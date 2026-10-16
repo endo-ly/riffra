@@ -1,5 +1,8 @@
 #pragma once
 
+#include <map>
+#include <vector>
+
 #include "TimelineEngine.h"
 #include "contract/ExecutionGraph.h"
 
@@ -18,8 +21,10 @@ public:
                              juce::String& error);
 
 private:
-    bool prepareMixer(const ExecutionGraph& graph, PreparedTimeline& prepared,
-                      PluginProcessingMode mode, juce::String& error);
+    bool prepareMixer(
+        const ExecutionGraph& graph, PreparedTimeline& prepared, PluginProcessingMode mode,
+        const std::map<juce::String, std::vector<const SidechainSendSpec*>>& sendsByTargetDevice,
+        juce::String& error);
     TimelineEngine& engine;
 };
 

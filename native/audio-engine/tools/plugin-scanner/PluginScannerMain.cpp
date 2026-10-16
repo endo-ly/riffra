@@ -24,7 +24,7 @@ juce::var makeLoadTestResult(const juce::String& path, const bool success,
 std::optional<juce::String> validateInstanceCreation(const juce::String& path) {
     riffra::PluginRack rack;
     if (const auto loadError =
-            rack.load(path, 44100.0, 512, riffra::PluginProcessingMode::realtime))
+            rack.load(path, 44100.0, 512, riffra::PluginProcessingMode::realtime, false))
         return loadError->message;
     return std::nullopt;
 }
@@ -78,6 +78,35 @@ int validateLoad(const juce::String& path) {
     return 0;
 }
 
+int probeSidechainCapability(const juce::String& path) {
+    if (!juce::File(path).exists()) {
+        writeJson(makeError(path, "VST3 bundle or file does not exist."));
+        return 2;
+    }
+
+    riffra::PluginRack rack;
+    if (const auto loadError =
+            rack.load(path, 44100.0, 512, riffra::PluginProcessingMode::realtime, false)) {
+        writeJson(makeError(path, loadError->message));
+        return 4;
+    }
+
+    const auto capability = rack.status().sidechain;
+    auto* result = new juce::DynamicObject();
+    result->setProperty("type", "pluginSidechainCapability");
+    result->setProperty("path", path);
+    auto* sidechain = new juce::DynamicObject();
+    sidechain->setProperty("available", capability.available);
+    sidechain->setProperty("mono", capability.mono);
+    sidechain->setProperty("stereo", capability.stereo);
+    sidechain->setProperty("channels", capability.channels);
+    sidechain->setProperty(
+        "reason", capability.reason.has_value() ? juce::var(*capability.reason) : juce::var());
+    result->setProperty("sidechain", juce::var(sidechain));
+    writeJson(juce::var(result));
+    return 0;
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -87,23 +116,28 @@ int main(int argc, char* argv[]) {
     }
     juce::ScopedJuceInitialiser_GUI juceInitialiser;
     if (argc < 2) {
-        writeJson(makeError({}, "Usage: riffra-plugin-scan --scan|--validate-load <vst3-path>"));
+        writeJson(makeError(
+            {}, "Usage: riffra-plugin-scan --scan|--validate-load|--probe-sidechain <vst3-path>"));
         return 1;
     }
     const auto mode = juce::String(argv[1]);
     if (mode == "--help" || mode == "-h") {
         writeJson(makeError({},
                             "Usage: riffra-plugin-scan --scan <vst3-path>\n"
-                            "       riffra-plugin-scan --validate-load <vst3-path>"));
+                            "       riffra-plugin-scan --validate-load <vst3-path>\n"
+                            "       riffra-plugin-scan --probe-sidechain <vst3-path>"));
         return 0;
     }
     if (argc != 3) {
-        writeJson(makeError({}, "Usage: riffra-plugin-scan --scan|--validate-load <vst3-path>"));
+        writeJson(makeError(
+            {}, "Usage: riffra-plugin-scan --scan|--validate-load|--probe-sidechain <vst3-path>"));
         return 1;
     }
     const auto path = juce::String::fromUTF8(argv[2]);
     if (mode == "--scan") return scan(path);
     if (mode == "--validate-load") return validateLoad(path);
-    writeJson(makeError({}, "Usage: riffra-plugin-scan --scan|--validate-load <vst3-path>"));
+    if (mode == "--probe-sidechain") return probeSidechainCapability(path);
+    writeJson(makeError(
+        {}, "Usage: riffra-plugin-scan --scan|--validate-load|--probe-sidechain <vst3-path>"));
     return 1;
 }

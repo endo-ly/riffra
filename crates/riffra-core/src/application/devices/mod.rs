@@ -202,6 +202,7 @@ where
                 ));
             }
             remove_device_automation(&mut session.arrangement.automation_lanes, device_id);
+            remove_sidechain_routes(&mut session.arrangement, device_id);
             session.arrangement.revision = session.arrangement.revision.saturating_add(1);
             Ok(())
         })
@@ -507,5 +508,26 @@ fn same_plugin_identity(left: &TrackInstrument, right: &TrackInstrument) -> bool
 fn remove_device_automation(lanes: &mut Vec<AutomationLane>, device_id: &str) {
     lanes.retain(|lane| {
         !matches!(&lane.target, AutomationTarget::DeviceParameter { device_id: id, .. } if id == device_id)
+    });
+}
+
+fn remove_sidechain_routes(arrangement: &mut crate::Arrangement, device_id: &str) {
+    let removed = arrangement
+        .mixer
+        .sidechain_sends
+        .iter()
+        .filter(|send| send.target_device_id == device_id)
+        .map(|send| send.id.clone())
+        .collect::<std::collections::HashSet<_>>();
+    arrangement
+        .mixer
+        .sidechain_sends
+        .retain(|send| send.target_device_id != device_id);
+    arrangement.automation_lanes.retain(|lane| {
+        !matches!(
+            &lane.target,
+            AutomationTarget::SidechainSendLevel { sidechain_send_id }
+                if removed.contains(sidechain_send_id)
+        )
     });
 }

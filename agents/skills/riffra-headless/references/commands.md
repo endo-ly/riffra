@@ -52,6 +52,9 @@ Timebaseのテンポ・拍子は `timebase update` で変更できる。MIDI cha
 | `harmonyEvents`   | Harmony Event               |
 | `automationLanes` | Automation Lane             |
 | `devices`         | Instrument or effect device |
+| `buses`           | Group / Return              |
+| `sends`           | Return向けSend              |
+| `sidechainSends`  | Device補助入力向けSend      |
 
 ### 複数操作の一括適用
 
@@ -358,23 +361,39 @@ riffra --data-root ./riffra-data clip remove --midi-clip-ids-json $ids
 
 - `track update`は指定した項目だけを更新する
 - 1つでもSoloが有効なTrackがあるとSolo以外のTrackは無音になり、MuteとSoloが両方有効なTrackも無音になる。Clip MuteはTrackのMute/Soloとは独立にそのClipだけを消す。Soloの解除は、Soloを立てた各Trackへ`--solo false`を渡して行う
-- RenderはTrackとClipのGain、Pan、Mute、Solo、Automation、Masterをすべて反映する。`render start --track-id`のstem Renderは対象Track以外をmutedにした状態で書き出す。`--normalize true`はMaster Gain適用後のピーク正規化であり、ミックス内の相対バランスは保たれる
+- RenderはTrackとClipのGain、Pan、Mute、Solo、Automation、Masterをすべて反映する。`render start --track-id`のStem Renderは対象Trackの主出力を分離し、SidechainとExternal Audioの依存元は処理を維持する。`--normalize true`はMaster Gain適用後のピーク正規化であり、ミックス内の相対バランスは保たれる
 
 Group・Return・Sendの正準設定は`mixer get`でまとめて参照し、`mixer bus list`と`mixer send list`で個別に一覧取得する。各操作はStandaloneとAttachedで同じControl Commandを使う。
 
-| 操作               | CLI                                                                                                   |
-| ------------------ | ----------------------------------------------------------------------------------------------------- |
-| Group / Return作成 | `mixer bus add --name <name> --kind group\|return`                                                    |
-| Bus更新            | `mixer bus update --bus-id <id> --patch-json <JSON\|@file>`                                           |
-| Bus削除            | `mixer bus remove --bus-id <id>`                                                                      |
-| Track主出力先      | `mixer output --track-id <id> --bus-id <group-id>`。`--bus-id`省略でMaster                            |
-| Send作成           | `mixer send add --track-id <id> --return-bus-id <id> --level-db <dB>`。`--pre-fader`でPre-Faderを選ぶ |
-| Send更新           | `mixer send update --send-id <id> --patch-json <JSON\|@file>`                                         |
-| Send削除           | `mixer send remove --send-id <id>`                                                                    |
+| 操作               | CLI                                                                                                                  |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| Group / Return作成 | `mixer bus add --name <name> --kind group\|return`                                                                   |
+| Bus更新            | `mixer bus update --bus-id <id> --patch-json <JSON\|@file>`                                                          |
+| Bus削除            | `mixer bus remove --bus-id <id>`                                                                                     |
+| Track主出力先      | `mixer output --track-id <id> --bus-id <group-id>`。`--bus-id`省略でMaster                                           |
+| Send作成           | `mixer send add --track-id <id> --return-bus-id <id> --level-db <dB>`。`--pre-fader`でPre-Faderを選ぶ                |
+| Send更新           | `mixer send update --send-id <id> --patch-json <JSON\|@file>`                                                        |
+| Send削除           | `mixer send remove --send-id <id>`                                                                                   |
+| Sidechain一覧      | `mixer sidechain list`                                                                                               |
+| Sidechain作成      | `mixer sidechain add --source-track-id <id> --target-device-id <id> --level-db <dB>`。`--pre-fader`でPre-Faderを選ぶ |
+| Sidechain更新      | `mixer sidechain update --sidechain-send-id <id> --patch-json <JSON\|@file>`                                         |
+| Sidechain削除      | `mixer sidechain remove --sidechain-send-id <id>`                                                                    |
 
 Busの部分更新は`name`、`gainDb`、`pan`、`panLaw`、`muted`、`solo`を受け取る。Sendの部分更新は`returnBusId`、`levelDb`、`position`（`preFader` / `postFader`）、`enabled`を受け取る。GainとSend LevelはTrack Gainと同じ範囲、PanはTrack Panと同じ範囲で正準化し、非有限値を拒否する。参照中のBusを削除する操作は失敗し、参照しているTrack・SendのIDを返す。
 
 `session apply`では`mixer.bus.add/update/remove`、`mixer.output.set`、`mixer.send.add/update/remove`を使用できる。後続操作の`busName`と`returnBusName`は、そのBatchで作成したBusも含めてIDへ解決する。同じ名前が複数ある場合はIDを指定する。
+
+Sidechainは別Track・Group・Return・Master上のEffect Deviceを指定する。Live Hostの`device inspect`で`capabilities.sidechain`を確認してから接続し、Instrument Deviceと送信元自身のTrack上のEffectは指定しない。追加したIDは`createdEntityIds.sidechainSends`から取得する。更新の`patch-json`は`targetDeviceId`、`levelDb`、`position`（`preFader` / `postFader`）、`enabled`を受け取る。`session apply`へは`mixer.sidechain.add/update/remove`を含められる。
+
+```powershell
+riffra --attach mixer sidechain list
+riffra --attach --expected-sequence 24 mixer sidechain add `
+  --source-track-id track:drums --target-device-id device:compressor --level-db -6
+riffra --attach --expected-sequence 25 mixer sidechain update `
+  --sidechain-send-id sidechain:01j... --patch-json '{"enabled":false}'
+```
+
+Source TrackのMuteはSidechainも止める。Soloで主出力が分離されてもSidechainは維持する。Processed Variantに必要な制御信号が録音から再利用できない場合はRaw Takeを保持し、`record list`の`processedUnavailableReason`で理由を確認できる。
 
 #### Automation
 
@@ -386,6 +405,7 @@ Busの部分更新は`name`、`gainDb`、`pan`、`panLaw`、`muted`、`solo`を�
 | Group・Return Mix | `--bus-id <id> --parameter gain\|pan`         |
 | Master Gain       | `--master --parameter gain`                   |
 | Send Level        | `--send-id <id> --parameter level`            |
+| Sidechain Level   | `--sidechain-send-id <id> --parameter level`  |
 | VST3 Parameter    | `--device-id <id> --parameter-id <stable-id>` |
 
 ```powershell

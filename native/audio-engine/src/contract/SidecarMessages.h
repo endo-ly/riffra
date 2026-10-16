@@ -252,11 +252,20 @@ struct TransportAcceptedSpec final {
     std::uint64_t commandSequence = 0;
 };
 
+struct DeviceSidechainCapabilitySpec final {
+    bool available = false;
+    bool mono = false;
+    bool stereo = false;
+    std::uint32_t channels = 0;
+    std::optional<juce::String> reason;
+};
+
 struct DeviceCapabilitiesSpec final {
     bool parameters = false;
     bool state = false;
     bool presets = false;
     bool editor = false;
+    DeviceSidechainCapabilitySpec sidechain;
 };
 
 struct DeviceStatusSpec final {

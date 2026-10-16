@@ -233,10 +233,13 @@ pub struct HostDispatcher<'a> {
     core: CoreRef<'a>,
     project_store: ProjectStoreRef<'a>,
     data_root: PathBuf,
+    plugin_scan: PathBuf,
     sonalloy: PathBuf,
     built_in_instruments: Arc<BuiltInInstrumentCatalog>,
     validate_plugin_roles: bool,
     audio: Option<&'a crate::audio::AudioSupervisor>,
+    #[cfg(test)]
+    test_sidechain_capability: Option<crate::api::output::DeviceSidechainCapability>,
 }
 
 /// Standalone canonical editing entry point.
@@ -266,16 +269,19 @@ impl HostDispatcher<'static> {
                 core: AppCore::new(initialized.project_id, initialized.loaded.session, 0),
                 recovered_from_generation: initialized.loaded.recovered_from_generation,
             });
-        let sonalloy = RuntimeBinaries::beside_current_executable()?.sonalloy;
+        let binaries = RuntimeBinaries::beside_current_executable()?;
         Ok(Self {
             _lease: Some(lease),
             core: CoreRef::Owned(project),
             project_store: ProjectStoreRef::Owned(project_store),
             data_root,
-            sonalloy,
+            plugin_scan: binaries.plugin_scan,
+            sonalloy: binaries.sonalloy,
             built_in_instruments,
             validate_plugin_roles: false,
             audio: None,
+            #[cfg(test)]
+            test_sidechain_capability: None,
         })
     }
 }
@@ -382,6 +388,7 @@ impl<'a> HostDispatcher<'a> {
         project: &'a crate::host::open_project::ProjectCell,
         project_store: &'a ProjectStore,
         data_root: &'a Path,
+        plugin_scan: &'a Path,
         sonalloy: &'a Path,
         built_in_instruments: &'a Arc<BuiltInInstrumentCatalog>,
     ) -> Self {
@@ -390,10 +397,13 @@ impl<'a> HostDispatcher<'a> {
             core: CoreRef::Borrowed(project),
             project_store: ProjectStoreRef::Borrowed(project_store),
             data_root: data_root.to_path_buf(),
+            plugin_scan: plugin_scan.to_path_buf(),
             sonalloy: sonalloy.to_path_buf(),
             built_in_instruments: Arc::clone(built_in_instruments),
             validate_plugin_roles: true,
             audio: None,
+            #[cfg(test)]
+            test_sidechain_capability: None,
         }
     }
 
@@ -808,6 +818,7 @@ mod tests {
                 recovered_from_generation: initialized.loaded.recovered_from_generation,
             });
         let sonalloy = std::path::PathBuf::new();
+        let plugin_scan = root.join("riffra-plugin-scan");
         let plugin_path = root.join("VST3/Synth.vst3");
         fs::create_dir_all(&plugin_path).unwrap();
         crate::plugins::save(
@@ -836,6 +847,7 @@ mod tests {
             &project,
             &project_store,
             &root,
+            &plugin_scan,
             &sonalloy,
             &built_in_instruments,
         );

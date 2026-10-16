@@ -50,6 +50,7 @@ struct RecordingTrackManifest {
     raw_file: Option<String>,
     processed_file: Option<String>,
     midi_file: Option<String>,
+    processed_unavailable_reason: Option<String>,
 }
 
 /// Returns the canonical product references held by a `RecordingCapture`.
@@ -103,6 +104,7 @@ fn validate_completed_capture_assets(
     raw_asset_id: Option<&AssetId>,
     processed_asset_id: Option<&AssetId>,
     midi_asset_id: Option<&AssetId>,
+    processed_unavailable: bool,
 ) -> Result<(), String> {
     if raw_asset_id.is_none() && processed_asset_id.is_none() {
         let midi_asset_id = midi_asset_id.ok_or_else(|| {
@@ -113,15 +115,28 @@ fn validate_completed_capture_assets(
     }
     let raw_asset_id = raw_asset_id
         .ok_or_else(|| "Completed recording has no canonical raw audio Asset ID.".to_string())?;
-    let processed_asset_id = processed_asset_id.ok_or_else(|| {
-        "Completed recording has no canonical processed audio Asset ID.".to_string()
-    })?;
     let _ = canonical_asset_location(data_root, raw_asset_id, "raw audio")?;
-    let _ = canonical_asset_location(data_root, processed_asset_id, "processed audio")?;
+    if let Some(processed_asset_id) = processed_asset_id {
+        let _ = canonical_asset_location(data_root, processed_asset_id, "processed audio")?;
+    } else if !processed_unavailable {
+        return Err("Completed recording has no canonical processed audio Asset ID.".into());
+    }
     if let Some(midi_asset_id) = midi_asset_id {
         let _ = canonical_asset_location(data_root, midi_asset_id, "MIDI")?;
     }
     Ok(())
+}
+
+fn processed_unavailable_reason(manifest: &RecordingManifest) -> Option<String> {
+    let reasons = manifest
+        .tracks
+        .as_ref()?
+        .iter()
+        .filter_map(|track| track.processed_unavailable_reason.as_deref())
+        .filter(|reason| !reason.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("; ");
+    (!reasons.is_empty()).then_some(reasons)
 }
 
 /// A process interruption can leave the native writer's partial WAVs and a
@@ -444,12 +459,14 @@ pub fn list(data_root: &Path, query: Option<&str>) -> Result<Vec<RecordingAsset>
                 .capture
                 .as_ref()
                 .is_some_and(|capture| capture.status == RecordingCaptureStatus::Completed);
+        let processed_unavailable_reason = processed_unavailable_reason(&manifest);
         if canonical_capture
             && let Err(error) = validate_completed_capture_assets(
                 data_root,
                 raw_asset_id.as_ref(),
                 processed_asset_id.as_ref(),
                 midi_asset_id.as_ref(),
+                processed_unavailable_reason.is_some(),
             )
         {
             validation_error = Some(error);
@@ -551,6 +568,7 @@ pub fn list(data_root: &Path, query: Option<&str>) -> Result<Vec<RecordingAsset>
             processed_dropout_start_sample: dropout.processed_dropout_start_sample,
             processed_dropout_end_sample: dropout.processed_dropout_end_sample,
             recovery_status,
+            processed_unavailable_reason,
         });
     }
     assets.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
@@ -980,33 +998,35 @@ mod tests {
 
     #[test]
     fn indexes_completed_and_recoverable_manifests() {
-        let root = temp_root();
-        let take = root.join("recordings/inbox/take-1");
-        fs::create_dir_all(&take).unwrap();
-        let raw = take.join("raw.wav");
-        let processed = take.join("processed.wav");
-        fs::write(&raw, b"raw audio").unwrap();
-        fs::write(&processed, b"processed audio").unwrap();
-        let raw_id = asset::register(
-            &root,
-            AssetKind::Audio,
-            "Raw recording",
-            &raw.to_string_lossy(),
-            Some(Provenance::recorded_root()),
-        )
-        .unwrap();
-        let processed_id = asset::register(
-            &root,
-            AssetKind::Audio,
-            "Processed recording",
-            &processed.to_string_lossy(),
-            Some(Provenance::recorded_root()),
-        )
-        .unwrap();
-        let manifest = serde_json::to_vec_pretty(&serde_json::json!({
+        for processed_available in [true, false] {
+            let root = temp_root();
+            let take = root.join("recordings/inbox/take-1");
+            fs::create_dir_all(&take).unwrap();
+            let raw = take.join("raw.wav");
+            let processed = take.join("processed.wav");
+            fs::write(&raw, b"raw audio").unwrap();
+            fs::write(&processed, b"processed audio").unwrap();
+            let raw_id = asset::register(
+                &root,
+                AssetKind::Audio,
+                "Raw recording",
+                &raw.to_string_lossy(),
+                Some(Provenance::recorded_root()),
+            )
+            .unwrap();
+            let processed_id = asset::register(
+                &root,
+                AssetKind::Audio,
+                "Processed recording",
+                &processed.to_string_lossy(),
+                Some(Provenance::recorded_root()),
+            )
+            .unwrap();
+            let manifest = serde_json::to_vec_pretty(&serde_json::json!({
             "state": "completed",
             "rawFile": "raw.wav",
-            "processedFile": "processed.wav",
+            "processedFile": processed_available.then_some("processed.wav"),
+            "tracks": [{"processedUnavailableReason": (!processed_available).then_some("sidechain input for device fx:target is incomplete")}],
             "sampleRate": 44100.0,
             "samplesWritten": 44100,
             "droppedBlocks": 0,
@@ -1022,19 +1042,78 @@ mod tests {
                 "inputChannelName": null,
                 "bufferSize": null,
                 "rawAudioAssetId": raw_id,
-                "processedAudioAssetId": processed_id,
+                "processedAudioAssetId": processed_available.then_some(processed_id),
                 "dropoutInformation": { "samplesWritten": 44_100, "droppedBlocks": 0 }
+            }
+        }))
+        .unwrap();
+            fs::write(take.join("manifest.json"), manifest).unwrap();
+
+            let results = list(&root, Some("take-1")).unwrap();
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].state, "completed");
+            assert_eq!(results[0].error, None);
+            assert_eq!(results[0].samples_written, 44_100);
+            assert_eq!(results[0].sample_rate, Some(44_100));
+            assert_eq!(results[0].processed_asset_id.is_some(), processed_available);
+            assert_eq!(
+                results[0].processed_unavailable_reason.is_some(),
+                !processed_available
+            );
+            let _ = fs::remove_dir_all(root);
+        }
+    }
+
+    #[test]
+    fn rejects_completed_capture_without_processed_asset_or_unavailability_reason() {
+        let root = temp_root();
+        let take = root.join("recordings/inbox/take-missing-processed");
+        fs::create_dir_all(&take).unwrap();
+        let raw = take.join("raw.wav");
+        fs::write(&raw, b"raw audio").unwrap();
+        let raw_id = asset::register(
+            &root,
+            AssetKind::Audio,
+            "Raw recording",
+            &raw.to_string_lossy(),
+            Some(Provenance::recorded_root()),
+        )
+        .unwrap();
+        let manifest = serde_json::to_vec_pretty(&serde_json::json!({
+            "state": "completed",
+            "sampleRate": 44100.0,
+            "samplesWritten": 44100,
+            "capture": {
+                "captureId": "capture:take-missing-processed",
+                "sessionId": "session-1",
+                "status": "completed",
+                "startedAtMs": 1_000,
+                "completedAtMs": 2_000,
+                "sampleRate": 44_100,
+                "audioDriver": null,
+                "inputChannel": null,
+                "inputChannelName": null,
+                "bufferSize": null,
+                "rawAudioAssetId": raw_id,
+                "processedAudioAssetId": null,
+                "dropoutInformation": { "samplesWritten": 44_100 }
             }
         }))
         .unwrap();
         fs::write(take.join("manifest.json"), manifest).unwrap();
 
-        let results = list(&root, Some("take-1")).unwrap();
+        let results = list(&root, Some("take-missing-processed")).unwrap();
+
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].state, "completed");
-        assert_eq!(results[0].error, None);
-        assert_eq!(results[0].samples_written, 44_100);
-        assert_eq!(results[0].sample_rate, Some(44_100));
+        assert_eq!(results[0].state, "invalid");
+        assert!(
+            results[0]
+                .error
+                .as_deref()
+                .is_some_and(|error| { error.contains("no canonical processed audio Asset ID") })
+        );
+        assert_eq!(results[0].raw_path, None);
+        assert_eq!(results[0].processed_path, None);
         let _ = fs::remove_dir_all(root);
     }
 

@@ -32,6 +32,20 @@ struct PluginLoadError final {
     juce::String message;
 };
 
+/// Auxiliary input support of one plugin rack, probed from the plugin bus structure.
+struct PluginSidechainCapability final {
+    /// An auxiliary input bus is exposed after the main input bus.
+    bool available = false;
+    /// The auxiliary input bus accepts a mono layout.
+    bool mono = false;
+    /// The auxiliary input bus accepts a stereo layout.
+    bool stereo = false;
+    /// Channels of the currently enabled auxiliary layout (0, 1, or 2).
+    int channels = 0;
+    /// Why the auxiliary input cannot be used, when it cannot be.
+    std::optional<juce::String> reason;
+};
+
 /// Prepared configuration and runtime counters of one plugin rack.
 struct PluginRackStatus final {
     bool loaded = false;
@@ -48,6 +62,7 @@ struct PluginRackStatus final {
     std::uint64_t droppedMidiEvents = 0;
     std::uint64_t loadCount = 0;
     std::uint64_t destroyCount = 0;
+    PluginSidechainCapability sidechain;
 };
 
 /// One normalized discrete value and its plugin-provided text.
@@ -101,7 +116,8 @@ public:
     ~PluginRack();
 
     [[nodiscard]] std::optional<PluginLoadError> load(const juce::String& path, double sampleRate,
-                                                      int blockSize, PluginProcessingMode mode);
+                                                      int blockSize, PluginProcessingMode mode,
+                                                      bool sidechainInput);
     void release() noexcept;
     /// Reserves callback MIDI storage for prepared timeline events.
     [[nodiscard]] bool prepareTimelineMidiCapacity(std::size_t eventCapacity,
@@ -120,6 +136,7 @@ public:
     bool applyPersistedState(const PluginStateSpec& state, juce::String& error) noexcept;
     [[nodiscard]] std::optional<PluginStateSpec> persistedState(juce::String& error) const;
     void process(const float* const* inputChannelData, int numInputChannels,
+                 const float* const* auxInputChannelData, int numAuxInputChannels,
                  float* const* outputChannelData, int numOutputChannels, int numSamples,
                  const juce::MidiBuffer* timelineMidi = nullptr,
                  std::span<PluginParameterAutomation> automation = {},
@@ -175,9 +192,16 @@ private:
     void updateParameterCount(juce::AudioProcessor& processor);
     [[nodiscard]] juce::AudioProcessorEditor* createEditor(juce::String& error);
     [[nodiscard]] juce::String currentPluginName() const;
+    /// Auxiliary input wiring resolved from the buses a processor was prepared with.
+    struct ProcessorLayout final {
+        PluginSidechainCapability sidechain;
+        std::vector<int> auxInputOffsets;
+        int processChannels = 0;
+    };
     [[nodiscard]] static std::optional<PluginLoadError> configureProcessor(
         juce::AudioProcessor& processor, double sampleRate, int blockSize,
-        PluginProcessingMode mode);
+        PluginProcessingMode mode, bool sidechainInput, ProcessorLayout& layout);
+    void adoptProcessorLayout(const ProcessorLayout& layout, int blockSize) noexcept;
     bool applyStateData(const juce::String& base64, juce::String& error) noexcept;
     void applyQueuedParameterChanges() noexcept;
     void applyAutomation(std::span<PluginParameterAutomation> bindings, std::int64_t timelineSample,
@@ -223,6 +247,10 @@ private:
     juce::AudioPluginFormatManager formatManager;
     std::unique_ptr<juce::AudioProcessor> plugin;
     std::unique_ptr<ParameterQueue> parameterQueue;
+    juce::AudioBuffer<float> auxInputBuffer;
+    std::vector<float*> processPointers;
+    std::vector<int> auxInputOffsets;
+    int processChannelCount = 0;
     std::atomic<int> preparedLatencySamples{0};
     int preparedTailSamples = 0;
     PendingMidi pendingMidi;
@@ -236,7 +264,12 @@ private:
     std::atomic<int> preparedBlockSize{0};
     std::atomic<int> pluginInputChannels{0};
     std::atomic<int> pluginOutputChannels{0};
+    std::atomic<int> pluginAuxInputChannels{0};
     std::atomic<bool> pluginIsInstrument{false};
+    std::atomic<bool> pluginSidechainAvailable{false};
+    std::atomic<bool> pluginSidechainMono{false};
+    std::atomic<bool> pluginSidechainStereo{false};
+    std::optional<juce::String> sidechainUnavailableReason;
     std::atomic<bool> hostEditInProgress{false};
     std::atomic<int> cachedProgramCount{0};
     std::atomic<bool> cachedHasEditor{false};

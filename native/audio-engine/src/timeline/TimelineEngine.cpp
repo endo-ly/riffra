@@ -151,7 +151,9 @@ bool TimelineEngine::preparedOwnerReusesRuntimeDevices(const EffectOwnerSpec& de
                    candidate->effects == current->effects;
         }
         const auto* track = graphs.pending->findTrack(deviceOwner.id);
-        return track != nullptr && track->reuseRuntimeDevices;
+        const auto* current = graphs.latestCommitted->findTrack(deviceOwner.id);
+        return track != nullptr && current != nullptr &&
+               &track->runtime->effects() == &current->runtime->effects();
     });
 }
 
@@ -590,14 +592,22 @@ bool TimelineEngine::setSendLevelControl(const juce::String& sendId, const float
         return false;
     }
     return graphRegistry.access([&](ControlGraphRegistry::State& graphs) {
-        if (graphs.latestCommitted != nullptr)
+        if (graphs.latestCommitted != nullptr && sendId.isNotEmpty()) {
+            const auto level = juce::Decibels::decibelsToGain(juce::jlimit(-90.0f, 24.0f, levelDb));
+            const auto storeGain = [&](MixerRoute& route) {
+                route.gain.store(level, std::memory_order_release);
+            };
             for (auto& route : graphs.latestCommitted->mixer.trackRoutes)
-                if (route->sendId == sendId && sendId.isNotEmpty()) {
-                    route->gain.store(
-                        juce::Decibels::decibelsToGain(juce::jlimit(-90.0f, 24.0f, levelDb)),
-                        std::memory_order_release);
+                if (route->sendId == sendId) {
+                    storeGain(*route);
                     return true;
                 }
+            for (auto& route : graphs.latestCommitted->mixer.sidechainRoutes)
+                if (route->sendId == sendId) {
+                    storeGain(*route);
+                    return true;
+                }
+        }
         error = "send is unavailable";
         return false;
     });
@@ -660,6 +670,10 @@ bool TimelineEngine::previewAutomationValue(const AutomationTargetKind kind, con
                     for (auto& route : *routes)
                         if (route->sendId == id && id.isNotEmpty())
                             return apply(route->levelPreview);
+                break;
+            case AutomationTargetKind::sidechainSendLevel:
+                for (auto& route : graph->mixer.sidechainRoutes)
+                    if (route->sendId == id && id.isNotEmpty()) return apply(route->levelPreview);
                 break;
             case AutomationTargetKind::deviceParameter: {
                 PluginRack* rack = nullptr;

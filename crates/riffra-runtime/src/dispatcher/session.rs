@@ -1064,4 +1064,193 @@ mod tests {
 
         let _ = fs::remove_dir_all(root);
     }
+
+    #[test]
+    fn sidechain_send_commands_apply_in_batches_and_round_trip() {
+        // Arrange
+        let root = std::env::temp_dir().join(format!("riffra-dispatcher-sidechain-{}", now_ms()));
+        let mut dispatcher = Dispatcher::open(
+            root.clone(),
+            crate::test_support::prepare_built_in_resource_root(&root),
+        )
+        .unwrap();
+        let lead = dispatcher
+            .dispatch(
+                command("track.add", json!({"name":"Lead","kind":"audio"})),
+                None,
+            )
+            .unwrap();
+        let lead_id = mutated_session(&lead).arrangement.tracks[0].id.clone();
+        let pad = dispatcher
+            .dispatch(
+                command("track.add", json!({"name":"Pad","kind":"audio"})),
+                None,
+            )
+            .unwrap();
+        let pad_id = mutated_session(&pad).arrangement.tracks[1].id.clone();
+        dispatcher
+            .dispatch(
+                command(
+                    "effect.add",
+                    json!({"owner":{"kind":"track","id":pad_id},"pluginPath":"compressor.vst3"}),
+                ),
+                None,
+            )
+            .unwrap();
+        let device_id = dispatcher
+            .core
+            .cell()
+            .read()
+            .canonical
+            .clone()
+            .session
+            .arrangement
+            .tracks[1]
+            .effects[0]
+            .id
+            .clone();
+
+        dispatcher.test_sidechain_capability =
+            Some(crate::api::output::DeviceSidechainCapability::default());
+        let add_params = json!({
+            "sourceTrackId":lead_id,
+            "targetDeviceId":device_id,
+            "levelDb":-6.0,
+            "position":"preFader"
+        });
+
+        let direct_rejection = dispatcher
+            .dispatch(command("mixer.sidechain.add", add_params.clone()), None)
+            .unwrap_err();
+        assert!(direct_rejection.to_string().contains("mono or stereo"));
+        assert!(
+            dispatcher
+                .core
+                .cell()
+                .read()
+                .canonical
+                .session
+                .arrangement
+                .mixer
+                .sidechain_sends
+                .is_empty()
+        );
+
+        let batch_rejection = dispatcher
+            .dispatch(
+                command(
+                    "session.apply",
+                    json!({"operations":[{"command":"mixer.sidechain.add","params":add_params.clone()}]}),
+                ),
+                None,
+            )
+            .unwrap_err()
+            .protocol_error();
+        assert_eq!(
+            batch_rejection.details.as_ref().unwrap()["command"],
+            "mixer.sidechain.add"
+        );
+        assert!(
+            dispatcher
+                .core
+                .cell()
+                .read()
+                .canonical
+                .session
+                .arrangement
+                .mixer
+                .sidechain_sends
+                .is_empty()
+        );
+        dispatcher.test_sidechain_capability =
+            Some(crate::api::output::DeviceSidechainCapability {
+                available: true,
+                mono: false,
+                stereo: true,
+                channels: 0,
+                reason: None,
+            });
+
+        // Act
+        let added = dispatcher
+            .dispatch(
+                command(
+                    "session.apply",
+                    json!({
+                        "includeCreatedIds": true,
+                        "operations": [{
+                            "command":"mixer.sidechain.add",
+                            "params":add_params
+                        }]
+                    }),
+                ),
+                None,
+            )
+            .unwrap();
+        let added = output_value(&added);
+        let send_id = added["createdEntityIds"]["sidechainSends"][0]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let listed = dispatcher
+            .dispatch(command("mixer.sidechain.list", json!({})), None)
+            .unwrap();
+        dispatcher
+            .dispatch(
+                command(
+                    "mixer.sidechain.update",
+                    json!({
+                        "sidechainSendId":send_id,
+                        "patch":{"levelDb":-12.0,"position":"postFader","enabled":false}
+                    }),
+                ),
+                None,
+            )
+            .unwrap();
+        let updated = dispatcher
+            .dispatch(command("mixer.sidechain.list", json!({})), None)
+            .unwrap();
+        dispatcher
+            .dispatch(
+                command("mixer.sidechain.remove", json!({"sidechainSendId":send_id})),
+                None,
+            )
+            .unwrap();
+        let removed = dispatcher
+            .dispatch(command("mixer.sidechain.list", json!({})), None)
+            .unwrap();
+        let unknown_target = dispatcher
+            .dispatch(
+                command(
+                    "mixer.sidechain.add",
+                    json!({
+                        "sourceTrackId":lead_id,"targetDeviceId":"device:missing",
+                        "levelDb":0.0,"position":"postFader"
+                    }),
+                ),
+                None,
+            )
+            .unwrap_err()
+            .protocol_error();
+
+        // Assert
+        assert_eq!(output_type(&listed), "sidechainSends");
+        assert_eq!(added["createdEntityCounts"]["sidechainSends"], 1);
+        let listed = output_value(&listed);
+        let send = &listed[0];
+        assert_eq!(send["id"], send_id.as_str());
+        assert_eq!(send["sourceTrackId"], lead_id.as_str());
+        assert_eq!(send["targetDeviceId"], device_id.as_str());
+        assert_eq!(send["levelDb"], -6.0);
+        assert_eq!(send["position"], "preFader");
+        assert_eq!(send["enabled"], true);
+        let send = &output_value(&updated)[0];
+        assert_eq!(send["levelDb"], -12.0);
+        assert_eq!(send["position"], "postFader");
+        assert_eq!(send["enabled"], false);
+        assert!(output_value(&removed).as_array().unwrap().is_empty());
+        assert!(unknown_target.message.contains("device:missing"));
+
+        let _ = fs::remove_dir_all(root);
+    }
 }

@@ -547,8 +547,20 @@ export class FakeNativeApi implements NativeApi {
   removeSend(...args: Parameters<NativeApi['removeSend']>) {
     return this.command('removeSend', args);
   }
+  addSidechainSend(...args: Parameters<NativeApi['addSidechainSend']>) {
+    return this.command('addSidechainSend', args);
+  }
+  updateSidechainSend(...args: Parameters<NativeApi['updateSidechainSend']>) {
+    return this.command('updateSidechainSend', args);
+  }
+  removeSidechainSend(...args: Parameters<NativeApi['removeSidechainSend']>) {
+    return this.command('removeSidechainSend', args);
+  }
   previewSendLevel(...args: Parameters<NativeApi['previewSendLevel']>) {
     return this.command('previewSendLevel', args);
+  }
+  previewSidechainSendLevel(...args: Parameters<NativeApi['previewSidechainSendLevel']>) {
+    return this.command('previewSidechainSendLevel', args);
   }
   addEffect(...args: Parameters<NativeApi['addEffect']>) {
     return this.command('addEffect', args);
@@ -1155,6 +1167,9 @@ const arrangementMutationMethodNames = new Set<keyof NativeApi>([
   'addSend',
   'updateSend',
   'removeSend',
+  'addSidechainSend',
+  'updateSidechainSend',
+  'removeSidechainSend',
   'addEffect',
   'removeEffect',
   'reorderEffects',
@@ -1204,6 +1219,7 @@ const voidMethodNames = new Set<keyof NativeApi>([
   'previewMasterGainDb',
   'previewAutomationValue',
   'previewSendLevel',
+  'previewSidechainSendLevel',
   'previewChannelMix',
   'openPluginEditor',
   'playTimeline',

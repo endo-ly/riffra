@@ -14,12 +14,73 @@ use riffra_core::{
 };
 
 impl HostDispatcher<'_> {
+    fn sidechain_capability(
+        &self,
+        owner: &riffra_core::EffectOwner,
+        device_id: &str,
+        plugin_path: &str,
+    ) -> Result<crate::api::output::DeviceSidechainCapability, DispatchError> {
+        if let Some(audio) = self.audio
+            && let Ok(inspection) = audio.inspect_device(owner, device_id)
+        {
+            return Ok(inspection.capabilities.sidechain);
+        }
+        crate::plugins::validation::probe_sidechain_capability(
+            &self.plugin_scan,
+            std::path::Path::new(plugin_path),
+        )
+        .map_err(|error| {
+            DispatchError::invalid_request(format!(
+                "sidechain target '{device_id}' capability is unknown; verification failed: {error}"
+            ))
+        })
+    }
+
+    fn validate_sidechain_activation(
+        &self,
+        command: &CanonicalCommand,
+        canonical: &CanonicalState,
+    ) -> Result<(), DispatchError> {
+        let Some(target_device_id) = sidechain_target_to_activate(command, canonical) else {
+            return Ok(());
+        };
+        let arrangement = &canonical.session.arrangement;
+        let Some(owner) = arrangement.device_owner(&target_device_id) else {
+            return Ok(());
+        };
+        let Ok(riffra_core::DeviceRef::Effect(effect)) =
+            arrangement.device(&owner, &target_device_id)
+        else {
+            return Ok(());
+        };
+        if effect.plugin.disabled_placeholder {
+            return Err(DispatchError::invalid_request(format!(
+                "sidechain target '{target_device_id}' is not an available effect"
+            )));
+        }
+        #[cfg(test)]
+        let capability = match self.test_sidechain_capability.clone() {
+            Some(capability) => capability,
+            None => self.sidechain_capability(&owner, &target_device_id, &effect.plugin.path)?,
+        };
+        #[cfg(not(test))]
+        let capability =
+            self.sidechain_capability(&owner, &target_device_id, &effect.plugin.path)?;
+        if capability.mono || capability.stereo {
+            return Ok(());
+        }
+        Err(DispatchError::invalid_request(format!(
+            "sidechain target '{target_device_id}' does not support mono or stereo auxiliary input"
+        )))
+    }
+
     pub(super) fn run_canonical<S: riffra_core::SessionStorage + ?Sized>(
         &self,
         application: &mut riffra_core::application::Application<'_, S>,
         command: CanonicalCommand,
         canonical: CanonicalState,
     ) -> Result<ControlOutput, DispatchError> {
+        self.validate_sidechain_activation(&command, &canonical)?;
         let timebase = canonical.session.arrangement.timebase.clone();
         let tick = |position| {
             timebase
@@ -67,6 +128,26 @@ impl HostDispatcher<'_> {
             CanonicalCommand::SendRemove(params) => {
                 self.edited(application.remove_send(&params.send_id)?, application)
             }
+            CanonicalCommand::SidechainSendList(_) => Ok(ControlOutput::SidechainSends(
+                canonical.session.arrangement.mixer.sidechain_sends,
+            )),
+            CanonicalCommand::SidechainSendAdd(params) => self.created(
+                application.add_sidechain_send_with_created_ids(
+                    params.source_track_id,
+                    params.target_device_id,
+                    params.level_db,
+                    params.position,
+                )?,
+                application,
+            ),
+            CanonicalCommand::SidechainSendUpdate(params) => self.edited(
+                application.update_sidechain_send(&params.sidechain_send_id, params.patch)?,
+                application,
+            ),
+            CanonicalCommand::SidechainSendRemove(params) => self.edited(
+                application.remove_sidechain_send(&params.sidechain_send_id)?,
+                application,
+            ),
             CanonicalCommand::MixdownGet(_) => {
                 Ok(ControlOutput::Mixdown(canonical.session.settings.mixdown))
             }
@@ -770,6 +851,33 @@ impl HostDispatcher<'_> {
     }
 }
 
+fn sidechain_target_to_activate(
+    command: &CanonicalCommand,
+    canonical: &CanonicalState,
+) -> Option<String> {
+    match command {
+        CanonicalCommand::SidechainSendAdd(params) => Some(params.target_device_id.clone()),
+        CanonicalCommand::SidechainSendUpdate(params) => canonical
+            .session
+            .arrangement
+            .mixer
+            .sidechain_sends
+            .iter()
+            .find(|send| send.id == params.sidechain_send_id)
+            .and_then(|send| {
+                let target = params
+                    .patch
+                    .target_device_id
+                    .as_deref()
+                    .unwrap_or(&send.target_device_id);
+                let enabled = params.patch.enabled.unwrap_or(send.enabled);
+                (enabled && (!send.enabled || target != send.target_device_id))
+                    .then(|| target.to_owned())
+            }),
+        _ => None,
+    }
+}
+
 fn automation_lane(
     session: &CreativeSession,
     target: AutomationTarget,
@@ -824,6 +932,14 @@ fn automation_lanes(
                     .iter()
                     .any(|send| send.id == *send_id && send.track_id == *id)
             }
+            (
+                Some(EffectOwner::Track { id }),
+                AutomationTarget::SidechainSendLevel { sidechain_send_id },
+            ) => arrangement
+                .mixer
+                .sidechain_sends
+                .iter()
+                .any(|send| send.id == *sidechain_send_id && send.source_track_id == *id),
             (Some(owner), AutomationTarget::DeviceParameter { device_id, .. }) => {
                 arrangement.device(owner, device_id).is_ok()
             }
@@ -838,7 +954,82 @@ fn automation_lanes(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use riffra_core::{AutomationPoint, EffectOwner, TimelineTick, Track, TrackMixParameter};
+    use riffra_core::{
+        AutomationPoint, EffectOwner, SendPosition, SidechainSend, SidechainSendPatch,
+        TimelineTick, Track, TrackMixParameter,
+    };
+
+    #[test]
+    fn capability_validation_only_runs_when_a_sidechain_route_becomes_active() {
+        let mut session = CreativeSession::new(1);
+        session
+            .arrangement
+            .tracks
+            .push(Track::audio("track:source".into(), "Source".into()));
+        session
+            .arrangement
+            .mixer
+            .sidechain_sends
+            .push(SidechainSend {
+                id: "sidechain:1".into(),
+                source_track_id: "track:source".into(),
+                target_device_id: "device:first".into(),
+                level_db: -6.0,
+                position: SendPosition::PostFader,
+                enabled: false,
+            });
+        let canonical =
+            riffra_core::AppCore::new("project:test".into(), session, 0).canonical_state();
+
+        let add = CanonicalCommand::SidechainSendAdd(crate::api::params::SidechainSendAddParams {
+            source_track_id: "track:source".into(),
+            target_device_id: "device:first".into(),
+            level_db: -6.0,
+            position: SendPosition::PostFader,
+        });
+        let activate =
+            CanonicalCommand::SidechainSendUpdate(crate::api::params::SidechainSendUpdateParams {
+                sidechain_send_id: "sidechain:1".into(),
+                patch: SidechainSendPatch {
+                    enabled: Some(true),
+                    ..Default::default()
+                },
+            });
+        let level_change =
+            CanonicalCommand::SidechainSendUpdate(crate::api::params::SidechainSendUpdateParams {
+                sidechain_send_id: "sidechain:1".into(),
+                patch: SidechainSendPatch {
+                    level_db: Some(-12.0),
+                    ..Default::default()
+                },
+            });
+        let retarget =
+            CanonicalCommand::SidechainSendUpdate(crate::api::params::SidechainSendUpdateParams {
+                sidechain_send_id: "sidechain:1".into(),
+                patch: SidechainSendPatch {
+                    target_device_id: Some("device:second".into()),
+                    enabled: Some(true),
+                    ..Default::default()
+                },
+            });
+
+        assert_eq!(
+            sidechain_target_to_activate(&add, &canonical).as_deref(),
+            Some("device:first")
+        );
+        assert_eq!(
+            sidechain_target_to_activate(&activate, &canonical).as_deref(),
+            Some("device:first")
+        );
+        assert_eq!(
+            sidechain_target_to_activate(&level_change, &canonical),
+            None
+        );
+        assert_eq!(
+            sidechain_target_to_activate(&retarget, &canonical).as_deref(),
+            Some("device:second")
+        );
+    }
 
     #[test]
     fn automation_read_resolves_targets_and_lists_channel_ownership() {
@@ -848,6 +1039,18 @@ mod tests {
             .arrangement
             .tracks
             .push(Track::audio("track:1".into(), "Audio".into()));
+        session
+            .arrangement
+            .mixer
+            .sidechain_sends
+            .push(SidechainSend {
+                id: "sidechain:1".into(),
+                source_track_id: "track:1".into(),
+                target_device_id: "fx:target".into(),
+                level_db: -6.0,
+                position: SendPosition::PostFader,
+                enabled: true,
+            });
         let pan = AutomationTarget::TrackMix {
             track_id: "track:1".into(),
             parameter: TrackMixParameter::Pan,
@@ -873,6 +1076,18 @@ mod tests {
                     value: -6.0,
                 }],
             },
+            AutomationLane {
+                id: "sidechain".into(),
+                target: AutomationTarget::SidechainSendLevel {
+                    sidechain_send_id: "sidechain:1".into(),
+                },
+                interpolation: AutomationInterpolation::Linear,
+                points: vec![AutomationPoint {
+                    id: "sidechain-point".into(),
+                    tick: TimelineTick(0),
+                    value: 0.0,
+                }],
+            },
         ];
 
         // Act
@@ -889,11 +1104,13 @@ mod tests {
         // Assert
         assert_eq!(
             all.iter().map(|lane| lane.id.as_str()).collect::<Vec<_>>(),
-            ["master", "pan"]
+            ["master", "pan", "sidechain"]
         );
-        assert_eq!(track, lane);
-        assert_eq!(track.len(), 1);
+        assert_eq!(lane.len(), 1);
+        assert_eq!(lane[0].id, "pan");
+        assert_eq!(track.len(), 2);
         assert_eq!(track[0].id, "pan");
+        assert_eq!(track[1].id, "sidechain");
         assert!(
             automation_lane(
                 &session,

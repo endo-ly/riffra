@@ -272,7 +272,12 @@ pub fn inspect_canonical_state(
         arrangement.automation_lanes.iter().filter(|lane| {
             query.track_id.as_ref().is_none_or(|id| {
                 arrangement.tracks.iter().any(|track| {
-                    track.id == *id && lane.target.is_on_track(track, &arrangement.mixer.sends)
+                    track.id == *id
+                        && lane.target.is_on_track(
+                            track,
+                            &arrangement.mixer.sends,
+                            &arrangement.mixer.sidechain_sends,
+                        )
                 })
             })
         }),
@@ -450,10 +455,13 @@ fn inspect_track(
         }
     });
     let automation = automation_counts(
-        arrangement
-            .automation_lanes
-            .iter()
-            .filter(|lane| lane.target.is_on_track(track, &arrangement.mixer.sends)),
+        arrangement.automation_lanes.iter().filter(|lane| {
+            lane.target.is_on_track(
+                track,
+                &arrangement.mixer.sends,
+                &arrangement.mixer.sidechain_sends,
+            )
+        }),
         selection,
     );
 

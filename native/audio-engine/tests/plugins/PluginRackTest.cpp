@@ -30,7 +30,7 @@ TEST(PluginRackTest, ProcessesMonoInputToStereoOutput) {
     input.fill(0.25f);
     const std::array<const float*, 1> inputs{input.data()};
     const std::array<float*, 2> outputs{outputLeft.data(), outputRight.data()};
-    rack->process(inputs.data(), 1, outputs.data(), 2, kBlockSize);
+    rack->process(inputs.data(), 1, nullptr, 0, outputs.data(), 2, kBlockSize);
 
     EXPECT_FLOAT_EQ(outputLeft.front(), 0.5f);
     EXPECT_FLOAT_EQ(outputRight.back(), 0.5f);
@@ -44,7 +44,7 @@ TEST(PluginRackTest, ReturnsDrySignalWhenBypassedOrUnloaded) {
         input.fill(0.25f);
         const std::array<const float*, 1> inputs{input.data()};
         const std::array<float*, 2> outputs{outputLeft.data(), outputRight.data()};
-        rack.process(inputs.data(), 1, outputs.data(), 2, kBlockSize);
+        rack.process(inputs.data(), 1, nullptr, 0, outputs.data(), 2, kBlockSize);
 
         EXPECT_FLOAT_EQ(outputLeft.front(), 0.25f);
         EXPECT_FLOAT_EQ(outputRight.back(), 0.25f);
@@ -106,7 +106,7 @@ TEST(PluginRackTest, RestoresPersistedPluginState) {
 
     juce::AudioBuffer<float> output(2, kBlockSize);
     const auto process = [&] {
-        rack->process(nullptr, 0, output.getArrayOfWritePointers(), 2, kBlockSize);
+        rack->process(nullptr, 0, nullptr, 0, output.getArrayOfWritePointers(), 2, kBlockSize);
     };
     ASSERT_TRUE(rack->setParameter(0, 0.75f, error)) << error;
     process();
@@ -138,7 +138,7 @@ TEST(PluginRackTest, PassesMidiToInstrumentProcessor) {
     const std::array<float*, 2> outputs{outputLeft.data(), outputRight.data()};
     juce::MidiBuffer midi;
     midi.addEvent(juce::MidiMessage::noteOn(1, 60, 0.8f), 0);
-    rack->process(nullptr, 0, outputs.data(), 2, kBlockSize, &midi);
+    rack->process(nullptr, 0, nullptr, 0, outputs.data(), 2, kBlockSize, &midi);
 
     ASSERT_EQ(trace.midiMessageCount, 1);
     EXPECT_TRUE(trace.lastMidiMessage.isNoteOn());
@@ -147,7 +147,7 @@ TEST(PluginRackTest, PassesMidiToInstrumentProcessor) {
 
     midi.clear();
     midi.addEvent(juce::MidiMessage::noteOff(1, 60), 0);
-    rack->process(nullptr, 0, outputs.data(), 2, kBlockSize, &midi);
+    rack->process(nullptr, 0, nullptr, 0, outputs.data(), 2, kBlockSize, &midi);
     ASSERT_EQ(trace.midiMessageCount, 2);
     EXPECT_TRUE(trace.lastMidiMessage.isNoteOff());
     EXPECT_EQ(trace.lastMidiMessage.getNoteNumber(), 60);
@@ -171,7 +171,7 @@ TEST(PluginRackTest, EnforcesMidiCapacityForTimelineAndQueuedEvents) {
         std::array<float, kBlockSize> outputRight{};
         const std::array<float*, 2> outputs{outputLeft.data(), outputRight.data()};
 
-        rack->process(nullptr, 0, outputs.data(), 2, kBlockSize, &timeline);
+        rack->process(nullptr, 0, nullptr, 0, outputs.data(), 2, kBlockSize, &timeline);
 
         EXPECT_EQ(trace.midiMessageCount, 257);
         EXPECT_EQ(rack->status().droppedMidiEvents, 0);
@@ -194,7 +194,7 @@ TEST(PluginRackTest, EnforcesMidiCapacityForTimelineAndQueuedEvents) {
         std::array<float, kBlockSize> outputRight{};
         const std::array<float*, 2> outputs{outputLeft.data(), outputRight.data()};
 
-        rack->process(nullptr, 0, outputs.data(), 2, kBlockSize, &timeline);
+        rack->process(nullptr, 0, nullptr, 0, outputs.data(), 2, kBlockSize, &timeline);
 
         EXPECT_EQ(trace.midiMessageCount, 0);
         EXPECT_EQ(rack->status().droppedMidiEvents, 1);
@@ -228,7 +228,7 @@ TEST(PluginRackTest, EnforcesMidiCapacityForTimelineAndQueuedEvents) {
         const std::array<float*, 2> outputs{outputLeft.data(), outputRight.data()};
         // Live MIDI queued between blocks reaches the instrument in the next one.
         ASSERT_TRUE(rack->enqueueMidi(juce::MidiMessage::noteOn(1, 64, 0.5f)));
-        rack->process(nullptr, 0, outputs.data(), 2, kBlockSize);
+        rack->process(nullptr, 0, nullptr, 0, outputs.data(), 2, kBlockSize);
 
         ASSERT_EQ(trace.midiMessageCount, 1);
         EXPECT_TRUE(trace.lastMidiMessage.isNoteOn());
@@ -252,7 +252,7 @@ TEST(PluginRackTest, EnforcesMidiCapacityForTimelineAndQueuedEvents) {
         std::array<float, kBlockSize> outputLeft{};
         std::array<float, kBlockSize> outputRight{};
         const std::array<float*, 2> outputs{outputLeft.data(), outputRight.data()};
-        rack->process(nullptr, 0, outputs.data(), 2, kBlockSize);
+        rack->process(nullptr, 0, nullptr, 0, outputs.data(), 2, kBlockSize);
 
         EXPECT_EQ(trace.midiMessageCount, 256);
         EXPECT_EQ(rack->status().droppedMidiEvents, 0);
@@ -270,7 +270,7 @@ TEST(PluginRackTest, EnforcesMidiCapacityForTimelineAndQueuedEvents) {
 
         rack->allNotesOff();
         ASSERT_TRUE(rack->enqueueMidi(juce::MidiMessage::noteOn(1, 60, 0.8f)));
-        rack->process(nullptr, 0, outputs.data(), 2, kBlockSize);
+        rack->process(nullptr, 0, nullptr, 0, outputs.data(), 2, kBlockSize);
 
         ASSERT_EQ(trace.midiMessages.size(), 49u);
         EXPECT_TRUE(trace.midiMessages.front().isController());
@@ -292,7 +292,7 @@ TEST(PluginRackTest, SendsPanicControllersOnEveryMidiChannel) {
 
     // Act
     rack->allNotesOff();
-    rack->process(nullptr, 0, outputs.data(), 2, kBlockSize);
+    rack->process(nullptr, 0, nullptr, 0, outputs.data(), 2, kBlockSize);
 
     // Assert
     ASSERT_EQ(trace.midiMessages.size(), 48u);
@@ -321,7 +321,7 @@ TEST(PluginRackTest, BindsStableParameterIdsAndAppliesAutomationBeforeRealVstPro
     PluginRack rack;
     juce::String error;
     ASSERT_FALSE(rack.load(RIFFRA_TEST_EFFECT_BUNDLE_PATH, kSampleRate, kBlockSize,
-                           PluginProcessingMode::offline)
+                           PluginProcessingMode::offline, false)
                      .has_value());
     const auto parameters = rack.parameters();
     ASSERT_FALSE(parameters.empty());
@@ -344,19 +344,19 @@ TEST(PluginRackTest, BindsStableParameterIdsAndAppliesAutomationBeforeRealVstPro
 
     // Act / Assert
     ASSERT_TRUE(rack.setParameter(0, state->parameterValues[0], error)) << error;
-    rack.process(inputs.data(), 1, outputs.data(), 2, 32, nullptr, bindings, 0, true);
+    rack.process(inputs.data(), 1, nullptr, 0, outputs.data(), 2, 32, nullptr, bindings, 0, true);
     EXPECT_NEAR(left.back(), 0.0625f, 0.0001f);
-    rack.process(inputs.data(), 1, outputs.data(), 2, 32, nullptr, bindings, 32, true);
+    rack.process(inputs.data(), 1, nullptr, 0, outputs.data(), 2, 32, nullptr, bindings, 32, true);
     EXPECT_NEAR(left.back(), 0.1875f, 0.0001f);
     EXPECT_FALSE(rack.setParameter(0, 0.9f, error));
     EXPECT_FALSE(rack.applyPersistedState(*state, error));
     EXPECT_FALSE(rack.setProgram(0, error));
-    rack.process(inputs.data(), 1, outputs.data(), 2, 32, nullptr, {}, 48, true);
+    rack.process(inputs.data(), 1, nullptr, 0, outputs.data(), 2, 32, nullptr, {}, 48, true);
     const auto restoredState = rack.persistedState(error);
     ASSERT_TRUE(restoredState.has_value()) << error;
     EXPECT_NEAR(restoredState->parameterValues[0], state->parameterValues[0], 0.0001f);
     EXPECT_NEAR(rack.parameters()[0].value, state->parameterValues[0], 0.0001f);
-    rack.process(inputs.data(), 1, outputs.data(), 2, 32, nullptr, bindings, 64, false);
+    rack.process(inputs.data(), 1, nullptr, 0, outputs.data(), 2, 32, nullptr, bindings, 64, false);
     EXPECT_NEAR(rack.parameters()[0].value, state->parameterValues[0], 0.0001f);
     EXPECT_FALSE(
         rack.bindAutomation("absent-parameter", lane, *state, true, failure, error).has_value());
@@ -433,6 +433,186 @@ TEST(PluginRackTest, AutomationBindingUsesProjectedStateWithoutCapturingPluginSt
     EXPECT_EQ(error, "automation parameter ID is ambiguous: test.parameter");
     EXPECT_FALSE(rack->setAutomationPreview("test.parameter", 7, 0.5f, error));
     EXPECT_EQ(error, "automation parameter ID is ambiguous: test.parameter");
+}
+
+TEST(PluginRackTest, ReportsAuxiliaryInputCapabilityWithoutEnablingIt) {
+    // Arrange
+    SidechainTrace trace;
+    juce::String error;
+
+    // Act
+    auto rack =
+        PluginRackTestPeer::install(std::make_unique<TestSidechainProcessor>(true, true, trace),
+                                    kSampleRate, kBlockSize, error);
+
+    // Assert
+    ASSERT_NE(rack, nullptr) << error;
+    const auto status = rack->status();
+    EXPECT_TRUE(status.sidechain.available);
+    EXPECT_TRUE(status.sidechain.mono);
+    EXPECT_TRUE(status.sidechain.stereo);
+    EXPECT_EQ(status.sidechain.channels, 0);
+    EXPECT_FALSE(status.sidechain.reason.has_value());
+
+    std::array<float, kBlockSize> left{};
+    std::array<float, kBlockSize> right{};
+    std::array<float, kBlockSize> outputLeft{};
+    std::array<float, kBlockSize> outputRight{};
+    left.fill(0.25f);
+    right.fill(-0.25f);
+    const std::array<const float*, 2> inputs{left.data(), right.data()};
+    const std::array<float*, 2> outputs{outputLeft.data(), outputRight.data()};
+    rack->process(inputs.data(), 2, nullptr, 0, outputs.data(), 2, kBlockSize);
+    EXPECT_EQ(trace.bufferChannels, 2);
+    EXPECT_EQ(trace.auxBusChannels, 0);
+    EXPECT_FLOAT_EQ(outputLeft[0], 0.25f);
+    EXPECT_FLOAT_EQ(outputRight[0], -0.25f);
+}
+
+TEST(PluginRackTest, ProcessesStereoAuxiliaryInputAtItsBufferOffsets) {
+    // Arrange
+    SidechainTrace trace;
+    juce::String error;
+    auto rack =
+        PluginRackTestPeer::install(std::make_unique<TestSidechainProcessor>(true, true, trace),
+                                    kSampleRate, kBlockSize, error, false, true);
+    ASSERT_NE(rack, nullptr) << error;
+    const auto status = rack->status();
+    EXPECT_EQ(status.sidechain.channels, 2);
+    EXPECT_FALSE(status.sidechain.reason.has_value());
+
+    std::array<float, kBlockSize> left{};
+    std::array<float, kBlockSize> right{};
+    std::array<float, kBlockSize> auxLeft{};
+    std::array<float, kBlockSize> auxRight{};
+    std::array<float, kBlockSize> outputLeft{};
+    std::array<float, kBlockSize> outputRight{};
+    left.fill(0.25f);
+    right.fill(-0.25f);
+    auxLeft.fill(0.5f);
+    auxRight.fill(0.125f);
+    const std::array<const float*, 2> inputs{left.data(), right.data()};
+    const std::array<const float*, 2> aux{auxLeft.data(), auxRight.data()};
+    const std::array<float*, 2> outputs{outputLeft.data(), outputRight.data()};
+
+    // Act
+    rack->process(inputs.data(), 2, aux.data(), 2, outputs.data(), 2, kBlockSize);
+
+    // Assert
+    EXPECT_EQ(trace.bufferChannels, 4);
+    EXPECT_EQ(trace.auxBusChannels, 2);
+    EXPECT_FLOAT_EQ(trace.auxPeak, 0.5f);
+    EXPECT_FLOAT_EQ(outputLeft[0], 0.75f);
+    EXPECT_FLOAT_EQ(outputRight[0], -0.125f);
+}
+
+TEST(PluginRackTest, FoldsStereoAuxiliaryAudioIntoAMonoBus) {
+    // Arrange
+    SidechainTrace trace;
+    juce::String error;
+    auto rack =
+        PluginRackTestPeer::install(std::make_unique<TestSidechainProcessor>(true, false, trace),
+                                    kSampleRate, kBlockSize, error, false, true);
+    ASSERT_NE(rack, nullptr) << error;
+    const auto status = rack->status();
+    EXPECT_TRUE(status.sidechain.mono);
+    EXPECT_FALSE(status.sidechain.stereo);
+    EXPECT_EQ(status.sidechain.channels, 1);
+
+    std::array<float, kBlockSize> left{};
+    std::array<float, kBlockSize> right{};
+    std::array<float, kBlockSize> auxLeft{};
+    std::array<float, kBlockSize> auxRight{};
+    std::array<float, kBlockSize> outputLeft{};
+    std::array<float, kBlockSize> outputRight{};
+    left.fill(0.4f);
+    right.fill(0.2f);
+    auxLeft.fill(1.0f);
+    auxRight.fill(0.2f);
+    const std::array<const float*, 2> inputs{left.data(), right.data()};
+    const std::array<const float*, 2> aux{auxLeft.data(), auxRight.data()};
+    const std::array<float*, 2> outputs{outputLeft.data(), outputRight.data()};
+
+    // Act
+    rack->process(inputs.data(), 2, aux.data(), 2, outputs.data(), 2, kBlockSize);
+
+    // Assert
+    EXPECT_EQ(trace.bufferChannels, 3);
+    EXPECT_EQ(trace.auxBusChannels, 1);
+    EXPECT_FLOAT_EQ(trace.auxPeak, 0.6f);
+    EXPECT_FLOAT_EQ(outputLeft[0], 1.0f);
+    EXPECT_FLOAT_EQ(outputRight[0], 0.8f);
+}
+
+TEST(PluginRackTest, FeedsSilenceWhenNoSidechainAudioIsConnected) {
+    // Arrange
+    SidechainTrace trace;
+    juce::String error;
+    auto rack =
+        PluginRackTestPeer::install(std::make_unique<TestSidechainProcessor>(true, true, trace),
+                                    kSampleRate, kBlockSize, error, false, true);
+    ASSERT_NE(rack, nullptr) << error;
+    std::array<float, kBlockSize> left{};
+    std::array<float, kBlockSize> right{};
+    std::array<float, kBlockSize> outputLeft{};
+    std::array<float, kBlockSize> outputRight{};
+    left.fill(0.25f);
+    right.fill(-0.25f);
+    const std::array<const float*, 2> inputs{left.data(), right.data()};
+    const std::array<float*, 2> outputs{outputLeft.data(), outputRight.data()};
+
+    // Act
+    rack->process(inputs.data(), 2, nullptr, 0, outputs.data(), 2, kBlockSize);
+
+    // Assert
+    EXPECT_EQ(trace.auxBusChannels, 2);
+    EXPECT_FLOAT_EQ(trace.auxPeak, 0.0f);
+    EXPECT_FLOAT_EQ(outputLeft[0], 0.25f);
+    EXPECT_FLOAT_EQ(outputRight[0], -0.25f);
+}
+
+TEST(PluginRackTest, KeepsAnEffectUsableWithoutAnAuxiliaryInputBus) {
+    // Arrange
+    ProcessorTrace trace;
+    juce::String error;
+    auto rack = PluginRackTestPeer::install(std::make_unique<TestProcessor>(trace), kSampleRate,
+                                            kBlockSize, error);
+
+    // Act / Assert
+    ASSERT_NE(rack, nullptr) << error;
+    const auto status = rack->status();
+    EXPECT_FALSE(status.sidechain.available);
+    EXPECT_EQ(status.sidechain.channels, 0);
+    ASSERT_TRUE(status.sidechain.reason.has_value());
+    EXPECT_EQ(*status.sidechain.reason, "The VST3 does not expose an auxiliary input bus.");
+    const auto prepared = PluginRackTestPeer::install(std::make_unique<TestProcessor>(trace),
+                                                      kSampleRate, kBlockSize, error, false, true);
+    ASSERT_NE(prepared, nullptr) << error;
+    EXPECT_FALSE(prepared->status().sidechain.available);
+}
+
+TEST(PluginRackTest, KeepsAnEffectUsableWhenItsSidechainLayoutIsUnsupported) {
+    // Arrange
+    SidechainTrace trace;
+    juce::String error;
+    auto rack =
+        PluginRackTestPeer::install(std::make_unique<TestSidechainProcessor>(false, false, trace),
+                                    kSampleRate, kBlockSize, error);
+
+    // Act / Assert
+    ASSERT_NE(rack, nullptr) << error;
+    const auto status = rack->status();
+    EXPECT_TRUE(status.sidechain.available);
+    EXPECT_FALSE(status.sidechain.mono);
+    EXPECT_FALSE(status.sidechain.stereo);
+    ASSERT_TRUE(status.sidechain.reason.has_value());
+    EXPECT_EQ(*status.sidechain.reason,
+              "The VST3 does not support a mono or stereo auxiliary input.");
+    const auto prepared =
+        PluginRackTestPeer::install(std::make_unique<TestSidechainProcessor>(false, false, trace),
+                                    kSampleRate, kBlockSize, error, false, true);
+    ASSERT_NE(prepared, nullptr) << error;
+    EXPECT_EQ(prepared->status().sidechain.channels, 0);
 }
 
 }  // namespace riffra

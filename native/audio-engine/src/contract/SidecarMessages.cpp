@@ -340,12 +340,23 @@ juce::var encodeResponseBody(const SidecarResponseSpec& response) {
                     .set("name", status.name)
                     .set("bypassed", status.bypassed)
                     .set("parameterCount", integer(status.parameterCount))
-                    .set("capabilities", ObjectBuilder{}
-                                             .set("parameters", status.capabilities.parameters)
-                                             .set("state", status.capabilities.state)
-                                             .set("presets", status.capabilities.presets)
-                                             .set("editor", status.capabilities.editor)
-                                             .build())
+                    .set("capabilities",
+                         ObjectBuilder{}
+                             .set("parameters", status.capabilities.parameters)
+                             .set("state", status.capabilities.state)
+                             .set("presets", status.capabilities.presets)
+                             .set("editor", status.capabilities.editor)
+                             .set("sidechain",
+                                  ObjectBuilder{}
+                                      .set("available", status.capabilities.sidechain.available)
+                                      .set("mono", status.capabilities.sidechain.mono)
+                                      .set("stereo", status.capabilities.sidechain.stereo)
+                                      .set("channels",
+                                           integer(status.capabilities.sidechain.channels))
+                                      .set("reason",
+                                           optionalString(status.capabilities.sidechain.reason))
+                                      .build())
+                             .build())
                     .build();
             },
             [](const DeviceParametersSpec& status) {

@@ -231,9 +231,13 @@ void TimelineEngine::processTracks(PreparedTimeline& prepared,
                                    const float transportGainStep) noexcept {
     processLiveAudioTracks(prepared, physicalInputChannels, physicalInputChannelCount, rangeStart,
                            destinationStart, sampleCount);
-    for (auto& stage : prepared.processingStages)
-        pool->run(stage, {TrackStageKind::playback, &prepared, rangeStart, destinationStart,
-                          sampleCount, transportGainStart, transportGainStep, true});
+    clearSidechainInputs(prepared);
+    for (std::size_t stageIndex = 0; stageIndex < prepared.processingStages.size(); ++stageIndex) {
+        pool->run(prepared.processingStages[stageIndex],
+                  {TrackStageKind::playback, &prepared, rangeStart, destinationStart, sampleCount,
+                   transportGainStart, transportGainStep, true});
+        mixSidechainStage(prepared, static_cast<int>(stageIndex), rangeStart, sampleCount, true);
+    }
     mixProductionOutput(prepared, outputChannels, channelCount, rangeStart, destinationStart,
                         sampleCount, true);
     if (prepared.fadeOutSamples > 0) {
@@ -331,12 +335,29 @@ void TimelineEngine::mergeTimelineAndLiveInput(Track& track, const int sampleCou
                                          sampleCount);
 }
 
+void TimelineEngine::clearSidechainInputs(PreparedTimeline& timeline) noexcept {
+    for (auto& track : timeline.tracks) track->runtime->effects().clearSidechainBuffers();
+    for (auto& bus : timeline.mixer.buses) bus->effects->clearSidechainBuffers();
+    timeline.mixer.masterEffects->clearSidechainBuffers();
+}
+
+void TimelineEngine::mixSidechainStage(PreparedTimeline& timeline, const int stageIndex,
+                                       const std::int64_t rangeStart, const int sampleCount,
+                                       const bool playing) noexcept {
+    for (auto* route : timeline.mixer.sidechainRoutesByStage[static_cast<std::size_t>(stageIndex)])
+        route->mix(sampleCount, rangeStart, playing);
+}
+
 void TimelineEngine::processLiveInstrumentTracks(
     PreparedTimeline& prepared, float* const* outputChannels, const int channelCount,
     const std::int64_t rangeStart, const int destinationStart, const int sampleCount) noexcept {
-    for (auto& stage : prepared.processingStages)
-        pool->run(stage, {TrackStageKind::live, &prepared, rangeStart, destinationStart,
-                          sampleCount, 1.0f, 0.0f, false});
+    clearSidechainInputs(prepared);
+    for (std::size_t stageIndex = 0; stageIndex < prepared.processingStages.size(); ++stageIndex) {
+        pool->run(prepared.processingStages[stageIndex],
+                  {TrackStageKind::live, &prepared, rangeStart, destinationStart, sampleCount, 1.0f,
+                   0.0f, false});
+        mixSidechainStage(prepared, static_cast<int>(stageIndex), rangeStart, sampleCount, false);
+    }
     mixProductionOutput(prepared, outputChannels, channelCount, rangeStart, destinationStart,
                         sampleCount, false);
 }
@@ -369,7 +390,8 @@ void TimelineEngine::processInstrumentTrack(const PreparedTimeline& prepared, Tr
         runtime.mixBuffer.getArrayOfReadPointers(), 2,
         runtime.processedBuffer.getArrayOfWritePointers(), 2, sampleCount, nullptr,
         runtime.deviceAutomation,
-        rangeStart - runtime.routeLatencySamples + runtime.effects().latencySamples(), true);
+        rangeStart - runtime.routeLatencySamples + runtime.effectLatencySamples(), true,
+        &runtime.effectAlignment);
 }
 
 void TimelineEngine::processLiveInstrumentTrack(const PreparedTimeline& prepared, Track& track,
@@ -395,13 +417,15 @@ void TimelineEngine::processLiveInstrumentTrack(const PreparedTimeline& prepared
                                   nullptr, context);
     runtime.effects().process(runtime.liveInputBuffer.getArrayOfReadPointers(), 2,
                               runtime.processedBuffer.getArrayOfWritePointers(), 2, sampleCount,
-                              nullptr, runtime.deviceAutomation, rangeStart, playing);
+                              nullptr, runtime.deviceAutomation, rangeStart, playing,
+                              &runtime.effectAlignment);
     runtime.markLiveMidiProcessed(sampleCount);
 }
 
 void TimelineEngine::warmUpPluginDevices(const int sampleCount) noexcept {
     auto* graph = realtime.graph;
     if (graph == nullptr) return;
+    clearSidechainInputs(*graph);
     for (auto& trackPtr : graph->tracks) {
         auto& runtime = *trackPtr->runtime;
         runtime.liveInputBuffer.clear(0, sampleCount);
@@ -410,8 +434,8 @@ void TimelineEngine::warmUpPluginDevices(const int sampleCount) noexcept {
                                           sampleCount, nullptr,
                                           instrumentProcessContext(*graph, 0, false));
         runtime.effects().process(runtime.liveInputBuffer.getArrayOfReadPointers(), 2,
-                                  runtime.processedBuffer.getArrayOfWritePointers(), 2,
-                                  sampleCount);
+                                  runtime.processedBuffer.getArrayOfWritePointers(), 2, sampleCount,
+                                  nullptr, {}, 0, false, &runtime.effectAlignment);
     }
     for (auto& bus : graph->mixer.buses) {
         bus->input.clear(0, sampleCount);
@@ -420,7 +444,8 @@ void TimelineEngine::warmUpPluginDevices(const int sampleCount) noexcept {
     graph->mixer.masterInput.clear(0, sampleCount);
     graph->mixer.masterEffects->process(graph->mixer.masterInput.getArrayOfReadPointers(), 2,
                                         graph->mixer.masterOutput.getArrayOfWritePointers(), 2,
-                                        sampleCount);
+                                        sampleCount, nullptr, {}, 0, false,
+                                        &graph->mixer.masterEffectAlignment);
 }
 
 void TimelineEngine::mixTrackOutput(Track& track, const std::int64_t rangeStart,
@@ -500,16 +525,34 @@ void TimelineEngine::mixProductionOutput(PreparedTimeline& prepared, float* cons
                                          const int channelCount, const std::int64_t rangeStart,
                                          const int destinationStart, const int sampleCount,
                                          const bool playing) noexcept {
+    const auto [captureStart, captureEnd] = ArrangementGraph::captureIntersection(
+        destinationStart, sampleCount, realtime.captureBlockOffset, realtime.captureBlockSamples);
+    if (captureEnd > captureStart) {
+        const auto offset = captureStart - destinationStart;
+        for (auto& track : prepared.tracks) {
+            if (track->runtime->instrumentTrack || !track->runtime->armed ||
+                track->runtime->audioInputChannel < 0)
+                continue;
+            for (const auto& effect : track->effects) {
+                const auto* auxiliary = track->runtime->effects().sidechainBuffer(effect.id);
+                if (auxiliary == nullptr) continue;
+                const std::array<const float*, 2> channels{auxiliary->getReadPointer(0) + offset,
+                                                           auxiliary->getReadPointer(1) + offset};
+                recordingCapture->writeSidechain(track->id, effect.id, channels.data(),
+                                                 captureEnd - captureStart);
+            }
+        }
+    }
     auto& mixer = prepared.mixer;
     mixer.masterInput.clear(0, sampleCount);
     for (auto& bus : mixer.buses) bus->input.clear(0, sampleCount);
     for (auto& route : mixer.trackRoutes) route->mix(sampleCount, rangeStart, playing);
     pool->runMixer(mixer.parallelChannels, sampleCount, rangeStart, playing);
     for (auto& route : mixer.busRoutes) route->mix(sampleCount, rangeStart, playing);
-    mixer.masterEffects->process(mixer.masterInput.getArrayOfReadPointers(), 2,
-                                 mixer.masterOutput.getArrayOfWritePointers(), 2, sampleCount,
-                                 nullptr, mixer.masterDeviceAutomation,
-                                 rangeStart - mixer.masterInputLatency, playing);
+    mixer.masterEffects->process(
+        mixer.masterInput.getArrayOfReadPointers(), 2, mixer.masterOutput.getArrayOfWritePointers(),
+        2, sampleCount, nullptr, mixer.masterDeviceAutomation,
+        rangeStart - mixer.masterInputLatency, playing, &mixer.masterEffectAlignment);
     for (int channel = 0; channel < std::min(2, channelCount); ++channel) {
         if (outputChannels[channel] != nullptr)
             juce::FloatVectorOperations::add(outputChannels[channel] + destinationStart,
@@ -540,6 +583,8 @@ void TimelineEngine::clearPlaybackTrackState(PreparedTimeline& prepared) noexcep
         runtime.postEffectDelayWritePosition = 0;
         runtime.postEffectLowLatencyBypassActive = false;
         runtime.resetTimelineInputDelay();
+        runtime.effects().resetSidechainState();
+        runtime.effectAlignment.reset();
     }
 }
 

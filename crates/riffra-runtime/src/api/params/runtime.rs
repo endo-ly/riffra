@@ -212,3 +212,11 @@ pub struct SendLevelPreviewParams {
     pub send_id: String,
     pub level_db: f64,
 }
+
+/// Transient Sidechain Send level; canonical state is changed only by sidechain.update.
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, ts_rs::TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct SidechainSendLevelPreviewParams {
+    pub sidechain_send_id: String,
+    pub level_db: f64,
+}

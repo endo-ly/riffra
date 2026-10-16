@@ -4,7 +4,8 @@ use super::wire::{SidecarCommand, SidecarResponse, TakeComparisonVariant, WirePl
 use super::{AUDIO_DEVICE_COMMAND_TIMEOUT, AudioSupervisor, COMMAND_ACK_TIMEOUT};
 use crate::api::output::InstrumentPreviewDefinition;
 use crate::api::output::{
-    AudioStatus, DeviceCapabilities, DeviceInspection, DeviceParameterInfo, PluginPresetInfo,
+    AudioStatus, DeviceCapabilities, DeviceInspection, DeviceParameterInfo,
+    DeviceSidechainCapability, PluginPresetInfo,
 };
 use crate::api::params::AudioDriverConfig;
 use crate::execution::{GraphPluginState, TimelineSnapshot};
@@ -154,7 +155,7 @@ impl AudioSupervisor {
     ) -> NativeAudioResult<()> {
         self.request_ack(
             SidecarCommand::PrepareTimelineSnapshot {
-                snapshot: snapshot.clone(),
+                snapshot: Box::new(snapshot.clone()),
             },
             timeout.min(TIMELINE_PREPARE_TIMEOUT),
         )
@@ -264,6 +265,13 @@ impl AudioSupervisor {
                     state: status.capabilities.state,
                     presets: status.capabilities.presets,
                     editor: status.capabilities.editor,
+                    sidechain: DeviceSidechainCapability {
+                        available: status.capabilities.sidechain.available,
+                        mono: status.capabilities.sidechain.mono,
+                        stereo: status.capabilities.sidechain.stereo,
+                        channels: status.capabilities.sidechain.channels,
+                        reason: status.capabilities.sidechain.reason,
+                    },
                 },
                 parameter_count: status.parameter_count as usize,
                 state_persisted: true,

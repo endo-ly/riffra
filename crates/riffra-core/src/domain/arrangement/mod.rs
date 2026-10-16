@@ -30,6 +30,7 @@ pub use midi_clip::{
 };
 pub use mixer::{
     EffectOwner, MixBus, MixBusKind, MixBusPatch, Mixer, Send, SendPatch, SendPosition,
+    SidechainSend, SidechainSendPatch,
 };
 pub use track::{
     AudioInputRoute, MidiInputRoute, MonitoringState, PanLaw, Track, TrackKind, TrackPatch,
@@ -288,8 +289,36 @@ impl Arrangement {
             .position(|track| track.id == track_id)
             .ok_or_else(|| DomainError::UnknownTrack(track_id.to_owned()))?;
         let track = &self.tracks[index];
-        self.automation_lanes
-            .retain(|lane| !lane.target.is_on_track(track, &self.mixer.sends));
+        let removed_sidechain_ids = self
+            .mixer
+            .sidechain_sends
+            .iter()
+            .filter(|send| {
+                send.source_track_id == track_id
+                    || track
+                        .effects
+                        .iter()
+                        .any(|effect| effect.id == send.target_device_id)
+            })
+            .map(|send| send.id.as_str())
+            .collect::<HashSet<_>>();
+        self.automation_lanes.retain(|lane| {
+            !lane
+                .target
+                .is_on_track(track, &self.mixer.sends, &self.mixer.sidechain_sends)
+                && !matches!(
+                    &lane.target,
+                    AutomationTarget::SidechainSendLevel { sidechain_send_id }
+                        if removed_sidechain_ids.contains(sidechain_send_id.as_str())
+                )
+        });
+        self.mixer.sidechain_sends.retain(|send| {
+            send.source_track_id != track_id
+                && !track
+                    .effects
+                    .iter()
+                    .any(|effect| effect.id == send.target_device_id)
+        });
         self.tracks.remove(index);
         self.mixer.sends.retain(|send| send.track_id != track_id);
         for consumer in &mut self.tracks {
@@ -1586,23 +1615,6 @@ impl Arrangement {
             track.validate_and_normalize()?;
         }
         arrangement.validate_mixer()?;
-        for track in &arrangement.tracks {
-            let mut visited = HashSet::new();
-            let mut current = track;
-            while let Some(source) = &current.external_audio_source_track_id {
-                if current.kind != TrackKind::Instrument || !visited.insert(&current.id) {
-                    return Err(format!(
-                        "invalid external audio route for track '{}'",
-                        track.name
-                    ));
-                }
-                current = arrangement
-                    .tracks
-                    .iter()
-                    .find(|candidate| candidate.id == *source)
-                    .ok_or_else(|| format!("external audio source '{source}' does not exist"))?;
-            }
-        }
         let audio_clips = std::mem::take(&mut arrangement.audio_clips);
         let mut normalized_clips = Vec::with_capacity(audio_clips.len());
         let mut audio_clip_ids = std::collections::HashSet::new();

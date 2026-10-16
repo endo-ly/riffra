@@ -74,7 +74,7 @@ fn command_samples() -> Vec<SidecarCommand> {
         SidecarCommand::SetEngineTransitionMute { active: true },
         SidecarCommand::PreviewMasterGainDb { gain_db: -6.0 },
         SidecarCommand::PrepareTimelineSnapshot {
-            snapshot: snapshot(),
+            snapshot: Box::new(snapshot()),
         },
         SidecarCommand::CommitTimelineSnapshot,
         SidecarCommand::DiscardTimelineSnapshot,

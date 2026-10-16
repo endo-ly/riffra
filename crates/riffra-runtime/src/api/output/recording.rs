@@ -66,6 +66,10 @@ pub struct RecordingAsset {
     pub processed_dropout_start_sample: Option<u64>,
     pub processed_dropout_end_sample: Option<u64>,
     pub recovery_status: String,
+    /// Why a track retained its raw take without a processed variant.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub processed_unavailable_reason: Option<String>,
 }
 
 /// The status of a [`RecordingCapture`].

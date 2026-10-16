@@ -1,5 +1,8 @@
-use crate::api::output::{PluginRole, PluginScanState, ScanIssue, ScanReport};
+use crate::api::output::{
+    DeviceSidechainCapability, PluginRole, PluginScanState, ScanIssue, ScanReport,
+};
 use crate::audio::wire::{PluginScanMessage, PluginScanMetadata};
+use serde::Deserialize;
 use std::io::Read;
 use std::path::Path;
 use std::process::Stdio;
@@ -9,6 +12,96 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 const SCANNER_TIMEOUT: Duration = Duration::from_secs(30);
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SidechainCapabilityProbe {
+    #[serde(rename = "type")]
+    kind: String,
+    path: String,
+    sidechain: DeviceSidechainCapability,
+}
+
+/// Probes a plugin's Mono and Stereo auxiliary layouts in the isolated scanner.
+pub(crate) fn probe_sidechain_capability(
+    scanner: &Path,
+    plugin_path: &Path,
+) -> Result<DeviceSidechainCapability, String> {
+    let expected_path = plugin_path
+        .to_str()
+        .ok_or_else(|| "VST3 path is not valid UTF-8".to_string())?;
+    let mut child = crate::process::sidecar_command(scanner)
+        .arg("--probe-sidechain")
+        .arg(plugin_path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("isolated scanner could not start: {error}"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "isolated scanner stdout is unavailable".to_string())?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| "isolated scanner stderr is unavailable".to_string())?;
+    let stdout_reader = thread::spawn(move || read_to_end(stdout));
+    let stderr_reader = thread::spawn(move || read_to_end(stderr));
+    let deadline = Instant::now() + SCANNER_TIMEOUT;
+    let mut timed_out = false;
+    let status = loop {
+        match child
+            .try_wait()
+            .map_err(|error| format!("isolated scanner status could not be read: {error}"))?
+        {
+            Some(status) => break status,
+            None if Instant::now() >= deadline => {
+                timed_out = true;
+                let _ = child.kill();
+                break child
+                    .wait()
+                    .map_err(|error| format!("isolated scanner could not be stopped: {error}"))?;
+            }
+            None => thread::sleep(Duration::from_millis(25)),
+        }
+    };
+    let stdout = stdout_reader
+        .join()
+        .map_err(|_| "isolated scanner stdout reader panicked".to_string())??;
+    let stderr = stderr_reader
+        .join()
+        .map_err(|_| "isolated scanner stderr reader panicked".to_string())??;
+    if timed_out {
+        return Err(format!(
+            "sidechain capability probe exceeded {} seconds",
+            SCANNER_TIMEOUT.as_secs()
+        ));
+    }
+    if !status.success() {
+        if let Ok(PluginScanMessage::Error { message, .. }) =
+            serde_json::from_slice::<PluginScanMessage>(&stdout)
+        {
+            return Err(message);
+        }
+        return Err(scanner_failure(
+            "sidechain capability probe failed",
+            &stdout,
+            &stderr,
+        ));
+    }
+    let probe: SidechainCapabilityProbe = serde_json::from_slice(&stdout).map_err(|error| {
+        scanner_failure(
+            &format!("invalid capability result ({error})"),
+            &stdout,
+            &stderr,
+        )
+    })?;
+    if probe.kind != "pluginSidechainCapability" || probe.path != expected_path {
+        return Err("isolated scanner returned a mismatched sidechain capability".into());
+    }
+    Ok(probe.sidechain)
+}
 
 #[derive(Debug)]
 enum ValidationOutcome {

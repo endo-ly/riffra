@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type {
+  Arrangement,
   ArrangementMutationResult,
   CanonicalState,
   AutomationLane,
@@ -16,6 +17,7 @@ import styles from './Devices.module.css';
 
 interface DevicesPanelProps {
   projectId: string;
+  arrangement: Arrangement;
   automationLanes: AutomationLane[];
   playing: boolean;
   currentTick: number;
@@ -108,6 +110,12 @@ export function DevicesPanel(props: DevicesPanelProps) {
           stateData={plugin.stateData}
           parameterValues={plugin.parameterValues}
           applyCanonicalState={props.applyCanonicalState}
+          arrangement={props.arrangement}
+          isInstrument={track?.instrument?.id === device.id}
+          commit={commit}
+          onOpenSidechainAutomation={(sidechainSendId) =>
+            props.onOpenAutomation({ kind: 'sidechainSendLevel', sidechainSendId })
+          }
         />
       )}
       {device && !plugin && (

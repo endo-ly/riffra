@@ -18,7 +18,8 @@
         "mixer": {
           "buses": [],
           "masterEffects": [],
-          "sends": []
+          "sends": [],
+          "sidechainSends": []
         },
         "punchRange": null,
         "timebase": {

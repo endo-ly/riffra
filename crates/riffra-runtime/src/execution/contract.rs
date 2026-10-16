@@ -30,6 +30,7 @@ pub(crate) struct GraphMixer {
     pub(crate) master_effects: Vec<GraphPluginDevice>,
     pub(crate) buses: Vec<GraphMixBus>,
     pub(crate) sends: Vec<riffra_core::Send>,
+    pub(crate) sidechain_sends: Vec<riffra_core::SidechainSend>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -480,6 +481,14 @@ mod tests {
                 position: riffra_core::SendPosition::PreFader,
                 enabled: true,
             }],
+            sidechain_sends: vec![riffra_core::SidechainSend {
+                id: "sidechain:return".into(),
+                source_track_id: audio.id.clone(),
+                target_device_id: "device:return".into(),
+                level_db: -12.0,
+                position: riffra_core::SendPosition::PostFader,
+                enabled: true,
+            }],
         };
         TimelineSnapshot {
             project_id: "project-full".into(),
@@ -506,6 +515,16 @@ mod tests {
                         points: vec![GraphAutomationPoint {
                             tick: 0,
                             value: 0.25,
+                        }],
+                    },
+                    GraphAutomationLane {
+                        target: riffra_core::AutomationTarget::SidechainSendLevel {
+                            sidechain_send_id: "sidechain:return".into(),
+                        },
+                        interpolation: riffra_core::AutomationInterpolation::Linear,
+                        points: vec![GraphAutomationPoint {
+                            tick: 480,
+                            value: -6.5,
                         }],
                     },
                 ],

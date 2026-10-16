@@ -43,6 +43,7 @@ pub enum ControlOutput {
     Mixer(riffra_core::Mixer),
     MixBuses(Vec<riffra_core::MixBus>),
     Sends(Vec<riffra_core::Send>),
+    SidechainSends(Vec<riffra_core::SidechainSend>),
     InstrumentEvents(Vec<riffra_core::InstrumentControlEvent>),
     SessionInspection(SessionInspection),
     History(HistoryState),

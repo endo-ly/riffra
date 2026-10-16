@@ -77,6 +77,7 @@ struct MixerChannel final {
     std::vector<PluginDeviceSpec> effectSpecs;
     std::vector<PluginParameterAutomation> deviceAutomation;
     std::shared_ptr<PluginChain> effects = std::make_shared<PluginChain>();
+    PluginChainAlignment effectAlignment;
     juce::AudioBuffer<float> input;
     juce::AudioBuffer<float> output;
     std::atomic<float> gainDb{0.0f};
@@ -103,8 +104,8 @@ struct MixerChannel final {
     void process(const int sampleCount, const std::int64_t rangeStart,
                  const bool playing) noexcept {
         effects->process(input.getArrayOfReadPointers(), 2, output.getArrayOfWritePointers(), 2,
-                         sampleCount, nullptr, deviceAutomation, rangeStart - inputLatency,
-                         playing);
+                         sampleCount, nullptr, deviceAutomation, rangeStart - inputLatency, playing,
+                         &effectAlignment);
         if (playing && (!gainAutomation.empty() || !panAutomation.empty())) {
             MixAutomationCursor cursor(gainAutomation, panAutomation, rangeStart - outputLatency,
                                        sampleCount, gainDb.load(std::memory_order_acquire),
@@ -172,9 +173,13 @@ struct MixerRuntime final {
     std::vector<MixerChannel*> parallelChannels;
     std::vector<std::unique_ptr<MixerRoute>> trackRoutes;
     std::vector<std::unique_ptr<MixerRoute>> busRoutes;
+    std::vector<std::unique_ptr<MixerRoute>> sidechainRoutes;
+    /// Sidechain routes grouped by the stage whose output they carry.
+    std::vector<std::vector<MixerRoute*>> sidechainRoutesByStage;
     std::vector<PluginDeviceSpec> masterEffectSpecs;
     std::vector<PluginParameterAutomation> masterDeviceAutomation;
     std::shared_ptr<PluginChain> masterEffects = std::make_shared<PluginChain>();
+    PluginChainAlignment masterEffectAlignment;
     juce::AudioBuffer<float> masterInput;
     juce::AudioBuffer<float> masterOutput;
     std::int64_t masterInputLatency = 0;
@@ -191,13 +196,18 @@ struct MixerRuntime final {
         masterInput.clear();
         masterOutput.clear();
         masterEffects->allNotesOff();
+        masterEffects->resetSidechainState();
+        masterEffectAlignment.reset();
         for (auto& bus : buses) {
             bus->input.clear();
             bus->output.clear();
             bus->effects->allNotesOff();
+            bus->effects->resetSidechainState();
+            bus->effectAlignment.reset();
         }
         for (auto& route : trackRoutes) route->delay.reset();
         for (auto& route : busRoutes) route->delay.reset();
+        for (auto& route : sidechainRoutes) route->delay.reset();
     }
 };
 

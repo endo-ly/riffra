@@ -218,6 +218,10 @@ Track Send ──→ Returnの合流・Effect・Gain/Pan ──┴─ Master Eff
 
 Group・Return・MasterのEffectsはTrackと同じPluginChainを使う。Rustは保存状態と接続先を含むExecution Graphを投影し、NativeはそのGraphからStereoの準備済みMixerを作る。GroupとReturnは音声合流・Effect・ミックス処理を共有し、Track固有の音源・MIDI・録音処理を持たない。構成と音声環境が一致するDeviceは現役Graphから共有し、GainやSend Levelの変更で作り直さない。
 
+SidechainSendはTrackのEffect後のPre-FaderまたはGain・Pan適用後のPost-Fader信号を、指定したEffect Deviceの最初の補助入力へ分岐する。Mono入力には左右を合成し、Stereo入力には左右を保持する。複数送信はDeviceごとに合流させ、そのDeviceの主出力だけを後続Effectへ渡す。接続の追加・有効化前にVST3の実バス能力を確認し、Mono・Stereoのどちらも扱えないDeviceを拒否する。保存済み接続のDeviceが後から欠落または非対応になった場合は接続を保持し、実行可能な補助入力経路だけを準備する。Missing Pluginは既存の診断へ残し、補助入力非対応のEffectは通常のEffect処理を続ける。
+
+External AudioとSidechainの依存関係を合わせてTrackの処理順序を決め、同じ段階内の独立Trackを並列実行する。各送信先Deviceの主入力と補助入力の累積遅延を比較してPDCを配置し、そのDevice以降の遅延へ反映する。Track処理後にGroup・Return、最後にMasterへ補助入力を渡す。Sidechainの送信元と、Track上の受信先は低遅延監視のPDCバイパス対象に含めない。
+
 入力の累積レイテンシを合流先ごとに比較し、遅い経路へ揃える補償を接続に配置する。External Audioの依存Trackを先に処理し、独立TrackとGroup・Returnには同じワーカープールを利用する。MasterのEffectレイテンシも含めて補償する。低遅延監視中は、Track Effect直前に分かれているTimeline音声だけをその経路のPDC分遅らせ、ライブ入力はMixer routeの補償を迂回する。MIDIクリップはScheduler上のイベント位置を同量遅らせ、Post-Effects takeは出力段の補償へ加算するため、Track Effect Chainを複製せずにライブ監視の応答を保ちながらTimeline素材を同期できる。別TrackのExternal Audio入力に使われるTrack、External Audio入力を使うTrack、有効なSendを持つTrack、Volume/Panオートメーションを持つTrackには、このバイパスを適用せず、通常の経路PDCを適用する。Group出力のPDCは、すべての入力Trackが低遅延監視経路として接続されている場合にだけ迂回する。必要なバッファとDeviceはGraph準備時に確保し、Audio callbackでは確保・ロック待ち・ファイルI/O・プラグイン生成を行わない。
 
 Mute・Soloは主出力と並列Sendの可聴経路を決める。複数Soloは加算し、Muteを優先する。
@@ -231,6 +235,8 @@ Mute・Soloは主出力と並列Sendの可聴経路を決める。複数Soloは�
 | Group Solo  | 所属Trackの主出力とGroup出力を通す                                   |
 | Return Solo | そのReturnへのSendとWet出力を通し、Dry主出力を抑制する               |
 
+SidechainはSoloによる主出力の分離後も維持し、送信元TrackのMuteまたはSendの無効化で無音にする。GroupのMuteはTrackからのSidechainを止めず、対象EffectのBypassも接続を保持する。Seek・Loop・Stop・Graph切替では補助入力と補償用バッファをリセットし、直前の処理区間の信号を持ち越さない。
+
 Master FXは制作Mixを処理する。Metronome・Preview・Plugin Auditionは制作Mixの後で合成し、RealtimeのSafety Limiter・Feedback Protectionなどは最終出力へ維持する。Offlineも同じ制作Graphを使い、指定されたTailとGlobal Fadeを適用する。
 
 MIDI とライブ入力の扱いは次の通り。
@@ -243,9 +249,11 @@ MIDI とライブ入力の扱いは次の通り。
 
 録音キャプチャの扱いは次の通り。
 
-- リアルタイム中は入力の Raw テイクのみ保存する
+- リアルタイム中は入力のRawテイクを保存し、Sidechainを受けるTrackではDeviceへ届いた補助入力も同じキャプチャ窓で保存する。ライターとバッファは録音開始前に用意し、コールバックは有界キューへ渡す。ファイル書き込みは専用スレッドが行う
 - 停止時は短いグラフ境界でキャプチャ終了とエフェクト状態を確定し、Transport 停止後にグラフ外で Processed Variant を生成する
 - 生成は正準のトラックエフェクトから一時的な Effect Chain を構築し、ブロック単位で書き出す。録音時間に比例する作業用バッファも、録音専用の常設 Effect Chain も使わない
+
+Processed Variantは保存したDevice別の補助入力と主入力の補償設定を使い、Rawと同じファイル内区間で再生する。ライブ入力やLoopの各周回も録音時の制御信号を再利用できる。制御信号が欠損・不完全な場合はそのTrackのProcessed生成を省略し、理由をマニフェストへ記録してRawのみを完成したテイクとして保持する。
 
 AutomationはRustが所有する共通Laneから投影し、Nativeが処理位置に合わせて準備する。LinearはGainをdB、Panを左右位置、Device Parameterを正規化値で補間する。Stepは次のPointの時刻まで前の値を保持する。最初のPointより前と最後のPointより後は端点の値を保持する。Play・Seek・Loop・途中範囲のRenderでは楽曲全体の位置から評価し、Tempoと各経路のPDCを反映する。
 
@@ -487,7 +495,7 @@ Mastering設定がある場合はRustのRender JobがFFmpegの2-pass loudnormを
 
 完成WAVのSample Peakを実サンプルから測定し、Masteringを適用しない書き出しでもFFmpegのラウドネス測定を試みる。測定のために音声Graphを再実行しない。FFmpegの利用不可は通常Renderの成功と区別し、測定不能の理由を結果へ含める。
 
-単一Trackと各Stemは、選択TrackのGroup・Return・Master FXを通す。External Audioの依存元は処理を維持し、他Trackの主出力とSendは混ぜない。Stemは開始・終了・Sample Rate・Frame数を共有し、個別Masteringを行わない。共有Compressorなど非線形FXでは、Stemを加算した結果と全体Mixの厳密な一致を保証しない。
+単一Trackと各Stemは、選択TrackのGroup・Return・Master FXを通す。External Audioと有効なSidechainの送信元、およびそのExternal Audio依存元の処理を維持し、他Trackの主出力とReturn向けSendは混ぜない。送信元のMuteは維持し、Sidechainは指定Deviceの補助入力だけへ渡す。Stemは開始・終了・Sample Rate・Frame数を共有し、個別Masteringを行わない。共有Compressorなど非線形FXでは、Stemを加算した結果と全体Mixの厳密な一致を保証しない。
 
 ---
 

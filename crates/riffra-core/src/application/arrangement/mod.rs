@@ -61,6 +61,7 @@ where
                 .ok_or_else(|| crate::DomainError::UnknownTrack(track_id.to_owned()))?;
             let source = arrangement.tracks[source_index].clone();
             let source_sends = arrangement.mixer.sends.clone();
+            let source_sidechain_sends = arrangement.mixer.sidechain_sends.clone();
             let mut device_ids = std::collections::HashMap::new();
             let mut send_ids = std::collections::HashMap::new();
             let operation_id = next_id("duplicate");
@@ -96,6 +97,37 @@ where
                 })
                 .collect::<Vec<_>>();
             arrangement.mixer.sends.extend(sends);
+            let mut sidechain_send_ids = std::collections::HashMap::new();
+            let mut sidechain_sends = arrangement
+                .mixer
+                .sidechain_sends
+                .iter()
+                .filter(|send| send.source_track_id == track_id)
+                .cloned()
+                .map(|mut send| {
+                    let old_id = send.id.clone();
+                    send.id = next_id("sidechain-send");
+                    sidechain_send_ids.insert(old_id, send.id.clone());
+                    send.source_track_id = duplicate_id.clone();
+                    record_created(created, "sidechainSends", send.id.clone());
+                    send
+                })
+                .collect::<Vec<_>>();
+            sidechain_sends.extend(
+                arrangement
+                    .mixer
+                    .sidechain_sends
+                    .iter()
+                    .filter(|send| device_ids.contains_key(&send.target_device_id))
+                    .cloned()
+                    .map(|mut send| {
+                        send.id = next_id("sidechain-send");
+                        send.target_device_id = device_ids[&send.target_device_id].clone();
+                        record_created(created, "sidechainSends", send.id.clone());
+                        send
+                    }),
+            );
+            arrangement.mixer.sidechain_sends.extend(sidechain_sends);
             record_created(created, "tracks", duplicate_id.clone());
             arrangement
                 .tracks
@@ -134,7 +166,10 @@ where
             let automation_lanes = arrangement
                 .automation_lanes
                 .iter()
-                .filter(|lane| lane.target.is_on_track(&source, &source_sends))
+                .filter(|lane| {
+                    lane.target
+                        .is_on_track(&source, &source_sends, &source_sidechain_sends)
+                })
                 .cloned()
                 .enumerate()
                 .map(|(index, mut lane)| {
@@ -148,6 +183,9 @@ where
                         }
                         AutomationTarget::SendLevel { send_id } => {
                             *send_id = send_ids[send_id].clone()
+                        }
+                        AutomationTarget::SidechainSendLevel { sidechain_send_id } => {
+                            *sidechain_send_id = sidechain_send_ids[sidechain_send_id].clone()
                         }
                         _ => unreachable!("only track-owned targets are duplicated"),
                     }

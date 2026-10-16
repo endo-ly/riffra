@@ -134,8 +134,8 @@ void processTrackStage(Track& track, const TrackStageJob& job) noexcept {
                 runtime.mixBuffer.getArrayOfReadPointers(), 2,
                 runtime.processedBuffer.getArrayOfWritePointers(), 2, job.sampleCount, nullptr,
                 runtime.deviceAutomation,
-                job.rangeStart - runtime.routeLatencySamples + runtime.effects().latencySamples(),
-                true);
+                job.rangeStart - runtime.routeLatencySamples + runtime.effectLatencySamples(), true,
+                &runtime.effectAlignment);
     } else if (runtime.instrumentTrack) {
         TimelineEngine::processLiveInstrumentTrack(*job.graph, track, job.sampleCount,
                                                    job.rangeStart, job.playing);
@@ -145,7 +145,7 @@ void processTrackStage(Track& track, const TrackStageJob& job) noexcept {
         runtime.effects().process(runtime.liveInputBuffer.getArrayOfReadPointers(), 2,
                                   runtime.processedBuffer.getArrayOfWritePointers(), 2,
                                   job.sampleCount, nullptr, runtime.deviceAutomation,
-                                  job.rangeStart, false);
+                                  job.rangeStart, false, &runtime.effectAlignment);
     }
     TimelineEngine::mixTrackOutput(track, job.rangeStart, job.sampleCount, job.transportGainStart,
                                    job.transportGainStep, job.playing);

@@ -122,7 +122,7 @@ bool AudioCommandDispatcher::openPluginAudition(const juce::String& path, juce::
     }
     auto loaded = std::make_unique<PluginRack>();
     if (const auto loadError =
-            loaded->load(path, sampleRate, blockSize, PluginProcessingMode::realtime)) {
+            loaded->load(path, sampleRate, blockSize, PluginProcessingMode::realtime, false)) {
         error = loadError->scope + ": " + loadError->message;
         return false;
     }

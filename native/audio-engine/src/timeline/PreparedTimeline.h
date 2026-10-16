@@ -69,11 +69,11 @@ struct PreparedTimeline final {
         juce::String instrumentDeviceId;
         std::vector<PluginDeviceSpec> effects;
         std::optional<InstrumentSpec> instrument;
-        // Device instances are shared with the committed graph only when both
+        // The effect chain is shared with the committed graph only when both
         // topology and persisted state match it. A state change receives newly
         // prepared plugin instances so state application never mutates a
         // published graph.
-        bool reuseRuntimeDevices = false;
+        bool reuseEffects = false;
     };
 
     /// Assigned by the registry when the graph is committed.

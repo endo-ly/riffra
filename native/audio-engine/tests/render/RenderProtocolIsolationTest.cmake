@@ -29,7 +29,7 @@ set(request_template [=[
       "metronomeEnabled": false,
       "masterGainDb": 0.0,
       "automation": [],
-      "mixer": {"masterEffects": [], "buses": [], "sends": []},
+      "mixer": {"masterEffects": [], "buses": [], "sends": [], "sidechainSends": []},
       "tracks": [
         {
           "id": "track-isolation",

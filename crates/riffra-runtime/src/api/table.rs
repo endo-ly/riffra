@@ -234,6 +234,10 @@ control_commands! {
         SendAdd = "mixer.send.add" (SendAddParams) -> ArrangementMutation, mutation(batch), project;
         SendUpdate = "mixer.send.update" (SendUpdateParams) -> ArrangementMutation, mutation(batch), project;
         SendRemove = "mixer.send.remove" (SendIdParams) -> ArrangementMutation, mutation(batch), project;
+        SidechainSendList = "mixer.sidechain.list" (EmptyParams) -> SidechainSends, read, project;
+        SidechainSendAdd = "mixer.sidechain.add" (SidechainSendAddParams) -> ArrangementMutation, mutation(batch), project;
+        SidechainSendUpdate = "mixer.sidechain.update" (SidechainSendUpdateParams) -> ArrangementMutation, mutation(batch), project;
+        SidechainSendRemove = "mixer.sidechain.remove" (SidechainSendIdParams) -> ArrangementMutation, mutation(batch), project;
         TrackList = "track.list" (EmptyParams) -> Tracks, read, project;
         TrackAdd = "track.add" (TrackAddParams) -> ArrangementMutation, mutation(batch), project;
         TrackUpdate = "track.update" (TrackUpdateParams) -> ArrangementMutation, mutation(batch), project;
@@ -356,6 +360,7 @@ control_commands! {
         TransportSeek = "transport.seek" (SeekParams) -> Ok, project;
         MasterGainPreview = "audio.master-gain.preview" (MasterGainParams) -> Ok, project;
         SendLevelPreview = "mixer.send.preview" (SendLevelPreviewParams) -> Ok, project;
+        SidechainSendLevelPreview = "mixer.sidechain.preview" (SidechainSendLevelPreviewParams) -> Ok, project;
         ChannelMixPreview = "mixer.channel.preview" (ChannelMixParams) -> Ok, project;
         AutomationPreview = "automation.preview" (AutomationPreviewParams) -> Ok, project;
 

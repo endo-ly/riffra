@@ -32,6 +32,8 @@ public:
     /// successfully. Raw audio remains recoverable when processed generation
     /// fails.
     bool finish(bool processedSuccessfully, juce::String& error);
+    /// Completes an intentional raw-only capture without publishing an empty processed file.
+    bool finishRawOnly(juce::String& error);
 
     [[nodiscard]] int getRawChannels() const noexcept { return rawChannelCount; }
     [[nodiscard]] int getProcessedChannels() const noexcept { return processedChannelCount; }
@@ -60,6 +62,7 @@ private:
                      int processedChannels);
 
     bool initialise(juce::String& error);
+    bool finishProducts(bool processedSuccessfully, bool processedRequired, juce::String& error);
     bool writeManifest(const juce::String& state, juce::String& error) const;
     void recordProcessedDropout(std::uint64_t attemptedStart, int numSamples) noexcept;
     static std::unique_ptr<juce::AudioFormatWriter::ThreadedWriter> createWriter(

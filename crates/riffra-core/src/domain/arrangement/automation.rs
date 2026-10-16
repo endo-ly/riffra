@@ -43,6 +43,9 @@ pub enum AutomationTarget {
     SendLevel {
         send_id: String,
     },
+    SidechainSendLevel {
+        sidechain_send_id: String,
+    },
     DeviceParameter {
         device_id: String,
         parameter_id: String,
@@ -75,7 +78,12 @@ impl AutomationTarget {
         }
     }
 
-    pub(crate) fn is_on_track(&self, track: &super::Track, sends: &[super::Send]) -> bool {
+    pub(crate) fn is_on_track(
+        &self,
+        track: &super::Track,
+        sends: &[super::Send],
+        sidechain_sends: &[super::SidechainSend],
+    ) -> bool {
         match self {
             Self::TrackMix { track_id, .. } => *track_id == track.id,
             Self::DeviceParameter { device_id, .. } => {
@@ -88,6 +96,9 @@ impl AutomationTarget {
             Self::SendLevel { send_id } => sends
                 .iter()
                 .any(|send| send.id == *send_id && send.track_id == track.id),
+            Self::SidechainSendLevel { sidechain_send_id } => sidechain_sends
+                .iter()
+                .any(|send| send.id == *sidechain_send_id && send.source_track_id == track.id),
             _ => false,
         }
     }
@@ -107,6 +118,11 @@ impl super::Arrangement {
             AutomationTarget::SendLevel { send_id } => {
                 self.mixer.sends.iter().any(|send| send.id == *send_id)
             }
+            AutomationTarget::SidechainSendLevel { sidechain_send_id } => self
+                .mixer
+                .sidechain_sends
+                .iter()
+                .any(|send| send.id == *sidechain_send_id),
             AutomationTarget::DeviceParameter {
                 device_id,
                 parameter_id,

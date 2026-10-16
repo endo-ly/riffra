@@ -25,17 +25,17 @@
 
 ## 2. 型定義の場所
 
-| エンティティ群                                  | 正準定義（Rust）                                                                | TypeScript                                            | C++ ミラー                                                  |
-| ----------------------------------------------- | ------------------------------------------------------------------------------- | ----------------------------------------------------- | ----------------------------------------------------------- |
-| セッション / アレンジ / クリップ / 録音レコード | `crates/riffra-core/src/domain/`                                                | `apps/desktop/src/model/generated/*.ts`（ts-rs 生成） | `native/audio-engine`（ランタイム投影に必要な部分のみ）     |
-| ミキサー（Mixer / MixBus / Send）               | `crates/riffra-core/src/domain/arrangement/mixer.rs`                            | 同上                                                  | `MixerSpec` / `MixBusSpec` / `SendSpec`（ExecutionGraph.h） |
-| 素材（Asset / Provenance）                      | `crates/riffra-core/src/domain/asset/`                                          | 同上                                                  | —                                                           |
-| エフェクト / VST3（EffectDevice / Vst3Plugin）  | `crates/riffra-core/src/domain/plugin/`                                         | 同上                                                  | `native/audio-engine`（グラフ構築）                         |
-| 録音キャプチャ / ドロップアウト                 | `apps/desktop/src-tauri/src/recording/model.rs`                                 | 同上                                                  | `native/audio-engine`（録音制御）                           |
-| 録音の read model                               | `apps/desktop/src-tauri/src/recording/repository.rs`（`RecordingAsset`）        | 同上                                                  | —                                                           |
-| バックグラウンドジョブ                          | `apps/desktop/src-tauri/src/jobs.rs`                                            | 同上                                                  | —                                                           |
-| オーディオ / デバイス状態                       | `apps/desktop/src-tauri/src/model.rs` ほか                                      | 同上                                                  | `native/audio-engine`                                       |
-| Project container / 選択状態                    | `crates/riffra-host/src/project_store.rs`、`crates/riffra-runtime/src/model.rs` | 同上                                                  | —                                                           |
+| エンティティ群                                    | 正準定義（Rust）                                                                | TypeScript                                            | C++ ミラー                                                                        |
+| ------------------------------------------------- | ------------------------------------------------------------------------------- | ----------------------------------------------------- | --------------------------------------------------------------------------------- |
+| セッション / アレンジ / クリップ / 録音レコード   | `crates/riffra-core/src/domain/`                                                | `apps/desktop/src/model/generated/*.ts`（ts-rs 生成） | `native/audio-engine`（ランタイム投影に必要な部分のみ）                           |
+| ミキサー（Mixer / MixBus / Send / SidechainSend） | `crates/riffra-core/src/domain/arrangement/mixer.rs`                            | 同上                                                  | `MixerSpec` / `MixBusSpec` / `SendSpec` / `SidechainSendSpec`（ExecutionGraph.h） |
+| 素材（Asset / Provenance）                        | `crates/riffra-core/src/domain/asset/`                                          | 同上                                                  | —                                                                                 |
+| エフェクト / VST3（EffectDevice / Vst3Plugin）    | `crates/riffra-core/src/domain/plugin/`                                         | 同上                                                  | `native/audio-engine`（グラフ構築）                                               |
+| 録音キャプチャ / ドロップアウト                   | `apps/desktop/src-tauri/src/recording/model.rs`                                 | 同上                                                  | `native/audio-engine`（録音制御）                                                 |
+| 録音の read model                                 | `apps/desktop/src-tauri/src/recording/repository.rs`（`RecordingAsset`）        | 同上                                                  | —                                                                                 |
+| バックグラウンドジョブ                            | `apps/desktop/src-tauri/src/jobs.rs`                                            | 同上                                                  | —                                                                                 |
+| オーディオ / デバイス状態                         | `apps/desktop/src-tauri/src/model.rs` ほか                                      | 同上                                                  | `native/audio-engine`                                                             |
+| Project container / 選択状態                      | `crates/riffra-host/src/project_store.rs`、`crates/riffra-runtime/src/model.rs` | 同上                                                  | —                                                                                 |
 
 TypeScript は `npm run gen:types`（cargo test による ts-rs 出力 → `scripts/gen-barrel.js` のバレル生成）で常に Rust から再生成される。手書きの型は追加しない。
 
@@ -106,19 +106,22 @@ External Audioは1つのSource TrackからInstrumentへ音声を渡す。複数C
 
 Mixdown設定は楽曲終端Tick、秒単位のTailとFade、任意のLoudness Mastering目標と比較用のSample Rate・Block Sizeを保持する。Entire Arrangementの終端は楽曲終端設定と現在のClip終端の大きい方にTailを加え、最終MixへFadeを1回適用する。
 
-MixerはArrangementに所属し、Masterのエフェクト列、Group・Returnのチャンネル、TrackからReturnへのSendを保存する。GroupはTrackの主出力先、Returnは並列Sendの宛先として区別する。Trackの主出力先が未指定の場合はMasterを表し、Master GainはSessionSettingsに保持する。Mixerが未指定のセッションは空のMixerを初期値とする。
+MixerはArrangementに所属し、Masterのエフェクト列、Group・Returnのチャンネル、TrackからReturnへのSend、TrackからEffect Deviceの補助入力へのSidechainSendを保存する。GroupはTrackの主出力先、Returnは並列Sendの宛先として区別する。SidechainSendは送信元Trackと送信先DeviceのID、Level、Pre/Post Fader、Enabledを保持し、Track・Group・Return・Master上のEffectを宛先にできる。Trackの主出力先が未指定の場合はMasterを表し、Master GainはSessionSettingsに保持する。Mixerが未指定のセッションは空のMixerを初期値とする。
 
 Busを削除するには、主出力先として参照するTrackと宛先として参照するSendを先に解除する。Track削除時はそのTrackのSendも削除し、Track複製時は主出力先とSend設定を引き継いでDevice・SendのIDを新しく割り当てる。
 
+SidechainSendは送信元Trackまたは送信先Effectの削除時に関連Laneとともに削除する。Bus内のEffectが参照されている場合、Bus削除は参照元IDを示して拒否する。Track複製では送信元の接続と、複製されるEffectへの接続を新しいTrack・Device・Send IDへ付け替え、LaneとPointも複製する。同一Deviceの並べ替えやBypassでは接続を維持する。
+
 Automation Laneは独立したID、対象、補間方式（`linear` / `step`）、Point列を保持する。対象は次のいずれかで、所有者を別フィールドへ重複して保存しない。
 
-| 対象              | 参照とパラメーター                    | 値の意味                  |
-| ----------------- | ------------------------------------- | ------------------------- |
-| `trackMix`        | Track IDと`volume` / `pan`            | VolumeはdB、Panは左右位置 |
-| `busMix`          | Group・ReturnのBus IDと`gain` / `pan` | GainはdB、Panは左右位置   |
-| `masterGain`      | Master                                | dB                        |
-| `sendLevel`       | Send ID                               | dB                        |
-| `deviceParameter` | VST3 Device IDとStable Parameter ID   | 正規化値0..1              |
+| 対象                 | 参照とパラメーター                    | 値の意味                  |
+| -------------------- | ------------------------------------- | ------------------------- |
+| `trackMix`           | Track IDと`volume` / `pan`            | VolumeはdB、Panは左右位置 |
+| `busMix`             | Group・ReturnのBus IDと`gain` / `pan` | GainはdB、Panは左右位置   |
+| `masterGain`         | Master                                | dB                        |
+| `sendLevel`          | Send ID                               | dB                        |
+| `sidechainSendLevel` | SidechainSend ID                      | dB                        |
+| `deviceParameter`    | VST3 Device IDとStable Parameter ID   | 正規化値0..1              |
 
 Pointは独立したID、楽曲全体の絶対Tick、数値を保持する。Laneの更新はIDを維持し、空のPoint列はLaneを削除する。補間と再生時の適用は[音声アーキテクチャ](architecture.md#51-投影プロトコル)に従う。
 
@@ -137,6 +140,8 @@ Track・Bus・Send・Deviceの削除は、その対象のLaneも削除する。T
 | `RecordingAsset`         | UI 用 read model。`recordings/inbox` のマニフェストから組み立て、回復（recoverable）時の表示・復旧操作を担う。永続ドメインとしては使用しない                                                                                    |
 
 ディスク上の構成は `recordings/inbox|archive|library/<take>/`（manifest.json + raw/processed WAV + midi.json）。再生・編集に使うのはキャプチャから登録された正準 Asset であり、テイクディレクトリはリカバリ用の記録に留まる。
+
+Rawのみを持つ録音テイクも完成した成果物として扱う。Processed Variantの入力を再現できない場合はRawを登録し、生成できない理由をキャプチャのマニフェストと`RecordingAsset.processedUnavailableReason`へ残す。制御信号の保存・再利用は[音声アーキテクチャ](architecture.md#51-投影プロトコル)を参照する。
 
 `AudioClip.take_variant` は、録音テイクの音源だけでなくトラックエフェクトの適用位置も表す。`raw` は現在の Track Effect Chain を通り、`processed` は録音時の Track Effect Chain が適用済みの音源としてその Chain を通らない。どちらの音源にも、クリップのゲイン・パン・フェードと、トラックのゲイン・パン・オートメーション、ミュート・ソロ、遅延補正を共通で適用する。
 
@@ -183,6 +188,9 @@ flowchart TD
     AR --> MX[Mixer]
     MX --> MB[MixBus]
     MX --> SN[Send]
+    MX --> SC[SidechainSend]
+    SC -->|送信元| TR
+    SC -->|補助入力の宛先| ED
     MX -->|Master| ED[EffectDevice]
     MB --> ED
     TR -->|主出力先Group| MB
@@ -229,6 +237,7 @@ flowchart TD
 | ゲイン            | マスター `-90.0..=0.0`、クリップ・トラック `-90.0..=24.0`。Master・Track・Bus・Sendの非有限値はエラー。Bus Gain・Send LevelはTrackと同じ値域                                                                                                                                                                     |
 | パン              | Track・Busは `-1.0..=1.0`、非有限値はエラー                                                                                                                                                                                                                                                                      |
 | Mixerルーティング | Track・BusのIDはチャンネル間で一意、Send IDも一意。Trackの主出力先は既存Group、Sendは既存Trackから既存Returnへの経路に限定し、同じ組のSendは1つだけ許可する                                                                                                                                                      |
+| SidechainSend     | IDは非空でTrack・Bus・Send・SidechainSend間で一意。同一送信元Trackと送信先Deviceの組は1つ。Instrument Deviceと自己所有のEffectへの接続を拒否し、有効な接続とExternal Audioを合わせた循環を拒否する。LevelはSendと同じ値域・有限値規則を使う。VST3の補助入力能力は実行時に検証する                                |
 | フェード          | fade_in / fade_out はタイムライン持続時間以下にクランプ                                                                                                                                                                                                                                                          |
 | エフェクト        | idとnameは空文字禁止、Device IDはInstrument・Track Effects・Bus Effects・Master Effectsを通じて一意、1チャンネルあたり最大256件                                                                                                                                                                                  |
 | VST3 プラグイン   | pathは空文字禁止。パラメータ値は `0.0..=1.0` にクランプし、非有限値は 0.0。状態データは4,000,000文字まで                                                                                                                                                                                                         |

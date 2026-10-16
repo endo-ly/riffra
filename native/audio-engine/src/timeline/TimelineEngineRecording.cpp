@@ -130,7 +130,20 @@ bool TimelineEngine::finalizeRecording(juce::String& error) {
         finalizedRecordingTracks.reserve(graph.tracks.size());
         for (const auto& track : graph.tracks) {
             if (track->runtime->instrumentTrack || !track->runtime->armed) continue;
-            finalizedRecordingTracks.push_back({track->id, track->effects});
+            OfflineRecordingTrack offline{track->id, track->effects, {}, {}};
+            for (const auto& effect : track->effects) {
+                auto& chain = track->runtime->effects();
+                offline.mainInputDelays.emplace_back(
+                    effect.id, track->runtime->effectAlignment.delaySamples(effect.id));
+                if (chain.sidechainBuffer(effect.id) != nullptr)
+                    offline.sidechainInputs.push_back({"capture:" + effect.id,
+                                                       {},
+                                                       effect.id,
+                                                       0.0,
+                                                       SendPositionSpec::postFader,
+                                                       true});
+            }
+            finalizedRecordingTracks.push_back(std::move(offline));
         }
         return true;
     });
@@ -187,14 +200,44 @@ bool TimelineEngine::generateProcessedVariants(
             error = "Recorded raw audio could not be opened for offline processing.";
             return false;
         }
+        std::vector<std::unique_ptr<juce::AudioFormatReader>> auxiliaryReaders;
+        bool replayable = true;
+        for (const auto& input : track.sidechainInputs) {
+            const auto file = sink->prepareSidechainForReading(track.id, input.targetDeviceId);
+            auto auxiliary = std::unique_ptr<juce::AudioFormatReader>(
+                file == juce::File{} ? nullptr : formatReader.createReaderFor(file));
+            if (auxiliary == nullptr || auxiliary->numChannels != 2 ||
+                auxiliary->sampleRate != sampleRate ||
+                auxiliary->lengthInSamples != reader->lengthInSamples) {
+                sink->processedVariantUnavailable(
+                    track.id, "sidechain input for device " + input.targetDeviceId +
+                                  " is unavailable or incomplete; the raw take is retained");
+                replayable = false;
+                break;
+            }
+            auxiliaryReaders.push_back(std::move(auxiliary));
+        }
+        if (!replayable) continue;
         PluginChain offlineEffects;
         if (progress) progress();
-        if (!offlineEffects.load(track.effects, sampleRate, blockSize,
+        if (!offlineEffects.load(track.effects, track.sidechainInputs, sampleRate, blockSize,
                                  PluginProcessingMode::offline, error,
                                  track.id + "/offline-processing"))
             return false;
+        std::vector<juce::String> deviceIds;
+        deviceIds.reserve(track.effects.size());
+        for (const auto& effect : track.effects) deviceIds.push_back(effect.id);
+        PluginChainAlignment offlineAlignment;
+        if (!offlineAlignment.prepare(deviceIds, track.mainInputDelays, blockSize, error))
+            return false;
         if (progress) progress();
-        const auto delay = std::max(0, offlineEffects.latencySamples());
+        const auto totalDelay = static_cast<std::int64_t>(offlineEffects.latencySamples()) +
+                                offlineAlignment.latencySamples();
+        if (totalDelay > std::numeric_limits<int>::max()) {
+            error = "recorded sidechain alignment exceeds the supported buffer size";
+            return false;
+        }
+        const auto delay = static_cast<int>(std::max<std::int64_t>(0, totalDelay));
         for (const auto& [segStart, segEnd] : segments) {
             const auto segmentLength = segEnd - segStart;
             if (segmentLength > static_cast<std::uint64_t>(std::numeric_limits<int>::max())) {
@@ -204,6 +247,7 @@ bool TimelineEngine::generateProcessedVariants(
             const auto segmentSamples = static_cast<int>(segmentLength);
             if (segmentSamples <= 0) continue;
             offlineEffects.reset();
+            offlineAlignment.reset();
             juce::AudioBuffer<float> blockBuffer(2, blockSize);
             juce::AudioBuffer<float> processedBlock(2, blockSize);
             int discarded = delay;
@@ -236,13 +280,25 @@ bool TimelineEngine::generateProcessedVariants(
             while (remaining > 0) {
                 const auto count = std::min(blockSize, remaining);
                 blockBuffer.clear();
-                if (!reader->read(blockBuffer.getArrayOfWritePointers(), 2, readPos, count)) {
+                if (!reader->read(&blockBuffer, 0, count, readPos, true, true)) {
                     error = "Recorded raw audio could not be read for offline processing.";
                     return false;
                 }
                 readPos += count;
+                offlineEffects.clearSidechainBuffers();
+                for (std::size_t index = 0; index < auxiliaryReaders.size(); ++index) {
+                    auto* buffer =
+                        offlineEffects.sidechainBuffer(track.sidechainInputs[index].targetDeviceId);
+                    if (buffer == nullptr ||
+                        !auxiliaryReaders[index]->read(buffer->getArrayOfWritePointers(), 2,
+                                                       readPos - count, count)) {
+                        error = "recorded sidechain input could not be read for offline processing";
+                        return false;
+                    }
+                }
                 offlineEffects.process(blockBuffer.getArrayOfReadPointers(), 2,
-                                       processedBlock.getArrayOfWritePointers(), 2, count);
+                                       processedBlock.getArrayOfWritePointers(), 2, count, nullptr,
+                                       {}, 0, false, &offlineAlignment);
                 if (!consumeProcessedBlock(count)) return false;
                 if (progress) progress();
                 remaining -= count;
@@ -252,8 +308,10 @@ bool TimelineEngine::generateProcessedVariants(
             while (written < segmentSamples) {
                 const auto count = blockSize;
                 blockBuffer.clear();
+                offlineEffects.clearSidechainBuffers();
                 offlineEffects.process(blockBuffer.getArrayOfReadPointers(), 2,
-                                       processedBlock.getArrayOfWritePointers(), 2, count);
+                                       processedBlock.getArrayOfWritePointers(), 2, count, nullptr,
+                                       {}, 0, false, &offlineAlignment);
                 if (!consumeProcessedBlock(count)) return false;
                 if (progress) progress();
             }
@@ -291,6 +349,12 @@ juce::var TimelineEngine::recordingConfiguration() const {
                                static_cast<int>(track->runtime->pluginDelaySamples));
             value->setProperty("pluginTailSamples",
                                static_cast<int>(track->runtime->pluginTailSamples));
+            juce::Array<juce::var> sidechainInputs;
+            for (const auto& effect : track->effects) {
+                if (track->runtime->effects().sidechainBuffer(effect.id) != nullptr)
+                    sidechainInputs.add(effect.id);
+            }
+            value->setProperty("sidechainInputs", sidechainInputs);
             trackValues.add(juce::var(value));
         }
         result->setProperty("tracks", trackValues);

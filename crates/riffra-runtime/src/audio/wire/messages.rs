@@ -349,11 +349,23 @@ pub(crate) struct WirePluginStateResponse {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct WireDeviceSidechainCapability {
+    pub(crate) available: bool,
+    pub(crate) mono: bool,
+    pub(crate) stereo: bool,
+    pub(crate) channels: u32,
+    #[serde(deserialize_with = "nullable")]
+    pub(crate) reason: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct WireDeviceCapabilities {
     pub(crate) parameters: bool,
     pub(crate) state: bool,
     pub(crate) presets: bool,
     pub(crate) editor: bool,
+    pub(crate) sidechain: WireDeviceSidechainCapability,
 }
 
 #[derive(Clone, Debug, Deserialize)]

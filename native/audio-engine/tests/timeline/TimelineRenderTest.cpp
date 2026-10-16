@@ -874,6 +874,429 @@ TEST(MixerRoutingTest, AppliesMuteAndAdditiveSoloToDryAndParallelPaths) {
     }
 }
 
+TEST(MixerRoutingTest, SendsSidechainAudioToSupportedTargetsAndKeepsUnsupportedTargetsOnline) {
+    // Arrange
+    juce::ScopedJuceInitialiser_GUI initialiser;
+    test::TemporaryDirectory directory;
+    const auto source = directory.get().getChildFile("sidechain.wav");
+    ASSERT_TRUE(writePcmWave(source, 48'000, 1, 128, 8'192));
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+
+    enum class Target { track, group, master, unsupported };
+    for (const auto target : {Target::track, Target::group, Target::master, Target::unsupported}) {
+        SCOPED_TRACE(static_cast<int>(target));
+        const auto build = [&](const bool withSend) {
+            auto snapshot = makeTestSnapshot();
+            auto audio = makeAudioTrack("track:source");
+            audio.panLaw = "unityCenterStereo";
+            AudioClipSpec clip;
+            clip.id = "clip:source";
+            clip.path = source.getFullPathName();
+            clip.startTick = 20;
+            clip.sourceSampleRate = 48'000;
+            clip.sourceEndFrame = 128;
+            clip.durationFrames = 128;
+            clip.durationSampleRate = 48'000;
+            audio.audioClips.push_back(clip);
+            if (target == Target::group) audio.outputBusId = "bus:group";
+            snapshot.graph.tracks.push_back(std::move(audio));
+            juce::String deviceId;
+            if (target == Target::track || target == Target::unsupported) {
+                auto owner = makeAudioTrack("track:target");
+                owner.panLaw = "unityCenterStereo";
+                owner.effects.push_back({"fx:target",
+                                         target == Target::track ? RIFFRA_TEST_SIDECHAIN_BUNDLE_PATH
+                                                                 : RIFFRA_TEST_EFFECT_BUNDLE_PATH,
+                                         {}});
+                deviceId = "fx:target";
+                snapshot.graph.tracks.push_back(std::move(owner));
+            } else if (target == Target::group) {
+                MixBusSpec group;
+                group.id = "bus:group";
+                group.panLaw = "unityCenterStereo";
+                group.effects.push_back({"fx:group", RIFFRA_TEST_SIDECHAIN_BUNDLE_PATH, {}});
+                deviceId = "fx:group";
+                snapshot.graph.mixer.buses.push_back(std::move(group));
+            } else {
+                deviceId = "fx:master";
+                snapshot.graph.mixer.masterEffects.push_back(
+                    {deviceId, RIFFRA_TEST_SIDECHAIN_BUNDLE_PATH, {}});
+            }
+            if (withSend)
+                snapshot.graph.mixer.sidechainSends.push_back({"send:sidechain", "track:source",
+                                                               deviceId, 0.0,
+                                                               SendPositionSpec::postFader, true});
+            return snapshot;
+        };
+
+        std::array<juce::AudioBuffer<float>, 2> outputs{juce::AudioBuffer<float>(2, 704),
+                                                        juce::AudioBuffer<float>(2, 704)};
+        for (int variant = 0; variant < 2; ++variant) {
+            SCOPED_TRACE(variant == 0 ? "without sidechain" : "with sidechain");
+            TimelineEngine engine(true);
+            juce::String error;
+            {
+                SCOPED_TRACE("load snapshot");
+                ASSERT_TRUE(
+                    loadTestSnapshot(engine, build(variant == 1), formats, 48'000.0, 64, error))
+                    << error;
+                if (target == Target::unsupported && variant == 1) {
+                    const auto* graph = TimelineEngineTestPeer::committedGraph(engine);
+                    ASSERT_NE(graph, nullptr);
+                    EXPECT_TRUE(graph->mixer.sidechainRoutes.empty());
+                    const auto* targetTrack = graph->findTrack("track:target");
+                    ASSERT_NE(targetTrack, nullptr);
+                    EXPECT_EQ(targetTrack->runtime->effects().sidechainBuffer("fx:target"),
+                              nullptr);
+                }
+            }
+            {
+                SCOPED_TRACE("start playback");
+                ASSERT_TRUE(engine.play());
+            }
+            {
+                SCOPED_TRACE("mix output");
+                auto& rendered = outputs[static_cast<std::size_t>(variant)];
+                rendered.clear();
+                engine.mix(rendered.getArrayOfWritePointers(), 2, 704);
+            }
+        }
+
+        // Assert
+        auto doubledPeak = 0.0f;
+        for (int sample = 0; sample < 704; ++sample) {
+            for (int channel = 0; channel < 2; ++channel) {
+                const auto baseline = outputs[0].getSample(channel, sample);
+                const auto rendered = outputs[1].getSample(channel, sample);
+                if (target == Target::unsupported) {
+                    EXPECT_NEAR(rendered, baseline, 0.0001f) << "sample " << sample;
+                } else {
+                    const auto expected = 2.0f * baseline;
+                    EXPECT_NEAR(rendered, expected, 0.0001f) << "sample " << sample;
+                    doubledPeak = std::max(doubledPeak, std::abs(expected));
+                }
+            }
+        }
+        if (target != Target::unsupported) EXPECT_GT(doubledPeak, 0.3f);
+    }
+}
+
+TEST(MixerRoutingTest, AlignsMultipleSidechainSourcesWithTheTargetDeviceLatency) {
+    // Arrange
+    juce::ScopedJuceInitialiser_GUI initialiser;
+    test::TemporaryDirectory directory;
+    const auto loud = directory.get().getChildFile("loud.wav");
+    const auto quiet = directory.get().getChildFile("quiet.wav");
+    ASSERT_TRUE(writePcmWave(loud, 48'000, 1, 128, 8'192));
+    ASSERT_TRUE(writePcmWave(quiet, 48'000, 1, 128, 4'096));
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    const auto makeClip = [](const juce::String& id, const juce::File& file) {
+        AudioClipSpec clip;
+        clip.id = id;
+        clip.path = file.getFullPathName();
+        clip.startTick = 20;
+        clip.sourceSampleRate = 48'000;
+        clip.sourceEndFrame = 128;
+        clip.durationFrames = 128;
+        clip.durationSampleRate = 48'000;
+        return clip;
+    };
+    const auto build = [&](const bool withSend) {
+        auto snapshot = makeTestSnapshot();
+        auto latent = makeAudioTrack("track:latent");
+        latent.panLaw = "unityCenterStereo";
+        latent.audioClips.push_back(makeClip("clip:latent", loud));
+        latent.effects.push_back({"fx:latent", RIFFRA_TEST_EFFECT_BUNDLE_PATH, {}});
+        auto dry = makeAudioTrack("track:dry");
+        dry.panLaw = "unityCenterStereo";
+        dry.audioClips.push_back(makeClip("clip:dry", quiet));
+        auto target = makeAudioTrack("track:target");
+        target.panLaw = "unityCenterStereo";
+        target.effects.push_back({"fx:target", RIFFRA_TEST_SIDECHAIN_BUNDLE_PATH, {}});
+        snapshot.graph.tracks = {latent, dry, target};
+        if (withSend) {
+            snapshot.graph.mixer.sidechainSends.push_back({"send:latent", "track:latent",
+                                                           "fx:target", 0.0,
+                                                           SendPositionSpec::postFader, true});
+            snapshot.graph.mixer.sidechainSends.push_back(
+                {"send:dry", "track:dry", "fx:target", 0.0, SendPositionSpec::postFader, true});
+        }
+        return snapshot;
+    };
+
+    std::array<juce::AudioBuffer<float>, 2> outputs{juce::AudioBuffer<float>(2, 704),
+                                                    juce::AudioBuffer<float>(2, 704)};
+    for (int variant = 0; variant < 2; ++variant) {
+        TimelineEngine engine(true);
+        juce::String error;
+        ASSERT_TRUE(loadTestSnapshot(engine, build(variant == 1), formats, 48'000.0, 64, error))
+            << error;
+        ASSERT_TRUE(engine.play());
+        auto& rendered = outputs[static_cast<std::size_t>(variant)];
+        rendered.clear();
+        engine.mix(rendered.getArrayOfWritePointers(), 2, 704);
+        if (variant == 1) {
+            // A transport discontinuity must clear the auxiliary buffers and the
+            // device main input delays so the replay is identical.
+            ASSERT_TRUE(engine.stop());
+            ASSERT_TRUE(engine.seekToTick(0));
+            ASSERT_TRUE(engine.play());
+            juce::AudioBuffer<float> replay(2, 704);
+            replay.clear();
+            engine.mix(replay.getArrayOfWritePointers(), 2, 704);
+            for (int sample = 0; sample < 704; ++sample)
+                for (int channel = 0; channel < 2; ++channel)
+                    EXPECT_NEAR(replay.getSample(channel, sample),
+                                rendered.getSample(channel, sample), 0.0001f)
+                        << "sample " << sample;
+        }
+    }
+
+    // Assert: both sources keep their own latency-compensated timing and the
+    // auxiliary copies double the reference pulse exactly.
+    auto doubledPeak = 0.0f;
+    for (int sample = 0; sample < 704; ++sample) {
+        for (int channel = 0; channel < 2; ++channel) {
+            const auto expected = 2.0f * outputs[0].getSample(channel, sample);
+            EXPECT_NEAR(outputs[1].getSample(channel, sample), expected, 0.0001f)
+                << "sample " << sample;
+            doubledPeak = std::max(doubledPeak, std::abs(expected));
+        }
+    }
+    EXPECT_GT(doubledPeak, 0.3f);
+}
+
+TEST(MixerRoutingTest, AppliesSidechainSendLevelPositionMuteAndSolo) {
+    // Arrange
+    juce::ScopedJuceInitialiser_GUI initialiser;
+    test::TemporaryDirectory directory;
+    const auto source = directory.get().getChildFile("levels.wav");
+    ASSERT_TRUE(writePcmWave(source, 48'000, 1, 128, 8'192));
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    const auto kContent = 0.25f / std::sqrt(2.0f);
+
+    struct Case {
+        const char* name;
+        bool sendEnabled;
+        bool muted;
+        bool targetSolo;
+        double levelDb;
+        SendPositionSpec position;
+        double gainDb;
+        float expectedAtPulse;
+    };
+    const std::array<Case, 6> cases{{
+        {"post fader unity", true, false, false, 0.0, SendPositionSpec::postFader, 0.0,
+         2.0f * kContent},
+        {"pre fader skips the fader", true, false, false, 0.0, SendPositionSpec::preFader,
+         -6.020599913, 1.5f * kContent},
+        {"send level scales the tap", true, false, false, -6.020599913, SendPositionSpec::postFader,
+         -6.020599913, 0.75f * kContent},
+        {"disabled send is silent", false, false, false, 0.0, SendPositionSpec::postFader, 0.0,
+         kContent},
+        {"muted source is silent", true, true, false, 0.0, SendPositionSpec::postFader, 0.0, 0.0f},
+        {"solo keeps the auxiliary path", true, false, true, 0.0, SendPositionSpec::postFader, 0.0,
+         kContent},
+    }};
+    for (const auto& testCase : cases) {
+        SCOPED_TRACE(testCase.name);
+        auto snapshot = makeTestSnapshot();
+        auto audio = makeAudioTrack("track:source");
+        audio.panLaw = "unityCenterStereo";
+        audio.gainDb = testCase.gainDb;
+        audio.muted = testCase.muted;
+        AudioClipSpec clip;
+        clip.id = "clip:source";
+        clip.path = source.getFullPathName();
+        clip.startTick = 20;
+        clip.sourceSampleRate = 48'000;
+        clip.sourceEndFrame = 128;
+        clip.durationFrames = 128;
+        clip.durationSampleRate = 48'000;
+        audio.audioClips.push_back(clip);
+        auto target = makeAudioTrack("track:target");
+        target.panLaw = "unityCenterStereo";
+        target.solo = testCase.targetSolo;
+        target.effects.push_back({"fx:target", RIFFRA_TEST_SIDECHAIN_BUNDLE_PATH, {}});
+        snapshot.graph.tracks = {audio, target};
+        if (testCase.sendEnabled)
+            snapshot.graph.mixer.sidechainSends.push_back({"send:sidechain", "track:source",
+                                                           "fx:target", testCase.levelDb,
+                                                           testCase.position, true});
+        TimelineEngine engine(true);
+        juce::String error;
+        ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, 48'000.0, 64, error)) << error;
+        ASSERT_TRUE(engine.play());
+        juce::AudioBuffer<float> output(2, 704);
+        output.clear();
+
+        // Act
+        engine.mix(output.getArrayOfWritePointers(), 2, 704);
+
+        // Assert
+        EXPECT_NEAR(output.getSample(0, 560), testCase.expectedAtPulse, 0.002f);
+        EXPECT_NEAR(output.getSample(1, 560), testCase.expectedAtPulse, 0.002f);
+        EXPECT_NEAR(output.getSample(0, 499), 0.0f, 0.0001f);
+        EXPECT_NEAR(output.getSample(0, 628), 0.0f, 0.0001f);
+    }
+}
+
+TEST(MixerRoutingTest, SidechainSendLevelFollowsAutomationInRealtimeAndOffline) {
+    // Arrange
+    juce::ScopedJuceInitialiser_GUI initialiser;
+    test::TemporaryDirectory directory;
+    const auto source = directory.get().getChildFile("automated.wav");
+    ASSERT_TRUE(writePcmWave(source, 48'000, 1, 128, 8'192));
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    const auto kContent = 0.25f / std::sqrt(2.0f);
+    auto snapshot = makeTestSnapshot();
+    auto audio = makeAudioTrack("track:source");
+    audio.panLaw = "unityCenterStereo";
+    AudioClipSpec clip;
+    clip.id = "clip:source";
+    clip.path = source.getFullPathName();
+    clip.startTick = 20;
+    clip.sourceSampleRate = 48'000;
+    clip.sourceEndFrame = 128;
+    clip.durationFrames = 128;
+    clip.durationSampleRate = 48'000;
+    audio.audioClips.push_back(clip);
+    auto target = makeAudioTrack("track:target");
+    target.panLaw = "unityCenterStereo";
+    target.effects.push_back({"fx:target", RIFFRA_TEST_SIDECHAIN_BUNDLE_PATH, {}});
+    snapshot.graph.tracks = {audio, target};
+    snapshot.graph.mixer.sidechainSends.push_back(
+        {"send:sidechain", "track:source", "fx:target", 0.0, SendPositionSpec::postFader, true});
+    snapshot.graph.automation = {{AutomationTargetKind::sidechainSendLevel,
+                                  "send:sidechain",
+                                  {},
+                                  AutomationInterpolationSpec::step,
+                                  {{0, 0.0}, {24, -6.020599913}}}};
+    TimelineEngine engine(true);
+    juce::String error;
+    ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, 48'000.0, 64, error)) << error;
+    ASSERT_TRUE(engine.play());
+    juce::AudioBuffer<float> output(2, 704);
+    output.clear();
+
+    // Act: the clip pulse spans tick 20 (sample 500) past the step boundary at
+    // tick 24 (sample 600), which halves the automated auxiliary gain.
+    engine.mix(output.getArrayOfWritePointers(), 2, 704);
+
+    // Assert
+    const auto unity = 2.0f * kContent;
+    const auto halved = 1.5f * kContent;
+    EXPECT_NEAR(output.getSample(0, 599), unity, 0.002f);
+    EXPECT_NEAR(output.getSample(0, 600), halved, 0.002f);
+    EXPECT_NEAR(output.getSample(1, 599), unity, 0.002f);
+    EXPECT_NEAR(output.getSample(1, 600), halved, 0.002f);
+
+    // Assert: the offline renderer evaluates the same lane on the same samples.
+    OfflineRenderer::Result result;
+    const auto destination = directory.get().getChildFile("automated-render.wav");
+    ASSERT_TRUE(renderTestSnapshot(snapshot.graph, formats, destination, 0, 48, 48'000, 64, false,
+                                   result, error))
+        << error;
+    auto reader = std::unique_ptr<juce::AudioFormatReader>(formats.createReaderFor(destination));
+    ASSERT_NE(reader, nullptr);
+    ASSERT_GT(reader->lengthInSamples, 600);
+    juce::AudioBuffer<float> rendered(2, 601);
+    ASSERT_TRUE(reader->read(&rendered, 0, rendered.getNumSamples(), 0, true, true));
+    EXPECT_NEAR(rendered.getSample(0, 599), unity, 0.002f);
+    EXPECT_NEAR(rendered.getSample(0, 600), halved, 0.002f);
+    EXPECT_NEAR(rendered.getSample(0, 599), output.getSample(0, 599), 0.00001f);
+    EXPECT_NEAR(rendered.getSample(0, 600), output.getSample(0, 600), 0.00001f);
+
+    // A stem isolates the target's main output by solo while preserving the
+    // auxiliary source and its automation. The source's dry signal is absent.
+    snapshot.graph.tracks[1].solo = true;
+    const auto stemDestination = directory.get().getChildFile("automated-stem.wav");
+    ASSERT_TRUE(renderTestSnapshot(snapshot.graph, formats, stemDestination, 0, 48, 48'000, 64,
+                                   false, result, error))
+        << error;
+    auto stemReader =
+        std::unique_ptr<juce::AudioFormatReader>(formats.createReaderFor(stemDestination));
+    ASSERT_NE(stemReader, nullptr);
+    juce::AudioBuffer<float> stem(2, 601);
+    ASSERT_TRUE(stemReader->read(&stem, 0, stem.getNumSamples(), 0, true, true));
+    for (int channel = 0; channel < 2; ++channel) {
+        EXPECT_NEAR(stem.getSample(channel, 599), kContent, 0.002f);
+        EXPECT_NEAR(stem.getSample(channel, 600), 0.5f * kContent, 0.002f);
+    }
+}
+
+TEST(MixerRoutingTest, OverridesSidechainSendLevelControlOnThePreparedRoute) {
+    // Arrange
+    juce::ScopedJuceInitialiser_GUI initialiser;
+    test::TemporaryDirectory directory;
+    const auto source = directory.get().getChildFile("preview.wav");
+    ASSERT_TRUE(writePcmWave(source, 48'000, 1, 128, 8'192));
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    const auto kContent = 0.25f / std::sqrt(2.0f);
+    auto snapshot = makeTestSnapshot();
+    auto audio = makeAudioTrack("track:source");
+    audio.panLaw = "unityCenterStereo";
+    AudioClipSpec clip;
+    clip.id = "clip:source";
+    clip.path = source.getFullPathName();
+    clip.startTick = 20;
+    clip.sourceSampleRate = 48'000;
+    clip.sourceEndFrame = 128;
+    clip.durationFrames = 128;
+    clip.durationSampleRate = 48'000;
+    audio.audioClips.push_back(clip);
+    auto target = makeAudioTrack("track:target");
+    target.panLaw = "unityCenterStereo";
+    target.effects.push_back({"fx:target", RIFFRA_TEST_SIDECHAIN_BUNDLE_PATH, {}});
+    snapshot.graph.tracks = {audio, target};
+    snapshot.graph.mixer.sidechainSends.push_back(
+        {"send:sidechain", "track:source", "fx:target", 0.0, SendPositionSpec::postFader, true});
+    TimelineEngine engine(true);
+    juce::String error;
+    ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, 48'000.0, 64, error)) << error;
+    ASSERT_TRUE(engine.play());
+    juce::AudioBuffer<float> output(2, 704);
+    output.clear();
+
+    // Act: the transient level halves the sidechain route gain.
+    ASSERT_TRUE(engine.setSendLevelControl("send:sidechain", -6.020599913f, error)) << error;
+    engine.mix(output.getArrayOfWritePointers(), 2, 704);
+
+    // Assert
+    EXPECT_NEAR(output.getSample(0, 599), 1.5f * kContent, 0.002f);
+    EXPECT_FALSE(engine.setSendLevelControl("send:missing", 0.0f, error));
+    EXPECT_TRUE(error.containsIgnoreCase("unavailable")) << error;
+}
+
+TEST(MixerRoutingTest, RejectsCyclicSidechainRoutes) {
+    // Arrange
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    auto snapshot = makeTestSnapshot();
+    auto first = makeAudioTrack("track:first");
+    first.effects.push_back({"fx:first", RIFFRA_TEST_SIDECHAIN_BUNDLE_PATH, {}});
+    auto second = makeAudioTrack("track:second");
+    second.effects.push_back({"fx:second", RIFFRA_TEST_SIDECHAIN_BUNDLE_PATH, {}});
+    snapshot.graph.tracks = {first, second};
+    snapshot.graph.mixer.sidechainSends = {
+        {"send:first", "track:first", "fx:second", 0.0, SendPositionSpec::postFader, true},
+        {"send:second", "track:second", "fx:first", 0.0, SendPositionSpec::postFader, true}};
+    TimelineEngine engine;
+    juce::String error;
+
+    // Act
+    const auto loaded = loadTestSnapshot(engine, snapshot, formats, 48'000.0, 64, error);
+
+    // Assert
+    EXPECT_FALSE(loaded);
+    EXPECT_TRUE(error.containsIgnoreCase("cycle")) << error;
+}
+
 TEST(MixerRoutingTest, LowLatencyMonitoringKeepsTimelinePdcAcrossMasterAndGroupRoutes) {
     // Arrange
     juce::ScopedJuceInitialiser_GUI initialiser;

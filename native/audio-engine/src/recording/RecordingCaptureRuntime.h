@@ -44,6 +44,8 @@ public:
                                        const RecordingCaptureTrackState& track) noexcept;
     void writeAudioTrack(const juce::String& trackId, const float* raw,
                          int rawSampleCount) noexcept;
+    void writeSidechain(const juce::String& trackId, const juce::String& deviceId,
+                        const float* const* channels, int sampleCount) noexcept;
     void markLoopBoundary(std::uint64_t audioSample) noexcept;
     void writeMidiTrack(const juce::String& trackId, const juce::String& sourceDeviceId,
                         const juce::MidiMessage& message, std::uint64_t audioSample) noexcept;

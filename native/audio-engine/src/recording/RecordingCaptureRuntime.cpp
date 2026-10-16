@@ -6,6 +6,13 @@
 
 namespace riffra {
 
+void RecordingCaptureRuntime::writeSidechain(const juce::String& trackId,
+                                             const juce::String& deviceId,
+                                             const float* const* channels,
+                                             const int sampleCount) noexcept {
+    if (sink != nullptr) sink->writeSidechain(trackId, deviceId, channels, sampleCount);
+}
+
 void RecordingCaptureRuntime::setSink(ArrangementCaptureSink* const next) noexcept {
     auto* previous = std::exchange(sink, next);
     if (previous != nullptr && !retiredSinks.retire(previous)) jassertfalse;

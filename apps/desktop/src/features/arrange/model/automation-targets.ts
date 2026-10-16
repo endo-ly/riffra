@@ -27,6 +27,8 @@ export function automationTargetKey(target: AutomationTarget): string {
       return 'master';
     case 'sendLevel':
       return `send:${target.sendId}`;
+    case 'sidechainSendLevel':
+      return `sidechain:${target.sidechainSendId}`;
     case 'deviceParameter':
       return JSON.stringify([target.deviceId, target.parameterId]);
   }
@@ -46,6 +48,12 @@ export function automationOwner(
     case 'sendLevel': {
       const send = arrangement.mixer.sends.find((send) => send.id === target.sendId);
       return send ? { kind: 'track', id: send.trackId } : null;
+    }
+    case 'sidechainSendLevel': {
+      const send = arrangement.mixer.sidechainSends.find(
+        (send) => send.id === target.sidechainSendId,
+      );
+      return send ? { kind: 'track', id: send.sourceTrackId } : null;
     }
     case 'deviceParameter': {
       const track = arrangement.tracks.find(
@@ -89,6 +97,21 @@ export function automationDevices(session: CreativeSession, owner: EffectOwner) 
   return devices;
 }
 
+export function sidechainTargetName(
+  arrangement: Arrangement,
+  deviceId: string,
+): string | undefined {
+  for (const track of arrangement.tracks) {
+    const effect = track.effects.find((effect) => effect.id === deviceId);
+    if (effect) return effect.name;
+  }
+  for (const bus of arrangement.mixer.buses) {
+    const effect = bus.effects.find((effect) => effect.id === deviceId);
+    if (effect) return effect.name;
+  }
+  return arrangement.mixer.masterEffects.find((effect) => effect.id === deviceId)?.name;
+}
+
 export function automationOptions(
   session: CreativeSession,
   owner: EffectOwner,
@@ -120,6 +143,19 @@ export function automationOptions(
         options.push({
           target: { kind: 'sendLevel', sendId: send.id },
           name: `Send · ${destination?.name ?? send.returnBusId}`,
+          staticValue: send.levelDb,
+          min: -90,
+          max: 24,
+          unit: 'dB',
+        });
+      }
+      for (const send of arrangement.mixer.sidechainSends.filter(
+        (send) => send.sourceTrackId === track.id,
+      )) {
+        const deviceName = sidechainTargetName(arrangement, send.targetDeviceId);
+        options.push({
+          target: { kind: 'sidechainSendLevel', sidechainSendId: send.id },
+          name: `Sidechain · ${deviceName ?? send.targetDeviceId}`,
           staticValue: send.levelDb,
           min: -90,
           max: 24,

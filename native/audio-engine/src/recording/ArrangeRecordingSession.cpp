@@ -71,6 +71,29 @@ bool ArrangeRecordingSession::initialise(const juce::var& configuration, juce::S
             const auto child = directory.getChildFile("tracks").getChildFile(track.trackKey);
             track.audio = RecordingSession::create(child, sampleRate, 1, 2, error);
             if (track.audio == nullptr) return false;
+            const auto inputs = value.getProperty("sidechainInputs", {});
+            for (int inputIndex = 0; inputIndex < inputs.size(); ++inputIndex) {
+                if (!auxiliaryWriterThread.isThreadRunning()) auxiliaryWriterThread.startThread();
+                TrackWriter::AuxiliaryCapture input;
+                input.deviceId = inputs[inputIndex].toString();
+                input.file = child.getChildFile("sidechain-" + juce::String(inputIndex) + ".wav");
+                std::unique_ptr<juce::OutputStream> stream = input.file.createOutputStream();
+                juce::WavAudioFormat format;
+                auto writer = format.createWriterFor(
+                    stream, juce::AudioFormatWriterOptions()
+                                .withSampleRate(sampleRate)
+                                .withNumChannels(2)
+                                .withBitsPerSample(32)
+                                .withSampleFormat(
+                                    juce::AudioFormatWriterOptions::SampleFormat::floatingPoint));
+                if (writer == nullptr) {
+                    error = "sidechain capture writer could not be created for " + input.deviceId;
+                    return false;
+                }
+                input.writer = std::make_unique<juce::AudioFormatWriter::ThreadedWriter>(
+                    writer.release(), auxiliaryWriterThread, 131072);
+                track.auxiliaryInputs.push_back(std::move(input));
+            }
         } else if (!directory.getChildFile("tracks")
                         .getChildFile(track.trackKey)
                         .createDirectory()) {
@@ -326,6 +349,40 @@ bool ArrangeRecordingSession::writeProcessedAudioTrackOffline(const juce::String
     return found->audio->writeProcessedOffline(processed, sampleCount, timeoutMs);
 }
 
+void ArrangeRecordingSession::writeSidechain(const juce::String& trackId,
+                                             const juce::String& deviceId,
+                                             const float* const* channels,
+                                             const int sampleCount) noexcept {
+    for (auto& track : tracks) {
+        if (track.trackId != trackId) continue;
+        for (auto& input : track.auxiliaryInputs) {
+            if (input.deviceId != deviceId) continue;
+            if (input.writer == nullptr || !input.writer->write(channels, sampleCount))
+                input.failed = true;
+            return;
+        }
+    }
+}
+
+juce::File ArrangeRecordingSession::prepareSidechainForReading(
+    const juce::String& trackId, const juce::String& deviceId) noexcept {
+    for (auto& track : tracks) {
+        if (track.trackId != trackId) continue;
+        for (auto& input : track.auxiliaryInputs) {
+            if (input.deviceId != deviceId) continue;
+            input.writer.reset();
+            return input.failed ? juce::File{} : input.file;
+        }
+    }
+    return {};
+}
+
+void ArrangeRecordingSession::processedVariantUnavailable(const juce::String& trackId,
+                                                          const juce::String& reason) noexcept {
+    for (auto& track : tracks)
+        if (track.trackId == trackId) track.processedUnavailableReason = reason;
+}
+
 bool ArrangeRecordingSession::finish(const bool processedSuccessfully, juce::String& error) {
     if (finished.exchange(true, std::memory_order_acq_rel)) return true;
     auto completed = true;
@@ -338,9 +395,13 @@ bool ArrangeRecordingSession::finish(const bool processedSuccessfully, juce::Str
             recordedMidiEvents.push_back(queuedEvent);
     }
     for (auto& track : tracks) {
+        for (auto& input : track.auxiliaryInputs) input.writer.reset();
         if (track.audio != nullptr) {
             juce::String trackError;
-            if (!track.audio->finish(processedSuccessfully, trackError)) {
+            const auto audioCompleted = track.processedUnavailableReason.isEmpty()
+                                            ? track.audio->finish(processedSuccessfully, trackError)
+                                            : track.audio->finishRawOnly(trackError);
+            if (!audioCompleted) {
                 completed = false;
                 error << track.trackId << ": " << trackError << " ";
             }
@@ -427,6 +488,7 @@ bool ArrangeRecordingSession::finish(const bool processedSuccessfully, juce::Str
 bool ArrangeRecordingSession::cancel(juce::String& error) {
     if (finished.exchange(true, std::memory_order_acq_rel)) return true;
     for (auto& track : tracks) {
+        for (auto& input : track.auxiliaryInputs) input.writer.reset();
         if (track.audio != nullptr) {
             juce::String ignored;
             (void)track.audio->finish(true, ignored);
@@ -585,6 +647,15 @@ bool ArrangeRecordingSession::writeManifest(const juce::String& state, juce::Str
         value->setProperty("pluginLatencySamples", track.pluginLatencySamples);
         value->setProperty("pluginTailSamples", track.pluginTailSamples);
         if (track.kind == "audio") {
+            juce::Array<juce::var> sidechainInputs;
+            for (const auto& input : track.auxiliaryInputs) {
+                auto* captured = new juce::DynamicObject();
+                captured->setProperty("deviceId", input.deviceId);
+                captured->setProperty(
+                    "file", input.file.getRelativePathFrom(directory).replaceCharacter('\\', '/'));
+                sidechainInputs.add(juce::var(captured));
+            }
+            value->setProperty("sidechainInputs", sidechainInputs);
             if (track.audio != nullptr) {
                 value->setProperty("rawAttemptedSamples",
                                    static_cast<juce::int64>(track.audio->getRawAttemptedSamples()));
@@ -618,8 +689,11 @@ bool ArrangeRecordingSession::writeManifest(const juce::String& state, juce::Str
                     ? "processed.wav"
                     : "processed.wav.partial";
             value->setProperty("rawFile", "tracks/" + track.trackKey + "/" + rawFileName);
-            value->setProperty("processedFile",
-                               "tracks/" + track.trackKey + "/" + processedFileName);
+            if (track.processedUnavailableReason.isEmpty())
+                value->setProperty("processedFile",
+                                   "tracks/" + track.trackKey + "/" + processedFileName);
+            else
+                value->setProperty("processedUnavailableReason", track.processedUnavailableReason);
             juce::Array<juce::var> variantSegments;
             const auto trackSegmentCount =
                 std::min(track.captureSegmentCount, track.captureSegments.size());

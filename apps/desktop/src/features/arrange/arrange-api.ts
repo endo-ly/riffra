@@ -21,6 +21,7 @@ export type ArrangeWorkspaceApi = ArrangeApi &
     | 'previewAsset'
     | 'previewChannelMix'
     | 'previewSendLevel'
+    | 'previewSidechainSendLevel'
     | 'previewMasterGainDb'
     | 'previewAutomationValue'
     | 'setMasterGainDb'

@@ -22,6 +22,10 @@ export type ControlCommandResults = {
   'mixer.send.add': OutputValue<'arrangementMutation'>;
   'mixer.send.update': OutputValue<'arrangementMutation'>;
   'mixer.send.remove': OutputValue<'arrangementMutation'>;
+  'mixer.sidechain.list': OutputValue<'sidechainSends'>;
+  'mixer.sidechain.add': OutputValue<'arrangementMutation'>;
+  'mixer.sidechain.update': OutputValue<'arrangementMutation'>;
+  'mixer.sidechain.remove': OutputValue<'arrangementMutation'>;
   'track.list': OutputValue<'tracks'>;
   'track.add': OutputValue<'arrangementMutation'>;
   'track.update': OutputValue<'arrangementMutation'>;
@@ -136,6 +140,7 @@ export type ControlCommandResults = {
   'transport.seek': OutputValue<'ok'>;
   'audio.master-gain.preview': OutputValue<'ok'>;
   'mixer.send.preview': OutputValue<'ok'>;
+  'mixer.sidechain.preview': OutputValue<'ok'>;
   'mixer.channel.preview': OutputValue<'ok'>;
   'automation.preview': OutputValue<'ok'>;
   'audio.status': OutputValue<'audioStatus'>;

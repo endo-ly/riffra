@@ -1,7 +1,10 @@
 //! Canonical mixing-channel and parallel-route application operations.
 
 use super::*;
-use crate::{MixBus, MixBusKind, MixBusPatch, Send, SendPatch, SendPosition};
+use crate::{
+    MixBus, MixBusKind, MixBusPatch, Send, SendPatch, SendPosition, SidechainSend,
+    SidechainSendPatch,
+};
 
 impl<S: SessionStorage + ?Sized> Application<'_, S> {
     /// Adds a neutral Group or Return and reports its allocated identity.
@@ -94,6 +97,19 @@ impl<S: SessionStorage + ?Sized> Application<'_, S> {
                         .sends
                         .iter()
                         .filter(|send| send.return_bus_id == id)
+                        .map(|send| send.id.clone()),
+                )
+                .chain(
+                    arrangement
+                        .mixer
+                        .sidechain_sends
+                        .iter()
+                        .filter(|send| {
+                            arrangement.mixer.buses[index]
+                                .effects
+                                .iter()
+                                .any(|effect| effect.id == send.target_device_id)
+                        })
                         .map(|send| send.id.clone()),
                 )
                 .collect::<Vec<_>>();
@@ -218,6 +234,94 @@ impl<S: SessionStorage + ?Sized> Application<'_, S> {
                 })?;
             arrangement.mixer.sends.remove(index);
             arrangement.automation_lanes.retain(|lane| !matches!(&lane.target, AutomationTarget::SendLevel { send_id } if send_id == id));
+            arrangement.revision = arrangement.revision.saturating_add(1);
+            Ok(())
+        })
+    }
+
+    /// Adds an enabled Sidechain Send to one effect device and reports its identity.
+    ///
+    /// # Errors
+    /// Returns an error for invalid or duplicated routing, invalid level, or save failure.
+    pub fn add_sidechain_send_with_created_ids(
+        &mut self,
+        source_track_id: String,
+        target_device_id: String,
+        level_db: f64,
+        position: SendPosition,
+    ) -> Result<ApplicationMutation, ApplicationError> {
+        let id = next_id("sidechain-send");
+        let session = self.commit_arrangement(|arrangement| {
+            arrangement.mixer.sidechain_sends.push(SidechainSend {
+                id: id.clone(),
+                source_track_id,
+                target_device_id,
+                level_db,
+                position,
+                enabled: true,
+            });
+            arrangement.revision = arrangement.revision.saturating_add(1);
+            Ok(())
+        })?;
+        Ok(ApplicationMutation::one(session, "sidechainSends", id))
+    }
+
+    /// Updates a Sidechain Send's destination and controls.
+    ///
+    /// # Errors
+    /// Returns an error for a missing Sidechain Send, invalid route or controls,
+    /// or save failure.
+    pub fn update_sidechain_send(
+        &mut self,
+        id: &str,
+        patch: SidechainSendPatch,
+    ) -> Result<CreativeSession, ApplicationError> {
+        self.commit_arrangement(|arrangement| {
+            let send = arrangement
+                .mixer
+                .sidechain_sends
+                .iter_mut()
+                .find(|send| send.id == id)
+                .ok_or_else(|| {
+                    crate::DomainError::InvalidMixer(format!(
+                        "sidechain send '{id}' does not exist"
+                    ))
+                })?;
+            if let Some(value) = patch.target_device_id {
+                send.target_device_id = value;
+            }
+            if let Some(value) = patch.level_db {
+                send.level_db = value;
+            }
+            if let Some(value) = patch.position {
+                send.position = value;
+            }
+            if let Some(value) = patch.enabled {
+                send.enabled = value;
+            }
+            arrangement.revision = arrangement.revision.saturating_add(1);
+            Ok(())
+        })
+    }
+
+    /// Removes a Sidechain Send without altering the Track's other routing.
+    ///
+    /// # Errors
+    /// Returns an error for a missing Sidechain Send or save failure.
+    pub fn remove_sidechain_send(&mut self, id: &str) -> Result<CreativeSession, ApplicationError> {
+        self.commit_arrangement(|arrangement| {
+            let index = arrangement
+                .mixer
+                .sidechain_sends
+                .iter()
+                .position(|send| send.id == id)
+                .ok_or_else(|| {
+                    crate::DomainError::InvalidMixer(format!(
+                        "sidechain send '{id}' does not exist"
+                    ))
+                })?;
+            arrangement.mixer.sidechain_sends.remove(index);
+            arrangement.automation_lanes.retain(|lane| !matches!(&lane.target, AutomationTarget::SidechainSendLevel { sidechain_send_id } if sidechain_send_id == id));
             arrangement.revision = arrangement.revision.saturating_add(1);
             Ok(())
         })
@@ -526,7 +630,8 @@ mod tests {
             assert_eq!(copied.interpolation, AutomationInterpolation::Step);
             assert!(copied.target.is_on_track(
                 &session.arrangement.tracks[1],
-                &session.arrangement.mixer.sends
+                &session.arrangement.mixer.sends,
+                &session.arrangement.mixer.sidechain_sends,
             ));
         }
         let deleted = core
@@ -582,5 +687,208 @@ mod tests {
         // Assert
         assert!(matches!(result, Err(ApplicationError::Storage(_))));
         assert_eq!(core.canonical_state(), before);
+    }
+
+    #[test]
+    fn sidechain_send_edits_follow_device_track_and_duplication_lifecycle() {
+        // Arrange
+        let storage = Storage::default();
+        let mut core = core();
+        let target = core
+            .application(&storage)
+            .add_track_with_created_ids("Target", crate::TrackKind::Audio)
+            .unwrap()
+            .created_entity_ids["tracks"][0]
+            .clone();
+        let target_owner = EffectOwner::Track { id: target.clone() };
+        let first = core
+            .application(&storage)
+            .add_effect_with_created_ids(&target_owner, "Comp".into(), "C:/Comp.vst3".into())
+            .unwrap()
+            .created_entity_ids["devices"][0]
+            .clone();
+        let second = core
+            .application(&storage)
+            .add_effect_with_created_ids(&target_owner, "Gate".into(), "C:/Gate.vst3".into())
+            .unwrap()
+            .created_entity_ids["devices"][0]
+            .clone();
+        let own_device = core
+            .application(&storage)
+            .add_effect_with_created_ids(
+                &EffectOwner::Track {
+                    id: "track:source".into(),
+                },
+                "Own".into(),
+                "C:/Own.vst3".into(),
+            )
+            .unwrap()
+            .created_entity_ids["devices"][0]
+            .clone();
+        let send = core
+            .application(&storage)
+            .add_sidechain_send_with_created_ids(
+                "track:source".into(),
+                first.clone(),
+                -6.0,
+                SendPosition::PostFader,
+            )
+            .unwrap()
+            .created_entity_ids["sidechainSends"][0]
+            .clone();
+        let lane = core
+            .application(&storage)
+            .set_automation_with_created_ids(
+                AutomationTarget::SidechainSendLevel {
+                    sidechain_send_id: send.clone(),
+                },
+                AutomationInterpolation::Linear,
+                vec![AutomationPoint {
+                    id: next_id("point"),
+                    tick: TimelineTick(0),
+                    value: -6.0,
+                }],
+            )
+            .unwrap()
+            .created_entity_ids["automationLanes"][0]
+            .clone();
+
+        // Act
+        let duplicated_route = core
+            .application(&storage)
+            .add_sidechain_send_with_created_ids(
+                "track:source".into(),
+                first.clone(),
+                0.0,
+                SendPosition::PreFader,
+            );
+        let self_reference = core
+            .application(&storage)
+            .add_sidechain_send_with_created_ids(
+                "track:source".into(),
+                own_device,
+                0.0,
+                SendPosition::PreFader,
+            );
+        let updated = core
+            .application(&storage)
+            .update_sidechain_send(
+                &send,
+                SidechainSendPatch {
+                    target_device_id: Some(second.clone()),
+                    level_db: Some(-9.0),
+                    position: Some(SendPosition::PreFader),
+                    enabled: Some(false),
+                },
+            )
+            .unwrap();
+
+        // Assert
+        assert!(duplicated_route.is_err() && self_reference.is_err());
+        let updated_send = &updated.arrangement.mixer.sidechain_sends[0];
+        assert_eq!(updated_send.target_device_id, second);
+        assert_eq!(updated_send.level_db, -9.0);
+        assert_eq!(updated_send.position, SendPosition::PreFader);
+        assert!(!updated_send.enabled);
+
+        // Act
+        let duplicate = core
+            .application(&storage)
+            .duplicate_track_with_created_ids("track:source")
+            .unwrap();
+
+        // Assert
+        let duplicate_id = duplicate.created_entity_ids["tracks"][0].clone();
+        let duplicate_send = duplicate
+            .session
+            .arrangement
+            .mixer
+            .sidechain_sends
+            .iter()
+            .find(|candidate| candidate.source_track_id == duplicate_id)
+            .expect("duplicated sidechain send");
+        assert_ne!(duplicate_send.id, send);
+        assert_eq!(duplicate_send.target_device_id, second);
+        assert_eq!(duplicate_send.level_db, -9.0);
+        assert!(!duplicate_send.enabled);
+        let duplicate_lane = duplicate
+            .session
+            .arrangement
+            .automation_lanes
+            .iter()
+            .find(|lane| {
+                matches!(&lane.target, AutomationTarget::SidechainSendLevel { sidechain_send_id } if sidechain_send_id == &duplicate_send.id)
+            })
+            .expect("duplicated sidechain lane");
+        assert_ne!(duplicate_lane.id, lane);
+
+        // Act
+        let removed_device = core
+            .application(&storage)
+            .remove_effect(&target_owner, &second)
+            .unwrap();
+
+        // Assert
+        assert!(removed_device.arrangement.mixer.sidechain_sends.is_empty());
+        assert!(
+            removed_device
+                .arrangement
+                .automation_lanes
+                .iter()
+                .all(|lane| {
+                    !matches!(&lane.target, AutomationTarget::SidechainSendLevel { .. })
+                })
+        );
+
+        // Act
+        let undone = core.undo(&storage).unwrap();
+
+        // Assert
+        assert_eq!(undone.arrangement.mixer.sidechain_sends.len(), 2);
+        assert_eq!(undone.arrangement.automation_lanes.len(), 2);
+
+        // Act
+        let removed_track = core.application(&storage).remove_track(&target).unwrap();
+
+        // Assert
+        assert!(removed_track.arrangement.mixer.sidechain_sends.is_empty());
+        assert!(removed_track.arrangement.automation_lanes.is_empty());
+
+        // Act
+        let bus = core
+            .application(&storage)
+            .add_mix_bus_with_created_ids("Return".into(), MixBusKind::Return)
+            .unwrap()
+            .created_entity_ids["buses"][0]
+            .clone();
+        let bus_owner = EffectOwner::Bus { id: bus.clone() };
+        let bus_device = core
+            .application(&storage)
+            .add_effect_with_created_ids(&bus_owner, "Reverb".into(), "C:/Reverb.vst3".into())
+            .unwrap()
+            .created_entity_ids["devices"][0]
+            .clone();
+        let bus_send = core
+            .application(&storage)
+            .add_sidechain_send_with_created_ids(
+                "track:source".into(),
+                bus_device,
+                0.0,
+                SendPosition::PostFader,
+            )
+            .unwrap()
+            .created_entity_ids["sidechainSends"][0]
+            .clone();
+        let rejected_bus = core.application(&storage).remove_mix_bus(&bus).unwrap_err();
+
+        // Assert
+        assert!(rejected_bus.to_string().contains(&bus_send));
+        let saved = storage.saved.lock().unwrap().clone().unwrap();
+        let restored =
+            serde_json::from_str::<CreativeSession>(&serde_json::to_string(&saved).unwrap())
+                .unwrap()
+                .validate_and_normalize()
+                .unwrap();
+        assert_eq!(restored.arrangement.mixer, saved.arrangement.mixer);
     }
 }

@@ -313,6 +313,8 @@ private:
     struct OfflineRecordingTrack final {
         juce::String id;
         std::vector<PluginDeviceSpec> effects;
+        std::vector<SidechainSendSpec> sidechainInputs;
+        std::vector<std::pair<juce::String, int>> mainInputDelays;
     };
 
     // Realtime command path.
@@ -357,6 +359,9 @@ private:
     void processLiveInstrumentTracks(PreparedTimeline& timeline, float* const* outputChannels,
                                      int channelCount, std::int64_t rangeStart,
                                      int destinationStart, int sampleCount) noexcept;
+    void clearSidechainInputs(PreparedTimeline& timeline) noexcept;
+    void mixSidechainStage(PreparedTimeline& timeline, int stageIndex, std::int64_t rangeStart,
+                           int sampleCount, bool playing) noexcept;
     void processLiveAudioTracks(PreparedTimeline& timeline, const float* const* inputChannels,
                                 int inputChannelCount, std::int64_t rangeStart,
                                 int destinationStart, int sampleCount) noexcept;

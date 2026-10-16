@@ -262,6 +262,8 @@ function recordingDetail(recording: RecordingAsset): string {
   if (recording.error) return 'Unreadable';
   if (recording.state !== 'completed') return capitalize(recording.state);
   if (!recording.sampleRate || recording.samplesWritten === 0) return 'Empty';
+  if (recording.processedUnavailableReason)
+    return `Raw retained · ${recording.processedUnavailableReason}`;
   return formatDuration(recording.samplesWritten / recording.sampleRate);
 }
 

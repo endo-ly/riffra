@@ -67,6 +67,12 @@ public:
         const juce::String& trackId) noexcept override;
     bool writeProcessedAudioTrackOffline(const juce::String& trackId, const float* const* processed,
                                          int sampleCount, int timeoutMs) noexcept override;
+    void writeSidechain(const juce::String& trackId, const juce::String& deviceId,
+                        const float* const* channels, int sampleCount) noexcept override;
+    juce::File prepareSidechainForReading(const juce::String& trackId,
+                                          const juce::String& deviceId) noexcept override;
+    void processedVariantUnavailable(const juce::String& trackId,
+                                     const juce::String& reason) noexcept override;
     bool finish(bool processedSuccessfully, juce::String& error);
     bool cancel(juce::String& error);
     [[nodiscard]] ArrangeRecordingSummary summary() const;
@@ -100,6 +106,12 @@ private:
     using MidiEventQueue = BoundedMpmcQueue<MidiEvent, kMaximumMidiEvents>;
 
     struct TrackWriter final {
+        struct AuxiliaryCapture final {
+            juce::String deviceId;
+            juce::File file;
+            std::unique_ptr<juce::AudioFormatWriter::ThreadedWriter> writer;
+            bool failed = false;
+        };
         struct VariantCaptureSegment final {
             std::uint64_t audioClockStartSample = 0;
             std::uint64_t audioClockEndSample = 0;
@@ -120,6 +132,8 @@ private:
         int pluginTailSamples = 0;
         std::uint32_t midiTrackIndex = 0;
         std::unique_ptr<RecordingSession> audio;
+        std::vector<AuxiliaryCapture> auxiliaryInputs;
+        juce::String processedUnavailableReason;
         static constexpr std::size_t kMaximumTrackCaptureSegments = kMaximumCaptureSegments;
         std::vector<VariantCaptureSegment> captureSegments;
         std::size_t captureSegmentCount = 0;
@@ -144,6 +158,7 @@ private:
     bool punchEnabled = false;
     std::int64_t punchStartSample = 0;
     std::int64_t punchEndSample = 0;
+    juce::TimeSliceThread auxiliaryWriterThread{"Riffra sidechain capture writer"};
     std::vector<TrackWriter> tracks;
     std::unique_ptr<MidiEventQueue> midiEvents;
     std::unique_ptr<std::atomic<std::size_t>[]> midiTrackEventCounts;
