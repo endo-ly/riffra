@@ -2820,6 +2820,7 @@ dependencies = [
  "riffra-core",
  "riffra-host",
  "rusqlite",
+ "rustix",
  "serde",
  "serde_json",
  "serde_path_to_error",
@@ -2827,6 +2828,7 @@ dependencies = [
  "tracing",
  "ts-rs",
  "uuid",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

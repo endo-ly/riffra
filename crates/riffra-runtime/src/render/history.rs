@@ -856,33 +856,35 @@ pub(super) fn copy_files_no_clobber(copies: &[(PathBuf, PathBuf)]) -> Result<(),
                     source.display()
                 )
             })?;
-            let mut destination_file = fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(destination)
-                .map_err(|error| {
-                    if error.kind() == io::ErrorKind::AlreadyExists {
-                        format!("render output already exists: {}", destination.display())
-                    } else {
-                        format!(
-                            "render output could not be created at {}: {error}",
-                            destination.display()
-                        )
-                    }
-                })?;
-            created_files.push(destination.clone());
-            io::copy(&mut source_file, &mut destination_file).map_err(|error| {
+            let mut temporary = TemporaryRenderExport::create(parent).map_err(|error| {
+                format!(
+                    "render output could not be prepared in {}: {error}",
+                    parent.display()
+                )
+            })?;
+            io::copy(&mut source_file, temporary.file_mut()).map_err(|error| {
                 format!(
                     "render output could not be copied to {}: {error}",
                     destination.display()
                 )
             })?;
-            destination_file.sync_all().map_err(|error| {
+            temporary.file_mut().sync_all().map_err(|error| {
                 format!(
                     "render output could not be flushed at {}: {error}",
                     destination.display()
                 )
             })?;
+            temporary.publish(destination).map_err(|error| {
+                if error.kind() == io::ErrorKind::AlreadyExists {
+                    format!("render output already exists: {}", destination.display())
+                } else {
+                    format!(
+                        "render output could not be finalized at {}: {error}",
+                        destination.display()
+                    )
+                }
+            })?;
+            created_files.push(destination.clone());
         }
         Ok(())
     })();
@@ -896,4 +898,103 @@ pub(super) fn copy_files_no_clobber(copies: &[(PathBuf, PathBuf)]) -> Result<(),
         }
     }
     result
+}
+
+struct TemporaryRenderExport {
+    path: PathBuf,
+    file: Option<fs::File>,
+    published: bool,
+}
+
+impl TemporaryRenderExport {
+    fn create(parent: &Path) -> io::Result<Self> {
+        loop {
+            let path = parent.join(format!(
+                ".riffra-render-export-{}.tmp",
+                uuid::Uuid::now_v7()
+            ));
+            match fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+            {
+                Ok(file) => {
+                    return Ok(Self {
+                        path,
+                        file: Some(file),
+                        published: false,
+                    });
+                }
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
+    fn file_mut(&mut self) -> &mut fs::File {
+        self.file.as_mut().expect("temporary export file is open")
+    }
+
+    fn publish(mut self, destination: &Path) -> io::Result<()> {
+        drop(self.file.take());
+        rename_without_replace(&self.path, destination)?;
+        self.published = true;
+        Ok(())
+    }
+}
+
+impl Drop for TemporaryRenderExport {
+    fn drop(&mut self) {
+        if !self.published
+            && let Err(error) = fs::remove_file(&self.path)
+            && error.kind() != io::ErrorKind::NotFound
+        {
+            tracing::error!(%error, path = %self.path.display(), "render export temporary file cleanup failed");
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn rename_without_replace(source: &Path, destination: &Path) -> io::Result<()> {
+    use rustix::fs::{CWD, RenameFlags, renameat_with};
+
+    renameat_with(CWD, source, CWD, destination, RenameFlags::NOREPLACE).map_err(io::Error::from)
+}
+
+#[cfg(windows)]
+fn rename_without_replace(source: &Path, destination: &Path) -> io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+
+    let source = source.as_os_str().encode_wide().collect::<Vec<_>>();
+    let destination = destination.as_os_str().encode_wide().collect::<Vec<_>>();
+    if source.contains(&0) || destination.contains(&0) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "render output path contains a null character",
+        ));
+    }
+    let source = source
+        .into_iter()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let destination = destination
+        .into_iter()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let moved = unsafe {
+        windows_sys::Win32::Storage::FileSystem::MoveFileW(source.as_ptr(), destination.as_ptr())
+    };
+    if moved == 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+fn rename_without_replace(_source: &Path, _destination: &Path) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "atomic no-replace file finalization is unavailable on this platform",
+    ))
 }

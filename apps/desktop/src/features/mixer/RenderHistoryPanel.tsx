@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { RenderHistoryEntry } from '@/model/domain';
 import type { ArrangeWorkspaceApi } from '@/features/arrange/arrange-api';
 import { chooseRenderStemDirectory, saveRenderWav } from '@/native/dialog';
+import { ConfirmDialog } from '@/shared/ui/ConfirmDialog';
 import styles from './Mixer.module.css';
 
 interface Props {
@@ -20,10 +21,22 @@ function shortPath(path: string) {
   return path.split(/[\\/]/).at(-1) || path;
 }
 
+function deleteRenderMessage(render: RenderHistoryEntry) {
+  const fileNames = render.files.map((file) => shortPath(file.path)).join(', ') || 'none';
+  const existingFiles = render.files.filter((file) => file.fileExists).length;
+  const assetIds =
+    render.files
+      .filter((file) => file.assetRegistered)
+      .map((file) => file.assetId ?? 'unknown')
+      .join(', ') || 'none';
+  return `Render ID: ${render.renderId}. Project: ${render.projectId ?? 'unknown'}. WAV files: ${fileNames} (${existingFiles} present). Registered Assets to remove: ${assetIds}. The Render history entry will also be deleted. This cannot be undone.`;
+}
+
 export function RenderHistoryPanel({ api, refreshToken }: Props) {
   const [renders, setRenders] = useState<RenderHistoryEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [busyRenderId, setBusyRenderId] = useState<string | null>(null);
+  const [pendingDeleteRender, setPendingDeleteRender] = useState<RenderHistoryEntry | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -64,7 +77,8 @@ export function RenderHistoryPanel({ api, refreshToken }: Props) {
     }
   };
 
-  const deleteRender = async (renderId: string) => {
+  const deleteRender = async (render: RenderHistoryEntry) => {
+    const { renderId } = render;
     setBusyRenderId(renderId);
     setError(null);
     setMessage(null);
@@ -166,7 +180,7 @@ export function RenderHistoryPanel({ api, refreshToken }: Props) {
                 <button
                   type="button"
                   disabled={busy}
-                  onClick={() => void deleteRender(render.renderId)}
+                  onClick={() => setPendingDeleteRender(render)}
                 >
                   Delete
                 </button>
@@ -177,6 +191,20 @@ export function RenderHistoryPanel({ api, refreshToken }: Props) {
       </div>
       {message && <p role="status">{message}</p>}
       {error && <p role="alert">{error}</p>}
+      {pendingDeleteRender && (
+        <ConfirmDialog
+          title="Delete render permanently?"
+          message={deleteRenderMessage(pendingDeleteRender)}
+          confirmLabel="Delete"
+          danger
+          onConfirm={() => {
+            const render = pendingDeleteRender;
+            setPendingDeleteRender(null);
+            void deleteRender(render);
+          }}
+          onCancel={() => setPendingDeleteRender(null)}
+        />
+      )}
     </section>
   );
 }
