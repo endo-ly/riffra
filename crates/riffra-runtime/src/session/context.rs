@@ -72,10 +72,7 @@ impl<D: RuntimeDriver> SessionContext<'_, D> {
         Ok(())
     }
 
-    fn validate_snapshot(
-        &self,
-        current: &riffra_core::CanonicalState,
-    ) -> Result<(), AdapterError> {
+    fn validate_snapshot(&self, current: &riffra_core::CanonicalState) -> Result<(), AdapterError> {
         let expected = &self.snapshot;
         if current.project_id != expected.project_id {
             return Err(AdapterError::ProjectConflict {
