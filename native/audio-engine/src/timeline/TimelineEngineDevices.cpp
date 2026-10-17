@@ -115,7 +115,23 @@ void TimelineEngine::routeLiveMidi(RealtimeState& state) noexcept {
                 !ArrangementGraph::midiRouteMatches(runtime.midiSourceIndex, runtime.midiChannel,
                                                     event.sourceIndex, message.getChannel()))
                 continue;
-            if (runtime.hasLoadedInstrument()) (void)runtime.enqueueMidi(message);
+            if (runtime.hasLoadedInstrument()) {
+                if (message.isNoteOn() || message.isNoteOff()) {
+                    const auto outputNote = runtime.midiNoteTransform.outputNote(
+                        static_cast<std::uint8_t>(message.getNoteNumber()));
+                    if (outputNote) {
+                        const auto transformed =
+                            message.isNoteOn()
+                                ? juce::MidiMessage::noteOn(message.getChannel(), *outputNote,
+                                                            message.getVelocity())
+                                : juce::MidiMessage::noteOff(message.getChannel(), *outputNote,
+                                                             message.getVelocity());
+                        (void)runtime.enqueueMidi(transformed);
+                    }
+                } else {
+                    (void)runtime.enqueueMidi(message);
+                }
+            }
             if (state.recordingPhase == RecordingPhase::recording) {
                 recordingCapture->writeMidiTrack(track.id, event.sourceIndex, message,
                                                  state.audioClockSample);

@@ -137,7 +137,12 @@
           "id": "instrument-internal",
           "bypassed": true,
           "definitionJson": "{\"schemaVersion\":1}",
-          "definitionBaseDir": "instruments/builtin/preset"
+          "definitionBaseDir": "instruments/builtin/preset",
+          "midi": {
+            "transposeSemitones": 0,
+            "playableNotes": null,
+            "keyswitches": []
+          }
         },
         "audioClips": [],
         "midiClips": [
@@ -211,6 +216,11 @@
               0.75
             ],
             "bypassed": false
+          },
+          "midi": {
+            "transposeSemitones": 0,
+            "playableNotes": null,
+            "keyswitches": []
           }
         },
         "audioClips": [],

@@ -144,6 +144,9 @@ impl HostState {
                 &params.track_id,
                 riffra_core::MidiInputRoute::default(),
             ),
+            CanonicalCommand::InstrumentMidiSet(params) => context
+                .commit(|mut app| app.set_track_instrument_midi(&params.track_id, params.settings))
+                .map(|committed| committed.0),
             CanonicalCommand::InstrumentVst3Set(params) => {
                 let path = crate::plugins::selected_plugin_path(
                     &self.data_root,
@@ -316,7 +319,8 @@ impl HostState {
             | CanonicalCommand::InstrumentList(_)
             | CanonicalCommand::InstrumentSave(_)
             | CanonicalCommand::InstrumentExport(_)
-            | CanonicalCommand::InstrumentApply(_)) => {
+            | CanonicalCommand::InstrumentApply(_)
+            | CanonicalCommand::InstrumentMidiGet(_)) => {
                 return self.dispatch_shared_canonical(command, access, current, &mut context);
             }
         }

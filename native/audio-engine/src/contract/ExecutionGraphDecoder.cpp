@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <limits>
+#include <set>
 
 #include "ContractReader.h"
 #include "MixerGraphValidation.h"
@@ -225,36 +226,137 @@ bool decodePluginDevice(const juce::var& value, const juce::String& path, Plugin
     return decodePluginStateValue(state, child(path, "state"), output.state, error);
 }
 
+bool decodeMidiNoteArray(const juce::Array<juce::var>& source, const juce::String& path,
+                         std::vector<std::uint8_t>& output, juce::String& error) {
+    std::set<std::uint8_t> unique;
+    output.clear();
+    output.reserve(static_cast<std::size_t>(source.size()));
+    for (int index = 0; index < source.size(); ++index) {
+        const auto& value = source[index];
+        const auto note = value.isInt()     ? static_cast<std::int64_t>(value)
+                          : value.isInt64() ? static_cast<std::int64_t>(value)
+                                            : -1;
+        if (note < 0 || note > 127)
+            return fail(error, element(path, index), "must be an integer in 0..=127");
+        const auto decoded = static_cast<std::uint8_t>(note);
+        if (!unique.insert(decoded).second)
+            return fail(error, element(path, index), "must not contain duplicates");
+        output.push_back(decoded);
+    }
+    if (output.empty()) return fail(error, path, "must not be empty");
+    return true;
+}
+
+bool decodeInstrumentMidi(const juce::var& value, const juce::String& path,
+                          InstrumentMidiSpec& output, juce::String& error) {
+    ContractReader reader(value, path, {"transposeSemitones", "playableNotes", "keyswitches"},
+                          error);
+    double transpose = 0.0;
+    juce::var playable;
+    juce::Array<juce::var> keyswitches;
+    if (!reader.number("transposeSemitones", transpose) ||
+        !reader.value("playableNotes", playable) || !reader.array("keyswitches", keyswitches) ||
+        !reader.finish())
+        return false;
+    if (std::floor(transpose) != transpose || transpose < -127 || transpose > 127)
+        return fail(error, child(path, "transposeSemitones"), "must be an integer in -127..=127");
+    output.transposeSemitones = static_cast<std::int16_t>(transpose);
+
+    if (!playable.isVoid()) {
+        juce::String type;
+        ContractReader tagReader(playable, child(path, "playableNotes"), {"type"}, error);
+        if (!tagReader.string("type", type)) return false;
+        if (type == "range") {
+            ContractReader rangeReader(playable, child(path, "playableNotes"),
+                                       {"type", "start", "end"}, error);
+            PlayableNotesSpec range;
+            range.kind = PlayableNotesKindSpec::range;
+            juce::String actualType;
+            if (!rangeReader.string("type", actualType) || actualType != type ||
+                !rangeReader.unsigned8("start", range.start) ||
+                !rangeReader.unsigned8("end", range.end) || !rangeReader.finish())
+                return false;
+            if (range.start > 127 || range.end > 127)
+                return fail(error, child(path, "playableNotes"),
+                            "must be within MIDI notes 0..=127");
+            if (range.start > range.end)
+                return fail(error, child(child(path, "playableNotes"), "start"),
+                            "must not exceed end");
+            output.playableNotes = range;
+        } else if (type == "set") {
+            ContractReader setReader(playable, child(path, "playableNotes"), {"type", "notes"},
+                                     error);
+            juce::String actualType;
+            juce::Array<juce::var> notes;
+            if (!setReader.string("type", actualType) || actualType != type ||
+                !setReader.array("notes", notes) || !setReader.finish())
+                return false;
+            PlayableNotesSpec set;
+            set.kind = PlayableNotesKindSpec::set;
+            if (!decodeMidiNoteArray(notes, child(child(path, "playableNotes"), "notes"), set.notes,
+                                     error))
+                return false;
+            output.playableNotes = std::move(set);
+        } else {
+            return fail(error, child(child(path, "playableNotes"), "type"), unknownValue(type));
+        }
+    }
+
+    output.keyswitches.clear();
+    std::set<std::uint8_t> uniqueKeyswitches;
+    output.keyswitches.reserve(static_cast<std::size_t>(keyswitches.size()));
+    for (int index = 0; index < keyswitches.size(); ++index) {
+        const auto itemPath = element(child(path, "keyswitches"), index);
+        ContractReader keyReader(keyswitches[index], itemPath, {"note", "name"}, error);
+        InstrumentKeyswitchSpec key;
+        if (!keyReader.unsigned8("note", key.note) || !keyReader.string("name", key.name) ||
+            !keyReader.finish())
+            return false;
+        if (key.note > 127) return fail(error, child(itemPath, "note"), "must be in 0..=127");
+        key.name = key.name.trim();
+        if (key.name.isEmpty()) return fail(error, child(itemPath, "name"), "must not be empty");
+        if (!uniqueKeyswitches.insert(key.note).second)
+            return fail(error, child(itemPath, "note"), "must not contain duplicates");
+        output.keyswitches.push_back(std::move(key));
+    }
+    return true;
+}
+
 bool decodeInstrument(const juce::var& value, const juce::String& path, InstrumentSpec& output,
                       juce::String& error) {
     ContractReader tagReader(value, path, {"type"}, error);
     juce::String type;
     if (!tagReader.string("type", type)) return false;
     if (type == "vst3") {
-        ContractReader reader(value, path, {"type", "id", "path", "state"}, error);
+        ContractReader reader(value, path, {"type", "id", "path", "state", "midi"}, error);
         juce::String actualType;
         Vst3InstrumentSpec instrument;
-        juce::var state;
+        juce::var state, midi;
         if (!reader.string("type", actualType) || actualType != type ||
             !reader.string("id", instrument.id) || !reader.string("path", instrument.path) ||
-            !reader.object("state", state) || !reader.finish())
+            !reader.object("state", state) || !reader.object("midi", midi) || !reader.finish())
             return false;
         if (!decodePluginStateValue(state, child(path, "state"), instrument.state, error))
             return false;
+        if (!decodeInstrumentMidi(midi, child(path, "midi"), instrument.midi, error)) return false;
         output = std::move(instrument);
         return true;
     }
     if (type == "internal") {
         ContractReader reader(
-            value, path, {"type", "id", "bypassed", "definitionJson", "definitionBaseDir"}, error);
+            value, path, {"type", "id", "bypassed", "definitionJson", "definitionBaseDir", "midi"},
+            error);
         juce::String actualType;
         InternalInstrumentSpec instrument;
+        juce::var midi;
         if (!reader.string("type", actualType) || actualType != type ||
             !reader.string("id", instrument.id) ||
             !reader.boolean("bypassed", instrument.bypassed) ||
             !reader.string("definitionJson", instrument.definitionJson) ||
-            !reader.string("definitionBaseDir", instrument.definitionBaseDir) || !reader.finish())
+            !reader.string("definitionBaseDir", instrument.definitionBaseDir) ||
+            !reader.object("midi", midi) || !reader.finish())
             return false;
+        if (!decodeInstrumentMidi(midi, child(path, "midi"), instrument.midi, error)) return false;
         output = std::move(instrument);
         return true;
     }

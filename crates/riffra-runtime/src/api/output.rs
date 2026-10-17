@@ -45,6 +45,7 @@ pub enum ControlOutput {
     Sends(Vec<riffra_core::Send>),
     SidechainSends(Vec<riffra_core::SidechainSend>),
     InstrumentEvents(Vec<riffra_core::InstrumentControlEvent>),
+    InstrumentMidi(InstrumentMidiInspection),
     SessionInspection(SessionInspection),
     History(HistoryState),
     RenderExport(RenderExportResult),

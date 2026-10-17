@@ -107,10 +107,34 @@ struct PluginDeviceSpec final {
     bool operator==(const PluginDeviceSpec&) const = default;
 };
 
+enum class PlayableNotesKindSpec { range, set };
+
+struct PlayableNotesSpec final {
+    PlayableNotesKindSpec kind = PlayableNotesKindSpec::range;
+    std::uint8_t start = 0;
+    std::uint8_t end = 127;
+    std::vector<std::uint8_t> notes;
+    bool operator==(const PlayableNotesSpec&) const = default;
+};
+
+struct InstrumentKeyswitchSpec final {
+    std::uint8_t note = 0;
+    juce::String name;
+    bool operator==(const InstrumentKeyswitchSpec&) const = default;
+};
+
+struct InstrumentMidiSpec final {
+    std::int16_t transposeSemitones = 0;
+    std::optional<PlayableNotesSpec> playableNotes;
+    std::vector<InstrumentKeyswitchSpec> keyswitches;
+    bool operator==(const InstrumentMidiSpec&) const = default;
+};
+
 struct Vst3InstrumentSpec final {
     juce::String id;
     juce::String path;
     PluginStateSpec state;
+    InstrumentMidiSpec midi;
     bool operator==(const Vst3InstrumentSpec&) const = default;
 };
 
@@ -119,6 +143,7 @@ struct InternalInstrumentSpec final {
     bool bypassed = false;
     juce::String definitionJson;
     juce::String definitionBaseDir;
+    InstrumentMidiSpec midi;
     bool operator==(const InternalInstrumentSpec&) const = default;
 };
 

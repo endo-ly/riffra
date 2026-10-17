@@ -157,12 +157,14 @@ pub(crate) enum GraphInstrument {
         id: String,
         path: String,
         state: GraphPluginState,
+        midi: riffra_core::InstrumentMidiSettings,
     },
     Internal {
         id: String,
         bypassed: bool,
         definition_json: String,
         definition_base_dir: String,
+        midi: riffra_core::InstrumentMidiSettings,
     },
 }
 
@@ -412,6 +414,7 @@ mod tests {
                 bypassed: true,
                 definition_json: "{\"schemaVersion\":1}".into(),
                 definition_base_dir: "instruments/builtin/preset".into(),
+                midi: Default::default(),
             }),
             Vec::new(),
         );
@@ -428,6 +431,7 @@ mod tests {
                 id: "instrument-vst".into(),
                 path: "plugins/instrument.vst3".into(),
                 state: state(None, false),
+                midi: Default::default(),
             }),
             Vec::new(),
         );

@@ -1,6 +1,7 @@
 //! Execution of canonical commands.
 
 use super::{DispatchError, HostDispatcher};
+use crate::api::output::InstrumentMidiInspection;
 use crate::api::output::TrackSummary;
 use crate::api::{CanonicalCommand, ControlOutput};
 use riffra_core::application::{
@@ -189,6 +190,36 @@ impl HostDispatcher<'_> {
                 Ok(ControlOutput::InstrumentEvents(
                     clip.instrument_control_events.clone(),
                 ))
+            }
+            CanonicalCommand::InstrumentMidiGet(params) => {
+                let track = canonical
+                    .session
+                    .arrangement
+                    .tracks
+                    .iter()
+                    .find(|track| track.id == params.track_id)
+                    .ok_or_else(|| DispatchError::invalid_request("track was not found"))?;
+                if track.kind != riffra_core::TrackKind::Instrument {
+                    return Err(DispatchError::invalid_request(
+                        "instrument MIDI settings require an instrument track",
+                    ));
+                }
+                let settings = track
+                    .instrument
+                    .as_ref()
+                    .map(|instrument| instrument.midi.clone())
+                    .unwrap_or_default();
+                let warnings =
+                    settings.warnings(&track.id, &canonical.session.arrangement.midi_clips);
+                Ok(ControlOutput::InstrumentMidi(InstrumentMidiInspection {
+                    track_id: track.id.clone(),
+                    instrument_id: track
+                        .instrument
+                        .as_ref()
+                        .map(|instrument| instrument.id.clone()),
+                    settings,
+                    warnings,
+                }))
             }
             command @ (CanonicalCommand::InstrumentEventAdd(_)
             | CanonicalCommand::InstrumentEventSet(_)
@@ -794,6 +825,10 @@ impl HostDispatcher<'_> {
             CanonicalCommand::InstrumentSave(params) => self.save_instrument(params),
             CanonicalCommand::InstrumentExport(params) => self.export_instrument(params),
             CanonicalCommand::InstrumentApply(params) => self.apply_instrument(application, params),
+            CanonicalCommand::InstrumentMidiSet(params) => self.edited(
+                application.set_track_instrument_midi(&params.track_id, params.settings)?,
+                application,
+            ),
             CanonicalCommand::InstrumentVst3Set(params) => {
                 self.set_vst3_instrument(application, params)
             }

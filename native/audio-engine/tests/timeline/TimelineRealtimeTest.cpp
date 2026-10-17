@@ -353,8 +353,9 @@ TEST(TimelineRealtimeTest, DeliversLiveMidiToTheArmedInstrumentAtTheNextBlock) {
     formats.registerBasicFormats();
     TimelineEngine engine;
     juce::String error;
-    auto snapshot = makeInstrumentSnapshot("track:live");
-    snapshot.graph.tracks.front().armed = true;
+    auto snapshot = makeBuiltInInstrumentSnapshot("track:live", false, true);
+    auto& instrument = std::get<InternalInstrumentSpec>(*snapshot.graph.tracks.front().instrument);
+    instrument.midi.transposeSemitones = 12;
     ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, kSampleRate, kBlockSamples, error));
     InstrumentTrace trace;
     auto rack = PluginRackTestPeer::installInstrument(
@@ -378,11 +379,19 @@ TEST(TimelineRealtimeTest, DeliversLiveMidiToTheArmedInstrumentAtTheNextBlock) {
     // Assert
     EXPECT_TRUE(routed);
     EXPECT_TRUE(trace.lastMidiMessage.isNoteOn());
+    EXPECT_EQ(trace.lastMidiMessage.getNoteNumber(), 72);
     EXPECT_EQ(engine.status().frame.transportState, TransportState::stopped);
     ASSERT_FALSE(trace.midiSamplePositions.empty());
     EXPECT_EQ(trace.midiSamplePositions.front(), 0);
     EXPECT_GT(left.front(), 0.01f);
     EXPECT_GT(*std::max_element(left.begin(), left.end()), 0.01f);
+
+    // A Live Note Off uses the same mapped key, even when the source note stays untransposed.
+    ASSERT_TRUE(engine.enqueueLiveMidi(0, juce::MidiMessage::noteOff(1, 60)));
+    (void)engine.beginBlock(kBlockSamples);
+    engine.mix(outputs.data(), 2, kBlockSamples);
+    EXPECT_TRUE(trace.lastMidiMessage.isNoteOff());
+    EXPECT_EQ(trace.lastMidiMessage.getNoteNumber(), 72);
 }
 
 TEST(TimelineRealtimeTest, CountsLiveMidiTheFullQueueCannotTake) {

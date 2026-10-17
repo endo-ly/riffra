@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "MidiNoteTransform.h"
 #include "TimelineTimebase.h"
 #include "contract/ExecutionGraph.h"
 
@@ -89,7 +90,8 @@ public:
 
     [[nodiscard]] static bool compile(const MidiClip& source, const TimelineTimebase& timebase,
                                       double sampleRate, CompiledMidiClip& destination,
-                                      juce::String& error);
+                                      juce::String& error,
+                                      const MidiNoteTransform* transform = nullptr);
 
     static void schedule(const std::vector<CompiledMidiClip>& clips, std::int64_t rangeStart,
                          int sampleCount, juce::MidiBuffer& destination) noexcept;

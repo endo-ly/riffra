@@ -6,6 +6,38 @@ impl<'a, S> Application<'a, S>
 where
     S: SessionStorage + ?Sized,
 {
+    /// Updates the MIDI settings on an assigned Instrument Track device.
+    pub fn set_track_instrument_midi(
+        &mut self,
+        track_id: &str,
+        mut settings: crate::InstrumentMidiSettings,
+    ) -> Result<CreativeSession, ApplicationError> {
+        settings
+            .validate_and_normalize()
+            .map_err(ApplicationError::InvalidCommand)?;
+        self.core.commit(self.storage, |session| {
+            let track = session
+                .arrangement
+                .tracks
+                .iter_mut()
+                .find(|track| track.id == track_id)
+                .ok_or_else(|| crate::DomainError::UnknownTrack(track_id.to_owned()))?;
+            if track.kind != TrackKind::Instrument {
+                return Err(ApplicationError::InvalidCommand(
+                    "only instrument tracks can configure instrument MIDI settings".into(),
+                ));
+            }
+            let instrument = track.instrument.as_mut().ok_or_else(|| {
+                ApplicationError::InvalidCommand(
+                    "the instrument track has no assigned instrument".into(),
+                )
+            })?;
+            instrument.midi = settings;
+            session.arrangement.revision = session.arrangement.revision.saturating_add(1);
+            Ok(())
+        })
+    }
+
     /// Routes or clears a physical audio input on an Audio Track.
     pub fn set_track_audio_input(
         &mut self,

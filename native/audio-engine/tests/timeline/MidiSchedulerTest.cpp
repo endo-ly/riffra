@@ -45,6 +45,39 @@ TEST(MidiSchedulerTest, CompilesAndSortsPreparedTimelineEvents) {
     EXPECT_EQ(compiled.events[4].sampleOffset, 4);
 }
 
+TEST(MidiSchedulerTest, PreparedNoteMappingIsSharedByNormalAndInternalInstrumentEvents) {
+    InstrumentMidiSpec settings;
+    settings.transposeSemitones = 12;
+    settings.playableNotes = PlayableNotesSpec{PlayableNotesKindSpec::range, 60, 96, {}};
+    settings.keyswitches.push_back({24, "Sustain"});
+    const MidiNoteTransform transform(settings);
+    MidiClip source;
+    source.durationTicks = 960;
+    source.notes = {{0, 120, 60, 100, 1}, {240, 120, 24, 100, 1}, {480, 120, 120, 100, 1}};
+    const TimelineTimebase timebase{10, {{0, 60.0}}, {{0, 4, 4}}};
+
+    CompiledMidiClip midi;
+    juce::String error;
+    ASSERT_TRUE(MidiScheduler::compile(source, timebase, 10.0, midi, error, &transform))
+        << error.toStdString();
+    std::vector<int> midiNotes;
+    for (const auto& event : midi.events)
+        if (event.message.isNoteOn() || event.message.isNoteOff())
+            midiNotes.push_back(event.message.getNoteNumber());
+    EXPECT_EQ(midiNotes, (std::vector<int>{72, 72, 24, 24}));
+
+    source.directInstrumentEvents = true;
+    CompiledMidiClip internal;
+    ASSERT_TRUE(MidiScheduler::compile(source, timebase, 10.0, internal, error, &transform))
+        << error.toStdString();
+    std::vector<int> internalNotes;
+    for (const auto& event : internal.events)
+        if (event.instrumentEvent && (event.instrumentEvent->event_type == SONALLOY_EVENT_NOTE_ON ||
+                                      event.instrumentEvent->event_type == SONALLOY_EVENT_NOTE_OFF))
+            internalNotes.push_back(event.instrumentEvent->note_number);
+    EXPECT_EQ(internalNotes, (std::vector<int>{72, 72, 24, 24}));
+}
+
 TEST(MidiSchedulerTest, EmitsClippedNoteOffAtClipBoundaryAfterSeek) {
     CompiledMidiClip compiled;
     juce::String error;
