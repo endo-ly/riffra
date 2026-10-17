@@ -100,7 +100,7 @@ External Audioは1つのSource TrackからInstrumentへ音声を渡す。複数�
 - Busを削除するには、主出力先として参照するTrackと、宛先として参照するSendを先に解除する
 - Track削除時はそのTrackのSendも削除する。Track複製時は主出力先とSend設定を引き継ぎ、Device・SendのIDは新しく割り当てる
 
-Mixdown設定は楽曲終端Tick、秒単位のTailとFade、任意のLoudness Mastering目標、比較用のSample Rate・Block Sizeを保持する。Entire Arrangementの終端は楽曲終端設定と現在のClip終端の大きい方にTailを加え、最終MixへFadeを1回適用する。
+Mixdown設定は楽曲終端Tick、秒単位のTailとFade、任意のLoudness Mastering目標、比較用のSample Rate・Block Sizeを保持する。Entire Arrangementの終端は楽曲終端設定と現在のClip終端の大きい方にTailを加え、最終MixへFadeを1回適用する。Mastering目標は音量のIntegrated LUFSと判定基準のTrue Peak、参考量のLoudness Rangeであり、調整はMix全体への一定のゲインで行う。
 
 ### 3.4 オートメーション
 
@@ -115,7 +115,7 @@ Mixdown設定は楽曲終端Tick、秒単位のTailとFade、任意のLoudness M
 | `sidechainSendLevel` | SidechainSend ID                       | dB                        |
 | `deviceParameter`    | VST3 Device IDとStable Parameter ID    | 正規化値0..1              |
 
-- Pointは独立したID、楽曲全体の絶対Tick、数値を保持する
+- Pointは独立したID、楽曲全体の絶対Tick、値を保持する。入力は絶対Tickまたは小節位置のいずれかであり、小節位置はその時点のテンポ・拍子でTickへ変換して保存する。Device対象の値は正規化数値またはPluginの表示文字列であり、表示文字列は実行時に数値へ解決して保存する
 - Laneの更新はIDを維持し、空のPoint列はLaneの削除を表す
 - 補間と再生時の適用は [音声エンジンの設計](audio-engine.md) に従う
 - Track・Bus・Send・Deviceの削除は、その対象のLaneも削除する

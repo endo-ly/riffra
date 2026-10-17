@@ -7,7 +7,7 @@ mod transport;
 mod transport_executor;
 
 pub(crate) use self::ports::{ProjectionDriver, RuntimeDriver, TransportDriver};
-pub(crate) use self::projection_coordinator::ProjectionStatusHook;
+pub(crate) use self::projection_coordinator::{ProjectionStatusHook, ProjectionWait};
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
@@ -245,6 +245,24 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
         )?;
         self.projection
             .wait_for_operation(operation.operation_id, operation.key, deadline, timeout)
+    }
+
+    /// Waits until the native timeline holds the projected graph for `key` so
+    /// native device reads cannot run against a graph that is being replaced,
+    /// and lets reads proceed when the runtime holds no projection for that
+    /// key (for example in Safe Mode).
+    ///
+    /// # Errors
+    ///
+    /// Propagates the projection error when it failed or was replaced by a
+    /// newer canonical state, and [`RuntimeError::Timeout`] after
+    /// [`TIMELINE_PREPARE_TIMEOUT`].
+    pub(crate) fn wait_for_native_projection(
+        &self,
+        key: ProjectionKey,
+    ) -> Result<ProjectionWait, RuntimeError> {
+        self.projection
+            .wait_for_projection(key, TIMELINE_PREPARE_TIMEOUT)
     }
 
     /// Registers a Play intent without starting a new projection. Canonical

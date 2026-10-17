@@ -46,6 +46,27 @@ impl HostState {
         })
     }
 
+    /// Waits for the runtime projection matching `current` before a native
+    /// device read, so the read cannot observe a graph that is being replaced.
+    /// The wait runs without holding a canonical lock, and states outside the
+    /// projection lifecycle (Safe Mode, a runtime that never projected this
+    /// key) read the live native graph directly.
+    fn wait_for_device_projection(&self, current: &CanonicalState) -> Result<(), ProtocolError> {
+        let key = riffra_core::ProjectionKey {
+            sequence: current.sequence,
+            session_revision: current.session.arrangement.revision,
+        };
+        match self
+            .runtime
+            .wait_for_native_projection(key)
+            .map_err(runtime_error)?
+        {
+            crate::runtime::ProjectionWait::Ready | crate::runtime::ProjectionWait::Missing => {
+                Ok(())
+            }
+        }
+    }
+
     pub(crate) fn dispatch_request(self: &Arc<Self>, request: ControlRequest) -> ControlResponse {
         let _lifecycle = match self.lifecycle.enter() {
             Ok(guard) => guard,
@@ -728,15 +749,19 @@ impl HostState {
                     &params.device_id,
                 )? {
                     Some(inspection) => ControlOutput::DeviceInspection(inspection),
-                    None => ControlOutput::DeviceInspection(
-                        self.audio
-                            .inspect_device(&params.owner, &params.device_id)
-                            .map_err(audio_error)?,
-                    ),
+                    None => {
+                        self.wait_for_device_projection(&current)?;
+                        ControlOutput::DeviceInspection(
+                            self.audio
+                                .inspect_device(&params.owner, &params.device_id)
+                                .map_err(audio_error)?,
+                        )
+                    }
                 }
             }
             RuntimeCommand::DeviceParameterList(params) => {
                 let _ = canonical_plugin_device(&current, &params.owner, &params.device_id)?;
+                self.wait_for_device_projection(&current)?;
                 ControlOutput::DeviceParameters(
                     self.audio
                         .list_device_parameters(&params.owner, &params.device_id)
@@ -745,6 +770,7 @@ impl HostState {
             }
             RuntimeCommand::DeviceParameterGet(params) => {
                 let _ = canonical_plugin_device(&current, &params.owner, &params.device_id)?;
+                self.wait_for_device_projection(&current)?;
                 ControlOutput::DeviceParameter(
                     self.audio
                         .list_device_parameters(&params.owner, &params.device_id)
@@ -761,6 +787,7 @@ impl HostState {
             }
             RuntimeCommand::DeviceParameterFormat(params) => {
                 let _ = canonical_plugin_device(&current, &params.owner, &params.device_id)?;
+                self.wait_for_device_projection(&current)?;
                 let display_value = self
                     .audio
                     .device_parameter_display_value(
@@ -774,6 +801,7 @@ impl HostState {
             }
             RuntimeCommand::PluginPresetList(params) => {
                 let _ = canonical_plugin_device(&current, &params.owner, &params.device_id)?;
+                self.wait_for_device_projection(&current)?;
                 let presets = self
                     .audio
                     .list_plugin_programs(&params.owner, &params.device_id)
@@ -788,6 +816,7 @@ impl HostState {
             }
             RuntimeCommand::PluginPresetGet(params) => {
                 let _ = canonical_plugin_device(&current, &params.owner, &params.device_id)?;
+                self.wait_for_device_projection(&current)?;
                 let programs = self
                     .audio
                     .list_plugin_programs(&params.owner, &params.device_id)
@@ -812,6 +841,7 @@ impl HostState {
                 }
                 let (plugin_path, bypassed) =
                     canonical_plugin_device(&current, &params.owner, &params.device_id)?;
+                self.wait_for_device_projection(&current)?;
                 let programs = self
                     .audio
                     .list_plugin_programs(&params.owner, &params.device_id)
@@ -870,6 +900,7 @@ impl HostState {
             RuntimeCommand::PluginStateGet(params) => {
                 let (plugin_path, _) =
                     canonical_plugin_device(&current, &params.owner, &params.device_id)?;
+                self.wait_for_device_projection(&current)?;
                 let state = self
                     .audio
                     .get_plugin_state(&params.owner, &params.device_id)
@@ -880,6 +911,7 @@ impl HostState {
                 let (plugin_path, bypassed) =
                     canonical_plugin_device(&current, &params.owner, &params.device_id)?;
                 validate_plugin_state(&params.state, &plugin_path)?;
+                self.wait_for_device_projection(&current)?;
                 let previous_state = self
                     .audio
                     .get_plugin_state(&params.owner, &params.device_id)
@@ -1508,19 +1540,7 @@ pub(super) fn runtime_error(error: RuntimeError) -> ProtocolError {
 }
 
 pub(super) fn audio_error(error: crate::NativeAudioError) -> ProtocolError {
-    let descriptor = error.descriptor();
-    let code = match descriptor.kind.as_str() {
-        "deviceLost" | "transportLost" | "generationChanged" | "process" | "safeMode" => {
-            ErrorCode::RuntimeUnavailable
-        }
-        _ => ErrorCode::CommandFailed,
-    };
-    ProtocolError::new(code, descriptor.message).with_details(serde_json::json!({
-        "domain": "nativeAudio",
-        "kind": descriptor.kind,
-        "operation": descriptor.operation,
-        "details": descriptor.details,
-    }))
+    error.protocol_error()
 }
 
 fn canonical_plugin_device(

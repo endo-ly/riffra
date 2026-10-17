@@ -307,7 +307,7 @@ where
             let mut events = arrangement
                 .harmony_events
                 .iter()
-                .filter(|event| event.start_tick >= start_tick && event.start_tick < end_tick)
+                .filter(|event| event.start_tick < end_tick && event.end_tick > start_tick)
                 .cloned()
                 .collect::<Vec<_>>();
             events.sort_by_key(|event| (event.start_tick, event.end_tick, event.id.clone()));
@@ -324,13 +324,13 @@ where
             let mut notes = Vec::new();
             for event in events {
                 let pitches = realize_chord(&event.chord, voicing.lowest_octave)?;
-                let event_duration = event
-                    .end_tick
-                    .0
-                    .checked_sub(event.start_tick.0)
-                    .ok_or_else(|| {
-                        crate::DomainError::InvalidHarmony("harmony event range is invalid".into())
-                    })?;
+                // Notes live inside the common part of the realization selection, the
+                // harmony event range, and the target clip range.
+                let common_start = event.start_tick.0.max(start_tick.0).max(clip_start.0);
+                let common_end = event.end_tick.0.min(end_tick.0).min(clip_end.0);
+                if common_start >= common_end {
+                    continue;
+                }
                 if let Some(pattern) = &pattern {
                     let mut repeat = 0_u64;
                     loop {
@@ -348,19 +348,27 @@ where
                                         "rhythm onset is too large".into(),
                                     )
                                 })?;
-                            if onset >= event.end_tick.0 {
+                            if onset < common_end {
+                                added_step = true;
+                            }
+                            // Repeats stay anchored to the harmony event start, so a step can
+                            // begin before the selection window; only the part of its note
+                            // that reaches into the window is generated, clipped to the
+                            // window edges.
+                            let note_start = onset.max(common_start);
+                            let duration = timebase.musical_duration_to_ticks(step.duration)?;
+                            let note_end = onset.saturating_add(duration).min(common_end);
+                            if note_end <= note_start {
                                 continue;
                             }
-                            added_step = true;
-                            let duration = timebase.musical_duration_to_ticks(step.duration)?;
                             for pitch in &pitches {
                                 push_resolved_midi_note(
                                     &mut notes,
                                     available_notes,
                                     ResolvedMidiNoteInput {
                                         pitch: pitch.midi_pitch(),
-                                        absolute_start_tick: TimelineTick(onset),
-                                        duration_ticks: duration,
+                                        absolute_start_tick: TimelineTick(note_start),
+                                        duration_ticks: note_end - note_start,
                                         velocity: step.velocity.or(velocity).unwrap_or(100),
                                         channel: channel.unwrap_or(1),
                                     },
@@ -379,14 +387,20 @@ where
                             available_notes,
                             ResolvedMidiNoteInput {
                                 pitch: pitch.midi_pitch(),
-                                absolute_start_tick: event.start_tick,
-                                duration_ticks: event_duration,
+                                absolute_start_tick: TimelineTick(common_start),
+                                duration_ticks: common_end - common_start,
                                 velocity: velocity.unwrap_or(100),
                                 channel: channel.unwrap_or(1),
                             },
                         )?;
                     }
                 }
+            }
+            if notes.is_empty() {
+                return Err(crate::DomainError::InvalidHarmony(
+                    "no note fits within the realization selection".into(),
+                )
+                .into());
             }
             let ids = insert_resolved_midi_notes_in_arrangement(arrangement, clip_id, notes)?;
             for id in ids {
@@ -673,6 +687,214 @@ mod tests {
         );
         assert_eq!(notes[0].velocity, 80);
         assert_eq!(notes[3].velocity, 100);
+    }
+
+    #[test]
+    fn realize_keeps_notes_within_the_realization_selection() {
+        // Arrange
+        let storage = MemoryStorage::default();
+        let mut core = AppCore::new("project:test".into(), CreativeSession::new(1), 0);
+        let track = core
+            .application(&storage)
+            .add_track_with_created_ids("Keys", TrackKind::Instrument)
+            .unwrap();
+        let clip = core
+            .application(&storage)
+            .create_musical_midi_clip_with_created_ids(
+                &track.session.arrangement.tracks[0].id,
+                "50:1".parse().unwrap(),
+                "58:1".parse().unwrap(),
+                None,
+            )
+            .unwrap();
+        let clip_id = clip.session.arrangement.midi_clips[0].id.clone();
+        core.application(&storage)
+            .insert_harmony_events_with_created_ids(vec![HarmonyEventInput {
+                start: "49:1".parse().unwrap(),
+                end: "59:1".parse().unwrap(),
+                chord: Some("C".into()),
+                pitches: None,
+                root: None,
+                bass: None,
+                label: None,
+            }])
+            .unwrap();
+
+        // Act
+        let realized = core
+            .application(&storage)
+            .realize_harmony_with_created_ids(
+                &clip_id,
+                HarmonyRealizeSelection {
+                    start: Some("50:1".parse().unwrap()),
+                    end: Some("57:1".parse().unwrap()),
+                },
+                ChordVoicingInput::default(),
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+
+        // Assert
+        let clip = &realized.session.arrangement.midi_clips[0];
+        let selection_end = clip.start_tick.0 + 7 * 3_840;
+        assert_eq!(clip.notes.len(), 3);
+        for note in &clip.notes {
+            let absolute_end = clip.start_tick.0 + note.start_tick.0 + note.duration_ticks;
+            assert!(absolute_end <= selection_end);
+            assert!(clip.start_tick.0 + note.start_tick.0 >= clip.start_tick.0);
+        }
+        let note = &clip.notes[0];
+        assert_eq!(note.start_tick.0, 0);
+        assert_eq!(note.duration_ticks, 7 * 3_840);
+    }
+
+    #[test]
+    fn rhythm_realize_keeps_notes_within_the_realization_selection() {
+        // Arrange
+        let storage = MemoryStorage::default();
+        let mut core = AppCore::new("project:test".into(), CreativeSession::new(1), 0);
+        let track = core
+            .application(&storage)
+            .add_track_with_created_ids("Keys", TrackKind::Instrument)
+            .unwrap();
+        let clip = core
+            .application(&storage)
+            .create_musical_midi_clip_with_created_ids(
+                &track.session.arrangement.tracks[0].id,
+                "50:1".parse().unwrap(),
+                "58:1".parse().unwrap(),
+                None,
+            )
+            .unwrap();
+        let clip_id = clip.session.arrangement.midi_clips[0].id.clone();
+        core.application(&storage)
+            .insert_harmony_events_with_created_ids(vec![HarmonyEventInput {
+                start: "56:1".parse().unwrap(),
+                end: "58:1".parse().unwrap(),
+                chord: Some("C".into()),
+                pitches: None,
+                root: None,
+                bass: None,
+                label: None,
+            }])
+            .unwrap();
+
+        // Act
+        let realized = core
+            .application(&storage)
+            .realize_harmony_with_created_ids(
+                &clip_id,
+                HarmonyRealizeSelection {
+                    start: Some("50:1".parse().unwrap()),
+                    end: Some("57:1".parse().unwrap()),
+                },
+                ChordVoicingInput::default(),
+                Some(
+                    RhythmPattern::new(
+                        "1/2".parse().unwrap(),
+                        vec![
+                            RhythmStep {
+                                offset: "0/1".parse().unwrap(),
+                                duration: "1/8".parse().unwrap(),
+                                velocity: Some(80),
+                            },
+                            RhythmStep {
+                                offset: "1/4".parse().unwrap(),
+                                duration: "1/8".parse().unwrap(),
+                                velocity: None,
+                            },
+                        ],
+                    )
+                    .unwrap(),
+                ),
+                None,
+                None,
+            )
+            .unwrap();
+
+        // Assert
+        let clip = &realized.session.arrangement.midi_clips[0];
+        let selection_end = clip.start_tick.0 + 7 * 3_840;
+        assert_eq!(clip.notes.len(), 12);
+        for note in &clip.notes {
+            let absolute_end = clip.start_tick.0 + note.start_tick.0 + note.duration_ticks;
+            assert!(absolute_end <= selection_end);
+        }
+    }
+
+    #[test]
+    fn rhythm_realize_clips_step_notes_that_cross_the_selection_start() {
+        // Arrange
+        let storage = MemoryStorage::default();
+        let mut core = AppCore::new("project:test".into(), CreativeSession::new(1), 0);
+        let track = core
+            .application(&storage)
+            .add_track_with_created_ids("Keys", TrackKind::Instrument)
+            .unwrap();
+        let clip = core
+            .application(&storage)
+            .create_musical_midi_clip_with_created_ids(
+                &track.session.arrangement.tracks[0].id,
+                "50:1".parse().unwrap(),
+                "58:1".parse().unwrap(),
+                None,
+            )
+            .unwrap();
+        let clip_id = clip.session.arrangement.midi_clips[0].id.clone();
+        core.application(&storage)
+            .insert_harmony_events_with_created_ids(vec![HarmonyEventInput {
+                start: "49:1".parse().unwrap(),
+                end: "58:1".parse().unwrap(),
+                chord: Some("C".into()),
+                pitches: None,
+                root: None,
+                bass: None,
+                label: None,
+            }])
+            .unwrap();
+
+        // Act
+        let realized = core
+            .application(&storage)
+            .realize_harmony_with_created_ids(
+                &clip_id,
+                HarmonyRealizeSelection::default(),
+                ChordVoicingInput::default(),
+                Some(
+                    RhythmPattern::new(
+                        "1/2".parse().unwrap(),
+                        vec![RhythmStep {
+                            offset: "3/8".parse().unwrap(),
+                            duration: "1/2".parse().unwrap(),
+                            velocity: None,
+                        }],
+                    )
+                    .unwrap(),
+                ),
+                None,
+                None,
+            )
+            .unwrap();
+
+        // Assert
+        // The pattern starts before the clip: every repeat keeps its anchor on the harmony
+        // event start, and the step of the first reaching repeat is clipped to the clip start
+        // instead of being skipped.
+        let clip = &realized.session.arrangement.midi_clips[0];
+        let clip_end = clip.start_tick.0 + clip.duration_ticks;
+        assert_eq!(clip.notes.len(), 51);
+        let clipped = clip
+            .notes
+            .iter()
+            .filter(|note| note.duration_ticks == 1_440)
+            .collect::<Vec<_>>();
+        assert_eq!(clipped.len(), 3);
+        assert!(clipped.iter().all(|note| note.start_tick.0 == 0));
+        for note in &clip.notes {
+            assert!(clip.start_tick.0 + note.start_tick.0 + note.duration_ticks <= clip_end);
+        }
     }
 
     #[test]

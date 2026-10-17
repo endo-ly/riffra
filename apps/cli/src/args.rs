@@ -2040,10 +2040,20 @@ pub struct DeviceParameterSetArgs {
     #[arg(long)]
     pub parameter_index: u32,
     /// New parameter value; values are clamped to the device's 0.0..=1.0 parameter range.
-    #[arg(long, conflicts_with = "display", required_unless_present = "display")]
+    #[arg(
+        long,
+        allow_hyphen_values = true,
+        conflicts_with = "display",
+        required_unless_present = "display"
+    )]
     pub value: Option<f32>,
     /// Plugin display text; requires a running Host accessed with --attach.
-    #[arg(long, conflicts_with = "value", required_unless_present = "value")]
+    #[arg(
+        long,
+        allow_hyphen_values = true,
+        conflicts_with = "value",
+        required_unless_present = "value"
+    )]
     pub display: Option<String>,
 }
 
@@ -3188,7 +3198,8 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
                 MusicHarmonyCommand::Insert(args) => harmony_insert(args)?,
                 MusicHarmonyCommand::Update(args) => harmony_update(args)?,
                 MusicHarmonyCommand::Remove(args) => {
-                    let event_ids = serde_json::from_str::<Vec<String>>(&args.event_ids_json)
+                    let event_ids_json = quoted_input("event-ids-json", &args.event_ids_json)?;
+                    let event_ids = serde_json::from_str::<Vec<String>>(&event_ids_json)
                         .map_err(|error| format!("--event-ids-json is invalid JSON: {error}"))?;
                     Canonical::MusicHarmonyRemove(HarmonyRemoveParams { event_ids }).into()
                 }
@@ -3674,8 +3685,19 @@ fn optional_text<T: DeserializeOwned>(
     value.map(|value| text(pointer, value)).transpose()
 }
 
+/// Reads `@path` references as file contents; other input is taken verbatim.
+fn quoted_input(flag: &str, encoded: &str) -> Result<String, String> {
+    if let Some(path) = encoded.strip_prefix('@') {
+        std::fs::read_to_string(path)
+            .map_err(|error| format!("--{flag} file could not be read: {error}"))
+    } else {
+        Ok(encoded.to_owned())
+    }
+}
+
 fn json_argument(flag: &str, encoded: &str) -> Result<Value, String> {
-    serde_json::from_str(encoded).map_err(|error| format!("--{flag} is invalid JSON: {error}"))
+    serde_json::from_str(&quoted_input(flag, encoded)?)
+        .map_err(|error| format!("--{flag} is invalid JSON: {error}"))
 }
 
 fn track_id(args: IdArg) -> TrackIdParams {
@@ -3824,7 +3846,7 @@ fn json_source(
         return Ok(None);
     }
     let encoded = if let Some(inline) = inline {
-        inline
+        quoted_input(&format!("{field}-json"), &inline)?
     } else if let Some(file) = file {
         std::fs::read_to_string(&file)
             .map_err(|error| format!("--{field}-file could not be read: {error}"))?
@@ -3945,6 +3967,7 @@ fn id_list(ids: Vec<String>, encoded: Option<String>, flag: &str) -> Result<Vec<
     if !ids.is_empty() {
         return Err(format!("--{flag} and --{flag}-json cannot be combined"));
     }
+    let encoded = quoted_input(&format!("{flag}-json"), &encoded)?;
     serde_json::from_str::<Vec<String>>(&encoded)
         .map_err(|error| format!("--{flag}-json is invalid JSON: {error}"))
 }
@@ -5332,5 +5355,103 @@ mod tests {
             assert!(error.contains("unknown field"));
             let _ = std::fs::remove_file(path);
         }
+    }
+
+    #[test]
+    fn json_arguments_accept_file_references_and_negative_device_values() {
+        let path = std::env::temp_dir().join(format!(
+            "riffra-cli-json-at-reference-{}.json",
+            std::process::id()
+        ));
+        std::fs::write(&path, br#"[{"id":"point:1","tick":0,"value":-6}]"#).unwrap();
+        let at_reference = format!("@{}", path.display());
+        let from_file = wire(
+            Cli::try_parse_from([
+                "riffra",
+                "automation",
+                "set",
+                "--master",
+                "--parameter",
+                "gain",
+                "--interpolation",
+                "step",
+                "--points-json",
+                &at_reference,
+            ])
+            .unwrap(),
+        );
+        let inline = wire(
+            Cli::try_parse_from([
+                "riffra",
+                "automation",
+                "set",
+                "--master",
+                "--parameter",
+                "gain",
+                "--interpolation",
+                "step",
+                "--points-json",
+                r#"[{"id":"point:1","tick":0,"value":-6}]"#,
+            ])
+            .unwrap(),
+        );
+        assert_eq!(from_file.params["points"], inline.params["points"]);
+
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "automation",
+            "set",
+            "--master",
+            "--parameter",
+            "gain",
+            "--interpolation",
+            "step",
+            "--points-json",
+            "@/riffra-missing-json-reference.json",
+        ])
+        .unwrap();
+        let RequestError::Usage(error) = cli.request().unwrap_err() else {
+            panic!("a missing @file reference is a usage error");
+        };
+        assert!(error.contains("file could not be read"));
+        let _ = std::fs::remove_file(path);
+
+        let value = wire(
+            Cli::try_parse_from([
+                "riffra",
+                "device",
+                "parameter",
+                "set",
+                "--track-id",
+                "track:1",
+                "--device-id",
+                "fx:1",
+                "--parameter-index",
+                "1",
+                "--value",
+                "-0.25",
+            ])
+            .unwrap(),
+        );
+        assert_eq!(value.params["value"], -0.25);
+
+        let display = wire(
+            Cli::try_parse_from([
+                "riffra",
+                "device",
+                "parameter",
+                "set",
+                "--track-id",
+                "track:1",
+                "--device-id",
+                "fx:1",
+                "--parameter-index",
+                "1",
+                "--display",
+                "-60.00 dB",
+            ])
+            .unwrap(),
+        );
+        assert_eq!(display.params["display"], "-60.00 dB");
     }
 }

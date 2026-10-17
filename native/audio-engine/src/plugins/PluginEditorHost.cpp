@@ -26,7 +26,6 @@ public:
             host.rack.hostEditInProgress.load(std::memory_order_acquire) ||
             (!details.nonParameterStateChanged && !details.programChanged))
             return;
-        host.rack.parameterControllerSyncPending.store(true, std::memory_order_release);
         host.markOpaqueStateDirty();
     }
 
@@ -206,7 +205,6 @@ void PluginEditorHost::queueParameterChange(const int index, const float value) 
         return;
     if (rack.isAutomationActive()) return;
     rack.staticStateDirty.store(true, std::memory_order_release);
-    rack.parameterControllerSyncPending.store(true, std::memory_order_release);
     const auto offset = static_cast<std::size_t>(index);
     parameterValues[offset].store(juce::jlimit(0.0f, 1.0f, value), std::memory_order_release);
     parameterDirty[offset].store(true, std::memory_order_release);

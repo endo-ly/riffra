@@ -95,6 +95,15 @@ struct PluginProgramStatus final {
     std::optional<juce::String> error;
 };
 
+/// Plugin-reported state of one parameter, read back after an application.
+struct PluginParameterReadback final {
+    float value = 0.0f;
+    juce::String displayValue;
+    juce::String label;
+    bool discrete = false;
+    std::uint32_t stepCount = 0;
+};
+
 class PluginRack;
 
 /// Graph-owned binding; plugin identity and parameter references are resolved before publication.
@@ -150,6 +159,15 @@ public:
     [[nodiscard]] std::uint64_t droppedMidiEvents() const noexcept;
     [[nodiscard]] PluginRackStatus status() const;
     [[nodiscard]] std::vector<PluginParameterInfo> parameters() const;
+    /// Plugin-reported normalized value, display text, and quantization of one
+    /// parameter, read back to verify an application.
+    [[nodiscard]] std::optional<PluginParameterReadback> parameterReadback(
+        int index, juce::String& error) const;
+    /// Compares requested display text with the plugin-rendered text, allowing
+    /// unit continuations and display precision to differ.
+    [[nodiscard]] static bool equivalentDisplayText(const juce::String& input,
+                                                    const juce::String& output,
+                                                    const juce::String& label);
     /// Resolves a stable parameter ID and binds its lane to the projected static state.
     [[nodiscard]] std::optional<PluginParameterAutomation> bindAutomation(
         const juce::String& parameterId, AutomationRuntime lane, const PluginStateSpec& state,
@@ -190,6 +208,7 @@ private:
     };
 
     void updateParameterCount(juce::AudioProcessor& processor);
+    void refreshPreparedLatencySamples() noexcept;
     [[nodiscard]] juce::AudioProcessorEditor* createEditor(juce::String& error);
     [[nodiscard]] juce::String currentPluginName() const;
     /// Auxiliary input wiring resolved from the buses a processor was prepared with.
@@ -214,7 +233,7 @@ private:
     std::atomic<std::uint64_t> cancelledControlSequence{0};
     void queueParameterValue(int index, float value) noexcept;
     [[nodiscard]] bool canQueueParameterValue(int index, juce::String& error) const noexcept;
-    bool synchronizeParameterController(juce::String& error);
+    [[nodiscard]] bool hasQueuedParameterChanges() const noexcept;
     std::optional<float> parameterValueForText(int index, const juce::String& text,
                                                juce::String& error) const;
     [[nodiscard]] std::optional<juce::String> parameterDisplayValue(int index, float value,
@@ -281,7 +300,6 @@ private:
     std::atomic<std::uint64_t> destroyCount{0};
     std::atomic<bool> bypassed{false};
     std::atomic<bool> panicPending{false};
-    std::atomic<bool> parameterControllerSyncPending{false};
     std::atomic<bool> automationActive{false};
     const PluginParameterAutomation* activeBindings = nullptr;
     std::size_t activeBindingCount = 0;

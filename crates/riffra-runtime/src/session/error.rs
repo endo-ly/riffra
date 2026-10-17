@@ -19,6 +19,8 @@ pub enum AdapterError {
     #[error("{0}")]
     RuntimeUnavailable(String),
     #[error("{0}")]
+    Native(NativeAudioError),
+    #[error("{0}")]
     CommandFailed(String),
 }
 
@@ -37,6 +39,7 @@ impl AdapterError {
             Self::RuntimeUnavailable(message) => {
                 ProtocolError::new(ErrorCode::RuntimeUnavailable, message)
             }
+            Self::Native(error) => error.protocol_error(),
             Self::CommandFailed(message) => ProtocolError::new(ErrorCode::CommandFailed, message),
         }
     }
@@ -79,6 +82,6 @@ impl From<&str> for AdapterError {
 
 impl From<NativeAudioError> for AdapterError {
     fn from(error: NativeAudioError) -> Self {
-        Self::RuntimeUnavailable(error.to_string())
+        Self::Native(error)
     }
 }

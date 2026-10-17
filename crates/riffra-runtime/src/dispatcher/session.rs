@@ -104,7 +104,7 @@ fn batch_operation(
     params: Value,
     owned_snapshots: &mut Vec<OwnedProjectInstrumentSnapshot>,
 ) -> Result<BTreeMap<String, Vec<String>>, DispatchError> {
-    let params = resolve_batch_references(&candidate.canonical_state(), params)?;
+    let params = resolve_batch_references(name, &candidate.canonical_state(), params)?;
     let command = ControlCommand::decode(name, params)?;
     let policy = command.policy();
     let (
@@ -151,8 +151,11 @@ fn unsupported(name: &str) -> DispatchError {
 /// Rewrites Track, Clip, and Bus name references to IDs against the batch
 /// candidate. A `clipName` is looked up within the Track, and the Track and
 /// Clip references are replaced by the `clipId`. Runs before decoding
-/// because the names are not params fields.
+/// because the names are not params fields. `automation.set` additionally
+/// accepts name references inside `target` and musical `position` values,
+/// converted to absolute ticks with the candidate timebase.
 fn resolve_batch_references(
+    name: &str,
     canonical: &riffra_core::CanonicalState,
     params: Value,
 ) -> Result<Value, DispatchError> {
@@ -160,6 +163,14 @@ fn resolve_batch_references(
         Value::Object(params) => params,
         params => return Ok(params),
     };
+
+    if name == "automation.set" {
+        if let Some(Value::Object(target)) = params.get_mut("target") {
+            resolve_track_name_reference(target, canonical)?;
+            resolve_bus_name_reference(target, canonical, "busName", "busId")?;
+        }
+        resolve_automation_points(canonical, &mut params)?;
+    }
 
     if let Some(Value::Object(owner)) = params.get_mut("owner")
         && let Some(name) = owner.remove("name")
@@ -212,76 +223,9 @@ fn resolve_batch_references(
         owner.insert("id".into(), Value::String(id));
     }
 
-    if params.contains_key("trackName") {
-        if params.contains_key("trackId") {
-            return Err(DispatchError::invalid_request(
-                "trackId and trackName cannot both be specified",
-            ));
-        }
-        let name = params
-            .get("trackName")
-            .and_then(Value::as_str)
-            .ok_or_else(|| DispatchError::invalid_request("trackName must be a string"))?;
-        let matches = canonical
-            .session
-            .arrangement
-            .tracks
-            .iter()
-            .filter(|track| track.name == name)
-            .collect::<Vec<_>>();
-        let track_id = match matches.as_slice() {
-            [] => {
-                return Err(DispatchError::invalid_request(format!(
-                    "unknown track name '{name}'"
-                )));
-            }
-            [track] => track.id.clone(),
-            matches => {
-                return Err(DispatchError::invalid_request(format!(
-                    "ambiguous track name '{name}': {} tracks matched",
-                    matches.len()
-                )));
-            }
-        };
-        params.remove("trackName");
-        params.insert("trackId".into(), Value::String(track_id));
-    }
-
-    for (name_key, id_key) in [("busName", "busId"), ("returnBusName", "returnBusId")] {
-        if let Some(name) = params.get(name_key) {
-            if params.contains_key(id_key) {
-                return Err(DispatchError::invalid_request(format!(
-                    "{id_key} and {name_key} cannot both be specified"
-                )));
-            }
-            let name = name.as_str().ok_or_else(|| {
-                DispatchError::invalid_request(format!("{name_key} must be a string"))
-            })?;
-            let matches = canonical
-                .session
-                .arrangement
-                .mixer
-                .buses
-                .iter()
-                .filter(|bus| bus.name == name)
-                .collect::<Vec<_>>();
-            let id = match matches.as_slice() {
-                [bus] => bus.id.clone(),
-                [] => {
-                    return Err(DispatchError::invalid_request(format!(
-                        "unknown bus name '{name}'"
-                    )));
-                }
-                _ => {
-                    return Err(DispatchError::invalid_request(format!(
-                        "ambiguous bus name '{name}'"
-                    )));
-                }
-            };
-            params.remove(name_key);
-            params.insert(id_key.into(), Value::String(id));
-        }
-    }
+    resolve_track_name_reference(&mut params, canonical)?;
+    resolve_bus_name_reference(&mut params, canonical, "busName", "busId")?;
+    resolve_bus_name_reference(&mut params, canonical, "returnBusName", "returnBusId")?;
 
     if params.contains_key("clipName") {
         if params.contains_key("clipId") {
@@ -326,6 +270,135 @@ fn resolve_batch_references(
     }
 
     Ok(Value::Object(params))
+}
+
+/// Rewrites a `trackName` reference into `trackId` on one params object.
+fn resolve_track_name_reference(
+    params: &mut serde_json::Map<String, Value>,
+    canonical: &riffra_core::CanonicalState,
+) -> Result<(), DispatchError> {
+    if !params.contains_key("trackName") {
+        return Ok(());
+    }
+    if params.contains_key("trackId") {
+        return Err(DispatchError::invalid_request(
+            "trackId and trackName cannot both be specified",
+        ));
+    }
+    let name = params
+        .get("trackName")
+        .and_then(Value::as_str)
+        .ok_or_else(|| DispatchError::invalid_request("trackName must be a string"))?;
+    let matches = canonical
+        .session
+        .arrangement
+        .tracks
+        .iter()
+        .filter(|track| track.name == name)
+        .collect::<Vec<_>>();
+    let track_id = match matches.as_slice() {
+        [] => {
+            return Err(DispatchError::invalid_request(format!(
+                "unknown track name '{name}'"
+            )));
+        }
+        [track] => track.id.clone(),
+        matches => {
+            return Err(DispatchError::invalid_request(format!(
+                "ambiguous track name '{name}': {} tracks matched",
+                matches.len()
+            )));
+        }
+    };
+    params.remove("trackName");
+    params.insert("trackId".into(), Value::String(track_id));
+    Ok(())
+}
+
+/// Rewrites a bus `name_key` reference into `id_key` on one params object.
+fn resolve_bus_name_reference(
+    params: &mut serde_json::Map<String, Value>,
+    canonical: &riffra_core::CanonicalState,
+    name_key: &str,
+    id_key: &str,
+) -> Result<(), DispatchError> {
+    let Some(name) = params.get(name_key) else {
+        return Ok(());
+    };
+    if params.contains_key(id_key) {
+        return Err(DispatchError::invalid_request(format!(
+            "{id_key} and {name_key} cannot both be specified"
+        )));
+    }
+    let name = name
+        .as_str()
+        .ok_or_else(|| DispatchError::invalid_request(format!("{name_key} must be a string")))?;
+    let matches = canonical
+        .session
+        .arrangement
+        .mixer
+        .buses
+        .iter()
+        .filter(|bus| bus.name == name)
+        .collect::<Vec<_>>();
+    let id = match matches.as_slice() {
+        [bus] => bus.id.clone(),
+        [] => {
+            return Err(DispatchError::invalid_request(format!(
+                "unknown bus name '{name}'"
+            )));
+        }
+        _ => {
+            return Err(DispatchError::invalid_request(format!(
+                "ambiguous bus name '{name}'"
+            )));
+        }
+    };
+    params.remove(name_key);
+    params.insert(id_key.into(), Value::String(id));
+    Ok(())
+}
+
+/// Converts `automation.set` points from musical positions to absolute ticks.
+/// Enumerated before decoding, and never stored.
+fn resolve_automation_points(
+    canonical: &riffra_core::CanonicalState,
+    params: &mut serde_json::Map<String, Value>,
+) -> Result<(), DispatchError> {
+    let Some(points) = params.get_mut("points").and_then(Value::as_array_mut) else {
+        return Ok(());
+    };
+    let timebase = &canonical.session.arrangement.timebase;
+    for point in points {
+        let Value::Object(point) = point else {
+            return Err(DispatchError::invalid_request(
+                "automation points must be objects",
+            ));
+        };
+        let has_tick = point.contains_key("tick");
+        let has_position = point.contains_key("position");
+        if has_tick == has_position {
+            return Err(DispatchError::invalid_request(
+                "automation points specify exactly one of tick or position",
+            ));
+        }
+        if !has_position {
+            continue;
+        }
+        let position = point.remove("position");
+        let position =
+            serde_json::from_value::<riffra_core::MusicalPosition>(position.unwrap_or(Value::Null))
+                .map_err(|error| {
+                    DispatchError::invalid_request(format!(
+                        "automation point position is invalid: {error}"
+                    ))
+                })?;
+        let tick = timebase
+            .musical_position_to_tick(position)
+            .map_err(|error| DispatchError::invalid_request(error.to_string()))?;
+        point.insert("tick".into(), Value::Number(tick.0.into()));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1235,6 +1308,116 @@ mod tests {
             "masterGain"
         );
         assert_ne!(final_arrangement["mixer"]["buses"][0]["id"], group_id);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn session_apply_resolves_automation_target_names_and_musical_positions() {
+        let root =
+            std::env::temp_dir().join(format!("riffra-dispatcher-automation-batch-{}", now_ms()));
+        let dispatcher = Dispatcher::open(
+            root.clone(),
+            crate::test_support::prepare_built_in_resource_root(&root),
+        )
+        .unwrap();
+
+        let applied = dispatcher
+            .dispatch(
+                command(
+                    "session.apply",
+                    json!({
+                        "includeCreatedIds":true,
+                        "operations":[
+                            {"command":"track.add","params":{"name":"Organ","kind":"instrument"}},
+                            {"command":"mixer.bus.add","params":{"name":"Group","kind":"group"}},
+                            {"command":"automation.set","params":{
+                                "target":{"kind":"trackMix","trackName":"Organ","parameter":"volume"},
+                                "interpolation":"linear",
+                                "points":[
+                                    {"id":"point:intro","position":"1:1","value":-12},
+                                    {"id":"point:verse","position":"9:1","value":-6}
+                                ]}},
+                            {"command":"automation.set","params":{
+                                "target":{"kind":"busMix","busName":"Group","parameter":"gain"},
+                                "interpolation":"linear",
+                                "points":[{"id":"point:group","tick":0,"value":0}]}},
+                            {"command":"timebase.set-map","params":{
+                                "tempoChanges":[{"tick":0,"bpm":120}],
+                                "timeSignatureChanges":[{"tick":0,"numerator":4,"denominator":4},{"tick":15360,"numerator":2,"denominator":4}]}},
+                            {"command":"automation.set","params":{
+                                "target":{"kind":"trackMix","trackName":"Organ","parameter":"pan"},
+                                "interpolation":"linear",
+                                "points":[
+                                    {"id":"point:half","position":"5:1","value":-1},
+                                    {"id":"point:full","position":"6:1","value":1}
+                                ]}}
+                        ]
+                    }),
+                ),
+                None,
+            )
+            .unwrap();
+
+        let created = output_value(&applied)["createdEntityIds"].clone();
+        let track_id = created["tracks"][0].as_str().unwrap().to_owned();
+        let bus_id = created["buses"][0].as_str().unwrap().to_owned();
+        let session_structure = dispatcher
+            .dispatch(command("session.get", json!({})), None)
+            .unwrap();
+        let lanes = output_value(&session_structure)["arrangement"]["automationLanes"]
+            .as_array()
+            .cloned()
+            .unwrap();
+        assert_eq!(lanes.len(), 3);
+        assert_eq!(
+            lanes[0]["target"],
+            json!({"kind":"trackMix","trackId":track_id,"parameter":"volume"})
+        );
+        assert_eq!(
+            lanes[0]["points"],
+            json!([
+                {"id":"point:intro","tick":0,"value":-12.0},
+                {"id":"point:verse","tick":30720,"value":-6.0}
+            ])
+        );
+        assert_eq!(
+            lanes[1]["target"],
+            json!({"kind":"busMix","busId":bus_id,"parameter":"gain"})
+        );
+        assert_eq!(
+            lanes[2]["target"],
+            json!({"kind":"trackMix","trackId":track_id,"parameter":"pan"})
+        );
+        assert_eq!(
+            lanes[2]["points"],
+            json!([
+                {"id":"point:half","tick":15360,"value":-1.0},
+                {"id":"point:full","tick":17280,"value":1.0}
+            ])
+        );
+
+        let failed = dispatcher.dispatch(
+            command(
+                "session.apply",
+                json!({
+                    "operations":[
+                        {"command":"automation.set","params":{
+                            "target":{"kind":"trackMix","trackId":track_id,"parameter":"pan"},
+                            "interpolation":"linear",
+                            "points":[{"id":"point:both","tick":0,"position":"1:1","value":0}]}
+                        }
+                    ]
+                }),
+            ),
+            None,
+        );
+        assert!(failed.is_err());
+        let survived = dispatcher
+            .dispatch(command("session.get", json!({})), None)
+            .unwrap();
+        assert_eq!(survived.sequence, session_structure.sequence);
+        assert_eq!(output_value(&survived), output_value(&session_structure));
 
         let _ = fs::remove_dir_all(root);
     }

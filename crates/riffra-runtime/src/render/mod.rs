@@ -299,18 +299,20 @@ fn render_timeline_with_renderer_for_project(
     if !plan.output_path.is_file() {
         return Err("Native Offline Render completed without producing its WAV output.".into());
     }
-    let (mastering, mastered_measurement) =
-        if let Some(target) = &session.settings.mixdown.mastering {
-            let (report, measurement) =
-                mastering::master(&plan.output_path, target, plan.sample_rate, cancelled)?;
-            (Some(Box::new(report)), Some(measurement))
-        } else {
-            (None, None)
-        };
+    let mastering = if let Some(target) = &session.settings.mixdown.mastering {
+        Some(Box::new(mastering::master(
+            &plan.output_path,
+            target,
+            plan.sample_rate,
+            cancelled,
+        )?))
+    } else {
+        None
+    };
     let (measurements, mut warnings) = mastering::measure_output(
         &plan.output_path,
         plan.sample_rate,
-        mastered_measurement,
+        mastering.as_deref(),
         session.settings.mixdown.mastering.as_ref(),
         cancelled,
     )?;

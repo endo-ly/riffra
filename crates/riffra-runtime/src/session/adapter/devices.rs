@@ -87,6 +87,15 @@ pub(super) fn commit_device_arrangement_with_created_ids<D: RuntimeDriver>(
             AdapterError::RuntimeUnavailable(message) => {
                 AdapterError::runtime(repair_previous_arrangement(context, message))
             }
+            AdapterError::Native(error) => AdapterError::Native({
+                let descriptor = error.descriptor();
+                crate::NativeAudioError::structured(
+                    descriptor.kind,
+                    repair_previous_arrangement(context, descriptor.message),
+                    descriptor.operation.as_deref().unwrap_or_default(),
+                    descriptor.details,
+                )
+            }),
             AdapterError::CommandFailed(message) => {
                 AdapterError::command(repair_previous_arrangement(context, message))
             }
@@ -116,6 +125,15 @@ pub(super) fn commit_device_arrangement_with_created_ids<D: RuntimeDriver>(
                 AdapterError::RuntimeUnavailable(message) => {
                     AdapterError::runtime(repair_previous_arrangement(context, message))
                 }
+                AdapterError::Native(error) => AdapterError::Native({
+                    let descriptor = error.descriptor();
+                    crate::NativeAudioError::structured(
+                        descriptor.kind,
+                        repair_previous_arrangement(context, descriptor.message),
+                        descriptor.operation.as_deref().unwrap_or_default(),
+                        descriptor.details,
+                    )
+                }),
                 AdapterError::CommandFailed(message) => {
                     AdapterError::command(repair_previous_arrangement(context, message))
                 }
@@ -280,6 +298,27 @@ pub fn set_device_bypassed(
     }
 }
 
+/// Waits for the runtime projection matching the context snapshot before
+/// touching a device on the native timeline, so the device read and write
+/// cannot observe a graph that is being replaced. The wait runs without
+/// holding a canonical lock, and states outside the projection lifecycle
+/// (Safe Mode, a runtime that never projected this key) fall straight through.
+fn wait_for_device_projection<D: RuntimeDriver>(
+    context: &SessionContext<'_, D>,
+) -> Result<(), AdapterError> {
+    let key = riffra_core::ProjectionKey {
+        sequence: context.snapshot.sequence,
+        session_revision: context.snapshot.session.arrangement.revision,
+    };
+    match context
+        .runtime
+        .wait_for_native_projection(key)
+        .map_err(|error| AdapterError::CommandFailed(error.to_string()))?
+    {
+        crate::runtime::ProjectionWait::Ready | crate::runtime::ProjectionWait::Missing => Ok(()),
+    }
+}
+
 pub fn set_device_parameter(
     context: &mut SessionContext<'_>,
     owner: &riffra_core::EffectOwner,
@@ -292,20 +331,32 @@ pub fn set_device_parameter(
         return Err("select exactly one finite value or display text".into());
     }
     let value = value.map(|value| value.clamp(0.0, 1.0));
-    let session = current_session(context)?;
-    let device = session
-        .arrangement
-        .device(owner, device_id)
-        .map_err(|error| AdapterError::command(error.to_string()))?;
-    if device.plugin().is_none() {
-        return Err(AdapterError::command(
-            "built-in instruments do not expose parameters",
-        ));
+    {
+        let session = current_session(context)?;
+        let device = session
+            .arrangement
+            .device(owner, device_id)
+            .map_err(|error| AdapterError::command(error.to_string()))?;
+        if device.plugin().is_none() {
+            return Err(AdapterError::command(
+                "built-in instruments do not expose parameters",
+            ));
+        }
     }
+    // The device write only commits after the native graph accepted the
+    // parameter, so verify-then-commit order keeps canonical and native alive
+    // without a post-commit reconciliation against an already mutated state.
+    // The projection wait can block for a long time, so it runs without
+    // holding the canonical write lock; holding it across the wait would
+    // stall every other canonical writer. Afterwards the lock is taken back
+    // and kept through the commit, so the native change, its recorded state,
+    // and the canonical commit cannot interleave with another device writer.
+    context.release_writer();
+    wait_for_device_projection(context)?;
+    context.reacquire_writer()?;
     let previous = context.audio.get_plugin_state(owner, device_id)?;
-    let index = usize::try_from(parameter_index)
-        .map_err(|_| AdapterError::command("device parameter index is invalid"))?;
-    if index >= previous.parameter_values.len() {
+    if usize::try_from(parameter_index).is_ok_and(|index| index >= previous.parameter_values.len())
+    {
         return Err(AdapterError::command("device parameter index is invalid"));
     }
     let committed: Result<_, AdapterError> = (|| {
@@ -357,8 +408,8 @@ pub fn open_plugin_editor(
         .map_err(|error| AdapterError::runtime(error.to_string()))?;
     context
         .audio
-        .open_plugin_editor(&project_id, owner, device_id)
-        .map_err(|error| AdapterError::runtime(error.to_string()))
+        .open_plugin_editor(&project_id, owner, device_id)?;
+    Ok(())
 }
 
 /// Rewrites every canonical Asset reference pointed to by `asset_id` to the
