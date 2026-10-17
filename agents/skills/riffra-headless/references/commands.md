@@ -83,7 +83,7 @@ Raw MIDI形式で置き換える場合は`midi-clip update --clip-id midi-clip:0
 
 各行は `command` と `params` を持つ既存Control Commandであり、Batch専用の楽曲記法は使わない。`trackName`は候補Session上で一意に解決される。`clipName`は指定したTrack内のMIDI Clipから一意に解決されるため、`clipName`を使うときは `trackId` か `trackName` を併せる。このときTrackの指定はClipを探す範囲としてだけ使われ、operationは解決した`clipId`で実行される。`trackId`と`trackName`、`clipId`と`clipName`は同時に指定できない。同名が複数ある場合は曖昧さとして失敗する。解決結果はProtocolやCanonical identityには保存されない。
 
-Batchは全operationを候補Sessionへ適用してから、成功時だけ1回commitする。`expectedSequence`の不一致はoperation開始前にBatch全体を拒否し、途中の失敗、非対応コマンド、名前の未解決・曖昧さでもCanonical Sessionは変更されない。Batchへ含められるのは、正準状態を変えるコマンドのうちTrack・Clip・Note・Music・Marker・Range・Automation・設定・Instrument割り当て・Effect・Deviceの編集である。読み取り(`session.get`、`session.inspect`、`history.get`など)、Undo / Redo、Project操作、Assetの取り込みと配置(`asset.import-midi`、`*-clip.add-asset`)、VST3 instrumentの設定(`instrument.vst3.set`)、master gainの設定、欠落依存の解決(`missing.*`)、Runtimeサービス(Render、Transport、Recordingなど)は含めない。`instrument.apply` は組み込みinstrumentに限りBatchへ含められ、`user:` instrumentは単独のcommandとして実行する。
+Batchは全operationを候補Sessionへ適用してから、成功時だけ1回commitする。`expectedSequence`の不一致はoperation開始前にBatch全体を拒否し、途中の失敗、非対応コマンド、名前の未解決・曖昧さでもCanonical Sessionは変更されない。Batchへ含められるのは、正準状態を変えるコマンドのうちTrack・Clip・Note・Music・Marker・Range・Automation・設定・Instrument割り当て・Effect・Deviceの編集である。読み取り(`session.get`、`session.inspect`、`history.get`など)、Undo / Redo、Project操作、Assetの取り込みと配置(`asset.import-midi`、`*-clip.add-asset`)、master gainの設定、欠落依存の解決(`missing.*`)、Runtimeサービス(Render、Transport、Recordingなど)は含めない。`instrument.vst3.set`と`instrument.apply`はBatchで利用できる。ユーザー音源の適用で作るProject SnapshotはBatchの成功時にSessionから参照されるものだけ保持し、Batch失敗時は今回作成したSnapshotを削除する。
 
 成功応答はCanonical Sessionやoperationごとの結果を含まない。
 

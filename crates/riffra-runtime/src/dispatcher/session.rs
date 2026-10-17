@@ -6,8 +6,11 @@ use crate::api::params::{BatchOperation, SessionApplyParams};
 use crate::api::{
     CanonicalAccess, CanonicalCommand, CommandExecutor, ControlCommand, ControlOutput,
 };
+use crate::dispatcher::instrument::{
+    OwnedProjectInstrumentSnapshot, cleanup_project_instrument_snapshots, with_snapshot_cleanup,
+};
 use serde_json::Value;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 impl HostDispatcher<'_> {
     pub(super) fn apply_batch<S: riffra_core::SessionStorage + ?Sized>(
@@ -31,11 +34,22 @@ impl HostDispatcher<'_> {
         let memory = super::MemorySessionStorage;
         let mut created_entity_counts = BTreeMap::<String, usize>::new();
         let mut created_entity_ids = BTreeMap::<String, Vec<String>>::new();
+        let mut owned_snapshots = Vec::<OwnedProjectInstrumentSnapshot>::new();
         for (operation_index, operation) in params.operations.into_iter().enumerate() {
             let BatchOperation { command, params } = operation;
-            let created =
-                batch_operation(self, &mut candidate.application(&memory), &command, params)
-                    .map_err(|error| error.with_batch_context(operation_index, &command))?;
+            let created = match batch_operation(
+                self,
+                &mut candidate.application(&memory),
+                &command,
+                params,
+                &mut owned_snapshots,
+            ) {
+                Ok(created) => created,
+                Err(error) => {
+                    let error = error.with_batch_context(operation_index, &command);
+                    return Err(with_snapshot_cleanup(error, &owned_snapshots));
+                }
+            };
             for (kind, ids) in created {
                 *created_entity_counts.entry(kind.clone()).or_default() += ids.len();
                 created_entity_ids.entry(kind).or_default().extend(ids);
@@ -43,7 +57,34 @@ impl HostDispatcher<'_> {
         }
 
         let candidate_session = candidate.snapshot().session.clone();
-        application.commit_prepared_candidate(candidate_session, canonical.sequence)?;
+        let referenced_snapshots = candidate_session
+            .arrangement
+            .tracks
+            .iter()
+            .filter_map(|track| track.instrument.as_ref())
+            .filter_map(|instrument| match &instrument.source {
+                riffra_core::TrackInstrumentSource::Internal {
+                    resource:
+                        riffra_core::InternalInstrumentResource::UserSnapshot { snapshot_id, .. },
+                    ..
+                } => Some(snapshot_id.clone()),
+                _ => None,
+            })
+            .collect::<BTreeSet<_>>();
+        let (retained_snapshots, unused_snapshots): (Vec<_>, Vec<_>) = owned_snapshots
+            .into_iter()
+            .partition(|snapshot| referenced_snapshots.contains(&snapshot.snapshot_id));
+        if let Err(error) = cleanup_project_instrument_snapshots(&unused_snapshots) {
+            return Err(with_snapshot_cleanup(
+                DispatchError::CommandFailed(error),
+                &retained_snapshots,
+            ));
+        }
+        if let Err(error) =
+            application.commit_prepared_candidate(candidate_session, canonical.sequence)
+        {
+            return Err(with_snapshot_cleanup(error.into(), &retained_snapshots));
+        }
 
         Ok(ControlOutput::BatchMutation(BatchMutationResult {
             applied_commands,
@@ -61,6 +102,7 @@ fn batch_operation(
     candidate: &mut riffra_core::application::Application<'_, super::MemorySessionStorage>,
     name: &str,
     params: Value,
+    owned_snapshots: &mut Vec<OwnedProjectInstrumentSnapshot>,
 ) -> Result<BTreeMap<String, Vec<String>>, DispatchError> {
     let params = resolve_batch_references(&candidate.canonical_state(), params)?;
     let command = ControlCommand::decode(name, params)?;
@@ -74,10 +116,25 @@ fn batch_operation(
     else {
         return Err(unsupported(name));
     };
-    if let CanonicalCommand::InstrumentApply(params) = &command
-        && !params.instrument_id.starts_with("builtin:")
-    {
-        return Err(unsupported(name));
+    if let CanonicalCommand::InstrumentApply(params) = command {
+        let prepared =
+            dispatcher.prepare_instrument_assignment(&candidate.canonical_state(), params)?;
+        if let Err(error) =
+            candidate.set_track_instrument(&prepared.track_id, Some(prepared.instrument))
+        {
+            return Err(with_snapshot_cleanup(
+                error.into(),
+                prepared.snapshot.as_slice(),
+            ));
+        }
+        if let Some(snapshot) = prepared.snapshot {
+            owned_snapshots.push(snapshot);
+        }
+        return Ok(if prepared.creates_device {
+            [("devices".to_owned(), vec![prepared.device_id])].into()
+        } else {
+            Default::default()
+        });
     }
     let canonical = candidate.canonical_state();
     let _ = access;
@@ -825,6 +882,134 @@ mod tests {
             .unwrap();
         assert_eq!(after_failure.sequence, replaced_state.sequence);
         assert_eq!(output_value(&after_failure), output_value(&replaced_state));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn session_apply_sets_vst3_instrument_and_reports_new_device() {
+        let root = std::env::temp_dir().join(format!("riffra-dispatcher-apply-vst3-{}", now_ms()));
+        let dispatcher = Dispatcher::open(
+            root.clone(),
+            crate::test_support::prepare_built_in_resource_root(&root),
+        )
+        .unwrap();
+
+        let result = dispatcher
+            .dispatch(
+                command(
+                    "session.apply",
+                    json!({
+                        "includeCreatedIds":true,
+                        "operations":[
+                            {"command":"track.add","params":{"name":"Lead","kind":"instrument"}},
+                            {"command":"instrument.vst3.set","params":{"trackName":"Lead","pluginPath":"C:\\Plugins\\Synth.vst3"}}
+                        ]
+                    }),
+                ),
+                None,
+            )
+            .unwrap();
+        assert_eq!(output_value(&result)["createdEntityCounts"]["devices"], 1);
+        let result_value = output_value(&result);
+        let device_id = result_value["createdEntityIds"]["devices"][0]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let state = dispatcher
+            .dispatch(command("session.get", json!({})), None)
+            .unwrap();
+        let instrument = &output_value(&state)["arrangement"]["tracks"][0]["instrument"];
+        assert_eq!(instrument["id"], device_id);
+        assert_eq!(instrument["source"]["type"], "vst3");
+        assert_eq!(instrument["source"]["path"], "C:\\Plugins\\Synth.vst3");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn session_apply_keeps_only_referenced_user_snapshots_and_cleans_failed_batch() {
+        let root = std::env::temp_dir().join(format!("riffra-dispatcher-apply-user-{}", now_ms()));
+        let resources = crate::test_support::prepare_built_in_resource_root(&root);
+        let user_uuid = new_instance_id();
+        let user_id = format!("user:{user_uuid}");
+        let package = root.join("instruments/user").join(&user_uuid);
+        fs::create_dir_all(package.join("samples")).unwrap();
+        fs::write(
+            package.join("definition.json"),
+            r#"{"metadata":{"name":"User Piano"},"version":1,"sample":"samples/attack.wav"}"#,
+        )
+        .unwrap();
+        fs::write(package.join("samples/attack.wav"), b"sample").unwrap();
+        fs::write(
+            package.join(".riffra-instrument.json"),
+            serde_json::json!({
+                "formatVersion": 1,
+                "instrumentId": user_id,
+                "definitionPath": "definition.json",
+                "createdAtMs": 1,
+                "updatedAtMs": 1
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let dispatcher = Dispatcher::open(root.clone(), resources).unwrap();
+
+        let applied = dispatcher
+            .dispatch(
+                command(
+                    "session.apply",
+                    json!({
+                        "includeCreatedIds":true,
+                        "operations":[
+                            {"command":"track.add","params":{"name":"Lead","kind":"instrument"}},
+                            {"command":"instrument.apply","params":{"trackName":"Lead","instrumentId":user_id.clone()}},
+                            {"command":"instrument.apply","params":{"trackName":"Lead","instrumentId":user_id.clone()}}
+                        ]
+                    }),
+                ),
+                None,
+            )
+            .unwrap();
+        assert_eq!(output_value(&applied)["createdEntityCounts"]["devices"], 1);
+        let state = dispatcher
+            .dispatch(command("session.get", json!({})), None)
+            .unwrap();
+        let snapshot_id = output_value(&state)["arrangement"]["tracks"][0]["instrument"]["source"]
+            ["resource"]["snapshotId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let snapshot_root = root.join("project-instruments");
+        let snapshots = fs::read_dir(&snapshot_root)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(snapshots.as_slice(), std::slice::from_ref(&snapshot_id));
+
+        let failed = dispatcher.dispatch(
+            command(
+                "session.apply",
+                json!({
+                    "operations":[
+                        {"command":"instrument.apply","params":{"trackName":"Lead","instrumentId":user_id.clone()}},
+                        {"command":"render.start","params":{}}
+                    ]
+                }),
+            ),
+            None,
+        );
+        assert!(failed.is_err());
+        let after_failure = dispatcher
+            .dispatch(command("session.get", json!({})), None)
+            .unwrap();
+        assert_eq!(after_failure.sequence, state.sequence);
+        assert_eq!(output_value(&after_failure), output_value(&state));
+        let remaining = fs::read_dir(&snapshot_root)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(remaining.as_slice(), std::slice::from_ref(&snapshot_id));
 
         let _ = fs::remove_dir_all(root);
     }
