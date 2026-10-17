@@ -33,6 +33,16 @@ public:
         return static_cast<std::uint8_t>(output);
     }
 
+    [[nodiscard]] std::optional<juce::MidiMessage> transformNoteMessage(
+        const juce::MidiMessage& message) const noexcept {
+        if (!message.isNoteOn() && !message.isNoteOff()) return std::nullopt;
+        const auto note = outputNote(static_cast<std::uint8_t>(message.getNoteNumber()));
+        if (!note) return std::nullopt;
+        if (message.isNoteOn())
+            return juce::MidiMessage::noteOn(message.getChannel(), *note, message.getVelocity());
+        return juce::MidiMessage::noteOff(message.getChannel(), *note, message.getVelocity());
+    }
+
     bool operator==(const MidiNoteTransform&) const = default;
 
 private:

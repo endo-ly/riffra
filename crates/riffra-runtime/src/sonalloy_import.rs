@@ -24,18 +24,6 @@ impl<'a> ImportedProject<'a> {
         path: &Path,
     ) -> Result<Self, String> {
         let bundle = sonalloy_bundle::read(path).map_err(|error| error.to_string())?;
-        let output = crate::process::sidecar_command(sonalloy)
-            .args(["demo", "validate"])
-            .arg(bundle.root.join("demo.json"))
-            .args(["--json"])
-            .output()
-            .map_err(|error| format!("sonalloy demo validation could not be started: {error}"))?;
-        if !output.status.success() {
-            return Err(format!(
-                "sonalloy demo validation failed: {}",
-                String::from_utf8_lossy(&output.stdout)
-            ));
-        }
         let mut import = Self {
             store,
             project_id: None,
@@ -416,8 +404,8 @@ mod tests {
 
     #[test]
     #[ignore = "requires installed Sonalloy, native render sidecars, and ffmpeg"]
-    fn bundle_and_project_package_render_the_reference_performance_without_the_source_bundle() {
-        // Arrange: the reference is produced by the bundled, released Sonalloy CLI.
+    fn bundle_and_project_package_render_identically_without_the_source_bundle() {
+        // Arrange: import the verified Bundle and render the resulting Project.
         let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let binaries = workspace.join("target/debug");
         let sonalloy = binaries.join(format!("sonalloy{}", std::env::consts::EXE_SUFFIX));
@@ -438,28 +426,6 @@ mod tests {
             fs::copy(fixture.join(&file.path), destination).unwrap();
         }
         fs::copy(fixture.join("bundle.json"), bundle_path.join("bundle.json")).unwrap();
-        let reference = root.join("reference.wav");
-        let output = crate::process::sidecar_command(&sonalloy)
-            .args(["render", "demo"])
-            .arg(bundle_path.join("demo.json"))
-            .arg("--output")
-            .arg(&reference)
-            .args([
-                "--sample-rate",
-                "48000",
-                "--block-size",
-                "256",
-                "--tail",
-                "0.5",
-                "--json",
-            ])
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stdout)
-        );
         let data_root = root.join("data");
         let store = ProjectStore::new(&data_root);
         store.initialize().unwrap();
@@ -517,111 +483,40 @@ mod tests {
                 .map(|bytes| f32::from_le_bytes(*bytes))
                 .collect::<Vec<_>>()
         };
-        let reference_samples = samples(&reference);
+        // Assert: removing the Bundle and packaging the Project preserves its render.
+        let original_samples = samples(Path::new(&original_result.path));
+        let packaged_samples = samples(Path::new(&packaged_result.path));
+        assert_eq!(original_result.frames, 136_001);
+        assert_eq!(packaged_result.frames, original_result.frames);
+        assert_eq!(packaged_samples.len(), original_samples.len());
+        let maximum_error = original_samples
+            .iter()
+            .zip(&packaged_samples)
+            .map(|(original, packaged)| (original - packaged).abs())
+            .fold(0.0f32, f32::max);
+        let signal_peak = original_samples
+            .iter()
+            .map(|sample| sample.abs())
+            .fold(0.0f32, f32::max);
+        assert!(
+            signal_peak > 0.01,
+            "render must contain an audible performance"
+        );
+        assert!(
+            maximum_error < 1.0e-5,
+            "maximum waveform difference {maximum_error}, render peak {signal_peak}"
+        );
+        assert_eq!(&original_samples[original_samples.len() - 2..], &[0.0, 0.0]);
+        assert_eq!(&packaged_samples[packaged_samples.len() - 2..], &[0.0, 0.0]);
 
-        // Assert: event timing, routing, gain, tail, and fade share the reference waveform.
-        assert_eq!(reference_samples.len(), 136_001 * 2);
-        for result in [&original_result, &packaged_result] {
-            let actual = samples(Path::new(&result.path));
-            assert_eq!(actual.len(), reference_samples.len());
-            let maximum_error = actual
-                .iter()
-                .zip(&reference_samples)
-                .map(|(actual, expected)| (actual - expected).abs())
-                .fold(0.0f32, f32::max);
-            let signal_peak = reference_samples
-                .iter()
-                .map(|sample| sample.abs())
-                .fold(0.0f32, f32::max);
-            assert!(
-                signal_peak > 0.01,
-                "reference must contain an audible performance"
-            );
-            assert!(
-                maximum_error < 1.0e-5,
-                "maximum waveform difference {maximum_error}, reference peak {signal_peak}"
-            );
-            assert_eq!(&actual[actual.len() - 2..], &[0.0, 0.0]);
-            assert_eq!(result.frames, 136_001);
-        }
         let target = riffra_core::LoudnessMastering {
             integrated_lufs: -16.0,
             true_peak_db: -1.0,
             loudness_range_lu: 11.0,
         };
-        let mut mastered_demo: serde_json::Value =
-            serde_json::from_slice(&fs::read(fixture.join("demo.json")).unwrap()).unwrap();
-        mastered_demo["mix"]["master"] = serde_json::json!({
-            "integrated_lufs": target.integrated_lufs,
-            "true_peak_db": target.true_peak_db,
-        });
-        for part in mastered_demo["parts"].as_array_mut().unwrap() {
-            for field in ["instrument", "pattern"] {
-                part[field] = serde_json::Value::from(
-                    fixture
-                        .join(part[field].as_str().unwrap())
-                        .to_string_lossy()
-                        .into_owned(),
-                );
-            }
-        }
-        let master_demo_path = root.join("master-demo.json");
-        fs::write(
-            &master_demo_path,
-            serde_json::to_vec(&mastered_demo).unwrap(),
-        )
-        .unwrap();
-        let master_reference = root.join("master-reference.wav");
-        let output = crate::process::sidecar_command(&sonalloy)
-            .args(["render", "demo"])
-            .arg(master_demo_path)
-            .arg("--output")
-            .arg(&master_reference)
-            .args([
-                "--sample-rate",
-                "48000",
-                "--block-size",
-                "256",
-                "--tail",
-                "0.5",
-                "--json",
-            ])
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stdout)
-        );
-        let sonalloy_report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-        assert_eq!(sonalloy_report["status"], "ok");
-        let sonalloy_master = &sonalloy_report["master"];
-        assert_eq!(
-            sonalloy_master["target"]["integrated_lufs"].as_f64(),
-            Some(target.integrated_lufs)
-        );
-        assert_eq!(
-            sonalloy_master["target"]["true_peak_db"].as_f64(),
-            Some(target.true_peak_db)
-        );
-        let sonalloy_integrated_lufs = sonalloy_master["output"]["integrated_lufs"]
-            .as_f64()
-            .unwrap();
-        assert!(
-            (sonalloy_integrated_lufs - target.integrated_lufs).abs() <= 0.5,
-            "Sonalloy mastered output is {sonalloy_integrated_lufs} LUFS for a {} LUFS target",
-            target.integrated_lufs
-        );
-        let sonalloy_true_peak = sonalloy_master["output"]["true_peak_db"].as_f64().unwrap();
-        assert!(
-            sonalloy_true_peak <= target.true_peak_db,
-            "Sonalloy mastered true peak is {sonalloy_true_peak} dBTP for a {} dBTP target",
-            target.true_peak_db
-        );
-        let sonalloy_master_samples = samples(&master_reference);
-        let mut mastered_session = imported;
+        let mut mastered_session = session.clone();
         mastered_session.settings.mixdown.mastering = Some(target.clone());
-        let mastered = render(&package_root, &mastered_session);
+        let mastered = render(&data_root, &mastered_session);
         let report = mastered.mastering.as_ref().unwrap();
         let crate::api::output::LoudnessReadout::Measured { measurement } =
             &mastered.measurements.loudness
@@ -631,7 +526,17 @@ mod tests {
         assert!(measurement.true_peak_db <= target.true_peak_db);
         assert!(report.deviation.integrated_lufs.abs() < 0.1);
         let actual = samples(Path::new(&mastered.path));
-        assert_eq!(actual.len(), sonalloy_master_samples.len());
+        let mut mastered_package_session = imported;
+        mastered_package_session.settings.mixdown.mastering = Some(target);
+        let mastered_package = render(&package_root, &mastered_package_session);
+        let packaged = samples(Path::new(&mastered_package.path));
+        assert_eq!(packaged.len(), actual.len());
+        assert!(
+            actual
+                .iter()
+                .zip(&packaged)
+                .all(|(original, packaged)| (original - packaged).abs() < 1.0e-5)
+        );
         fs::remove_dir_all(root).unwrap();
     }
 

@@ -43,7 +43,7 @@ pub struct InstrumentKeyswitch {
     pub name: String,
 }
 
-/// A note that cannot be represented as a valid MIDI note or is outside the configured range.
+/// A note that cannot be represented, is outside its playable range, or maps to a Keyswitch.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct InstrumentMidiWarning {
@@ -60,6 +60,7 @@ pub struct InstrumentMidiWarning {
 pub enum InstrumentMidiWarningReason {
     OutsideMidiRange,
     OutsidePlayableRange,
+    KeyswitchCollision,
 }
 
 impl InstrumentMidiSettings {
@@ -150,6 +151,12 @@ impl InstrumentMidiSettings {
                 let output_note = self.output_note(note.note);
                 let reason = match output_note {
                     None => Some(InstrumentMidiWarningReason::OutsideMidiRange),
+                    Some(output_note)
+                        if !self.keyswitches.iter().any(|key| key.note == note.note)
+                            && self.keyswitches.iter().any(|key| key.note == output_note) =>
+                    {
+                        Some(InstrumentMidiWarningReason::KeyswitchCollision)
+                    }
                     Some(output_note)
                         if !self.keyswitches.iter().any(|key| key.note == note.note)
                             && !self.is_playable(output_note) =>
@@ -507,6 +514,14 @@ mod tests {
                     velocity: 100,
                     channel: 1,
                 },
+                super::super::MidiNote {
+                    id: "note-keyswitch-collision".into(),
+                    note: 12,
+                    start_tick: crate::TimelineTick(360),
+                    duration_ticks: 120,
+                    velocity: 100,
+                    channel: 1,
+                },
             ],
             events: Vec::new(),
             instrument_control_events: Vec::new(),
@@ -519,7 +534,7 @@ mod tests {
         assert_eq!(settings.output_note(24), Some(24));
         assert_eq!(settings.output_note(120), None);
         let warnings = settings.warnings("track-1", &[clip]);
-        assert_eq!(warnings.len(), 2);
+        assert_eq!(warnings.len(), 3);
         assert_eq!(warnings[0].note_id, "note-low");
         assert_eq!(warnings[0].output_note, Some(62));
         assert_eq!(
@@ -531,6 +546,12 @@ mod tests {
         assert_eq!(
             warnings[1].reason,
             InstrumentMidiWarningReason::OutsideMidiRange
+        );
+        assert_eq!(warnings[2].note_id, "note-keyswitch-collision");
+        assert_eq!(warnings[2].output_note, Some(24));
+        assert_eq!(
+            warnings[2].reason,
+            InstrumentMidiWarningReason::KeyswitchCollision
         );
     }
 

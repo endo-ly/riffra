@@ -3,4 +3,4 @@
 /**
  * Why a MIDI note does not match its Instrument settings.
  */
-export type InstrumentMidiWarningReason = "outsideMidiRange" | "outsidePlayableRange";
+export type InstrumentMidiWarningReason = "outsideMidiRange" | "outsidePlayableRange" | "keyswitchCollision";

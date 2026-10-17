@@ -225,7 +225,11 @@ export function InstrumentMidiSettingsEditor({
                 {warning.outputNote === null
                   ? 'outside MIDI range'
                   : midiNoteName(warning.outputNote)}
-                {warning.reason === 'outsidePlayableRange' ? ' is outside the playable range' : ''}
+                {warning.reason === 'outsidePlayableRange'
+                  ? ' is outside the playable range'
+                  : warning.reason === 'keyswitchCollision'
+                    ? ' collides with a keyswitch'
+                    : ''}
               </li>
             ))}
           </ul>

@@ -116,21 +116,11 @@ void TimelineEngine::routeLiveMidi(RealtimeState& state) noexcept {
                                                     event.sourceIndex, message.getChannel()))
                 continue;
             if (runtime.hasLoadedInstrument()) {
-                if (message.isNoteOn() || message.isNoteOff()) {
-                    const auto outputNote = runtime.midiNoteTransform.outputNote(
-                        static_cast<std::uint8_t>(message.getNoteNumber()));
-                    if (outputNote) {
-                        const auto transformed =
-                            message.isNoteOn()
-                                ? juce::MidiMessage::noteOn(message.getChannel(), *outputNote,
-                                                            message.getVelocity())
-                                : juce::MidiMessage::noteOff(message.getChannel(), *outputNote,
-                                                             message.getVelocity());
-                        (void)runtime.enqueueMidi(transformed);
-                    }
-                } else {
+                if (const auto transformed =
+                        runtime.midiNoteTransform.transformNoteMessage(message))
+                    (void)runtime.enqueueMidi(*transformed);
+                else if (!message.isNoteOn() && !message.isNoteOff())
                     (void)runtime.enqueueMidi(message);
-                }
             }
             if (state.recordingPhase == RecordingPhase::recording) {
                 recordingCapture->writeMidiTrack(track.id, event.sourceIndex, message,
@@ -196,7 +186,10 @@ void TimelineEngine::playTargetedMidi(RealtimeState& state,
     auto* track = findTrackByKey(state, command.trackKey);
     if (track == nullptr || !track->runtime->hasLoadedInstrument()) return;
     const juce::MidiMessage message(command.midiBytes, command.midiSize);
-    (void)track->runtime->enqueueMidi(message);
+    if (const auto transformed = track->runtime->midiNoteTransform.transformNoteMessage(message))
+        (void)track->runtime->enqueueMidi(*transformed);
+    else if (!message.isNoteOn() && !message.isNoteOff())
+        (void)track->runtime->enqueueMidi(message);
     if (track->runtime->armed && state.recordingPhase == RecordingPhase::recording)
         recordingCapture->writeMidiTrack(track->id, playSurfaceSourceId, message,
                                          state.audioClockSample);

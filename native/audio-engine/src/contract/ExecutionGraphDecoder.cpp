@@ -233,9 +233,9 @@ bool decodeMidiNoteArray(const juce::Array<juce::var>& source, const juce::Strin
     output.reserve(static_cast<std::size_t>(source.size()));
     for (int index = 0; index < source.size(); ++index) {
         const auto& value = source[index];
-        const auto note = value.isInt()     ? static_cast<std::int64_t>(value)
-                          : value.isInt64() ? static_cast<std::int64_t>(value)
-                                            : -1;
+        const std::int64_t note = value.isInt()     ? static_cast<int>(value)
+                                  : value.isInt64() ? static_cast<juce::int64>(value)
+                                                    : -1;
         if (note < 0 || note > 127)
             return fail(error, element(path, index), "must be an integer in 0..=127");
         const auto decoded = static_cast<std::uint8_t>(note);
