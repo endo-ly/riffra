@@ -3198,7 +3198,8 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
                 MusicHarmonyCommand::Insert(args) => harmony_insert(args)?,
                 MusicHarmonyCommand::Update(args) => harmony_update(args)?,
                 MusicHarmonyCommand::Remove(args) => {
-                    let event_ids = serde_json::from_str::<Vec<String>>(&args.event_ids_json)
+                    let event_ids_json = quoted_input("event-ids-json", &args.event_ids_json)?;
+                    let event_ids = serde_json::from_str::<Vec<String>>(&event_ids_json)
                         .map_err(|error| format!("--event-ids-json is invalid JSON: {error}"))?;
                     Canonical::MusicHarmonyRemove(HarmonyRemoveParams { event_ids }).into()
                 }
@@ -3966,6 +3967,7 @@ fn id_list(ids: Vec<String>, encoded: Option<String>, flag: &str) -> Result<Vec<
     if !ids.is_empty() {
         return Err(format!("--{flag} and --{flag}-json cannot be combined"));
     }
+    let encoded = quoted_input(&format!("{flag}-json"), &encoded)?;
     serde_json::from_str::<Vec<String>>(&encoded)
         .map_err(|error| format!("--{flag}-json is invalid JSON: {error}"))
 }
