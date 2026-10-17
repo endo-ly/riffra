@@ -46,4 +46,8 @@ impl History {
     pub(crate) fn can_redo(&self) -> bool {
         !self.redo.is_empty()
     }
+
+    pub(crate) fn sessions(&self) -> impl Iterator<Item = &CreativeSession> {
+        self.undo.iter().chain(&self.redo)
+    }
 }

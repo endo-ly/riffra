@@ -261,11 +261,12 @@ fn render_timestamp(render_id: &str) -> Option<u64> {
         .ok()
 }
 
-pub(crate) fn delete_render(
+pub(crate) fn delete_render<'a>(
     data_root: &Path,
     project_store: &riffra_host::ProjectStore,
     active_project_id: &str,
     active_session: &CreativeSession,
+    history_sessions: impl Iterator<Item = &'a CreativeSession>,
     jobs: &crate::jobs::JobRegistry,
     render_id: &str,
 ) -> Result<RenderDeleteResult, String> {
@@ -305,6 +306,13 @@ pub(crate) fn delete_render(
         return Err(format!(
             "render deletion is blocked by current project {active_project_id} {reference}"
         ));
+    }
+    for session in history_sessions {
+        if let Some(reference) = session_asset_reference(session, &asset_set) {
+            return Err(format!(
+                "render deletion is blocked by current project {active_project_id} undo/redo history: {reference}"
+            ));
+        }
     }
     let projects = project_store
         .list()

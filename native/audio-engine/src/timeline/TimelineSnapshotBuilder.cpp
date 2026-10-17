@@ -446,7 +446,7 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
                     return;
                 track->reuseEffects = existing->effects == track->effects;
                 reuseInstrument =
-                    existing->instrument == track->instrument &&
+                    sameInstrumentRuntime(existing->instrument, track->instrument) &&
                     existing->runtime->timelineMidiCapacity() >= track->runtime->midiEventCapacity;
                 if (track->reuseEffects) track->runtime->shareEffectsWith(*existing->runtime);
                 if (reuseInstrument) track->runtime->shareInstrumentWith(*existing->runtime);

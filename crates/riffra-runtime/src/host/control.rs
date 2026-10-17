@@ -1055,17 +1055,26 @@ impl HostState {
             RuntimeCommand::RenderList(_) => ControlOutput::RenderList(
                 render::list_renders(&self.data_root).map_err(command_error)?,
             ),
-            RuntimeCommand::RenderClean(params) => ControlOutput::RenderDelete(
+            RuntimeCommand::RenderClean(params) => ControlOutput::RenderDelete({
+                let history_sessions = writer
+                    .as_ref()
+                    .ok_or_else(|| {
+                        command_error("render deletion requires an active project writer")
+                    })?
+                    .project()
+                    .core
+                    .history_sessions();
                 render::delete_render(
                     &self.data_root,
                     &self.project_store,
                     &current.project_id,
                     &current.session,
+                    history_sessions,
                     &self.jobs,
                     &params.render_id,
                 )
-                .map_err(command_error)?,
-            ),
+                .map_err(command_error)?
+            }),
             RuntimeCommand::JobGet(params) => ControlOutput::Job(
                 self.jobs
                     .status(&params.id)

@@ -2369,6 +2369,7 @@ mod tests {
             &riffra_host::ProjectStore::new(&root),
             &project.project_id,
             &project.loaded.session,
+            std::iter::empty(),
             &jobs,
             &render_id,
         )
@@ -2407,6 +2408,7 @@ mod tests {
             &store,
             &project.project_id,
             &CreativeSession::new(41),
+            std::iter::empty(),
             &active_jobs,
             &render_id,
         )
@@ -2417,6 +2419,7 @@ mod tests {
             &store,
             &project.project_id,
             &referenced,
+            std::iter::empty(),
             &jobs,
             &render_id,
         )
@@ -2432,6 +2435,7 @@ mod tests {
             &store,
             &project.project_id,
             &CreativeSession::new(42),
+            std::iter::empty(),
             &jobs,
             &render_id,
         )
@@ -2477,6 +2481,7 @@ mod tests {
             &store,
             &project.project_id,
             &CreativeSession::new(52),
+            std::iter::empty(),
             &jobs,
             &render_id,
         )
@@ -2497,6 +2502,7 @@ mod tests {
             &store,
             &project.project_id,
             &CreativeSession::new(52),
+            std::iter::empty(),
             &jobs,
             &render_id,
         )
@@ -2542,6 +2548,7 @@ mod tests {
             &store,
             &project.project_id,
             &session,
+            std::iter::empty(),
             &jobs,
             &render_id,
         )
@@ -2554,6 +2561,7 @@ mod tests {
             &store,
             &project.project_id,
             &session,
+            std::iter::empty(),
             &jobs,
             &render_id,
         )
@@ -2598,6 +2606,7 @@ mod tests {
             &store,
             &project.project_id,
             &session,
+            std::iter::empty(),
             &jobs,
             &second_id,
         )

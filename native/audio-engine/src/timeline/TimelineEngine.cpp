@@ -384,7 +384,17 @@ void TimelineEngine::applyRealtimeCommand(RealtimeState& state,
 
 void TimelineEngine::publishGraph(RealtimeState& state, PreparedTimeline* const graph) noexcept {
     auto* const previous = std::exchange(state.graph, graph);
-    if (previous != nullptr) previous->restoreAutomation();
+    if (previous != nullptr) {
+        for (auto& track : graph->tracks) {
+            const auto* const previousTrack = previous->findTrack(track->id);
+            if (previousTrack == nullptr) continue;
+            auto* const instrument = track->runtime->instrument();
+            if (instrument != nullptr && instrument == previousTrack->runtime->instrument() &&
+                previousTrack->runtime->midiNoteTransform != track->runtime->midiNoteTransform)
+                instrument->allNotesOff();
+        }
+        previous->restoreAutomation();
+    }
     if (state.transport == TransportState::playing) graph->beginAutomationRead();
     if (previous == nullptr)
         state.timelineSample = 0;
