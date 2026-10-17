@@ -110,6 +110,8 @@ export type ControlCommandResults = {
   'instrument.save': OutputValue<'instrumentLibraryItem'>;
   'instrument.export': OutputValue<'instrumentExport'>;
   'instrument.apply': OutputValue<'arrangementMutation'>;
+  'instrument.midi.get': OutputValue<'instrumentMidi'>;
+  'instrument.midi.set': OutputValue<'arrangementMutation'>;
   'instrument.vst3.set': OutputValue<'arrangementMutation'>;
   'instrument.clear': OutputValue<'arrangementMutation'>;
   'effect.add': OutputValue<'arrangementMutation'>;
@@ -196,6 +198,9 @@ export type ControlCommandResults = {
   'project.restore-generation': OutputValue<'arrangementMutation'>;
   'render.start': OutputValue<'job'>;
   'render.stems': OutputValue<'job'>;
+  'render.export': OutputValue<'renderExport'>;
+  'render.list': OutputValue<'renderList'>;
+  'render.clean': OutputValue<'renderDelete'>;
   'job.get': OutputValue<'job'>;
   'job.cancel': OutputValue<'job'>;
   'analysis.start': OutputValue<'analysis'>;

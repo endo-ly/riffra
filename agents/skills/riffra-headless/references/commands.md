@@ -493,6 +493,8 @@ Control Commandでは`owner`を `{"kind":"track","id":"..."}`、`{"kind":"bus","
 | ----------------------- | ------------------------------------------------------------------------------------------- |
 | `instrument list`       | -                                                                                           |
 | `instrument apply`      | `--track-id` `--instrument-id`（catalogの`id`。Built-inは`builtin:<presetId>`）             |
+| `instrument midi get`   | `--track-id`                                                                                |
+| `instrument midi set`   | `--track-id` `--settings-json`（設定全体をinline JSONで指定）                               |
 | `plugin instrument`     | `--track-id` (`--plugin-path` または `--plugin-id`)                                         |
 | `effect add`            | `<owner>` (`--plugin-path` または `--plugin-id`)                                            |
 | `instrument clear`      | `--track-id`                                                                                |
@@ -544,6 +546,13 @@ riffra --attach plugin preset set --track-id track:01j... --device-id device:01j
 Plugin presetはHostへ公開されたprogramだけを対象とし、Plugin固有GUIのpreset browserは対象外である。Plugin state fileにはschema version、Plugin path、parameter values、opaque stateを含め、別VST3のstateは適用しない。
 
 `instrument list`は同梱のBuilt-in instrumentとUser Instrumentのcatalogを返し、各エントリの`id`が`instrument apply`への入力になる。割り当て後の`track list`は`instrument`として`name`と`source`（`internal`）を返す。Built-in instrumentの割り当てはSafe Modeでも実行できる。
+
+`instrument midi get`はTrackに割り当てられた設定と、現在のMIDI Clipにある対応外Noteの警告を返す。`instrument midi set`は設定全体を置き換え、通常のCanonical Mutationとして保存・Undo/Redo・Batchの対象となる。JSONは`transposeSemitones`、`playableNotes`、`keyswitches`を持つ。演奏可能音域は`{"type":"range","start":36,"end":84}`または`{"type":"set","notes":[36,48,60]}`で指定し、制限しない場合は`null`を指定する。Keyswitchは`{"note":24,"name":"C0"}`の配列で、通常Noteの移調対象から除外される。
+
+```powershell
+riffra --attach instrument midi get --track-id track:01j...
+riffra --attach instrument midi set --track-id track:01j... --settings-json '{"transposeSemitones":12,"playableNotes":{"type":"range","start":36,"end":84},"keyswitches":[{"note":24,"name":"C0"}]}'
+```
 
 ### Missing 復旧
 
@@ -653,13 +662,18 @@ riffra --attach record promote --id rec:01j...
 ```powershell
 riffra --attach --expected-sequence 43 render start --range loop-range --normalize true
 riffra --attach --expected-sequence 43 render start --start 9:1 --end 13:1 --track-id track:01j...
+riffra --attach render start --out ./exports/song.wav
 riffra --attach job get --id job:01j...
 riffra --attach job wait --id job:01j...
 riffra --attach job wait --id job:01j... --timeout-ms 30000
 riffra --attach job cancel --id job:01j...
+riffra --attach render list
+riffra --attach render export --id render-01j... --out ./exports/song-copy.wav
+riffra --attach render clean --id render-01j...
 ```
 
 - `render start` は `--range entire-arrangement` (既定) または `--range loop-range` を指定できる。音楽座標の部分Renderは `--start <bar:beat> --end <bar:beat>` を両方指定し、`--track-id` と併用できる。[`--normalize true|false`] も指定できる。`--range loop-range` と `--start` / `--end` は併用しない
+- `render start --out <WAV_PATH>` はRender完了後にWAVを指定先へコピーする。`render stems --out <DIRECTORY>` は完成した各Stemを既存ディレクトリへコピーする。相対パスはCLIの作業ディレクトリを基準に解決され、既存ファイルは上書きされない。コピーが失敗しても内部Renderは履歴に残る
 - `render start` の `--expected-sequence` はRender対象のCanonical snapshotを固定する。ConflictならWAVを作成せず、最新状態をInspectしてからRenderし直す
 - `render stems` は一度の要求で複数Trackを同じ時間基準のWAVへ書き出す。選択方法は `--all-tracks` と `--track-ids <ID1>,<ID2>` のどちらか一方を必ず指定する。`--range`、`--start`、`--end` の使い方は `render start` と同じで、`render stems` に個別正規化の `--normalize` はない
 
@@ -675,6 +689,8 @@ riffra --attach render stems --track-ids track:bass,track:drums --start 9:1 --en
 - 応答は `type: "job"` のジョブ ID。ワンショットAttached CLIの`job wait`は`--timeout-ms`を指定しなければterminal stateまで待ち、指定した場合だけその時間で打ち切る。内部では既存の`job.get`を繰り返し呼び、`completed`、`failed`、`cancelled`のいずれかになった時点の結果を返す。interactiveでは`job.get`を呼び出し側で繰り返し、進行中の停止には`job cancel`を使う。Control ProtocolでJobを操作するコマンドは`job.get`と`job.cancel`である
 - Runtimeから意味のある進捗率を取得できない間の`progress`は`null`である
 - `render start` の出力は `renders/render-{ms}/timeline.wav` と manifest、`render stems` の出力は `renders/render-<unique-id>/` 配下の連番WAVと `render.json` である
+- `render list` は各RenderのID、種別、Project、作成時刻、ファイル・Asset状態、サイズ、Sample Rate、Duration、測定値と診断を返す。壊れたManifestは一覧全体を止めず、そのRenderの診断になる
+- `render export --id <RENDER_ID> --out <PATH>` は通常RenderをWAVへ、Stem Renderを既存ディレクトリへコピーする。`render clean --id <RENDER_ID>` はProject、保存世代、録音、Asset Provenanceに参照されていないRenderだけを削除し、外部Export先には触れない
 
 `plugin scan-start` も同様に非同期ジョブ(`job get` で追跡)である。同期版の `plugin scan` は完了まで応答を返さない。
 

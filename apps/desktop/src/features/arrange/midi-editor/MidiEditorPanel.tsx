@@ -1,7 +1,13 @@
 import { musicalGridTicks, snapToBar } from '@/shared/session/timebase';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, MutableRefObject } from 'react';
-import type { CreativeSession, MidiClip, MidiNote, ProjectTimebase } from '@/model/domain';
+import type {
+  CreativeSession,
+  InstrumentMidiInspection,
+  MidiClip,
+  MidiNote,
+  ProjectTimebase,
+} from '@/model/domain';
 import { ticksToSeconds } from '@/shared/session/timebase';
 import {
   SNAP_GRID_OPTIONS,
@@ -67,6 +73,7 @@ const LANE_LABEL_WIDTH = 48;
 
 interface MidiEditorPanelProps {
   clip: MidiClip | null;
+  instrumentMidi: InstrumentMidiInspection | null;
   /** Color of the track that owns the clip; notes are drawn in it. */
   trackColor: string | null;
   timebase: ProjectTimebase;
@@ -120,6 +127,29 @@ function pitchRowTop(pitch: number, rowHeight: number) {
 
 export function MidiEditorPanel(props: MidiEditorPanelProps) {
   const { clip } = props;
+  const instrumentSettings = props.instrumentMidi?.settings ?? null;
+  const keyswitchFor = (note: number) =>
+    instrumentSettings?.keyswitches.find((keyswitch) => keyswitch.note === note) ?? null;
+  const instrumentOutputNote = (note: number) => {
+    if (!instrumentSettings || keyswitchFor(note)) return note;
+    const output = note + instrumentSettings.transposeSemitones;
+    return output >= 0 && output <= 127 ? output : null;
+  };
+  const instrumentPlayable = (note: number) => {
+    if (!instrumentSettings) return true;
+    if (keyswitchFor(note)) return true;
+    const output = instrumentOutputNote(note);
+    if (output === null) return false;
+    const playable = instrumentSettings.playableNotes;
+    if (!playable) return true;
+    return playable.type === 'range'
+      ? output >= playable.start && output <= playable.end
+      : playable.notes.includes(output);
+  };
+  const warnedNoteIds = useMemo(
+    () => new Set(props.instrumentMidi?.warnings.map((warning) => warning.noteId) ?? []),
+    [props.instrumentMidi],
+  );
   const { onPanicMidi } = props;
   const [snap, setSnap] = useState<SnapGrid>('1/16');
   const [dragging, setDragging] = useState<{
@@ -1053,6 +1083,32 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
         }
       }}
     >
+      {props.instrumentMidi?.instrumentId && (
+        <div className={styles.instrumentMidiInfo} aria-label="Instrument MIDI configuration">
+          <span>
+            Transpose {instrumentSettings!.transposeSemitones > 0 ? '+' : ''}
+            {instrumentSettings!.transposeSemitones} st
+          </span>
+          <span>
+            {instrumentSettings!.playableNotes?.type === 'range'
+              ? `Playable ${midiNoteName(instrumentSettings!.playableNotes.start)}–${midiNoteName(instrumentSettings!.playableNotes.end)}`
+              : instrumentSettings!.playableNotes?.type === 'set'
+                ? `${instrumentSettings!.playableNotes.notes.length} playable notes`
+                : 'All notes playable'}
+          </span>
+          {instrumentSettings!.keyswitches.map((keyswitch) => (
+            <span key={`${keyswitch.note}:${keyswitch.name}`}>
+              {midiNoteName(keyswitch.note)}: {keyswitch.name}
+            </span>
+          ))}
+          {(props.instrumentMidi?.warnings.length ?? 0) > 0 && (
+            <strong role="status">
+              {props.instrumentMidi!.warnings.length} note warning
+              {props.instrumentMidi!.warnings.length === 1 ? '' : 's'}
+            </strong>
+          )}
+        </div>
+      )}
       <Toolbar label="MIDI Editor toolbar">
         <span className={styles.clipIdentity} title={props.clip.name}>
           {props.clip.name}
@@ -1155,7 +1211,13 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
                   data-hover={pitch === hoverPitch || undefined}
                   role="button"
                   tabIndex={0}
-                  aria-label={`Preview ${midiNoteName(pitch)}`}
+                  aria-label={
+                    keyswitchFor(pitch)
+                      ? `Keyswitch ${keyswitchFor(pitch)!.name} · Preview ${midiNoteName(pitch)}`
+                      : `Preview ${midiNoteName(pitch)}`
+                  }
+                  data-playable={instrumentSettings ? instrumentPlayable(pitch) : undefined}
+                  data-keyswitch={keyswitchFor(pitch) ? true : undefined}
                   onPointerDown={(event) => {
                     event.preventDefault();
                     event.stopPropagation();
@@ -1192,8 +1254,11 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
                       aria-hidden="true"
                     />
                   )}
-                  {(pitch % 12 === 0 || pitch === hoverPitch) && (
-                    <span className={styles.pianoLabel}>{midiNoteName(pitch)}</span>
+                  {(pitch % 12 === 0 || pitch === hoverPitch || keyswitchFor(pitch)) && (
+                    <span className={styles.pianoLabel}>
+                      {midiNoteName(pitch)}
+                      {keyswitchFor(pitch) ? ` · ${keyswitchFor(pitch)!.name}` : ''}
+                    </span>
                   )}
                 </div>
               ))}
@@ -1365,6 +1430,7 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
                     <span
                       key={note.id}
                       data-note-id={note.id}
+                      data-midi-warning={warnedNoteIds.has(note.id) || undefined}
                       className={`${styles.note} ${preview ? styles.dragging : ''} ${selectedNoteIds.includes(note.id) ? styles.selected : ''}`}
                       style={noteBox(visibleNote)}
                       onPointerDown={(event) => handlePointerDown(event, note, 'move')}

@@ -26,6 +26,23 @@ export async function openSonalloyBundle(): Promise<string | null> {
   return typeof result === 'string' ? result : null;
 }
 
+export async function chooseRenderStemDirectory(): Promise<string | null> {
+  const result = await open({
+    directory: true,
+    multiple: false,
+    title: 'Export Render Stems',
+  });
+  return typeof result === 'string' ? result : null;
+}
+
+export async function saveRenderWav(defaultName: string): Promise<string | null> {
+  const result = await save({
+    defaultPath: `${defaultName}.wav`,
+    filters: [{ name: 'WAV Audio', extensions: ['wav'] }],
+  });
+  return typeof result === 'string' ? result : null;
+}
+
 export async function saveProjectPackage(defaultName: string): Promise<string | null> {
   const result = await save({
     defaultPath: `${sanitizeProjectFileName(defaultName)}.riffra`,

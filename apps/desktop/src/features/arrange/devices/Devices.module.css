@@ -143,6 +143,81 @@
   accent-color: var(--color-accent);
 }
 
+.midiSettings {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  border-top: 1px solid var(--color-border-subtle);
+  padding-top: var(--space-3);
+}
+
+.midiSettings h4 {
+  margin: 0;
+}
+
+.midiSettings form {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.midiSettings label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.midiSettings :is(input, select, button) {
+  min-height: 24px;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-panel);
+  color: var(--color-text-primary);
+  color-scheme: dark;
+}
+
+.midiSettings input[type='number'] {
+  width: 8ch;
+}
+
+.midiSettings fieldset {
+  display: grid;
+  gap: var(--space-2);
+  border: 1px solid var(--color-border-default);
+}
+
+.midiRange,
+.keyswitchRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.keyswitchRow label:first-child {
+  flex: 0 0 auto;
+}
+
+.keyswitchRow label:nth-child(2) {
+  flex: 1 1 120px;
+}
+
+.midiWarnings {
+  padding: var(--space-2);
+  border: 1px solid color-mix(in srgb, var(--color-status-warning) 45%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-status-warning) 10%, transparent);
+  color: var(--color-text-primary);
+}
+
+.midiWarnings ul {
+  display: grid;
+  gap: var(--space-1);
+  margin: var(--space-1) 0 0;
+  padding-left: var(--space-4);
+}
+
 .panel [role='alert'] {
   color: var(--color-status-danger);
 }

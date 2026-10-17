@@ -20,6 +20,11 @@ import type {
   SendPatch,
   SendPosition,
   SidechainSendPatch,
+  InstrumentMidiSettings,
+  InstrumentMidiInspection,
+  RenderHistoryEntry,
+  RenderExportResult,
+  RenderDeleteResult,
   DeviceParameterInfo,
   PluginPresetInfo,
   LibraryAsset,
@@ -183,6 +188,9 @@ export interface RenderApi {
   setMixdown(settings: MixdownSettings): Promise<ArrangementMutationResult>;
   startRenderJob(options: RenderOptions): Promise<BackgroundJobStatus>;
   startStemRenderJob(params: RenderStemsParams): Promise<BackgroundJobStatus>;
+  listRenders(): Promise<RenderHistoryEntry[]>;
+  exportRender(renderId: string, outputPath: string): Promise<RenderExportResult>;
+  cleanRender(renderId: string): Promise<RenderDeleteResult>;
 }
 
 export interface AudioApi {
@@ -328,6 +336,11 @@ export interface ArrangeApi {
   ): Promise<ArrangementMutationResult>;
   setTrackMidiInput(trackId: string, route: MidiInputRoute): Promise<ArrangementMutationResult>;
   applyInstrument(trackId: string, instrumentId: string): Promise<ArrangementMutationResult>;
+  getInstrumentMidiSettings(trackId: string): Promise<InstrumentMidiInspection>;
+  setInstrumentMidiSettings(
+    trackId: string,
+    settings: InstrumentMidiSettings,
+  ): Promise<ArrangementMutationResult>;
   setTrackVst3Instrument(trackId: string, pluginPath: string): Promise<ArrangementMutationResult>;
   clearTrackInstrument(trackId: string): Promise<ArrangementMutationResult>;
   addEffect(owner: EffectOwner, pluginPath: string): Promise<ArrangementMutationResult>;

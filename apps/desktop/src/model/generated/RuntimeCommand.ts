@@ -35,6 +35,8 @@ import type { RecordRenameParams } from "./RecordRenameParams";
 import type { RecordStartParams } from "./RecordStartParams";
 import type { RenderStartParams } from "./RenderStartParams";
 import type { RenderStemsParams } from "./RenderStemsParams";
+import type { RenderCleanParams } from "./RenderCleanParams";
+import type { RenderExportParams } from "./RenderExportParams";
 import type { SeekParams } from "./SeekParams";
 import type { SendLevelPreviewParams } from "./SendLevelPreviewParams";
 import type { SidechainSendLevelPreviewParams } from "./SidechainSendLevelPreviewParams";
@@ -117,6 +119,9 @@ export type RuntimeCommand =
   | { command: "project.restore-generation"; params: ProjectRestoreParams }
   | { command: "render.start"; params: RenderStartParams }
   | { command: "render.stems"; params: RenderStemsParams }
+  | { command: "render.export"; params: RenderExportParams }
+  | { command: "render.list"; params: EmptyParams }
+  | { command: "render.clean"; params: RenderCleanParams }
   | { command: "job.get"; params: IdParams }
   | { command: "job.cancel"; params: IdParams }
   | { command: "analysis.start"; params: AnalysisParams }

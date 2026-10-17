@@ -16,4 +16,4 @@ trackIds: Array<string>,
 /**
  * Shared arrangement range for every stem.
  */
-range: RenderRange, };
+range: RenderRange, outputDirectory?: string | null, };

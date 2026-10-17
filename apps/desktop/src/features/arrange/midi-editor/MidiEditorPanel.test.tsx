@@ -37,6 +37,7 @@ function setup(startTick: number) {
   render(
     <MidiEditorPanel
       clip={clip}
+      instrumentMidi={null}
       trackColor={null}
       timebase={timebase}
       playheadTick={startTick}

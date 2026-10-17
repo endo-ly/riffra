@@ -1864,8 +1864,32 @@ pub enum InstrumentCommand {
     Export(InstrumentExportArgs),
     /// Apply a built-in or User Instrument to an Instrument Track.
     Apply(InstrumentApplyArgs),
+    /// Read or update the assigned Instrument's MIDI note settings.
+    Midi {
+        #[command(subcommand)]
+        command: InstrumentMidiCommand,
+    },
     /// Clear the Instrument assignment from an Instrument Track.
     Clear(IdArg),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum InstrumentMidiCommand {
+    /// Read current settings and notes outside their playable range.
+    Get {
+        /// Instrument Track ID.
+        #[arg(long)]
+        track_id: String,
+    },
+    /// Replace the assigned Instrument's MIDI settings from inline JSON.
+    Set {
+        /// Instrument Track ID.
+        #[arg(long)]
+        track_id: String,
+        /// Complete settings object as inline JSON.
+        #[arg(long)]
+        settings_json: String,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -3359,6 +3383,19 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
                 instrument_id: args.instrument_id,
             })
             .into(),
+            InstrumentCommand::Midi { command } => match command {
+                InstrumentMidiCommand::Get { track_id } => {
+                    Canonical::InstrumentMidiGet(TrackIdParams { track_id }).into()
+                }
+                InstrumentMidiCommand::Set {
+                    track_id,
+                    settings_json,
+                } => Canonical::InstrumentMidiSet(InstrumentMidiSetParams {
+                    track_id,
+                    settings: decode_params(json_argument("settings-json", &settings_json)?)?,
+                })
+                .into(),
+            },
             InstrumentCommand::Clear(args) => Canonical::InstrumentClear(track_id(args)).into(),
         },
         CliCommand::Effect { command } => match command {

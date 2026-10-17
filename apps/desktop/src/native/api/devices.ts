@@ -6,6 +6,7 @@ import type {
   SendPatch,
   SendPosition,
   SidechainSendPatch,
+  InstrumentMidiSettings,
 } from '@/model/domain';
 import { dispatchControl } from '../invoke';
 
@@ -14,6 +15,17 @@ export async function applyInstrument(
   instrumentId: string,
 ): Promise<ArrangementMutationResult> {
   return dispatchControl({ command: 'instrument.apply', params: { trackId, instrumentId } });
+}
+
+export async function getInstrumentMidiSettings(trackId: string) {
+  return dispatchControl({ command: 'instrument.midi.get', params: { trackId } });
+}
+
+export async function setInstrumentMidiSettings(
+  trackId: string,
+  settings: InstrumentMidiSettings,
+): Promise<ArrangementMutationResult> {
+  return dispatchControl({ command: 'instrument.midi.set', params: { trackId, settings } });
 }
 
 export async function setTrackVst3Instrument(

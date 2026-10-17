@@ -378,6 +378,15 @@ export class FakeNativeApi implements NativeApi {
   startStemRenderJob(...args: Parameters<NativeApi['startStemRenderJob']>) {
     return this.command('startStemRenderJob', args);
   }
+  listRenders(...args: Parameters<NativeApi['listRenders']>) {
+    return this.command('listRenders', args);
+  }
+  exportRender(...args: Parameters<NativeApi['exportRender']>) {
+    return this.command('exportRender', args);
+  }
+  cleanRender(...args: Parameters<NativeApi['cleanRender']>) {
+    return this.command('cleanRender', args);
+  }
 
   probeAudioDevices(...args: Parameters<NativeApi['probeAudioDevices']>) {
     return this.command('probeAudioDevices', args);
@@ -519,6 +528,12 @@ export class FakeNativeApi implements NativeApi {
   }
   applyInstrument(...args: Parameters<NativeApi['applyInstrument']>) {
     return this.command('applyInstrument', args);
+  }
+  getInstrumentMidiSettings(...args: Parameters<NativeApi['getInstrumentMidiSettings']>) {
+    return this.command('getInstrumentMidiSettings', args);
+  }
+  setInstrumentMidiSettings(...args: Parameters<NativeApi['setInstrumentMidiSettings']>) {
+    return this.command('setInstrumentMidiSettings', args);
   }
   setTrackVst3Instrument(...args: Parameters<NativeApi['setTrackVst3Instrument']>) {
     return this.command('setTrackVst3Instrument', args);
@@ -1022,6 +1037,32 @@ export class FakeNativeApi implements NativeApi {
       }
       case 'getHistoryState':
         return Promise.resolve({ canUndo: false, canRedo: false });
+      case 'listRenders':
+        return Promise.resolve([]);
+      case 'exportRender': {
+        const [renderId, outputPath] = arguments_ as [string, string];
+        return Promise.resolve({ renderId, sourcePath: '', outputPath, fileCount: 1 });
+      }
+      case 'cleanRender': {
+        const [renderId] = arguments_ as [string];
+        return Promise.resolve({ renderId, deletedFileCount: 0 });
+      }
+      case 'getInstrumentMidiSettings': {
+        const [trackId] = arguments_ as [string];
+        const track = this.bootstrapState.canonical.session.arrangement.tracks.find(
+          (item) => item.id === trackId,
+        );
+        return Promise.resolve({
+          trackId,
+          instrumentId: track?.instrument?.id ?? null,
+          settings: track?.instrument?.midi ?? {
+            transposeSemitones: 0,
+            playableNotes: null,
+            keyswitches: [],
+          },
+          warnings: [],
+        });
+      }
       case 'listProjects':
       case 'renameProject':
         return Promise.resolve(this.bootstrapState.projectState);
@@ -1158,6 +1199,7 @@ const arrangementMutationMethodNames = new Set<keyof NativeApi>([
   'setTrackAudioInput',
   'setTrackMidiInput',
   'applyInstrument',
+  'setInstrumentMidiSettings',
   'setTrackVst3Instrument',
   'clearTrackInstrument',
   'addMixBus',

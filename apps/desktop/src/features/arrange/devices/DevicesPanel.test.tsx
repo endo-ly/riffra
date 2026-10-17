@@ -9,6 +9,7 @@ import type {
   DeviceSidechainCapability,
   EffectOwner,
   DeviceParameterInfo,
+  InstrumentLibraryItem,
   Track,
 } from '@/model/domain';
 import { canonicalState, defaultSession } from '@/native/browser-defaults';
@@ -106,12 +107,14 @@ function Harness({
   api,
   initialTrack = track,
   initialSession,
+  instruments = [],
   owner = { kind: 'track', id: track.id },
   onOpenAutomation = () => undefined,
 }: {
   api: FakeNativeApi;
   initialTrack?: Track;
   initialSession?: CreativeSession;
+  instruments?: InstrumentLibraryItem[];
   owner?: EffectOwner;
   onOpenAutomation?: (target: AutomationTarget) => void;
 }) {
@@ -133,7 +136,7 @@ function Harness({
         return true;
       }}
       plugins={[]}
-      instruments={[]}
+      instruments={instruments}
       missingDeviceIds={[]}
       onDisableMissingPlugin={async () => undefined}
       onReplaceMissingPlugin={async () => undefined}
@@ -336,6 +339,7 @@ describe('DevicesPanel', () => {
         id: 'builtin:1',
         name: 'Built-in Keys',
         bypassed: false,
+        midi: { transposeSemitones: 0, playableNotes: null, keyswitches: [] },
         source: {
           type: 'internal',
           definitionJson: '{}',
@@ -344,7 +348,33 @@ describe('DevicesPanel', () => {
       },
       effects: [{ ...effect, plugin: { ...effect.plugin, disabledPlaceholder: true } }],
     };
-    render(<Harness api={api} initialTrack={builtin} />);
+    render(
+      <Harness
+        api={api}
+        initialTrack={builtin}
+        instruments={[
+          {
+            id: 'builtin:keys',
+            presetId: 'keys',
+            origin: 'builtIn',
+            name: 'Built-in Keys',
+            author: null,
+            description: null,
+            defaultCategory: 'Keys',
+            category: 'Keys',
+            defaultTags: [],
+            userTags: [],
+            tags: [],
+            favorite: false,
+            collectionIds: [],
+            recommendedRange: { minMidi: 48, maxMidi: 84 },
+            preview: null,
+          },
+        ]}
+      />,
+    );
+    expect(screen.getByText(/Library recommendation:/)).toBeInTheDocument();
+    expect(screen.getByLabelText('Playable notes')).toHaveValue('none');
     fireEvent.click(screen.getByRole('button', { name: 'Built-in Keys' }));
     expect(screen.getByRole('button', { name: 'Change' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Clear instrument' })).toBeInTheDocument();
