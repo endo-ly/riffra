@@ -171,7 +171,7 @@ Mixdown設定は楽曲終端Tick、秒単位のTailとFade、任意のLoudness M
 
 | エンティティ                 | 役割                                                                                                                                     |
 | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `TrackInstrument`            | Instrument Trackに割り当てる音源。id、name、bypassed、実装sourceとMIDI設定(`transposeSemitones`、`playableNotes`、`keyswitches`)を持つ   |
+| `TrackInstrument`            | Instrument Trackに割り当てる音源。id、name、bypassed、実装source、MIDI移調、演奏可能音域、Keyswitch設定を持つ                            |
 | `TrackInstrumentSource`      | `internal`(同梱definition本文とBuilt-in preset ID)または `vst3`(`Vst3Plugin`)を表す判別付きsource                                        |
 | `InternalInstrumentResource` | 同梱Built-in presetの識別子。definition本文を正準状態に保存し、resourceの絶対pathは保存対象外である                                      |
 | `EffectDevice`               | Track・Bus・Masterが所有する順序付きエフェクト列の要素。id、name、bypassed、`Vst3Plugin` を持つ                                          |
@@ -179,7 +179,7 @@ Mixdown設定は楽曲終端Tick、秒単位のTailとFade、任意のLoudness M
 
 `TrackInstrument` と `EffectDevice` は別々に管理し、VST3の永続状態はどちらも `Vst3Plugin` で表す。Built-in音源とVST3音源は同じInstrument RuntimeからRealtimeとOffline Renderへ接続され、Built-in音源にはVST3 editorや外部plugin pathは割り当てられない。
 
-InstrumentのMIDI設定は割り当てられた音源とともに正準状態へ保存される。Note番号の移調と演奏可能音域は既存のMIDI Clipを変更せず、Execution Graphへ投影される。Keyswitch Noteは移調対象外であり、ライブラリの`recommendedRange`は編集設定とは独立した参考値である。
+移調と演奏可能音域は演奏時に適用し、既存のMIDI Clipは変更しない。Keyswitch Noteは移調対象外である。
 
 ---
 

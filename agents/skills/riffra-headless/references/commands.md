@@ -72,7 +72,7 @@ riffra --attach session apply --file ./song.jsonl --include-created-ids
 {"command":"music.note.insert","params":{"trackName":"Lead","clipName":"Verse","notes":[{"pitch":"C4","position":"1:1","duration":"1/8"}]}}
 ```
 
-既存Clip内のNoteをまとめて置き換えるには、`midi-clip.update`の`patch.notes`へRaw MIDI Note配列を渡す。音楽座標を使う場合は同じBatchに`midi-note.clear`と`music.note.insert`をこの順で含める。ClipのID、Instrument、Events、その他のClip設定は維持される。
+既存ClipのNoteだけをまとめて置き換えるには、`midi-clip.update`の`patch.notes`へRaw MIDI Note配列を渡す。音楽座標を使う場合は同じBatchに`midi-note.clear`と`music.note.insert`をこの順で含める。
 
 ```jsonl
 {"command":"midi-note.clear","params":{"trackName":"Lead","clipName":"Verse"}}
@@ -83,7 +83,7 @@ Raw MIDI形式で置き換える場合は`midi-clip update --clip-id midi-clip:0
 
 各行は `command` と `params` を持つ既存Control Commandであり、Batch専用の楽曲記法は使わない。`trackName`は候補Session上で一意に解決される。`clipName`は指定したTrack内のMIDI Clipから一意に解決されるため、`clipName`を使うときは `trackId` か `trackName` を併せる。このときTrackの指定はClipを探す範囲としてだけ使われ、operationは解決した`clipId`で実行される。`trackId`と`trackName`、`clipId`と`clipName`は同時に指定できない。同名が複数ある場合は曖昧さとして失敗する。解決結果はProtocolやCanonical identityには保存されない。
 
-Batchは全operationを候補Sessionへ適用してから、成功時だけ1回commitする。`expectedSequence`の不一致はoperation開始前にBatch全体を拒否し、途中の失敗、非対応コマンド、名前の未解決・曖昧さでもCanonical Sessionは変更されない。Batchへ含められるのは、正準状態を変えるコマンドのうちTrack・Clip・Note・Music・Marker・Range・Automation・設定・Instrument割り当て・Effect・Deviceの編集である。読み取り(`session.get`、`session.inspect`、`history.get`など)、Undo / Redo、Project操作、Assetの取り込みと配置(`asset.import-midi`、`*-clip.add-asset`)、master gainの設定、欠落依存の解決(`missing.*`)、Runtimeサービス(Render、Transport、Recordingなど)は含めない。`instrument.vst3.set`と`instrument.apply`はBatchで利用できる。ユーザー音源の適用で作るProject SnapshotはBatchの成功時にSessionから参照されるものだけ保持し、Batch失敗時は今回作成したSnapshotを削除する。
+Batchは全operationを候補Sessionへ適用してから、成功時だけ1回commitする。`expectedSequence`の不一致はoperation開始前にBatch全体を拒否し、途中の失敗、非対応コマンド、名前の未解決・曖昧さでもCanonical Sessionは変更されない。Batchへ含められるのは、正準状態を変えるコマンドのうちTrack・Clip・Note・Music・Marker・Range・Automation・設定・Instrument割り当て・Effect・Deviceの編集である。読み取り(`session.get`、`session.inspect`、`history.get`など)、Undo / Redo、Project操作、Assetの取り込みと配置(`asset.import-midi`、`*-clip.add-asset`)、master gainの設定、欠落依存の解決(`missing.*`)、Runtimeサービス(Render、Transport、Recordingなど)は含めない。`instrument.vst3.set`と`instrument.apply`はBatchへ含められる。
 
 成功応答はCanonical Sessionやoperationごとの結果を含まない。
 
@@ -154,7 +154,7 @@ riffra --attach --expected-sequence 23 music midi-clip resize `
 
 `music note list` はClipまたはTrackを一つだけ指定する。Track指定では範囲も必須である。listの範囲は半開区間で、Noteと範囲が重なるものを返す。Track指定の結果はClipごとにgroup化され、各NoteへClip IDを繰り返さない。通常結果は音楽座標だけで、IDは`--include-ids`、raw tick / MIDI値は`--raw`を指定したときだけ返る。
 
-`--raw` の結果ではNoteの`absoluteTick`がArrangement全体の位置、Noteの`startTick`がClip相対位置を表す。Clipの`startTick`もArrangement上の位置として返る。`position`は小節・拍・拍内の割合で表すArrangement全体の位置、`duration`は全音符を1とする長さである。拍内の分数は拍に対する割合で、たとえば`5:1+1/2`は5小節目の1拍目の半分だけ進んだ位置を表す。raw結果には`timebase.ppq`と拍子も含まれる。
+`--raw` の結果では、Clipの`startTick`がArrangement上の位置、Noteの`startTick`がClip内の位置、Noteの`absoluteTick`がArrangement上の位置を表す。`timebase.ppq`と拍子も含まれる。
 
 `music note transform` は、指定範囲内で開始するNoteだけを対象にする。範囲指定はClip開始位置に対する絶対的な音楽座標で、Track指定では必須である。`--pitch`と`--channel`は変形前の値に対して判定される。`--timing-offset`は符号付き音価（例：`+1/48`、`-1/48`）、`--velocity-offset`は0〜127へclampされ、`--transpose-semitones`がMIDI範囲外になる場合や移動後のNoteがClip外になる場合はMutation全体が失敗する。対象Noteが0件でも失敗する。
 
@@ -547,7 +547,7 @@ Plugin presetはHostへ公開されたprogramだけを対象とし、Plugin固�
 
 `instrument list`は同梱のBuilt-in instrumentとUser Instrumentのcatalogを返し、各エントリの`id`が`instrument apply`への入力になる。割り当て後の`track list`は`instrument`として`name`と`source`（`internal`）を返す。Built-in instrumentの割り当てはSafe Modeでも実行できる。
 
-`instrument midi get`はTrackに割り当てられた設定と、現在のMIDI Clipにある対応外Noteの警告を返す。`instrument midi set`は設定全体を置き換え、通常のCanonical Mutationとして保存・Undo/Redo・Batchの対象となる。JSONは`transposeSemitones`、`playableNotes`、`keyswitches`を持つ。演奏可能音域は`{"type":"range","start":36,"end":84}`または`{"type":"set","notes":[36,48,60]}`で指定し、制限しない場合は`null`を指定する。Keyswitchは`{"note":24,"name":"C0"}`の配列で、通常Noteの移調対象から除外される。
+設定JSONは`transposeSemitones`、`playableNotes`、`keyswitches`を持つ。`playableNotes`には`{"type":"range","start":36,"end":84}`、`{"type":"set","notes":[36,48,60]}`、または制限なしを表す`null`を指定する。Keyswitchは`{"note":24,"name":"C0"}`の配列で指定する。
 
 ```powershell
 riffra --attach instrument midi get --track-id track:01j...
@@ -673,7 +673,7 @@ riffra --attach render clean --id render-01j...
 ```
 
 - `render start` は `--range entire-arrangement` (既定) または `--range loop-range` を指定できる。音楽座標の部分Renderは `--start <bar:beat> --end <bar:beat>` を両方指定し、`--track-id` と併用できる。[`--normalize true|false`] も指定できる。`--range loop-range` と `--start` / `--end` は併用しない
-- `render start --out <WAV_PATH>` はRender完了後にWAVを指定先へコピーする。`render stems --out <DIRECTORY>` は完成した各Stemを既存ディレクトリへコピーする。相対パスはCLIの作業ディレクトリを基準に解決され、既存ファイルは上書きされない。コピーが失敗しても内部Renderは履歴に残る
+- `render start --out <WAV_PATH>` は出力WAVのパスを、`render stems --out <DIRECTORY>` はStemの出力先を指定する。相対パスはCLIの作業ディレクトリを基準に解決される
 - `render start` の `--expected-sequence` はRender対象のCanonical snapshotを固定する。ConflictならWAVを作成せず、最新状態をInspectしてからRenderし直す
 - `render stems` は一度の要求で複数Trackを同じ時間基準のWAVへ書き出す。選択方法は `--all-tracks` と `--track-ids <ID1>,<ID2>` のどちらか一方を必ず指定する。`--range`、`--start`、`--end` の使い方は `render start` と同じで、`render stems` に個別正規化の `--normalize` はない
 
@@ -689,8 +689,6 @@ riffra --attach render stems --track-ids track:bass,track:drums --start 9:1 --en
 - 応答は `type: "job"` のジョブ ID。ワンショットAttached CLIの`job wait`は`--timeout-ms`を指定しなければterminal stateまで待ち、指定した場合だけその時間で打ち切る。内部では既存の`job.get`を繰り返し呼び、`completed`、`failed`、`cancelled`のいずれかになった時点の結果を返す。interactiveでは`job.get`を呼び出し側で繰り返し、進行中の停止には`job cancel`を使う。Control ProtocolでJobを操作するコマンドは`job.get`と`job.cancel`である
 - Runtimeから意味のある進捗率を取得できない間の`progress`は`null`である
 - `render start` の出力は `renders/render-{ms}/timeline.wav` と manifest、`render stems` の出力は `renders/render-<unique-id>/` 配下の連番WAVと `render.json` である
-- `render list` は各RenderのID、種別、Project、作成時刻、ファイル・Asset状態、サイズ、Sample Rate、Duration、測定値と診断を返す。壊れたManifestは一覧全体を止めず、そのRenderの診断になる
-- `render export --id <RENDER_ID> --out <PATH>` は通常RenderをWAVへ、Stem Renderを既存ディレクトリへコピーする。`render clean --id <RENDER_ID>` はProject、保存世代、録音、Asset Provenanceに参照されていないRenderだけを削除し、外部Export先には触れない
 
 `plugin scan-start` も同様に非同期ジョブ(`job get` で追跡)である。同期版の `plugin scan` は完了まで応答を返さない。
 

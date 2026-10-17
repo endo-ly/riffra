@@ -129,7 +129,7 @@ flowchart LR
 
 - 下位の層は上位の層を書き換えない。ネイティブ側で生まれた変更は、正準コミットとして上位へ反映する
 - 正準状態が変わると、実行グラフと準備済み状態を順に作り直す。逆に下位の層が消えても、制作状態は失われない
-- TrackInstrumentのMIDI移調、演奏可能音域、Keyswitch設定は正準状態に保存する。Rustは不変な設定をExecution Graphへ投影し、Nativeはグラフ準備時に固定長のNote変換表を作ってRealtime・Offline・Live MIDIで共有する
+- TrackInstrumentのMIDI設定は正準状態に保存し、Realtime・Offline Render・Live MIDIで共通に適用する
 
 ---
 
@@ -204,8 +204,6 @@ Project単位の書き込み権で競合を防ぐ。取得する範囲は、守�
 - ProjectはDataRoot内の制作単位であり、`session.json` に正準状態を保持する。Desktopの既定のDataRootはユーザーの `Music/Riffra` 配下である
 - `.riffra` はProjectの持ち出し用パッケージであり、Import / Exportでのみ扱う。正準そのものではない
 - レンダリング結果は `renders/` へ保存し、正準状態やパッケージには含めない
-- `render.json` は管理対象Renderの履歴情報であり、Render一覧はこのManifestを読み取る。指定先へExportしたコピーはRender履歴の所有物ではなく、Renderの削除対象にも含めない
-- 通常RenderとStem Renderは内部成果物とAsset登録を先に確定し、指定先へのコピーが要求された場合は完成後に別ファイルとして出力する。出力先に同名ファイルがある場合は上書きしない
 
 ### 6.2 保存の保証
 
