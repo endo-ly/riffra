@@ -10,6 +10,7 @@ pub use application::{
 };
 pub use materialize::midi_clip_for_take;
 pub(crate) use repository::{
-    archive, delete, detect_duplicates, list, media_paths, preflight_audio_paths, promote, rename,
-    save_asset_ids, save_capture_completing, save_capture_finalization_failure, save_capture_start,
+    archive, delete, detect_duplicates, list, media_paths, preflight_audio_paths, promote,
+    referenced_asset_ids, rename, save_asset_ids, save_capture_completing,
+    save_capture_finalization_failure, save_capture_start,
 };

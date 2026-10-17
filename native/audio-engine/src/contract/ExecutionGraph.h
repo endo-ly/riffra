@@ -107,10 +107,34 @@ struct PluginDeviceSpec final {
     bool operator==(const PluginDeviceSpec&) const = default;
 };
 
+enum class PlayableNotesKindSpec { range, set };
+
+struct PlayableNotesSpec final {
+    PlayableNotesKindSpec kind = PlayableNotesKindSpec::range;
+    std::uint8_t start = 0;
+    std::uint8_t end = 127;
+    std::vector<std::uint8_t> notes;
+    bool operator==(const PlayableNotesSpec&) const = default;
+};
+
+struct InstrumentKeyswitchSpec final {
+    std::uint8_t note = 0;
+    juce::String name;
+    bool operator==(const InstrumentKeyswitchSpec&) const = default;
+};
+
+struct InstrumentMidiSpec final {
+    std::int16_t transposeSemitones = 0;
+    std::optional<PlayableNotesSpec> playableNotes;
+    std::vector<InstrumentKeyswitchSpec> keyswitches;
+    bool operator==(const InstrumentMidiSpec&) const = default;
+};
+
 struct Vst3InstrumentSpec final {
     juce::String id;
     juce::String path;
     PluginStateSpec state;
+    InstrumentMidiSpec midi;
     bool operator==(const Vst3InstrumentSpec&) const = default;
 };
 
@@ -119,6 +143,7 @@ struct InternalInstrumentSpec final {
     bool bypassed = false;
     juce::String definitionJson;
     juce::String definitionBaseDir;
+    InstrumentMidiSpec midi;
     bool operator==(const InternalInstrumentSpec&) const = default;
 };
 
@@ -146,6 +171,23 @@ inline bool sameInstrumentTopology(const std::optional<InstrumentSpec>& left,
     const auto& leftInternal = std::get<InternalInstrumentSpec>(*left);
     const auto& rightInternal = std::get<InternalInstrumentSpec>(*right);
     return leftInternal.id == rightInternal.id &&
+           leftInternal.definitionJson == rightInternal.definitionJson &&
+           leftInternal.definitionBaseDir == rightInternal.definitionBaseDir;
+}
+
+inline bool sameInstrumentRuntime(const std::optional<InstrumentSpec>& left,
+                                  const std::optional<InstrumentSpec>& right) {
+    if (left.has_value() != right.has_value()) return false;
+    if (!left.has_value()) return true;
+    if (left->index() != right->index()) return false;
+    if (const auto* leftVst3 = std::get_if<Vst3InstrumentSpec>(&*left)) {
+        const auto& rightVst3 = std::get<Vst3InstrumentSpec>(*right);
+        return leftVst3->id == rightVst3.id && leftVst3->path == rightVst3.path &&
+               leftVst3->state == rightVst3.state;
+    }
+    const auto& leftInternal = std::get<InternalInstrumentSpec>(*left);
+    const auto& rightInternal = std::get<InternalInstrumentSpec>(*right);
+    return leftInternal.id == rightInternal.id && leftInternal.bypassed == rightInternal.bypassed &&
            leftInternal.definitionJson == rightInternal.definitionJson &&
            leftInternal.definitionBaseDir == rightInternal.definitionBaseDir;
 }

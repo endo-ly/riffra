@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "AutomationRuntime.h"
+#include "MidiNoteTransform.h"
 #include "MidiScheduler.h"
 #include "instruments/InstrumentRuntime.h"
 #include "plugins/PluginChain.h"
@@ -261,6 +262,7 @@ public:
     // Prepared timeline state. The snapshot builder allocates these buffers;
     // realtime code only clears and processes their existing storage.
     std::vector<MidiScheduler::CompiledMidiClip> midiClips;
+    MidiNoteTransform midiNoteTransform;
     PluginChainAlignment effectAlignment;
     std::int64_t timelinePdcDelaySamples = 0;
     juce::AudioBuffer<float> mixBuffer;

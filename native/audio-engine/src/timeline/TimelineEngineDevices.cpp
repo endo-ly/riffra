@@ -115,7 +115,13 @@ void TimelineEngine::routeLiveMidi(RealtimeState& state) noexcept {
                 !ArrangementGraph::midiRouteMatches(runtime.midiSourceIndex, runtime.midiChannel,
                                                     event.sourceIndex, message.getChannel()))
                 continue;
-            if (runtime.hasLoadedInstrument()) (void)runtime.enqueueMidi(message);
+            if (runtime.hasLoadedInstrument()) {
+                if (const auto transformed =
+                        runtime.midiNoteTransform.transformNoteMessage(message))
+                    (void)runtime.enqueueMidi(*transformed);
+                else if (!message.isNoteOn() && !message.isNoteOff())
+                    (void)runtime.enqueueMidi(message);
+            }
             if (state.recordingPhase == RecordingPhase::recording) {
                 recordingCapture->writeMidiTrack(track.id, event.sourceIndex, message,
                                                  state.audioClockSample);
@@ -180,7 +186,10 @@ void TimelineEngine::playTargetedMidi(RealtimeState& state,
     auto* track = findTrackByKey(state, command.trackKey);
     if (track == nullptr || !track->runtime->hasLoadedInstrument()) return;
     const juce::MidiMessage message(command.midiBytes, command.midiSize);
-    (void)track->runtime->enqueueMidi(message);
+    if (const auto transformed = track->runtime->midiNoteTransform.transformNoteMessage(message))
+        (void)track->runtime->enqueueMidi(*transformed);
+    else if (!message.isNoteOn() && !message.isNoteOff())
+        (void)track->runtime->enqueueMidi(message);
     if (track->runtime->armed && state.recordingPhase == RecordingPhase::recording)
         recordingCapture->writeMidiTrack(track->id, playSurfaceSourceId, message,
                                          state.audioClockSample);

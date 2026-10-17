@@ -151,8 +151,12 @@ public:
         ++loopBoundaryCount;
     }
     void writeMidiTrack(const juce::String&, const juce::String& sourceDeviceId,
-                        const juce::MidiMessage&, std::uint64_t) noexcept override {
+                        const juce::MidiMessage& message, std::uint64_t) noexcept override {
         receivedMidiSourceId = sourceDeviceId;
+        if (midiMessageCount >= midiNotes.size()) return;
+        midiNotes[midiMessageCount] = message.getNoteNumber();
+        midiNoteOns[midiMessageCount] = message.isNoteOn();
+        ++midiMessageCount;
     }
     void writeMidiTrack(const juce::String&, const std::uint16_t sourceIndex,
                         const juce::MidiMessage&, std::uint64_t) noexcept override {
@@ -195,6 +199,9 @@ public:
     juce::String receivedTrack;
     juce::String receivedMidiSourceId;
     std::uint16_t receivedMidiSourceIndex = MidiSourceRegistry::kUnregistered;
+    std::array<int, 8> midiNotes{};
+    std::array<bool, 8> midiNoteOns{};
+    std::size_t midiMessageCount = 0;
     int receivedSamples = 0;
     int beginCount = 0;
     int endCount = 0;

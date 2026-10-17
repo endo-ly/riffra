@@ -23,6 +23,7 @@ import type { InstrumentCollection } from "./InstrumentCollection";
 import type { InstrumentControlEvent } from "./InstrumentControlEvent";
 import type { InstrumentExport } from "./InstrumentExport";
 import type { InstrumentLibraryItem } from "./InstrumentLibraryItem";
+import type { InstrumentMidiInspection } from "./InstrumentMidiInspection";
 import type { LibraryAsset } from "./LibraryAsset";
 import type { MidiClip } from "./MidiClip";
 import type { MissingDependency } from "./MissingDependency";
@@ -43,6 +44,9 @@ import type { ProjectState } from "./ProjectState";
 import type { ProjectTimebase } from "./ProjectTimebase";
 import type { RecordingAsset } from "./RecordingAsset";
 import type { RecordingStopResult } from "./RecordingStopResult";
+import type { RenderDeleteResult } from "./RenderDeleteResult";
+import type { RenderExportResult } from "./RenderExportResult";
+import type { RenderHistoryEntry } from "./RenderHistoryEntry";
 import type { RuntimeProjectionStatus } from "./RuntimeProjectionStatus";
 import type { ScanReport } from "./ScanReport";
 import type { Send } from "./Send";
@@ -62,8 +66,12 @@ export type ControlOutput =
   | { type: "sends"; value: Array<Send> }
   | { type: "sidechainSends"; value: Array<SidechainSend> }
   | { type: "instrumentEvents"; value: Array<InstrumentControlEvent> }
+  | { type: "instrumentMidi"; value: InstrumentMidiInspection }
   | { type: "sessionInspection"; value: SessionInspection }
   | { type: "history"; value: HistoryState }
+  | { type: "renderExport"; value: RenderExportResult }
+  | { type: "renderList"; value: Array<RenderHistoryEntry> }
+  | { type: "renderDelete"; value: RenderDeleteResult }
   | { type: "arrangementMutation"; value: ArrangementMutationResult }
   | { type: "batchMutation"; value: BatchMutationResult }
   | { type: "automationLanes"; value: Array<AutomationLane> }

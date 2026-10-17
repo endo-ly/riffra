@@ -1263,7 +1263,7 @@ pub struct MusicalNoteListArgs {
     /// Include stable Note ids in the response.
     #[arg(long)]
     pub include_ids: bool,
-    /// Return raw MIDI and tick values instead of musical coordinates; Clip startTick is arrangement-absolute while Note startTick is Clip-relative, and the response includes timebase metadata.
+    /// Return raw MIDI and tick values instead of musical coordinates; Note absoluteTick is arrangement-absolute while Note startTick is Clip-relative, and the response includes Clip startTick and timebase metadata.
     #[arg(long)]
     pub raw: bool,
 }
@@ -1864,8 +1864,32 @@ pub enum InstrumentCommand {
     Export(InstrumentExportArgs),
     /// Apply a built-in or User Instrument to an Instrument Track.
     Apply(InstrumentApplyArgs),
+    /// Read or update the assigned Instrument's MIDI note settings.
+    Midi {
+        #[command(subcommand)]
+        command: InstrumentMidiCommand,
+    },
     /// Clear the Instrument assignment from an Instrument Track.
     Clear(IdArg),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum InstrumentMidiCommand {
+    /// Read current settings and notes outside their playable range.
+    Get {
+        /// Instrument Track ID.
+        #[arg(long)]
+        track_id: String,
+    },
+    /// Replace the assigned Instrument's MIDI settings from inline JSON.
+    Set {
+        /// Instrument Track ID.
+        #[arg(long)]
+        track_id: String,
+        /// Complete settings object as inline JSON.
+        #[arg(long)]
+        settings_json: String,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -2495,6 +2519,7 @@ pub enum RenderCommand {
     /// under an attached one-shot, use `job wait` to follow it to a terminal state. `job wait`
     /// without --timeout-ms waits until a terminal state, and only a supplied --timeout-ms ends
     /// the wait early.
+    /// --out copies the completed WAV to an absolute path without replacing an existing file.
     Start(RenderStartArgs),
     /// Render several Tracks to aligned WAV stems under one job and directory.
     ///
@@ -2502,6 +2527,12 @@ pub enum RenderCommand {
     /// skips Tracks without unmuted Clips; explicit IDs must be unique and
     /// refer to Tracks with renderable Clips. Range options match render start.
     Stems(RenderStemsArgs),
+    /// Copy a completed Render to a WAV path, or copy all stems to an existing directory.
+    Export(RenderExportArgs),
+    /// List Renders stored in the managed Render history.
+    List,
+    /// Delete a Render after checking every known project, recording, and Asset reference.
+    Clean(RenderCleanArgs),
 }
 
 #[derive(Debug, Args)]
@@ -2521,6 +2552,9 @@ pub struct RenderStartArgs {
     /// Render only this Track as a stem instead of the full mix.
     #[arg(long)]
     pub track_id: Option<String>,
+    /// Copy the completed WAV to this path without replacing an existing file.
+    #[arg(long)]
+    pub out: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -2540,6 +2574,26 @@ pub struct RenderStemsArgs {
     /// Time-selection end as an arrangement-absolute musical position; must be provided together with --start.
     #[arg(long)]
     pub end: Option<String>,
+    /// Copy completed stem WAVs to this existing directory without replacing files.
+    #[arg(long)]
+    pub out: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub struct RenderExportArgs {
+    /// Render directory name returned by render list.
+    #[arg(long)]
+    pub id: String,
+    /// Absolute or working-directory-relative WAV path, or an existing directory for stems.
+    #[arg(long)]
+    pub out: PathBuf,
+}
+
+#[derive(Debug, Args)]
+pub struct RenderCleanArgs {
+    /// Render directory name returned by render list.
+    #[arg(long)]
+    pub id: String,
 }
 
 #[derive(Debug, Subcommand)]
@@ -3329,6 +3383,19 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
                 instrument_id: args.instrument_id,
             })
             .into(),
+            InstrumentCommand::Midi { command } => match command {
+                InstrumentMidiCommand::Get { track_id } => {
+                    Canonical::InstrumentMidiGet(TrackIdParams { track_id }).into()
+                }
+                InstrumentMidiCommand::Set {
+                    track_id,
+                    settings_json,
+                } => Canonical::InstrumentMidiSet(InstrumentMidiSetParams {
+                    track_id,
+                    settings: decode_params(json_argument("settings-json", &settings_json)?)?,
+                })
+                .into(),
+            },
             InstrumentCommand::Clear(args) => Canonical::InstrumentClear(track_id(args)).into(),
         },
         CliCommand::Effect { command } => match command {
@@ -3557,6 +3624,15 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
         CliCommand::Render { command } => match command {
             RenderCommand::Start(args) => render_start(args)?,
             RenderCommand::Stems(args) => render_stems(args)?,
+            RenderCommand::Export(args) => Runtime::RenderExport(RenderExportParams {
+                render_id: args.id,
+                output_path: resolve_output_path(args.out)?,
+            })
+            .into(),
+            RenderCommand::List => Runtime::RenderList(EmptyParams {}).into(),
+            RenderCommand::Clean(args) => {
+                Runtime::RenderClean(RenderCleanParams { render_id: args.id }).into()
+            }
         },
         CliCommand::Job { command } => match command {
             JobCommand::Get(args) => Runtime::JobGet(IdParams { id: args.id }).into(),
@@ -3644,6 +3720,7 @@ fn render_start(args: RenderStartArgs) -> Result<ControlCommand, RequestError> {
             range,
             normalize: args.normalize.unwrap_or(false),
             track_id: args.track_id,
+            output_path: args.out.map(resolve_output_path).transpose()?,
         }),
     })
     .into())
@@ -3657,8 +3734,16 @@ fn render_stems(args: RenderStemsArgs) -> Result<ControlCommand, RequestError> {
         all_tracks: args.all_tracks,
         track_ids: args.track_ids,
         range: render_range(args.range, args.start, args.end, "/range")?,
+        output_directory: args.out.map(resolve_output_path).transpose()?,
     })
     .into())
+}
+
+fn resolve_output_path(path: PathBuf) -> Result<String, RequestError> {
+    let absolute = std::path::absolute(&path).map_err(|error| {
+        RequestError::Usage(format!("render output path could not be resolved: {error}"))
+    })?;
+    Ok(absolute.to_string_lossy().into_owned())
 }
 
 fn render_range(
@@ -4167,6 +4252,51 @@ mod tests {
     }
 
     #[test]
+    fn render_output_paths_are_absolute_and_export_is_a_runtime_command() {
+        let render = wire(
+            Cli::try_parse_from(["riffra", "render", "start", "--out", "exports/mix.wav"]).unwrap(),
+        );
+        assert_eq!(render.name, "render.start");
+        assert!(
+            render.params["options"]["outputPath"]
+                .as_str()
+                .unwrap()
+                .starts_with(
+                    &std::env::current_dir()
+                        .unwrap()
+                        .to_string_lossy()
+                        .to_string()
+                )
+        );
+
+        let export = wire(
+            Cli::try_parse_from([
+                "riffra",
+                "render",
+                "export",
+                "--id",
+                "render-123-abcd",
+                "--out",
+                "exports/copy.wav",
+            ])
+            .unwrap(),
+        );
+        assert_eq!(export.name, "render.export");
+        assert_eq!(export.params["renderId"], "render-123-abcd");
+        assert!(std::path::Path::new(export.params["outputPath"].as_str().unwrap()).is_absolute());
+
+        assert_eq!(
+            wire(Cli::try_parse_from(["riffra", "render", "list"]).unwrap()).name,
+            "render.list"
+        );
+        let clean = wire(
+            Cli::try_parse_from(["riffra", "render", "clean", "--id", "render-123-abcd"]).unwrap(),
+        );
+        assert_eq!(clean.name, "render.clean");
+        assert_eq!(clean.params["renderId"], "render-123-abcd");
+    }
+
+    #[test]
     fn invalid_musical_values_report_their_params_path() {
         // Arrange
         let cli = Cli::try_parse_from([
@@ -4487,6 +4617,28 @@ mod tests {
             json!({
                 "clipId":"midi-clip:1",
                 "notes":[{"pitch":"C4","position":"5:1","duration":"1/8"}]
+            })
+        );
+
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "--data-root",
+            "data",
+            "midi-clip",
+            "update",
+            "--clip-id",
+            "midi-clip:1",
+            "--patch",
+            r#"{"notes":[{"id":"note:1","note":60,"startTick":0,"durationTicks":480,"velocity":100,"channel":1}]}"#,
+        ])
+        .unwrap();
+        let request = wire(cli);
+        assert_eq!(request.name, "midi-clip.update");
+        assert_eq!(
+            request.params,
+            json!({
+                "clipId":"midi-clip:1",
+                "patch":{"notes":[{"id":"note:1","note":60,"startTick":0,"durationTicks":480,"velocity":100,"channel":1}]}
             })
         );
 

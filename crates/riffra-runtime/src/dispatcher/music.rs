@@ -186,6 +186,22 @@ mod tests {
                 .is_none()
         );
 
+        let raw = dispatcher
+            .dispatch(
+                request(
+                    "music.note.list",
+                    json!({"clipId":clip_id,"raw":true,"includeIds":true}),
+                ),
+                None,
+            )
+            .unwrap();
+        assert_eq!(output_value(&raw)["clips"][0]["startTick"], 15_360);
+        assert_eq!(output_value(&raw)["clips"][0]["notes"][0]["startTick"], 0);
+        assert_eq!(
+            output_value(&raw)["clips"][0]["notes"][0]["absoluteTick"],
+            15_360
+        );
+
         let fetched = dispatcher
             .dispatch(
                 request(

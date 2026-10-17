@@ -1,9 +1,10 @@
-import type { MutableRefObject } from 'react';
+import { useEffect, useState, type MutableRefObject } from 'react';
 import type {
   ArrangementMutationResult,
   CreativeSession,
   MidiClip,
   ProjectTimebase,
+  InstrumentMidiInspection,
 } from '@/model/domain';
 import type { ArrangeApi } from '@/native/native-api';
 import { MidiEditorPanel, type MidiGhostNote } from './midi-editor/MidiEditorPanel';
@@ -17,6 +18,7 @@ type ArrangeMidiApi = Pick<
   | 'insertMidiNotes'
   | 'quantizeMidiNotes'
   | 'duplicateMidiNotes'
+  | 'getInstrumentMidiSettings'
 >;
 
 interface ArrangeMidiEditorProps {
@@ -37,9 +39,29 @@ interface ArrangeMidiEditorProps {
 
 export function ArrangeMidiEditor(props: ArrangeMidiEditorProps) {
   const { api, commit } = props;
+  const [instrumentMidi, setInstrumentMidi] = useState<InstrumentMidiInspection | null>(null);
+  useEffect(() => {
+    if (!props.clip) {
+      setInstrumentMidi(null);
+      return;
+    }
+    let cancelled = false;
+    void api
+      .getInstrumentMidiSettings(props.clip.trackId)
+      .then((inspection) => {
+        if (!cancelled) setInstrumentMidi(inspection);
+      })
+      .catch(() => {
+        if (!cancelled) setInstrumentMidi(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [api, props.clip]);
   return (
     <MidiEditorPanel
       clip={props.clip}
+      instrumentMidi={instrumentMidi}
       trackColor={props.trackColor}
       timebase={props.timebase}
       ghostNotes={props.ghostNotes}

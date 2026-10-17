@@ -4,4 +4,9 @@ import type { RenderRange } from "./RenderRange";
 /**
  * Range, normalization, and Track selection of an offline render.
  */
-export type RenderOptions = { range: RenderRange, normalize: boolean, trackId?: string | null, };
+export type RenderOptions = {
+  range: RenderRange;
+  normalize: boolean;
+  trackId?: string | null;
+  outputPath?: string | null;
+};

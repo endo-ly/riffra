@@ -353,8 +353,9 @@ TEST(TimelineRealtimeTest, DeliversLiveMidiToTheArmedInstrumentAtTheNextBlock) {
     formats.registerBasicFormats();
     TimelineEngine engine;
     juce::String error;
-    auto snapshot = makeInstrumentSnapshot("track:live");
-    snapshot.graph.tracks.front().armed = true;
+    auto snapshot = makeBuiltInInstrumentSnapshot("track:live", false, true);
+    auto& instrument = std::get<InternalInstrumentSpec>(*snapshot.graph.tracks.front().instrument);
+    instrument.midi.transposeSemitones = 12;
     ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, kSampleRate, kBlockSamples, error));
     InstrumentTrace trace;
     auto rack = PluginRackTestPeer::installInstrument(
@@ -378,11 +379,83 @@ TEST(TimelineRealtimeTest, DeliversLiveMidiToTheArmedInstrumentAtTheNextBlock) {
     // Assert
     EXPECT_TRUE(routed);
     EXPECT_TRUE(trace.lastMidiMessage.isNoteOn());
+    EXPECT_EQ(trace.lastMidiMessage.getNoteNumber(), 72);
     EXPECT_EQ(engine.status().frame.transportState, TransportState::stopped);
     ASSERT_FALSE(trace.midiSamplePositions.empty());
     EXPECT_EQ(trace.midiSamplePositions.front(), 0);
     EXPECT_GT(left.front(), 0.01f);
     EXPECT_GT(*std::max_element(left.begin(), left.end()), 0.01f);
+
+    // A Live Note Off uses the same mapped key, even when the source note stays untransposed.
+    ASSERT_TRUE(engine.enqueueLiveMidi(0, juce::MidiMessage::noteOff(1, 60)));
+    (void)engine.beginBlock(kBlockSamples);
+    engine.mix(outputs.data(), 2, kBlockSamples);
+    EXPECT_TRUE(trace.lastMidiMessage.isNoteOff());
+    EXPECT_EQ(trace.lastMidiMessage.getNoteNumber(), 72);
+}
+
+TEST(TimelineRealtimeTest, TransformsPlaySurfaceNotesWithoutTransposingKeyswitches) {
+    // Arrange
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine engine;
+    juce::String error;
+    auto snapshot = makeBuiltInInstrumentSnapshot("track:play-surface", false, true);
+    auto& instrument = std::get<InternalInstrumentSpec>(*snapshot.graph.tracks.front().instrument);
+    instrument.midi.transposeSemitones = 12;
+    instrument.midi.keyswitches.push_back({48, "Sustain"});
+    ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, kSampleRate, kBlockSamples, error));
+    InstrumentTrace trace;
+    auto rack = PluginRackTestPeer::installInstrument(
+        std::make_unique<TestInstrumentProcessor>(trace), kSampleRate, kBlockSamples, error);
+    ASSERT_NE(rack, nullptr) << error;
+    ASSERT_TRUE(TimelineEngineTestPeer::installTrackInstrument(
+        engine, "track:play-surface", "instrument:play-surface", std::move(rack)));
+    CaptureIsolationSink recordingSink;
+    engine.setRecordingSink(&recordingSink);
+    ASSERT_EQ(engine.startRecording(0, error), RealtimeRequest::accepted);
+    engine.setRealtimeOwner(RealtimeOwner::audio);
+    std::array<float, kBlockSamples> left{};
+    std::array<float, kBlockSamples> right{};
+    const std::array<float*, 2> outputs{left.data(), right.data()};
+
+    const auto play = [&](const juce::MidiMessage& message) {
+        const auto queued = engine.enqueueTargetedMidi("track:play-surface", message, error);
+        if (queued != RealtimeRequest::accepted) return false;
+        (void)engine.beginBlock(kBlockSamples);
+        engine.mix(outputs.data(), 2, kBlockSamples);
+        return true;
+    };
+
+    // Act and assert: a regular Note On and Note Off share the same mapping.
+    ASSERT_TRUE(play(juce::MidiMessage::noteOn(1, 36, 0.8f))) << error;
+    EXPECT_TRUE(trace.lastMidiMessage.isNoteOn());
+    EXPECT_EQ(trace.lastMidiMessage.getNoteNumber(), 48);
+    ASSERT_TRUE(play(juce::MidiMessage::noteOff(1, 36))) << error;
+    EXPECT_TRUE(trace.lastMidiMessage.isNoteOff());
+    EXPECT_EQ(trace.lastMidiMessage.getNoteNumber(), 48);
+
+    // A source Keyswitch bypasses transpose on both message edges.
+    ASSERT_TRUE(play(juce::MidiMessage::noteOn(1, 48, 0.8f))) << error;
+    EXPECT_TRUE(trace.lastMidiMessage.isNoteOn());
+    EXPECT_EQ(trace.lastMidiMessage.getNoteNumber(), 48);
+    ASSERT_TRUE(play(juce::MidiMessage::noteOff(1, 48))) << error;
+    EXPECT_TRUE(trace.lastMidiMessage.isNoteOff());
+    EXPECT_EQ(trace.lastMidiMessage.getNoteNumber(), 48);
+
+    engine.setRealtimeOwner(RealtimeOwner::control);
+    ASSERT_EQ(engine.stopArrangeRecording(error), RealtimeRequest::accepted);
+    ASSERT_TRUE(engine.finalizeRecording(error)) << error;
+    EXPECT_EQ(recordingSink.midiMessageCount, 4u);
+    EXPECT_EQ(recordingSink.midiNotes[0], 36);
+    EXPECT_EQ(recordingSink.midiNotes[1], 36);
+    EXPECT_EQ(recordingSink.midiNotes[2], 48);
+    EXPECT_EQ(recordingSink.midiNotes[3], 48);
+    EXPECT_TRUE(recordingSink.midiNoteOns[0]);
+    EXPECT_FALSE(recordingSink.midiNoteOns[1]);
+    EXPECT_TRUE(recordingSink.midiNoteOns[2]);
+    EXPECT_FALSE(recordingSink.midiNoteOns[3]);
+    engine.clearRecordingSink();
 }
 
 TEST(TimelineRealtimeTest, CountsLiveMidiTheFullQueueCannotTake) {

@@ -6,7 +6,64 @@ use crate::api::output::InstrumentExport;
 use crate::api::params::{InstrumentApplyParams, InstrumentExportParams, InstrumentSaveParams};
 use crate::instrument::UserInstrumentStore;
 use crate::library;
-use std::fs;
+use std::path::PathBuf;
+
+pub(super) struct PreparedInstrumentAssignment {
+    pub track_id: String,
+    pub device_id: String,
+    pub instrument: riffra_core::TrackInstrument,
+    pub creates_device: bool,
+    pub snapshot: Option<OwnedProjectInstrumentSnapshot>,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct OwnedProjectInstrumentSnapshot {
+    pub snapshot_id: String,
+    pub package_root: PathBuf,
+    pub track_id: String,
+    pub instrument_id: String,
+}
+
+pub(super) fn cleanup_project_instrument_snapshots(
+    snapshots: &[OwnedProjectInstrumentSnapshot],
+) -> Result<(), String> {
+    let mut failures = Vec::new();
+    for snapshot in snapshots {
+        match std::fs::remove_dir_all(&snapshot.package_root) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                tracing::error!(
+                    snapshot_id = %snapshot.snapshot_id,
+                    instrument_id = %snapshot.instrument_id,
+                    track_id = %snapshot.track_id,
+                    path = %snapshot.package_root.display(),
+                    %error,
+                    "project instrument snapshot cleanup failed"
+                );
+                failures.push(format!(
+                    "project instrument snapshot cleanup failed at '{}': {error}",
+                    snapshot.package_root.display()
+                ));
+            }
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; "))
+    }
+}
+
+pub(super) fn with_snapshot_cleanup(
+    error: DispatchError,
+    snapshots: &[OwnedProjectInstrumentSnapshot],
+) -> DispatchError {
+    match cleanup_project_instrument_snapshots(snapshots) {
+        Ok(()) => error,
+        Err(cleanup_error) => DispatchError::CommandFailed(format!("{error}; {cleanup_error}")),
+    }
+}
 
 impl HostDispatcher<'_> {
     pub(super) fn list_instruments(&self) -> Result<ControlOutput, DispatchError> {
@@ -52,8 +109,33 @@ impl HostDispatcher<'_> {
         application: &mut riffra_core::application::Application<'_, S>,
         params: InstrumentApplyParams,
     ) -> Result<ControlOutput, DispatchError> {
-        let snapshot = application.canonical_state();
-        let track = snapshot
+        let prepared =
+            self.prepare_instrument_assignment(&application.canonical_state(), params)?;
+        if let Err(error) =
+            application.set_track_instrument(&prepared.track_id, Some(prepared.instrument))
+        {
+            return Err(with_snapshot_cleanup(
+                error.into(),
+                prepared.snapshot.as_slice(),
+            ));
+        }
+
+        self.arrangement_mutation(
+            if prepared.creates_device {
+                [("devices".to_owned(), vec![prepared.device_id])].into()
+            } else {
+                Default::default()
+            },
+            application,
+        )
+    }
+
+    pub(super) fn prepare_instrument_assignment(
+        &self,
+        canonical: &riffra_core::CanonicalState,
+        params: InstrumentApplyParams,
+    ) -> Result<PreparedInstrumentAssignment, DispatchError> {
+        let track = canonical
             .session
             .arrangement
             .tracks
@@ -67,58 +149,65 @@ impl HostDispatcher<'_> {
             .unwrap_or_else(|| format!("device:instrument:{}", params.track_id));
         let creates_device = track.instrument.is_none();
 
-        if let Some(preset_id) = params.instrument_id.strip_prefix("builtin:") {
-            let definition = self
-                .built_in_instruments
-                .resolve(preset_id)
-                .map_err(DispatchError::CommandFailed)?;
-            let instrument = riffra_core::TrackInstrument::built_in(
-                device_id.clone(),
-                definition.summary.name.clone(),
-                preset_id.to_owned(),
-                definition.definition_json.clone(),
-            )
-            .map_err(DispatchError::CommandFailed)?;
-            application.set_track_instrument(&params.track_id, Some(instrument))?;
-        } else if params.instrument_id.starts_with("user:") {
-            let store = UserInstrumentStore::new(&self.data_root, &self.sonalloy);
-            let user = store
-                .resolve(&params.instrument_id)
-                .map_err(DispatchError::CommandFailed)?;
-            let project_snapshot = store
-                .create_project_snapshot(&params.instrument_id)
-                .map_err(DispatchError::CommandFailed)?;
-            let committed = riffra_core::TrackInstrument::user_snapshot(
-                device_id.clone(),
-                user.name,
-                params.instrument_id.clone(),
-                project_snapshot.snapshot_id.clone(),
-                project_snapshot.definition_json,
-            )
-            .map_err(DispatchError::CommandFailed)
-            .and_then(|instrument| {
-                application
-                    .set_track_instrument(&params.track_id, Some(instrument))
-                    .map_err(DispatchError::from)
-            });
-            if let Err(error) = committed {
-                let _ = fs::remove_dir_all(&project_snapshot.package_root);
-                return Err(error);
-            }
-        } else {
-            return Err(DispatchError::invalid_request(format!(
-                "instrument id must start with builtin: or user: ({})",
-                params.instrument_id
-            )));
-        }
-
-        self.arrangement_mutation(
-            if creates_device {
-                [("devices".to_owned(), vec![device_id])].into()
+        let (instrument, snapshot) =
+            if let Some(preset_id) = params.instrument_id.strip_prefix("builtin:") {
+                let definition = self
+                    .built_in_instruments
+                    .resolve(preset_id)
+                    .map_err(DispatchError::CommandFailed)?;
+                (
+                    riffra_core::TrackInstrument::built_in(
+                        device_id.clone(),
+                        definition.summary.name.clone(),
+                        preset_id.to_owned(),
+                        definition.definition_json.clone(),
+                    )
+                    .map_err(DispatchError::CommandFailed)?,
+                    None,
+                )
+            } else if params.instrument_id.starts_with("user:") {
+                let store = UserInstrumentStore::new(&self.data_root, &self.sonalloy);
+                let user = store
+                    .resolve(&params.instrument_id)
+                    .map_err(DispatchError::CommandFailed)?;
+                let project_snapshot = store
+                    .create_project_snapshot(&params.instrument_id)
+                    .map_err(DispatchError::CommandFailed)?;
+                let owned_snapshot = OwnedProjectInstrumentSnapshot {
+                    snapshot_id: project_snapshot.snapshot_id,
+                    package_root: project_snapshot.package_root,
+                    track_id: params.track_id.clone(),
+                    instrument_id: params.instrument_id.clone(),
+                };
+                let instrument = match riffra_core::TrackInstrument::user_snapshot(
+                    device_id.clone(),
+                    user.name,
+                    params.instrument_id.clone(),
+                    owned_snapshot.snapshot_id.clone(),
+                    project_snapshot.definition_json,
+                ) {
+                    Ok(instrument) => instrument,
+                    Err(error) => {
+                        return Err(with_snapshot_cleanup(
+                            DispatchError::CommandFailed(error),
+                            std::slice::from_ref(&owned_snapshot),
+                        ));
+                    }
+                };
+                (instrument, Some(owned_snapshot))
             } else {
-                Default::default()
-            },
-            application,
-        )
+                return Err(DispatchError::invalid_request(format!(
+                    "instrument id must start with builtin: or user: ({})",
+                    params.instrument_id
+                )));
+            };
+
+        Ok(PreparedInstrumentAssignment {
+            track_id: params.track_id,
+            device_id,
+            instrument,
+            creates_device,
+            snapshot,
+        })
     }
 }

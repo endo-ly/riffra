@@ -8,7 +8,10 @@ export type RenderResult = {
   warnings: Array<string>;
   mastering: MasteringReport | null;
   assetId: AssetId;
+  projectId: string | null;
+  createdAtMs: number | null;
   path: string;
+  exportedPath: string | null;
   sampleRate: number;
   frames: number;
   durationMs: number;

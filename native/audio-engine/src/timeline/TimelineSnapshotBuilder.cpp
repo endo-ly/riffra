@@ -363,6 +363,11 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
         track->effects = trackSpec.effects;
         track->instrument = trackSpec.instrument;
         track->instrumentDeviceId = instrumentId(track->instrument);
+        if (track->instrument.has_value()) {
+            track->runtime->midiNoteTransform = std::visit(
+                [](const auto& instrument) { return MidiNoteTransform(instrument.midi); },
+                *track->instrument);
+        }
 
         std::uint64_t nextTimelineNoteId = 0;
         std::uint64_t noteIdStride = 0;
@@ -401,7 +406,7 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
                 midiClip.noteIdBase = originalNoteBase + iteration * noteIdStride;
                 MidiScheduler::CompiledMidiClip compiled;
                 if (!MidiScheduler::compile(midiClip, prepared->timebase, outputSampleRate,
-                                            compiled, error))
+                                            compiled, error, &track->runtime->midiNoteTransform))
                     return false;
                 compiled.noteIdStride = noteIdStride;
                 track->runtime->midiClips.push_back(std::move(compiled));
@@ -441,7 +446,7 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
                     return;
                 track->reuseEffects = existing->effects == track->effects;
                 reuseInstrument =
-                    existing->instrument == track->instrument &&
+                    sameInstrumentRuntime(existing->instrument, track->instrument) &&
                     existing->runtime->timelineMidiCapacity() >= track->runtime->midiEventCapacity;
                 if (track->reuseEffects) track->runtime->shareEffectsWith(*existing->runtime);
                 if (reuseInstrument) track->runtime->shareInstrumentWith(*existing->runtime);

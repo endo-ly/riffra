@@ -72,7 +72,11 @@ impl ProjectStore {
         fs::create_dir_all(&self.projects_dir)?;
         for entry in fs::read_dir(&self.projects_dir)? {
             let entry = entry?;
-            if entry.file_type()?.is_dir() {
+            let file_type = entry.file_type()?;
+            if file_type.is_symlink() {
+                return Err(invalid_data("Project store contains a symbolic link").into());
+            }
+            if file_type.is_dir() {
                 let project_id = entry.file_name().to_string_lossy().into_owned();
                 validate_project_id(&project_id).map_err(invalid_data)?;
             }
@@ -207,7 +211,11 @@ impl ProjectStore {
         let mut projects = Vec::new();
         for entry in fs::read_dir(&self.projects_dir)? {
             let entry = entry?;
-            if entry.file_type()?.is_dir() {
+            let file_type = entry.file_type()?;
+            if file_type.is_symlink() {
+                return Err(invalid_data("Project store contains a symbolic link"));
+            }
+            if file_type.is_dir() {
                 let project_id = entry.file_name().to_string_lossy().into_owned();
                 validate_project_id(&project_id).map_err(invalid_data)?;
                 projects.push(project_id);

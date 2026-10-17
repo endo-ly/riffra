@@ -6,12 +6,14 @@ import type {
   AutomationLane,
   AutomationTarget,
   InstrumentLibraryItem,
+  InstrumentMidiInspection,
   PluginEntry,
 } from '@/model/domain';
 import type { ArrangeWorkspaceApi } from '../arrange-api';
 import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
 import { DeviceParameterEditor } from './DeviceParameterEditor';
 import { DeviceChain } from './DeviceChain';
+import { InstrumentMidiSettingsEditor } from './InstrumentMidiSettingsEditor';
 import type { DeviceTarget } from './device-target';
 import styles from './Devices.module.css';
 
@@ -36,8 +38,19 @@ interface DevicesPanelProps {
 export function DevicesPanel(props: DevicesPanelProps) {
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [midiInspection, setMidiInspection] = useState<InstrumentMidiInspection | null>(null);
   const { target } = props;
   const track = target?.track;
+  const instrumentLibraryItem =
+    track?.instrument?.source.type === 'internal'
+      ? props.instruments.find((item) => {
+          const resource = track.instrument?.source;
+          if (resource?.type !== 'internal') return false;
+          return resource.resource.type === 'builtInPreset'
+            ? item.presetId === resource.resource.presetId
+            : item.id === resource.resource.instrumentId;
+        })
+      : undefined;
   const device =
     track?.instrument?.id === selectedDeviceId
       ? track.instrument
@@ -53,6 +66,25 @@ export function DevicesPanel(props: DevicesPanelProps) {
   const unavailable = Boolean(
     plugin && (plugin.disabledPlaceholder || props.missingDeviceIds.includes(device!.id)),
   );
+
+  useEffect(() => {
+    if (track?.kind !== 'instrument') {
+      setMidiInspection(null);
+      return;
+    }
+    let cancelled = false;
+    void props.api
+      .getInstrumentMidiSettings(track.id)
+      .then((inspection) => {
+        if (!cancelled) setMidiInspection(inspection);
+      })
+      .catch((failure: unknown) => {
+        if (!cancelled) setError(failure instanceof Error ? failure.message : String(failure));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [props.api, props.arrangement.revision, track?.id, track?.kind]);
 
   const runOperation = (operation: Promise<unknown>) => {
     setError(null);
@@ -83,6 +115,14 @@ export function DevicesPanel(props: DevicesPanelProps) {
         />
       ) : (
         <p>Select a channel to edit its devices.</p>
+      )}
+      {track?.instrument && (
+        <InstrumentMidiSettingsEditor
+          settings={track.instrument.midi}
+          recommendedRange={instrumentLibraryItem?.recommendedRange ?? null}
+          warnings={midiInspection?.trackId === track.id ? midiInspection.warnings : []}
+          onSave={(settings) => commit(props.api.setInstrumentMidiSettings(track.id, settings))}
+        />
       )}
       {target && device && plugin && !unavailable && (
         <DeviceParameterEditor

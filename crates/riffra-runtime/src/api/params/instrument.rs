@@ -29,6 +29,14 @@ pub struct InstrumentApplyParams {
     pub instrument_id: String,
 }
 
+/// Updates MIDI note handling on an assigned Instrument Track device.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct InstrumentMidiSetParams {
+    pub track_id: String,
+    pub settings: riffra_core::InstrumentMidiSettings,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct InstrumentIdParams {

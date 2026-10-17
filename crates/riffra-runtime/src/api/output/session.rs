@@ -1,9 +1,9 @@
 //! Canonical session results.
 
 use riffra_core::{
-    AudioInputRoute, CanonicalState, EffectDevice, MidiInputRoute, MonitoringState,
-    MusicalDuration, MusicalPitch, MusicalPosition, Track, TrackInstrument, TrackInstrumentSource,
-    TrackKind,
+    AudioInputRoute, CanonicalState, EffectDevice, InstrumentMidiSettings, InstrumentMidiWarning,
+    MidiInputRoute, MonitoringState, MusicalDuration, MusicalPitch, MusicalPosition, Track,
+    TrackInstrument, TrackInstrumentSource, TrackKind,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -60,6 +60,16 @@ pub struct TrackSummary {
     pub effects: Vec<TrackEffectSummary>,
 }
 
+/// Instrument MIDI configuration and notes that currently exceed it.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct InstrumentMidiInspection {
+    pub track_id: String,
+    pub instrument_id: Option<String>,
+    pub settings: InstrumentMidiSettings,
+    pub warnings: Vec<InstrumentMidiWarning>,
+}
+
 /// Effect metadata included in a lightweight Track projection.
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -82,6 +92,7 @@ pub struct TrackInstrumentSummary {
     pub name: String,
     pub bypassed: bool,
     pub source: TrackInstrumentSummarySource,
+    pub midi: InstrumentMidiSettings,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub preset_id: Option<String>,
@@ -148,6 +159,7 @@ impl TrackInstrumentSummary {
                 TrackInstrumentSource::Internal { .. } => TrackInstrumentSummarySource::Internal,
                 TrackInstrumentSource::Vst3(_) => TrackInstrumentSummarySource::Vst3,
             },
+            midi: instrument.midi.clone(),
             preset_id: instrument.built_in_preset_id().map(str::to_owned),
         }
     }

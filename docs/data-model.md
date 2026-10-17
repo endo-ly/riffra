@@ -171,13 +171,15 @@ Mixdown設定は楽曲終端Tick、秒単位のTailとFade、任意のLoudness M
 
 | エンティティ                 | 役割                                                                                                                                     |
 | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `TrackInstrument`            | Instrument Trackに割り当てる音源。id、name、bypassed、実装sourceを持つ                                                                   |
+| `TrackInstrument`            | Instrument Trackに割り当てる音源。id、name、bypassed、実装source、MIDI移調、演奏可能音域、Keyswitch設定を持つ                            |
 | `TrackInstrumentSource`      | `internal`(同梱definition本文とBuilt-in preset ID)または `vst3`(`Vst3Plugin`)を表す判別付きsource                                        |
 | `InternalInstrumentResource` | 同梱Built-in presetの識別子。definition本文を正準状態に保存し、resourceの絶対pathは保存対象外である                                      |
 | `EffectDevice`               | Track・Bus・Masterが所有する順序付きエフェクト列の要素。id、name、bypassed、`Vst3Plugin` を持つ                                          |
 | `Vst3Plugin`                 | VST3プラグインの永続状態。path、パラメータ値、プラグイン状態データ(不透明文字列)、欠落プラグインを無効化した状態(`disabled_placeholder`) |
 
 `TrackInstrument` と `EffectDevice` は別々に管理し、VST3の永続状態はどちらも `Vst3Plugin` で表す。Built-in音源とVST3音源は同じInstrument RuntimeからRealtimeとOffline Renderへ接続され、Built-in音源にはVST3 editorや外部plugin pathは割り当てられない。
+
+移調と演奏可能音域は演奏時に適用し、既存のMIDI Clipは変更しない。Keyswitch Noteは移調対象外である。
 
 ---
 

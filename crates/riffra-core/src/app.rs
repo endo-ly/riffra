@@ -203,6 +203,11 @@ impl AppCore {
         }
     }
 
+    /// Returns the sessions retained by this project's Undo and Redo history.
+    pub fn history_sessions(&self) -> impl Iterator<Item = &CreativeSession> {
+        self.history.sessions()
+    }
+
     fn restore_history_entry<S: SessionStorage + ?Sized>(
         &mut self,
         storage: &S,

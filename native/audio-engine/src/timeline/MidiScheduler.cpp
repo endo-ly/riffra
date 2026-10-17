@@ -210,7 +210,7 @@ bool MidiScheduler::prepareBuffer(juce::MidiBuffer& buffer,
 
 bool MidiScheduler::compile(const MidiClip& source, const TimelineTimebase& timebase,
                             const double sampleRate, CompiledMidiClip& destination,
-                            juce::String& error) {
+                            juce::String& error, const MidiNoteTransform* const transform) {
     destination = {};
     destination.startTick = source.startTick;
     destination.durationTicks = source.durationTicks;
@@ -232,6 +232,12 @@ bool MidiScheduler::compile(const MidiClip& source, const TimelineTimebase& time
             error = "Timeline MIDI note has an invalid musical range.";
             return false;
         }
+        const auto currentNoteId = noteId++;
+        const auto outputNote =
+            transform != nullptr
+                ? transform->outputNote(static_cast<std::uint8_t>(note.note))
+                : std::optional<std::uint8_t>(static_cast<std::uint8_t>(note.note));
+        if (!outputNote) continue;
         const auto noteStart = std::min<std::int64_t>(
             destination.lengthSamples - 1,
             std::max<std::int64_t>(
@@ -249,22 +255,23 @@ bool MidiScheduler::compile(const MidiClip& source, const TimelineTimebase& time
         if (source.directInstrumentEvents) {
             SonalloyEvent on{};
             on.event_type = SONALLOY_EVENT_NOTE_ON;
-            on.note_id = noteId++;
-            on.note_number = static_cast<std::uint8_t>(note.note);
+            on.note_id = currentNoteId;
+            on.note_number = *outputNote;
             on.velocity = static_cast<std::uint8_t>(note.velocity);
             SonalloyEvent off{};
             off.event_type = SONALLOY_EVENT_NOTE_OFF;
             off.note_id = on.note_id;
+            off.note_number = on.note_number;
             destination.events.push_back({noteStart, 6, {}, note.startTick, noteOrder, on, {}});
             destination.events.push_back(
                 {noteEnd, 1, {}, note.startTick + note.durationTicks, noteOrder++, off, {}});
         } else {
             appendEvent(destination,
                         juce::MidiMessage::noteOn(
-                            channel(note.channel), note.note,
+                            channel(note.channel), *outputNote,
                             static_cast<juce::uint8>(juce::jlimit(1, 127, note.velocity))),
                         noteStart, 1);
-            appendEvent(destination, juce::MidiMessage::noteOff(channel(note.channel), note.note),
+            appendEvent(destination, juce::MidiMessage::noteOff(channel(note.channel), *outputNote),
                         noteEnd, 0);
         }
     }

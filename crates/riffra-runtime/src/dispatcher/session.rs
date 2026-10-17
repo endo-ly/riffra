@@ -6,8 +6,11 @@ use crate::api::params::{BatchOperation, SessionApplyParams};
 use crate::api::{
     CanonicalAccess, CanonicalCommand, CommandExecutor, ControlCommand, ControlOutput,
 };
+use crate::dispatcher::instrument::{
+    OwnedProjectInstrumentSnapshot, cleanup_project_instrument_snapshots, with_snapshot_cleanup,
+};
 use serde_json::Value;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 impl HostDispatcher<'_> {
     pub(super) fn apply_batch<S: riffra_core::SessionStorage + ?Sized>(
@@ -31,11 +34,22 @@ impl HostDispatcher<'_> {
         let memory = super::MemorySessionStorage;
         let mut created_entity_counts = BTreeMap::<String, usize>::new();
         let mut created_entity_ids = BTreeMap::<String, Vec<String>>::new();
+        let mut owned_snapshots = Vec::<OwnedProjectInstrumentSnapshot>::new();
         for (operation_index, operation) in params.operations.into_iter().enumerate() {
             let BatchOperation { command, params } = operation;
-            let created =
-                batch_operation(self, &mut candidate.application(&memory), &command, params)
-                    .map_err(|error| error.with_batch_context(operation_index, &command))?;
+            let created = match batch_operation(
+                self,
+                &mut candidate.application(&memory),
+                &command,
+                params,
+                &mut owned_snapshots,
+            ) {
+                Ok(created) => created,
+                Err(error) => {
+                    let error = error.with_batch_context(operation_index, &command);
+                    return Err(with_snapshot_cleanup(error, &owned_snapshots));
+                }
+            };
             for (kind, ids) in created {
                 *created_entity_counts.entry(kind.clone()).or_default() += ids.len();
                 created_entity_ids.entry(kind).or_default().extend(ids);
@@ -43,7 +57,34 @@ impl HostDispatcher<'_> {
         }
 
         let candidate_session = candidate.snapshot().session.clone();
-        application.commit_prepared_candidate(candidate_session, canonical.sequence)?;
+        let referenced_snapshots = candidate_session
+            .arrangement
+            .tracks
+            .iter()
+            .filter_map(|track| track.instrument.as_ref())
+            .filter_map(|instrument| match &instrument.source {
+                riffra_core::TrackInstrumentSource::Internal {
+                    resource:
+                        riffra_core::InternalInstrumentResource::UserSnapshot { snapshot_id, .. },
+                    ..
+                } => Some(snapshot_id.clone()),
+                _ => None,
+            })
+            .collect::<BTreeSet<_>>();
+        let (retained_snapshots, unused_snapshots): (Vec<_>, Vec<_>) = owned_snapshots
+            .into_iter()
+            .partition(|snapshot| referenced_snapshots.contains(&snapshot.snapshot_id));
+        if let Err(error) = cleanup_project_instrument_snapshots(&unused_snapshots) {
+            return Err(with_snapshot_cleanup(
+                DispatchError::CommandFailed(error),
+                &retained_snapshots,
+            ));
+        }
+        if let Err(error) =
+            application.commit_prepared_candidate(candidate_session, canonical.sequence)
+        {
+            return Err(with_snapshot_cleanup(error.into(), &retained_snapshots));
+        }
 
         Ok(ControlOutput::BatchMutation(BatchMutationResult {
             applied_commands,
@@ -61,6 +102,7 @@ fn batch_operation(
     candidate: &mut riffra_core::application::Application<'_, super::MemorySessionStorage>,
     name: &str,
     params: Value,
+    owned_snapshots: &mut Vec<OwnedProjectInstrumentSnapshot>,
 ) -> Result<BTreeMap<String, Vec<String>>, DispatchError> {
     let params = resolve_batch_references(&candidate.canonical_state(), params)?;
     let command = ControlCommand::decode(name, params)?;
@@ -74,10 +116,25 @@ fn batch_operation(
     else {
         return Err(unsupported(name));
     };
-    if let CanonicalCommand::InstrumentApply(params) = &command
-        && !params.instrument_id.starts_with("builtin:")
-    {
-        return Err(unsupported(name));
+    if let CanonicalCommand::InstrumentApply(params) = command {
+        let prepared =
+            dispatcher.prepare_instrument_assignment(&candidate.canonical_state(), params)?;
+        if let Err(error) =
+            candidate.set_track_instrument(&prepared.track_id, Some(prepared.instrument))
+        {
+            return Err(with_snapshot_cleanup(
+                error.into(),
+                prepared.snapshot.as_slice(),
+            ));
+        }
+        if let Some(snapshot) = prepared.snapshot {
+            owned_snapshots.push(snapshot);
+        }
+        return Ok(if prepared.creates_device {
+            [("devices".to_owned(), vec![prepared.device_id])].into()
+        } else {
+            Default::default()
+        });
     }
     let canonical = candidate.canonical_state();
     let _ = access;
@@ -725,6 +782,460 @@ mod tests {
             output_value(&undone)["canonical"]["session"]["arrangement"]["mixer"]["buses"],
             json!([])
         );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn session_apply_replaces_notes_atomically_with_musical_coordinates() {
+        let root = std::env::temp_dir().join(format!("riffra-dispatcher-apply-notes-{}", now_ms()));
+        let dispatcher = Dispatcher::open(
+            root.clone(),
+            crate::test_support::prepare_built_in_resource_root(&root),
+        )
+        .unwrap();
+        let created = dispatcher
+            .dispatch(
+                command("track.add", json!({"name":"Lead","kind":"instrument"})),
+                None,
+            )
+            .unwrap();
+        let track_id = mutated_session(&created).arrangement.tracks[0].id.clone();
+        let created = dispatcher
+            .dispatch(
+                command(
+                    "music.midi-clip.create",
+                    json!({"trackId":track_id,"name":"Verse","start":"1:1","end":"5:1"}),
+                ),
+                None,
+            )
+            .unwrap();
+        let clip_id = mutated_session(&created).arrangement.midi_clips[0]
+            .id
+            .clone();
+        dispatcher
+            .dispatch(
+                command(
+                    "music.note.insert",
+                    json!({"clipId":clip_id,"notes":[{"pitch":"C4","position":"1:1","duration":"1/4"}]}),
+                ),
+                None,
+            )
+            .unwrap();
+        let before = dispatcher
+            .dispatch(command("session.get", json!({})), None)
+            .unwrap();
+        let original_clip_id = output_value(&before)["arrangement"]["midiClips"][0]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        let replaced = dispatcher
+            .dispatch(
+                command(
+                    "session.apply",
+                    json!({
+                        "operations":[
+                            {"command":"midi-note.clear","params":{"trackName":"Lead","clipName":"Verse"}},
+                            {"command":"music.note.insert","params":{"trackName":"Lead","clipName":"Verse","notes":[
+                                {"pitch":"E4","position":"1:2","duration":"1/8"},
+                                {"pitch":"G4","position":"2:1","duration":"1/8"}
+                            ]}}
+                        ]
+                    }),
+                ),
+                None,
+            )
+            .unwrap();
+        assert_eq!(replaced.sequence, before.sequence + 1);
+        let replaced_state = dispatcher
+            .dispatch(command("session.get", json!({})), None)
+            .unwrap();
+        let clip = &output_value(&replaced_state)["arrangement"]["midiClips"][0];
+        assert_eq!(clip["id"], original_clip_id);
+        assert_eq!(
+            clip["notes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|note| note["note"].as_u64().unwrap())
+                .collect::<Vec<_>>(),
+            [64, 67]
+        );
+
+        let failed = dispatcher.dispatch(
+            command(
+                "session.apply",
+                json!({
+                    "operations":[
+                        {"command":"midi-note.clear","params":{"trackName":"Lead","clipName":"Verse"}},
+                        {"command":"music.note.insert","params":{"trackName":"Lead","clipName":"Verse","notes":[
+                            {"pitch":"C4","position":"1:1","duration":"0"}
+                        ]}}
+                    ]
+                }),
+            ),
+            None,
+        );
+        assert!(failed.is_err());
+        let after_failure = dispatcher
+            .dispatch(command("session.get", json!({})), None)
+            .unwrap();
+        assert_eq!(after_failure.sequence, replaced_state.sequence);
+        assert_eq!(output_value(&after_failure), output_value(&replaced_state));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn session_apply_sets_vst3_instrument_and_reports_new_device() {
+        let root = std::env::temp_dir().join(format!("riffra-dispatcher-apply-vst3-{}", now_ms()));
+        let dispatcher = Dispatcher::open(
+            root.clone(),
+            crate::test_support::prepare_built_in_resource_root(&root),
+        )
+        .unwrap();
+
+        let result = dispatcher
+            .dispatch(
+                command(
+                    "session.apply",
+                    json!({
+                        "includeCreatedIds":true,
+                        "operations":[
+                            {"command":"track.add","params":{"name":"Lead","kind":"instrument"}},
+                            {"command":"instrument.vst3.set","params":{"trackName":"Lead","pluginPath":"C:\\Plugins\\Synth.vst3"}}
+                        ]
+                    }),
+                ),
+                None,
+            )
+            .unwrap();
+        assert_eq!(output_value(&result)["createdEntityCounts"]["devices"], 1);
+        let result_value = output_value(&result);
+        let device_id = result_value["createdEntityIds"]["devices"][0]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let state = dispatcher
+            .dispatch(command("session.get", json!({})), None)
+            .unwrap();
+        let instrument = &output_value(&state)["arrangement"]["tracks"][0]["instrument"];
+        assert_eq!(instrument["id"], device_id);
+        assert_eq!(instrument["source"]["type"], "vst3");
+        assert_eq!(instrument["source"]["path"], "C:\\Plugins\\Synth.vst3");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn session_apply_keeps_only_referenced_user_snapshots_and_cleans_failed_batch() {
+        let root = std::env::temp_dir().join(format!("riffra-dispatcher-apply-user-{}", now_ms()));
+        let resources = crate::test_support::prepare_built_in_resource_root(&root);
+        let user_uuid = new_instance_id();
+        let user_id = format!("user:{user_uuid}");
+        let package = root.join("instruments/user").join(&user_uuid);
+        fs::create_dir_all(package.join("samples")).unwrap();
+        fs::write(
+            package.join("definition.json"),
+            r#"{"metadata":{"name":"User Piano"},"version":1,"sample":"samples/attack.wav"}"#,
+        )
+        .unwrap();
+        fs::write(package.join("samples/attack.wav"), b"sample").unwrap();
+        fs::write(
+            package.join(".riffra-instrument.json"),
+            serde_json::json!({
+                "formatVersion": 1,
+                "instrumentId": user_id,
+                "definitionPath": "definition.json",
+                "createdAtMs": 1,
+                "updatedAtMs": 1
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let dispatcher = Dispatcher::open(root.clone(), resources).unwrap();
+
+        let applied = dispatcher
+            .dispatch(
+                command(
+                    "session.apply",
+                    json!({
+                        "includeCreatedIds":true,
+                        "operations":[
+                            {"command":"track.add","params":{"name":"Lead","kind":"instrument"}},
+                            {"command":"instrument.apply","params":{"trackName":"Lead","instrumentId":user_id.clone()}},
+                            {"command":"instrument.apply","params":{"trackName":"Lead","instrumentId":user_id.clone()}}
+                        ]
+                    }),
+                ),
+                None,
+            )
+            .unwrap();
+        assert_eq!(output_value(&applied)["createdEntityCounts"]["devices"], 1);
+        let state = dispatcher
+            .dispatch(command("session.get", json!({})), None)
+            .unwrap();
+        let snapshot_id = output_value(&state)["arrangement"]["tracks"][0]["instrument"]["source"]
+            ["resource"]["snapshotId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let snapshot_root = root.join("project-instruments");
+        let snapshots = fs::read_dir(&snapshot_root)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(snapshots.as_slice(), std::slice::from_ref(&snapshot_id));
+
+        let failed = dispatcher.dispatch(
+            command(
+                "session.apply",
+                json!({
+                    "operations":[
+                        {"command":"instrument.apply","params":{"trackName":"Lead","instrumentId":user_id.clone()}},
+                        {"command":"render.start","params":{}}
+                    ]
+                }),
+            ),
+            None,
+        );
+        assert!(failed.is_err());
+        let after_failure = dispatcher
+            .dispatch(command("session.get", json!({})), None)
+            .unwrap();
+        assert_eq!(after_failure.sequence, state.sequence);
+        assert_eq!(output_value(&after_failure), output_value(&state));
+        let remaining = fs::read_dir(&snapshot_root)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(remaining.as_slice(), std::slice::from_ref(&snapshot_id));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn session_apply_rebuilds_tracks_and_mixer_after_removing_references() {
+        let root =
+            std::env::temp_dir().join(format!("riffra-dispatcher-apply-rebuild-{}", now_ms()));
+        let dispatcher = Dispatcher::open(
+            root.clone(),
+            crate::test_support::prepare_built_in_resource_root(&root),
+        )
+        .unwrap();
+        let mut dispatcher = dispatcher;
+        dispatcher.test_sidechain_capability =
+            Some(crate::api::output::DeviceSidechainCapability {
+                available: true,
+                mono: false,
+                stereo: true,
+                channels: 0,
+                reason: None,
+            });
+        dispatcher
+            .dispatch(
+                command(
+                    "session.apply",
+                    json!({
+                        "includeCreatedIds":true,
+                        "operations":[
+                            {"command":"track.add","params":{"name":"Lead","kind":"instrument"}},
+                            {"command":"track.add","params":{"name":"Drums","kind":"instrument"}},
+                            {"command":"instrument.vst3.set","params":{"trackName":"Lead","pluginPath":"C:\\Plugins\\OldLead.vst3"}},
+                            {"command":"instrument.vst3.set","params":{"trackName":"Drums","pluginPath":"C:\\Plugins\\OldDrums.vst3"}},
+                            {"command":"music.midi-clip.create","params":{"trackName":"Lead","name":"Verse","start":"1:1","end":"5:1"}},
+                            {"command":"music.note.insert","params":{"trackName":"Lead","clipName":"Verse","notes":[{"pitch":"C4","position":"1:1","duration":"1/4"}]}},
+                            {"command":"mixer.bus.add","params":{"name":"Group","kind":"group"}},
+                            {"command":"mixer.bus.add","params":{"name":"Reverb","kind":"return"}},
+                            {"command":"mixer.output.set","params":{"trackName":"Lead","busName":"Group"}},
+                            {"command":"mixer.send.add","params":{"trackName":"Lead","returnBusName":"Reverb","levelDb":-6}},
+                            {"command":"effect.add","params":{"owner":{"kind":"track","name":"Drums"},"pluginPath":"C:\\Plugins\\OldCompressor.vst3"}},
+                            {"command":"effect.add","params":{"owner":{"kind":"bus","name":"Group"},"pluginPath":"C:\\Plugins\\OldLimiter.vst3"}}
+                        ]
+                    }),
+                ),
+                None,
+            )
+            .unwrap();
+        let initial = dispatcher
+            .dispatch(command("session.get", json!({})), None)
+            .unwrap();
+        let initial_value = output_value(&initial);
+        let lead_id = initial_value["arrangement"]["tracks"][0]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let drums_id = initial_value["arrangement"]["tracks"][1]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let drums_effect_id = initial_value["arrangement"]["tracks"][1]["effects"][0]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let group_id = initial_value["arrangement"]["mixer"]["buses"][0]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let reverb_id = initial_value["arrangement"]["mixer"]["buses"][1]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let sidechain = dispatcher
+            .dispatch(
+                command(
+                    "mixer.sidechain.add",
+                    json!({
+                        "sourceTrackId":lead_id.clone(),
+                        "targetDeviceId":drums_effect_id,
+                        "levelDb":-9
+                    }),
+                ),
+                None,
+            )
+            .unwrap();
+        let sidechain_id = output_value(&sidechain)["createdEntityIds"]["sidechainSends"][0]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        dispatcher
+            .dispatch(
+                command(
+                    "automation.set",
+                    json!({
+                        "target":{"kind":"trackMix","trackId":lead_id.clone(),"parameter":"volume"},
+                        "interpolation":"linear",
+                        "points":[{"id":"point:lead","tick":0,"value":-3}]
+                    }),
+                ),
+                None,
+            )
+            .unwrap();
+        dispatcher
+            .dispatch(
+                command(
+                    "automation.set",
+                    json!({
+                        "target":{"kind":"sidechainSendLevel","sidechainSendId":sidechain_id},
+                        "interpolation":"linear",
+                        "points":[{"id":"point:sidechain","tick":0,"value":-6}]
+                    }),
+                ),
+                None,
+            )
+            .unwrap();
+        let before_rebuild = dispatcher
+            .dispatch(command("session.get", json!({})), None)
+            .unwrap();
+
+        let operations = json!([
+            {"command":"track.remove","params":{"trackName":"Lead"}},
+            {"command":"track.remove","params":{"trackName":"Drums"}},
+            {"command":"mixer.bus.remove","params":{"busId":group_id.clone()}},
+            {"command":"mixer.bus.remove","params":{"busId":reverb_id.clone()}},
+            {"command":"track.add","params":{"name":"Lead","kind":"instrument"}},
+            {"command":"track.add","params":{"name":"Drums","kind":"instrument"}},
+            {"command":"instrument.vst3.set","params":{"trackName":"Lead","pluginPath":"C:\\Plugins\\NewLead.vst3"}},
+            {"command":"instrument.vst3.set","params":{"trackName":"Drums","pluginPath":"C:\\Plugins\\NewDrums.vst3"}},
+            {"command":"music.midi-clip.create","params":{"trackName":"Lead","name":"Verse","start":"1:1","end":"5:1"}},
+            {"command":"music.note.insert","params":{"trackName":"Lead","clipName":"Verse","notes":[{"pitch":"D4","position":"1:1","duration":"1/4"}]}},
+            {"command":"mixer.bus.add","params":{"name":"Group","kind":"group"}},
+            {"command":"mixer.bus.add","params":{"name":"Reverb","kind":"return"}},
+            {"command":"mixer.output.set","params":{"trackName":"Lead","busName":"Group"}},
+            {"command":"mixer.send.add","params":{"trackName":"Lead","returnBusName":"Reverb","levelDb":-4}},
+            {"command":"effect.add","params":{"owner":{"kind":"track","name":"Drums"},"pluginPath":"C:\\Plugins\\NewCompressor.vst3"}},
+            {"command":"automation.set","params":{"target":{"kind":"masterGain"},"interpolation":"linear","points":[{"id":"point:master","tick":0,"value":-6}]}}
+        ]);
+        let mut failed_operations = operations.as_array().unwrap().clone();
+        failed_operations
+            .push(json!({"command":"track.remove","params":{"trackId":"track:missing"}}));
+        let failed = dispatcher.dispatch(
+            command("session.apply", json!({"operations":failed_operations})),
+            None,
+        );
+        assert!(failed.is_err());
+        let after_failure = dispatcher
+            .dispatch(command("session.get", json!({})), None)
+            .unwrap();
+        assert_eq!(after_failure.sequence, before_rebuild.sequence);
+        assert_eq!(output_value(&after_failure), output_value(&before_rebuild));
+
+        let rebuilt = dispatcher
+            .dispatch(
+                command(
+                    "session.apply",
+                    json!({"includeCreatedIds":true,"operations":operations}),
+                ),
+                None,
+            )
+            .unwrap();
+        assert_eq!(rebuilt.sequence, before_rebuild.sequence + 1);
+        assert_eq!(output_value(&rebuilt)["createdEntityCounts"]["tracks"], 2);
+        assert_eq!(
+            output_value(&rebuilt)["createdEntityCounts"]["midiClips"],
+            1
+        );
+        assert_eq!(
+            output_value(&rebuilt)["createdEntityCounts"]["midiNotes"],
+            1
+        );
+        assert_eq!(output_value(&rebuilt)["createdEntityCounts"]["buses"], 2);
+        assert_eq!(output_value(&rebuilt)["createdEntityCounts"]["sends"], 1);
+        assert_eq!(output_value(&rebuilt)["createdEntityCounts"]["devices"], 3);
+
+        let final_state = dispatcher
+            .dispatch(command("session.get", json!({})), None)
+            .unwrap();
+        let final_state_value = output_value(&final_state);
+        let final_arrangement = &final_state_value["arrangement"];
+        assert_eq!(final_arrangement["tracks"].as_array().unwrap().len(), 2);
+        assert_ne!(final_arrangement["tracks"][0]["id"], lead_id);
+        assert_ne!(final_arrangement["tracks"][1]["id"], drums_id);
+        assert_eq!(final_arrangement["tracks"][0]["name"], "Lead");
+        assert_eq!(
+            final_arrangement["tracks"][0]["instrument"]["source"]["path"],
+            "C:\\Plugins\\NewLead.vst3"
+        );
+        assert_eq!(
+            final_arrangement["tracks"][1]["effects"][0]["plugin"]["path"],
+            "C:\\Plugins\\NewCompressor.vst3"
+        );
+        assert_eq!(final_arrangement["midiClips"].as_array().unwrap().len(), 1);
+        assert_eq!(final_arrangement["midiClips"][0]["name"], "Verse");
+        assert_eq!(final_arrangement["midiClips"][0]["notes"][0]["note"], 62);
+        assert_eq!(
+            final_arrangement["mixer"]["buses"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(
+            final_arrangement["mixer"]["sends"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(
+            final_arrangement["mixer"]["sidechainSends"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            final_arrangement["automationLanes"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            final_arrangement["automationLanes"][0]["target"]["kind"],
+            "masterGain"
+        );
+        assert_ne!(final_arrangement["mixer"]["buses"][0]["id"], group_id);
+
         let _ = fs::remove_dir_all(root);
     }
 

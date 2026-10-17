@@ -55,6 +55,7 @@ pub(crate) fn project_graph(
                             id: instrument.id.clone(),
                             path: plugin.path.clone(),
                             state,
+                            midi: instrument.midi.clone(),
                         }),
                         TrackInstrumentSource::Internal {
                             definition_json,
@@ -67,6 +68,7 @@ pub(crate) fn project_graph(
                                 bypassed: instrument.bypassed,
                                 definition_json: definition_json.clone(),
                                 definition_base_dir: base_dir.to_string_lossy().into_owned(),
+                                midi: instrument.midi.clone(),
                             })
                             .or_else(|| {
                                 diagnostics.missing_device_ids.push(instrument.id.clone());
@@ -85,6 +87,7 @@ pub(crate) fn project_graph(
                                 .join(snapshot_id)
                                 .to_string_lossy()
                                 .into_owned(),
+                            midi: instrument.midi.clone(),
                         }),
                     });
 

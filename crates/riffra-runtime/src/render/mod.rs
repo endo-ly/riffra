@@ -1,3 +1,5 @@
+#[cfg(test)]
+use crate::api::output::RenderKind;
 use crate::api::output::{ProjectionDiagnostics, RenderResult, RenderStem, RenderStemsResult};
 use crate::api::params::{RenderOptions, RenderRange};
 use crate::asset;
@@ -11,9 +13,13 @@ use std::{
     sync::atomic::AtomicBool,
 };
 
+mod history;
 mod mastering;
 mod worker;
 
+#[cfg(test)]
+use history::{RenderDeletionMarker, write_deletion_marker};
+pub(crate) use history::{delete_render, export_render, list_renders};
 pub(crate) use worker::RenderWorker;
 
 /// Platform-independent request for rendering a prepared Execution Graph.
@@ -54,6 +60,16 @@ struct SharedRenderConditions {
     sample_rate: u32,
 }
 
+/// Immutable inputs captured for one timeline render job.
+pub(crate) struct TimelineRenderContext<'a> {
+    pub(crate) data_root: &'a Path,
+    pub(crate) built_in_instruments: &'a BuiltInInstrumentCatalog,
+    pub(crate) session: &'a CreativeSession,
+    pub(crate) project_id: Option<&'a str>,
+    pub(crate) created_at_ms: u64,
+    pub(crate) options: RenderOptions,
+}
+
 /// Validated Track order and skipped IDs for a stem render request.
 pub(crate) struct StemSelection {
     /// Selected Tracks in canonical order.
@@ -80,6 +96,8 @@ pub(crate) struct StemRenderContext<'a> {
     pub(crate) selection: StemSelection,
     /// Arrangement range shared by every stem.
     pub(crate) range: RenderRange,
+    /// Absolute directory for external copies of the completed stem files.
+    pub(crate) output_directory: Option<String>,
 }
 
 /// Stem metadata and cleanup guard awaiting atomic job completion.
@@ -165,6 +183,7 @@ impl Drop for PendingOutput<'_> {
 /// # Errors
 /// Returns a host-provided description when validation, rendering, or Asset
 /// registration fails.
+#[cfg(test)]
 pub(crate) fn render_timeline_with_cancellation(
     renderer: &RenderWorker,
     data_root: &Path,
@@ -174,17 +193,33 @@ pub(crate) fn render_timeline_with_cancellation(
     options: RenderOptions,
     cancelled: &AtomicBool,
 ) -> Result<RenderResult, String> {
-    render_timeline_with_renderer(
-        data_root,
-        built_in_instruments,
-        session,
-        created_at_ms,
-        options,
+    render_timeline_with_project_cancellation(
+        renderer,
+        TimelineRenderContext {
+            data_root,
+            built_in_instruments,
+            session,
+            project_id: None,
+            created_at_ms,
+            options,
+        },
+        cancelled,
+    )
+}
+
+pub(crate) fn render_timeline_with_project_cancellation(
+    renderer: &RenderWorker,
+    context: TimelineRenderContext<'_>,
+    cancelled: &AtomicBool,
+) -> Result<RenderResult, String> {
+    render_timeline_with_renderer_for_project(
+        context,
         |request| renderer.render_timeline_offline_cancellable(request, cancelled),
         Some(cancelled),
     )
 }
 
+#[cfg(test)]
 fn render_timeline_with_renderer(
     data_root: &Path,
     built_in_instruments: &BuiltInInstrumentCatalog,
@@ -194,6 +229,38 @@ fn render_timeline_with_renderer(
     render: impl FnOnce(OfflineRenderRequest) -> Result<Vec<String>, String>,
     cancelled: Option<&AtomicBool>,
 ) -> Result<RenderResult, String> {
+    render_timeline_with_renderer_for_project(
+        TimelineRenderContext {
+            data_root,
+            built_in_instruments,
+            session,
+            project_id: None,
+            created_at_ms,
+            options,
+        },
+        render,
+        cancelled,
+    )
+}
+
+fn render_timeline_with_renderer_for_project(
+    context: TimelineRenderContext<'_>,
+    render: impl FnOnce(OfflineRenderRequest) -> Result<Vec<String>, String>,
+    cancelled: Option<&AtomicBool>,
+) -> Result<RenderResult, String> {
+    let TimelineRenderContext {
+        data_root,
+        built_in_instruments,
+        session,
+        project_id,
+        created_at_ms,
+        options,
+    } = context;
+    let output_path = options
+        .output_path
+        .as_deref()
+        .map(history::validate_output_file_path)
+        .transpose()?;
     let plan = build_render_plan(
         data_root,
         built_in_instruments,
@@ -292,12 +359,15 @@ fn render_timeline_with_renderer(
     };
     pending.asset_id = Some(rendered_asset_id.clone());
 
-    let result = RenderResult {
+    let mut result = RenderResult {
         measurements,
         warnings,
         mastering,
         asset_id: rendered_asset_id,
+        project_id: project_id.map(str::to_owned),
+        created_at_ms: Some(created_at_ms),
         path: plan.output_path.to_string_lossy().into_owned(),
+        exported_path: None,
         sample_rate: plan.sample_rate,
         frames,
         duration_ms: range_end_ms.saturating_sub(range_start_ms),
@@ -324,6 +394,10 @@ fn render_timeline_with_renderer(
         return Err("timeline render was cancelled".into());
     }
     pending.committed = true;
+    if let Some(output_path) = output_path {
+        history::copy_files_no_clobber(&[(plan.output_path.clone(), output_path.clone())])?;
+        result.exported_path = Some(output_path.to_string_lossy().into_owned());
+    }
     Ok(result)
 }
 
@@ -489,7 +563,12 @@ fn render_stems_with_renderer(
         created_at_ms,
         selection,
         range,
+        output_directory,
     } = context;
+    let output_directory = output_directory
+        .as_deref()
+        .map(history::validate_output_directory)
+        .transpose()?;
     let conditions = shared_render_conditions(session, &range)?;
     if cancelled.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire)) {
         return Err("Timeline render was cancelled.".into());
@@ -531,6 +610,7 @@ fn render_stems_with_renderer(
             range: range.clone(),
             normalize: false,
             track_id: Some(track.id.clone()),
+            output_path: None,
         };
         let output_path = directory.join(format!("stem-{:03}.wav", index + 1));
         let plan = build_render_plan_with_conditions(
@@ -642,9 +722,11 @@ fn render_stems_with_renderer(
     }
 
     let frames = frames.ok_or("No stems were rendered.")?;
-    let result = RenderStemsResult {
+    let mut result = RenderStemsResult {
         directory: directory.to_string_lossy().into_owned(),
+        exported_directory: None,
         project_id: project_id.to_owned(),
+        created_at_ms: Some(created_at_ms),
         source_sequence,
         sample_rate: conditions.sample_rate,
         start_tick: conditions.start_tick,
@@ -661,6 +743,25 @@ fn render_stems_with_renderer(
     .map_err(|error| format!("Render manifest could not be saved: {error}"))?;
     if cancelled.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire)) {
         return Err("Timeline render was cancelled.".into());
+    }
+    if let Some(output_directory) = output_directory {
+        pending.commit();
+        let copies = result
+            .stems
+            .iter()
+            .map(|stem| {
+                let source = PathBuf::from(&stem.path);
+                let name = source
+                    .file_name()
+                    .ok_or_else(|| {
+                        format!("render stem path has no file name: {}", source.display())
+                    })?
+                    .to_os_string();
+                Ok((source, output_directory.join(name)))
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        history::copy_files_no_clobber(&copies)?;
+        result.exported_directory = Some(output_directory.to_string_lossy().into_owned());
     }
     Ok(PendingRenderStems {
         result,
@@ -1193,6 +1294,7 @@ mod tests {
                 created_at_ms: 21,
                 selection: select_stem_tracks(&session, true, &[]).unwrap(),
                 range: RenderRange::EntireArrangement,
+                output_directory: None,
             },
             |request| {
                 fs::write(&request.destination, wav(request.sample_rate, 128)).unwrap();
@@ -1397,6 +1499,7 @@ mod tests {
                 created_at_ms: 10,
                 selection,
                 range: RenderRange::EntireArrangement,
+                output_directory: None,
             },
             |request| {
                 let audible_tracks = request
@@ -1699,6 +1802,7 @@ mod tests {
                 created_at_ms: 1,
                 selection,
                 range: RenderRange::EntireArrangement,
+                output_directory: None,
             },
             &AtomicBool::new(false),
         )
@@ -1851,6 +1955,7 @@ mod tests {
                 created_at_ms: 11,
                 selection,
                 range: RenderRange::EntireArrangement,
+                output_directory: None,
             },
             |request| {
                 calls += 1;
@@ -1922,6 +2027,7 @@ mod tests {
                 created_at_ms: 12,
                 selection,
                 range: RenderRange::EntireArrangement,
+                output_directory: None,
             },
             |request| {
                 fs::write(&request.destination, wav(request.sample_rate, 128)).unwrap();
@@ -2188,5 +2294,474 @@ mod tests {
             assert!(!root.join("exports").exists());
         }
         let _ = fs::remove_dir_all(root);
+    }
+
+    fn create_managed_render(
+        data_root: &Path,
+        session: &CreativeSession,
+        created_at_ms: u64,
+    ) -> RenderResult {
+        render_timeline_with_renderer(
+            data_root,
+            empty_catalog(),
+            session,
+            created_at_ms,
+            RenderOptions::default(),
+            |request| {
+                fs::write(&request.destination, wav(request.sample_rate, 128)).unwrap();
+                Ok(Vec::new())
+            },
+            None,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn render_history_lists_integrity_and_clean_removes_only_managed_files() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-render-clean-{}",
+            riffra_control::new_instance_id()
+        ));
+        let output = root.join("exports").join("mix.wav");
+        fs::create_dir_all(output.parent().unwrap()).unwrap();
+        let render = create_managed_render(&root, &session_with_clips(), 31);
+        let render_id = Path::new(&render.path)
+            .parent()
+            .unwrap()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        export_render(&root, &render_id, output.to_str().unwrap()).unwrap();
+
+        let listed = list_renders(&root).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].render_id, render_id);
+        assert_eq!(listed[0].kind, RenderKind::Timeline);
+        assert_eq!(listed[0].created_at_ms, Some(31));
+        assert_eq!(listed[0].file_count, 1);
+        assert!(listed[0].file_size_bytes.unwrap() > 0);
+        assert!(listed[0].files[0].file_exists);
+        assert!(listed[0].files[0].asset_registered);
+        assert!(listed[0].diagnostics.is_empty());
+
+        let malformed_directory = root.join("renders").join("render-32-damaged");
+        fs::create_dir(&malformed_directory).unwrap();
+        fs::write(
+            malformed_directory.join("render.json"),
+            b"not a render manifest",
+        )
+        .unwrap();
+        let listed = list_renders(&root).unwrap();
+        let damaged = listed
+            .iter()
+            .find(|item| item.render_id == "render-32-damaged")
+            .unwrap();
+        assert_eq!(damaged.kind, RenderKind::Unknown);
+        assert_eq!(damaged.created_at_ms, Some(32));
+        assert_eq!(damaged.diagnostics.len(), 1);
+        fs::remove_dir_all(malformed_directory).unwrap();
+
+        let project = riffra_host::ProjectStore::new(&root).initialize().unwrap();
+        let jobs = crate::jobs::JobRegistry::default();
+        let deleted = delete_render(
+            &root,
+            &riffra_host::ProjectStore::new(&root),
+            &project.project_id,
+            &project.loaded.session,
+            std::iter::empty(),
+            &jobs,
+            &render_id,
+        )
+        .unwrap();
+        assert_eq!(deleted.deleted_file_count, 2);
+        assert!(!Path::new(&render.path).exists());
+        assert!(output.is_file());
+        assert!(asset::load(&root, &render.asset_id).is_none());
+        assert!(list_renders(&root).unwrap().is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn render_clean_rejects_current_and_saved_generation_references() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-render-referenced-{}",
+            riffra_control::new_instance_id()
+        ));
+        let render = create_managed_render(&root, &session_with_clips(), 41);
+        let render_id = Path::new(&render.path)
+            .parent()
+            .unwrap()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let store = riffra_host::ProjectStore::new(&root);
+        let project = store.initialize().unwrap();
+        let jobs = crate::jobs::JobRegistry::default();
+        let mut referenced = session_with_clips();
+        referenced.arrangement.midi_clips[0].asset_id = Some(render.asset_id.clone());
+        let active_jobs = crate::jobs::JobRegistry::default();
+        let _ = active_jobs.start(crate::api::output::JobKind::Render);
+        let active_job_error = delete_render(
+            &root,
+            &store,
+            &project.project_id,
+            &CreativeSession::new(41),
+            std::iter::empty(),
+            &active_jobs,
+            &render_id,
+        )
+        .unwrap_err();
+        assert!(active_job_error.contains("active Render jobs"));
+        let current_error = delete_render(
+            &root,
+            &store,
+            &project.project_id,
+            &referenced,
+            std::iter::empty(),
+            &jobs,
+            &render_id,
+        )
+        .unwrap_err();
+        assert!(current_error.contains("current project"));
+        assert!(current_error.contains("Clip clip"));
+
+        let session_store = store.session_store(&project.project_id).unwrap();
+        session_store.save(&referenced).unwrap();
+        session_store.save(&CreativeSession::new(42)).unwrap();
+        let generation_error = delete_render(
+            &root,
+            &store,
+            &project.project_id,
+            &CreativeSession::new(42),
+            std::iter::empty(),
+            &jobs,
+            &render_id,
+        )
+        .unwrap_err();
+        assert!(generation_error.contains("saved session"));
+        assert!(generation_error.contains("Clip clip"));
+        assert!(Path::new(&render.path).is_file());
+        assert!(asset::load(&root, &render.asset_id).is_some());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn render_clean_rejects_recording_and_provenance_references() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-render-dependent-{}",
+            riffra_control::new_instance_id()
+        ));
+        let render = create_managed_render(&root, &session_with_clips(), 51);
+        let render_id = Path::new(&render.path)
+            .parent()
+            .unwrap()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let store = riffra_host::ProjectStore::new(&root);
+        let project = store.initialize().unwrap();
+        let jobs = crate::jobs::JobRegistry::default();
+        let child_path = root.join("derived.wav");
+        fs::write(&child_path, wav(48_000, 128)).unwrap();
+        let child_id = asset::register_derived(
+            &root,
+            std::slice::from_ref(&render.asset_id),
+            riffra_core::AssetKind::Audio,
+            "Derived Render",
+            &child_path.to_string_lossy(),
+            riffra_core::ProvenanceOperation::Processed,
+            serde_json::Map::new(),
+        )
+        .unwrap();
+        let dependency_error = delete_render(
+            &root,
+            &store,
+            &project.project_id,
+            &CreativeSession::new(52),
+            std::iter::empty(),
+            &jobs,
+            &render_id,
+        )
+        .unwrap_err();
+        assert!(dependency_error.contains(&child_id.to_string()));
+
+        let capture_directory = root.join("recordings").join("inbox").join("take-1");
+        fs::create_dir_all(&capture_directory).unwrap();
+        let mut capture = crate::api::output::RecordingCapture::start("capture:1", "session-1", 1);
+        capture.raw_audio_asset_id = Some(render.asset_id.clone());
+        fs::write(
+            capture_directory.join("manifest.json"),
+            serde_json::to_vec(&serde_json::json!({ "capture": capture })).unwrap(),
+        )
+        .unwrap();
+        let recording_error = delete_render(
+            &root,
+            &store,
+            &project.project_id,
+            &CreativeSession::new(52),
+            std::iter::empty(),
+            &jobs,
+            &render_id,
+        )
+        .unwrap_err();
+        assert!(recording_error.contains("recording"));
+        assert!(recording_error.contains("raw audio"));
+        assert!(Path::new(&render.path).is_file());
+        assert!(asset::load(&root, &render.asset_id).is_some());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn render_clean_recovers_interrupted_file_and_asset_removal() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-render-clean-retry-{}",
+            riffra_control::new_instance_id()
+        ));
+        let store = riffra_host::ProjectStore::new(&root);
+        let project = store.initialize().unwrap();
+        let session = CreativeSession::new(61);
+        let jobs = crate::jobs::JobRegistry::default();
+        let render = create_managed_render(&root, &session_with_clips(), 61);
+        let directory = Path::new(&render.path).parent().unwrap().to_path_buf();
+        let render_id = directory
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let render_root = directory.parent().unwrap();
+        let marker_name = format!(".deleting-{render_id}-interrupted");
+        let tombstone = render_root.join(&marker_name);
+        let marker_path = render_root.join(format!("{marker_name}.json"));
+        let marker = RenderDeletionMarker {
+            render_id: render_id.clone(),
+            asset_ids: vec![render.asset_id.clone()],
+            deleted_file_count: 2,
+        };
+
+        fs::rename(&directory, &tombstone).unwrap();
+        write_deletion_marker(&marker_path, &marker).unwrap();
+        let restored = delete_render(
+            &root,
+            &store,
+            &project.project_id,
+            &session,
+            std::iter::empty(),
+            &jobs,
+            &render_id,
+        )
+        .unwrap_err();
+        assert!(restored.contains("was restored"));
+        assert!(directory.is_dir());
+        assert!(asset::load(&root, &render.asset_id).is_some());
+        delete_render(
+            &root,
+            &store,
+            &project.project_id,
+            &session,
+            std::iter::empty(),
+            &jobs,
+            &render_id,
+        )
+        .unwrap();
+
+        let second_render = create_managed_render(&root, &session_with_clips(), 62);
+        let second_directory = Path::new(&second_render.path)
+            .parent()
+            .unwrap()
+            .to_path_buf();
+        let second_id = second_directory
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let second_tombstone_name = format!(".deleting-{second_id}-committed");
+        let second_tombstone = second_directory
+            .parent()
+            .unwrap()
+            .join(&second_tombstone_name);
+        let second_marker_path = second_directory
+            .parent()
+            .unwrap()
+            .join(format!("{second_tombstone_name}.json"));
+        fs::rename(&second_directory, &second_tombstone).unwrap();
+        write_deletion_marker(
+            &second_marker_path,
+            &RenderDeletionMarker {
+                render_id: second_id.clone(),
+                asset_ids: vec![second_render.asset_id.clone()],
+                deleted_file_count: 2,
+            },
+        )
+        .unwrap();
+        asset::remove_render_assets(
+            &root,
+            &[(second_render.asset_id.clone(), second_render.path.clone())],
+        )
+        .unwrap();
+        let completed = delete_render(
+            &root,
+            &store,
+            &project.project_id,
+            &session,
+            std::iter::empty(),
+            &jobs,
+            &second_id,
+        )
+        .unwrap();
+        assert_eq!(completed.deleted_file_count, 2);
+        assert!(!second_tombstone.exists());
+        assert!(!second_marker_path.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn render_outputs_and_exports_never_clobber_and_roll_back_partial_copies() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-render-export-{}",
+            riffra_control::new_instance_id()
+        ));
+        let exports = root.join("exports");
+        fs::create_dir_all(&exports).unwrap();
+        let session = session_with_clips();
+        let catalog = empty_catalog();
+        let requested_output = exports.join("mix.wav");
+
+        let rendered = render_timeline_with_renderer(
+            &root,
+            catalog,
+            &session,
+            1,
+            RenderOptions {
+                output_path: Some(requested_output.to_string_lossy().into_owned()),
+                ..RenderOptions::default()
+            },
+            |request| {
+                fs::write(&request.destination, wav(request.sample_rate, 128)).unwrap();
+                Ok(Vec::new())
+            },
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            PathBuf::from(rendered.exported_path.unwrap())
+                .canonicalize()
+                .unwrap(),
+            requested_output.canonicalize().unwrap()
+        );
+        assert_eq!(
+            fs::read(&requested_output).unwrap(),
+            fs::read(&rendered.path).unwrap()
+        );
+
+        let existing_output = exports.join("already-there.wav");
+        fs::write(&existing_output, b"preserve existing file").unwrap();
+        let failed_copy = render_timeline_with_renderer(
+            &root,
+            catalog,
+            &session,
+            2,
+            RenderOptions {
+                output_path: Some(existing_output.to_string_lossy().into_owned()),
+                ..RenderOptions::default()
+            },
+            |request| {
+                fs::write(&request.destination, wav(request.sample_rate, 128)).unwrap();
+                Ok(Vec::new())
+            },
+            None,
+        );
+        assert!(
+            failed_copy
+                .unwrap_err()
+                .contains("render output already exists")
+        );
+        assert_eq!(
+            fs::read(&existing_output).unwrap(),
+            b"preserve existing file"
+        );
+        let partial_output = exports.join("partial.wav");
+        let render_output = PathBuf::from(&rendered.path);
+        let failed_batch = history::copy_files_no_clobber(&[
+            (render_output.clone(), partial_output.clone()),
+            (render_output, existing_output.clone()),
+        ]);
+        assert!(
+            failed_batch
+                .unwrap_err()
+                .contains("render output already exists")
+        );
+        assert!(!partial_output.exists());
+        assert_eq!(
+            fs::read(&existing_output).unwrap(),
+            b"preserve existing file"
+        );
+        let failed_render_directory = fs::read_dir(root.join("renders"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| {
+                path.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with("render-2-")
+            })
+            .unwrap();
+        assert!(failed_render_directory.join("timeline.wav").is_file());
+        let recovered_output = exports.join("recovered.wav");
+        let recovered = export_render(
+            &root,
+            failed_render_directory
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            recovered_output.to_str().unwrap(),
+        )
+        .unwrap();
+        assert_eq!(recovered.file_count, 1);
+        assert_eq!(
+            fs::read(recovered_output).unwrap(),
+            fs::read(failed_render_directory.join("timeline.wav")).unwrap()
+        );
+
+        let stem_directory = exports.join("stems");
+        fs::create_dir(&stem_directory).unwrap();
+        let selection = select_stem_tracks(&session, true, &[]).unwrap();
+        let mut stems = render_stems_with_renderer(
+            StemRenderContext {
+                data_root: &root,
+                built_in_instruments: catalog,
+                session: &session,
+                project_id: "project-render-export",
+                source_sequence: 3,
+                created_at_ms: 3,
+                selection,
+                range: RenderRange::EntireArrangement,
+                output_directory: Some(stem_directory.to_string_lossy().into_owned()),
+            },
+            |request| {
+                fs::write(&request.destination, wav(request.sample_rate, 128)).unwrap();
+                Ok(Vec::new())
+            },
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            PathBuf::from(stems.result.exported_directory.unwrap())
+                .canonicalize()
+                .unwrap(),
+            stem_directory.canonicalize().unwrap()
+        );
+        assert_eq!(fs::read_dir(&stem_directory).unwrap().count(), 1);
+        let internal_stem = PathBuf::from(&stems.result.stems[0].path);
+        let exported_stem = stem_directory.join(internal_stem.file_name().unwrap());
+        assert_eq!(
+            fs::read(exported_stem).unwrap(),
+            fs::read(&internal_stem).unwrap()
+        );
+        stems.output.commit();
+        fs::remove_dir_all(root).unwrap();
     }
 }

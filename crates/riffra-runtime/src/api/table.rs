@@ -325,7 +325,9 @@ control_commands! {
         InstrumentSave = "instrument.save" (InstrumentSaveParams) -> InstrumentLibraryItem, read, host;
         InstrumentExport = "instrument.export" (InstrumentExportParams) -> InstrumentExport, read, host;
         InstrumentApply = "instrument.apply" (InstrumentApplyParams) -> ArrangementMutation, mutation(batch), project;
-        InstrumentVst3Set = "instrument.vst3.set" (PluginPathParams) -> ArrangementMutation, mutation, project(long);
+        InstrumentMidiGet = "instrument.midi.get" (TrackIdParams) -> InstrumentMidi, read, project;
+        InstrumentMidiSet = "instrument.midi.set" (InstrumentMidiSetParams) -> ArrangementMutation, mutation(batch), project;
+        InstrumentVst3Set = "instrument.vst3.set" (PluginPathParams) -> ArrangementMutation, mutation(batch), project(long);
         InstrumentClear = "instrument.clear" (TrackIdParams) -> ArrangementMutation, mutation(batch), project;
         EffectAdd = "effect.add" (EffectAddParams) -> ArrangementMutation, mutation(batch), project(long);
         EffectRemove = "effect.remove" (DeviceParams) -> ArrangementMutation, mutation(batch), project;
@@ -421,6 +423,9 @@ control_commands! {
 
         RenderStart = "render.start" (RenderStartParams) -> Job, project;
         RenderStems = "render.stems" (RenderStemsParams) -> Job, project;
+        RenderExport = "render.export" (RenderExportParams) -> RenderExport, host;
+        RenderList = "render.list" (EmptyParams) -> RenderList, host;
+        RenderClean = "render.clean" (RenderCleanParams) -> RenderDelete, project;
         JobGet = "job.get" (IdParams) -> Job, host;
         JobCancel = "job.cancel" (IdParams) -> Job, host;
         AnalysisStart = "analysis.start" (AnalysisParams) -> Analysis, host;

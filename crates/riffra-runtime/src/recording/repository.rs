@@ -575,6 +575,82 @@ pub fn list(data_root: &Path, query: Option<&str>) -> Result<Vec<RecordingAsset>
     Ok(assets)
 }
 
+pub fn referenced_asset_ids(data_root: &Path) -> Result<Vec<(String, AssetId)>, String> {
+    let root = data_root.join("recordings");
+    match fs::symlink_metadata(&root) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            return Err("recording references cannot be checked through a symbolic link".into());
+        }
+        Ok(metadata) if metadata.is_dir() => {}
+        Ok(_) => return Err("recording store is not a directory".into()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(format!("recording store could not be inspected: {error}")),
+    }
+    let mut references = Vec::new();
+    let mut directories = vec![root];
+    while let Some(directory) = directories.pop() {
+        let entries = fs::read_dir(&directory).map_err(|error| {
+            format!(
+                "recording references could not be inspected at {}: {error}",
+                directory.display()
+            )
+        })?;
+        for entry in entries {
+            let entry = entry.map_err(|error| {
+                format!(
+                    "recording reference entry could not be read at {}: {error}",
+                    directory.display()
+                )
+            })?;
+            let file_type = entry.file_type().map_err(|error| {
+                format!(
+                    "recording reference type could not be read at {}: {error}",
+                    entry.path().display()
+                )
+            })?;
+            if file_type.is_symlink() {
+                return Err(format!(
+                    "recording references cannot be checked through a symbolic link: {}",
+                    entry.path().display()
+                ));
+            }
+            if file_type.is_dir() {
+                directories.push(entry.path());
+                continue;
+            }
+            if !file_type.is_file() || entry.file_name() != "manifest.json" {
+                continue;
+            }
+            let path = entry.path();
+            let manifest = read_manifest(&path).map_err(|error| {
+                format!(
+                    "recording references could not be checked at {}: {error}",
+                    path.display()
+                )
+            })?;
+            let Some(capture) = manifest.capture else {
+                continue;
+            };
+            for (label, asset_id) in [
+                ("raw audio", capture.raw_audio_asset_id),
+                ("processed audio", capture.processed_audio_asset_id),
+                ("MIDI", capture.midi_asset_id),
+            ] {
+                if let Some(asset_id) = asset_id {
+                    references.push((
+                        format!(
+                            "recording {} {label}",
+                            path.parent().unwrap_or(&path).display()
+                        ),
+                        asset_id,
+                    ));
+                }
+            }
+        }
+    }
+    Ok(references)
+}
+
 /// Stores the canonical product ids in the take manifest. The audio files are
 /// never rewritten; only the recovery/index metadata is atomically replaced.
 pub fn save_asset_ids(

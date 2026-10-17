@@ -9,6 +9,8 @@ import type {
   RenderRange,
 } from '@/model/domain';
 import type { ArrangeWorkspaceApi } from '@/features/arrange/arrange-api';
+import { RenderHistoryPanel } from './RenderHistoryPanel';
+import { chooseRenderStemDirectory, saveRenderWav } from '@/native/dialog';
 import styles from './Mixer.module.css';
 
 interface Props {
@@ -83,6 +85,7 @@ export function MixdownDialog(props: Props) {
   const [range, setRange] = useState<RenderRange['kind']>('entireArrangement');
   const [trackId, setTrackId] = useState('');
   const [stems, setStems] = useState(false);
+  const [outputPath, setOutputPath] = useState('');
   const [saving, setSaving] = useState(false);
   const [job, setJob] = useState<BackgroundJobStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -102,6 +105,14 @@ export function MixdownDialog(props: Props) {
   const active = Boolean(job && ['queued', 'running', 'cancelling'].includes(job.state));
   const busy = saving || Boolean(active);
   const jobId = job?.id;
+  const chooseOutput = async () => {
+    try {
+      const path = stems ? await chooseRenderStemDirectory() : await saveRenderWav('riffra-render');
+      if (path) setOutputPath(path);
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : String(failure));
+    }
+  };
   useEffect(() => {
     if (!active || !jobId) return;
     let cancelled = false;
@@ -151,11 +162,13 @@ export function MixdownDialog(props: Props) {
               allTracks: !trackId,
               trackIds: trackId ? [trackId] : [],
               range: renderRange,
+              outputDirectory: outputPath || null,
             })
           : await props.api.startRenderJob({
               range: renderRange,
               trackId: trackId || null,
               normalize: false,
+              outputPath: outputPath || null,
             });
         if (alive.current) setJob(queued);
       }
@@ -309,10 +322,20 @@ export function MixdownDialog(props: Props) {
               <input
                 type="checkbox"
                 checked={stems}
-                onChange={(e) => setStems(e.currentTarget.checked)}
+                onChange={(e) => {
+                  setStems(e.currentTarget.checked);
+                  setOutputPath('');
+                }}
               />
               Aligned Track stems
             </label>
+            <div className={styles.renderOutputPicker}>
+              <span>{stems ? 'Stem output directory' : 'WAV output file'}</span>
+              <button type="button" onClick={() => void chooseOutput()}>
+                Choose output
+              </button>
+              <small>{outputPath || 'Keep output in the Riffra render store only'}</small>
+            </div>
             {stems && (
               <p>
                 Stems retain Group, Return and Master FX without individual loudness mastering.
@@ -363,6 +386,10 @@ export function MixdownDialog(props: Props) {
               )}
             </section>
           ))}
+        <RenderHistoryPanel
+          api={props.api}
+          refreshToken={job?.state === 'completed' ? job.id : ''}
+        />
         {error && <p role="alert">{error}</p>}
       </section>
     </div>

@@ -127,6 +127,9 @@ pub struct RawMidiNoteView {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
     pub pitch: u8,
+    /// Arrangement-absolute timeline position.
+    pub absolute_tick: u64,
+    /// Position relative to the containing MIDI Clip.
     pub start_tick: u64,
     pub duration_ticks: u64,
     pub velocity: u8,
@@ -353,6 +356,15 @@ where
                                 Ok(MusicalNoteListNoteView::Raw(RawMidiNoteView {
                                     id: request.include_ids.then(|| note.id.clone()),
                                     pitch: note.note,
+                                    absolute_tick: clip
+                                        .start_tick
+                                        .0
+                                        .checked_add(note.start_tick.0)
+                                        .ok_or_else(|| {
+                                            ApplicationError::InvalidCommand(
+                                                "absolute note tick overflows u64".into(),
+                                            )
+                                        })?,
                                     start_tick: note.start_tick.0,
                                     duration_ticks: note.duration_ticks,
                                     velocity: note.velocity,
@@ -1337,7 +1349,34 @@ mod tests {
             panic!("expected a raw Note");
         };
         assert_eq!(note.start_tick, 3_840);
+        assert_eq!(note.absolute_tick, 19_200);
         assert!(note.id.is_some());
+
+        core.application(&_storage)
+            .move_midi_clips(vec![crate::domain::MidiClipMove {
+                clip_id: second_clip.clone(),
+                start_tick: TimelineTick(20_480),
+                track_id,
+            }])
+            .unwrap();
+        let moved = core
+            .application(&_storage)
+            .list_musical_notes(MusicalNoteListRequest {
+                scope: MusicalNoteScope {
+                    clip_id: Some(second_clip),
+                    track_id: None,
+                },
+                start: None,
+                end: None,
+                include_ids: false,
+                raw: true,
+            })
+            .unwrap();
+        let MusicalNoteListNoteView::Raw(note) = &moved.clips[0].notes[0] else {
+            panic!("expected a raw Note");
+        };
+        assert_eq!(note.start_tick, 3_840);
+        assert_eq!(note.absolute_tick, 24_320);
     }
 
     #[test]

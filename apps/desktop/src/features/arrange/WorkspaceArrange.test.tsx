@@ -901,6 +901,7 @@ describe('WorkspaceArrange', () => {
         id: 'device:audition',
         name: 'Fake Synth',
         bypassed: false,
+        midi: { transposeSemitones: 0, playableNotes: null, keyswitches: [] },
         source: {
           type: 'vst3',
           path: 'C:\\Plugins\\FakeSynth.vst3',
@@ -1700,6 +1701,7 @@ describe('WorkspaceArrange', () => {
         id: 'device:velocity',
         name: 'Fake Synth',
         bypassed: false,
+        midi: { transposeSemitones: 0, playableNotes: null, keyswitches: [] },
         source: {
           type: 'vst3',
           path: 'C:\\Plugins\\FakeSynth.vst3',
@@ -1949,6 +1951,7 @@ describe('WorkspaceArrange', () => {
         id: 'device:live',
         name: 'Fake Synth',
         bypassed: false,
+        midi: { transposeSemitones: 0, playableNotes: null, keyswitches: [] },
         source: {
           type: 'vst3',
           path: 'C:\\Plugins\\FakeSynth.vst3',
@@ -2020,6 +2023,7 @@ describe('WorkspaceArrange', () => {
         id: 'device:live',
         name: 'Fake Synth',
         bypassed: false,
+        midi: { transposeSemitones: 0, playableNotes: null, keyswitches: [] },
         source: {
           type: 'vst3',
           path: 'C:\\Plugins\\FakeSynth.vst3',
@@ -2098,6 +2102,7 @@ describe('WorkspaceArrange', () => {
           id: 'device:live',
           name: 'Fake Synth',
           bypassed: false,
+          midi: { transposeSemitones: 0, playableNotes: null, keyswitches: [] },
           source: {
             type: 'vst3',
             path: 'C:\\Plugins\\FakeSynth.vst3',
@@ -2171,6 +2176,7 @@ describe('WorkspaceArrange', () => {
         id: `device:${id}`,
         name: 'Fake Synth',
         bypassed: false,
+        midi: { transposeSemitones: 0, playableNotes: null, keyswitches: [] },
         source: {
           type: 'vst3' as const,
           path: 'C:\\Plugins\\FakeSynth.vst3',
@@ -2217,6 +2223,7 @@ describe('WorkspaceArrange', () => {
         id: 'device:live',
         name: 'Fake Synth',
         bypassed: false,
+        midi: { transposeSemitones: 0, playableNotes: null, keyswitches: [] },
         source: {
           type: 'vst3',
           path: 'C:\\Plugins\\FakeSynth.vst3',

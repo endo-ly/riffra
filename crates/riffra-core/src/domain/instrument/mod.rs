@@ -13,6 +13,171 @@ pub struct TrackInstrument {
     pub name: String,
     pub bypassed: bool,
     pub source: TrackInstrumentSource,
+    #[serde(default)]
+    pub midi: InstrumentMidiSettings,
+}
+
+/// MIDI note transformation and playability settings for one Instrument.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct InstrumentMidiSettings {
+    pub transpose_semitones: i16,
+    pub playable_notes: Option<PlayableNotes>,
+    pub keyswitches: Vec<InstrumentKeyswitch>,
+}
+
+/// Notes an Instrument can play, either as an inclusive range or an explicit set.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[serde(tag = "type", deny_unknown_fields, rename_all = "camelCase")]
+#[ts(rename_all_fields = "camelCase")]
+pub enum PlayableNotes {
+    Range { start: u8, end: u8 },
+    Set { notes: Vec<u8> },
+}
+
+/// A MIDI note reserved for a named Instrument articulation.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct InstrumentKeyswitch {
+    pub note: u8,
+    pub name: String,
+}
+
+/// A note that cannot be represented, is outside its playable range, or maps to a Keyswitch.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct InstrumentMidiWarning {
+    pub clip_id: String,
+    pub note_id: String,
+    pub source_note: u8,
+    pub output_note: Option<u8>,
+    pub reason: InstrumentMidiWarningReason,
+}
+
+/// Why a MIDI note does not match its Instrument settings.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum InstrumentMidiWarningReason {
+    OutsideMidiRange,
+    OutsidePlayableRange,
+    KeyswitchCollision,
+}
+
+impl InstrumentMidiSettings {
+    /// Validates and trims setting labels before they are persisted.
+    pub fn validate_and_normalize(&mut self) -> Result<(), String> {
+        self.validate()?;
+        for keyswitch in &mut self.keyswitches {
+            keyswitch.name = keyswitch.name.trim().to_owned();
+        }
+        Ok(())
+    }
+
+    /// Validates settings that can be persisted on an Instrument.
+    pub fn validate(&self) -> Result<(), String> {
+        if !(-127..=127).contains(&self.transpose_semitones) {
+            return Err("instrument transpose must be between -127 and 127 semitones".into());
+        }
+        match &self.playable_notes {
+            Some(PlayableNotes::Range { start, end }) if *start > 127 || *end > 127 => {
+                return Err("playable note range must be within MIDI notes 0..=127".into());
+            }
+            Some(PlayableNotes::Range { start, end }) if start > end => {
+                return Err("playable note range start must not exceed its end".into());
+            }
+            Some(PlayableNotes::Set { notes }) if notes.iter().any(|note| *note > 127) => {
+                return Err("playable note set must contain MIDI notes 0..=127".into());
+            }
+            Some(PlayableNotes::Set { notes }) if notes.is_empty() => {
+                return Err("playable note set must not be empty".into());
+            }
+            Some(PlayableNotes::Set { notes }) => {
+                let unique = notes
+                    .iter()
+                    .copied()
+                    .collect::<std::collections::BTreeSet<_>>();
+                if unique.len() != notes.len() {
+                    return Err("playable note set must not contain duplicates".into());
+                }
+            }
+            _ => {}
+        }
+        let mut keyswitch_notes = std::collections::BTreeSet::new();
+        for keyswitch in &self.keyswitches {
+            if keyswitch.note > 127 {
+                return Err("keyswitch notes must be within MIDI notes 0..=127".into());
+            }
+            if keyswitch.name.trim().is_empty() {
+                return Err("keyswitch names must not be empty".into());
+            }
+            if !keyswitch_notes.insert(keyswitch.note) {
+                return Err("keyswitch note numbers must be unique".into());
+            }
+        }
+        Ok(())
+    }
+
+    /// Maps a source note to the note sent to the Instrument.
+    pub fn output_note(&self, source_note: u8) -> Option<u8> {
+        if self
+            .keyswitches
+            .iter()
+            .any(|keyswitch| keyswitch.note == source_note)
+        {
+            return Some(source_note);
+        }
+        let note = i16::from(source_note) + self.transpose_semitones;
+        u8::try_from(note).ok().filter(|note| *note <= 127)
+    }
+
+    /// Returns whether the supplied Instrument note is playable.
+    pub fn is_playable(&self, output_note: u8) -> bool {
+        match &self.playable_notes {
+            None => true,
+            Some(PlayableNotes::Range { start, end }) => (*start..=*end).contains(&output_note),
+            Some(PlayableNotes::Set { notes }) => notes.contains(&output_note),
+        }
+    }
+
+    /// Reports notes in the selected Track that cannot be played as configured.
+    pub fn warnings(
+        &self,
+        track_id: &str,
+        clips: &[super::MidiClip],
+    ) -> Vec<InstrumentMidiWarning> {
+        let mut warnings = Vec::new();
+        for clip in clips.iter().filter(|clip| clip.track_id == track_id) {
+            for note in &clip.notes {
+                let output_note = self.output_note(note.note);
+                let reason = match output_note {
+                    None => Some(InstrumentMidiWarningReason::OutsideMidiRange),
+                    Some(output_note)
+                        if !self.keyswitches.iter().any(|key| key.note == note.note)
+                            && self.keyswitches.iter().any(|key| key.note == output_note) =>
+                    {
+                        Some(InstrumentMidiWarningReason::KeyswitchCollision)
+                    }
+                    Some(output_note)
+                        if !self.keyswitches.iter().any(|key| key.note == note.note)
+                            && !self.is_playable(output_note) =>
+                    {
+                        Some(InstrumentMidiWarningReason::OutsidePlayableRange)
+                    }
+                    Some(_) => None,
+                };
+                if let Some(reason) = reason {
+                    warnings.push(InstrumentMidiWarning {
+                        clip_id: clip.id.clone(),
+                        note_id: note.id.clone(),
+                        source_note: note.note,
+                        output_note,
+                        reason,
+                    });
+                }
+            }
+        }
+        warnings
+    }
 }
 
 /// The implementation source of a Track instrument.
@@ -61,6 +226,7 @@ impl TrackInstrument {
             name,
             bypassed: false,
             source: TrackInstrumentSource::Vst3(Vst3Plugin::new(path)),
+            midi: InstrumentMidiSettings::default(),
         };
         validate_and_normalize(&mut instrument)?;
         Ok(instrument)
@@ -81,6 +247,7 @@ impl TrackInstrument {
                 definition_json,
                 resource: InternalInstrumentResource::BuiltInPreset { preset_id },
             },
+            midi: InstrumentMidiSettings::default(),
         };
         validate_and_normalize(&mut instrument)?;
         Ok(instrument)
@@ -105,6 +272,7 @@ impl TrackInstrument {
                     snapshot_id,
                 },
             },
+            midi: InstrumentMidiSettings::default(),
         };
         validate_and_normalize(&mut instrument)?;
         Ok(instrument)
@@ -192,6 +360,7 @@ pub(crate) fn validate_and_normalize(instrument: &mut TrackInstrument) -> Result
     }
     instrument.id = instrument.id.trim().to_owned();
     instrument.name = instrument.name.trim().to_owned();
+    instrument.midi.validate_and_normalize()?;
 
     match &mut instrument.source {
         TrackInstrumentSource::Internal {
@@ -290,6 +459,99 @@ mod tests {
         assert_eq!(
             instrument.as_internal().map(|(definition, _)| definition),
             Some(r#"{"completelyOpaque":"value"}"#)
+        );
+    }
+
+    #[test]
+    fn missing_instrument_midi_settings_load_as_defaults() {
+        let mut encoded = serde_json::to_value(built_in()).unwrap();
+        encoded.as_object_mut().unwrap().remove("midi");
+
+        let decoded = serde_json::from_value::<TrackInstrument>(encoded).unwrap();
+
+        assert_eq!(decoded.midi, InstrumentMidiSettings::default());
+    }
+
+    #[test]
+    fn midi_mapping_preserves_keyswitches_and_reports_unplayable_notes() {
+        let settings = InstrumentMidiSettings {
+            transpose_semitones: 12,
+            playable_notes: Some(PlayableNotes::Range { start: 64, end: 80 }),
+            keyswitches: vec![InstrumentKeyswitch {
+                note: 24,
+                name: "Sustain".into(),
+            }],
+        };
+        let clip = super::super::MidiClip {
+            id: "clip-1".into(),
+            name: "Clip".into(),
+            track_id: "track-1".into(),
+            asset_id: None,
+            start_tick: crate::TimelineTick(0),
+            duration_ticks: 960,
+            notes: vec![
+                super::super::MidiNote {
+                    id: "note-low".into(),
+                    note: 50,
+                    start_tick: crate::TimelineTick(0),
+                    duration_ticks: 120,
+                    velocity: 100,
+                    channel: 1,
+                },
+                super::super::MidiNote {
+                    id: "note-high".into(),
+                    note: 120,
+                    start_tick: crate::TimelineTick(120),
+                    duration_ticks: 120,
+                    velocity: 100,
+                    channel: 1,
+                },
+                super::super::MidiNote {
+                    id: "keyswitch".into(),
+                    note: 24,
+                    start_tick: crate::TimelineTick(240),
+                    duration_ticks: 120,
+                    velocity: 100,
+                    channel: 1,
+                },
+                super::super::MidiNote {
+                    id: "note-keyswitch-collision".into(),
+                    note: 12,
+                    start_tick: crate::TimelineTick(360),
+                    duration_ticks: 120,
+                    velocity: 100,
+                    channel: 1,
+                },
+            ],
+            events: Vec::new(),
+            instrument_control_events: Vec::new(),
+            muted: false,
+            loop_enabled: false,
+            recording_take_id: None,
+        };
+
+        assert_eq!(settings.output_note(50), Some(62));
+        assert_eq!(settings.output_note(24), Some(24));
+        assert_eq!(settings.output_note(120), None);
+        let warnings = settings.warnings("track-1", &[clip]);
+        assert_eq!(warnings.len(), 3);
+        assert_eq!(warnings[0].note_id, "note-low");
+        assert_eq!(warnings[0].output_note, Some(62));
+        assert_eq!(
+            warnings[0].reason,
+            InstrumentMidiWarningReason::OutsidePlayableRange
+        );
+        assert_eq!(warnings[1].note_id, "note-high");
+        assert_eq!(warnings[1].output_note, None);
+        assert_eq!(
+            warnings[1].reason,
+            InstrumentMidiWarningReason::OutsideMidiRange
+        );
+        assert_eq!(warnings[2].note_id, "note-keyswitch-collision");
+        assert_eq!(warnings[2].output_note, Some(24));
+        assert_eq!(
+            warnings[2].reason,
+            InstrumentMidiWarningReason::KeyswitchCollision
         );
     }
 
