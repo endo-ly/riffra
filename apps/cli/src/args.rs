@@ -1263,7 +1263,7 @@ pub struct MusicalNoteListArgs {
     /// Include stable Note ids in the response.
     #[arg(long)]
     pub include_ids: bool,
-    /// Return raw MIDI and tick values instead of musical coordinates; Clip startTick is arrangement-absolute while Note startTick is Clip-relative, and the response includes timebase metadata.
+    /// Return raw MIDI and tick values instead of musical coordinates; Note absoluteTick is arrangement-absolute while Note startTick is Clip-relative, and the response includes Clip startTick and timebase metadata.
     #[arg(long)]
     pub raw: bool,
 }
@@ -4487,6 +4487,28 @@ mod tests {
             json!({
                 "clipId":"midi-clip:1",
                 "notes":[{"pitch":"C4","position":"5:1","duration":"1/8"}]
+            })
+        );
+
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "--data-root",
+            "data",
+            "midi-clip",
+            "update",
+            "--clip-id",
+            "midi-clip:1",
+            "--patch",
+            r#"{"notes":[{"id":"note:1","note":60,"startTick":0,"durationTicks":480,"velocity":100,"channel":1}]}"#,
+        ])
+        .unwrap();
+        let request = wire(cli);
+        assert_eq!(request.name, "midi-clip.update");
+        assert_eq!(
+            request.params,
+            json!({
+                "clipId":"midi-clip:1",
+                "patch":{"notes":[{"id":"note:1","note":60,"startTick":0,"durationTicks":480,"velocity":100,"channel":1}]}
             })
         );
 

@@ -289,6 +289,33 @@ mod tests {
             MidiEventKind::ControlChange
         );
         assert_eq!(arrangement.revision, 1);
+        let original_clip = arrangement.midi_clips[0].clone();
+        arrangement
+            .update_midi_clip(
+                &original_clip.id,
+                MidiClipPatch {
+                    notes: Some(vec![MidiNote {
+                        id: "note:replacement".into(),
+                        note: 64,
+                        start_tick: TimelineTick(0),
+                        duration_ticks: 240,
+                        velocity: 92,
+                        channel: 1,
+                    }]),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let replaced_clip = &arrangement.midi_clips[0];
+        assert_eq!(replaced_clip.id, original_clip.id);
+        assert_eq!(replaced_clip.track_id, original_clip.track_id);
+        assert_eq!(
+            replaced_clip.instrument_control_events,
+            original_clip.instrument_control_events
+        );
+        assert_eq!(replaced_clip.events, original_clip.events);
+        assert_eq!(replaced_clip.notes[0].id, "note:replacement");
+
         let mut audio_arrangement = Arrangement::default();
         audio_arrangement
             .tracks

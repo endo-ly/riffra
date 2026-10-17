@@ -729,6 +729,107 @@ mod tests {
     }
 
     #[test]
+    fn session_apply_replaces_notes_atomically_with_musical_coordinates() {
+        let root = std::env::temp_dir().join(format!("riffra-dispatcher-apply-notes-{}", now_ms()));
+        let dispatcher = Dispatcher::open(
+            root.clone(),
+            crate::test_support::prepare_built_in_resource_root(&root),
+        )
+        .unwrap();
+        let created = dispatcher
+            .dispatch(
+                command("track.add", json!({"name":"Lead","kind":"instrument"})),
+                None,
+            )
+            .unwrap();
+        let track_id = mutated_session(&created).arrangement.tracks[0].id.clone();
+        let created = dispatcher
+            .dispatch(
+                command(
+                    "music.midi-clip.create",
+                    json!({"trackId":track_id,"name":"Verse","start":"1:1","end":"5:1"}),
+                ),
+                None,
+            )
+            .unwrap();
+        let clip_id = mutated_session(&created).arrangement.midi_clips[0]
+            .id
+            .clone();
+        dispatcher
+            .dispatch(
+                command(
+                    "music.note.insert",
+                    json!({"clipId":clip_id,"notes":[{"pitch":"C4","position":"1:1","duration":"1/4"}]}),
+                ),
+                None,
+            )
+            .unwrap();
+        let before = dispatcher
+            .dispatch(command("session.get", json!({})), None)
+            .unwrap();
+        let original_clip_id = output_value(&before)["arrangement"]["midiClips"][0]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        let replaced = dispatcher
+            .dispatch(
+                command(
+                    "session.apply",
+                    json!({
+                        "operations":[
+                            {"command":"midi-note.clear","params":{"trackName":"Lead","clipName":"Verse"}},
+                            {"command":"music.note.insert","params":{"trackName":"Lead","clipName":"Verse","notes":[
+                                {"pitch":"E4","position":"1:2","duration":"1/8"},
+                                {"pitch":"G4","position":"2:1","duration":"1/8"}
+                            ]}}
+                        ]
+                    }),
+                ),
+                None,
+            )
+            .unwrap();
+        assert_eq!(replaced.sequence, before.sequence + 1);
+        let replaced_state = dispatcher
+            .dispatch(command("session.get", json!({})), None)
+            .unwrap();
+        let clip = &output_value(&replaced_state)["arrangement"]["midiClips"][0];
+        assert_eq!(clip["id"], original_clip_id);
+        assert_eq!(
+            clip["notes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|note| note["note"].as_u64().unwrap())
+                .collect::<Vec<_>>(),
+            [64, 67]
+        );
+
+        let failed = dispatcher.dispatch(
+            command(
+                "session.apply",
+                json!({
+                    "operations":[
+                        {"command":"midi-note.clear","params":{"trackName":"Lead","clipName":"Verse"}},
+                        {"command":"music.note.insert","params":{"trackName":"Lead","clipName":"Verse","notes":[
+                            {"pitch":"C4","position":"1:1","duration":"0"}
+                        ]}}
+                    ]
+                }),
+            ),
+            None,
+        );
+        assert!(failed.is_err());
+        let after_failure = dispatcher
+            .dispatch(command("session.get", json!({})), None)
+            .unwrap();
+        assert_eq!(after_failure.sequence, replaced_state.sequence);
+        assert_eq!(output_value(&after_failure), output_value(&replaced_state));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn session_apply_returns_only_counts_unless_created_ids_are_requested() {
         let root =
             std::env::temp_dir().join(format!("riffra-dispatcher-apply-compact-{}", now_ms()));

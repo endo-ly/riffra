@@ -72,6 +72,15 @@ riffra --attach session apply --file ./song.jsonl --include-created-ids
 {"command":"music.note.insert","params":{"trackName":"Lead","clipName":"Verse","notes":[{"pitch":"C4","position":"1:1","duration":"1/8"}]}}
 ```
 
+既存Clip内のNoteをまとめて置き換えるには、`midi-clip.update`の`patch.notes`へRaw MIDI Note配列を渡す。音楽座標を使う場合は同じBatchに`midi-note.clear`と`music.note.insert`をこの順で含める。ClipのID、Instrument、Events、その他のClip設定は維持される。
+
+```jsonl
+{"command":"midi-note.clear","params":{"trackName":"Lead","clipName":"Verse"}}
+{"command":"music.note.insert","params":{"trackName":"Lead","clipName":"Verse","notes":[{"pitch":"C4","position":"1:1","duration":"1/8"},{"pitch":"E4","position":"1:2","duration":"1/8"}]}}
+```
+
+Raw MIDI形式で置き換える場合は`midi-clip update --clip-id midi-clip:01j... --patch '{"notes":[{"id":"note:01j...","note":60,"startTick":0,"durationTicks":480,"velocity":100,"channel":1}]}'`を使う。`notes`を省略すると既存のNoteは維持される。
+
 各行は `command` と `params` を持つ既存Control Commandであり、Batch専用の楽曲記法は使わない。`trackName`は候補Session上で一意に解決される。`clipName`は指定したTrack内のMIDI Clipから一意に解決されるため、`clipName`を使うときは `trackId` か `trackName` を併せる。このときTrackの指定はClipを探す範囲としてだけ使われ、operationは解決した`clipId`で実行される。`trackId`と`trackName`、`clipId`と`clipName`は同時に指定できない。同名が複数ある場合は曖昧さとして失敗する。解決結果はProtocolやCanonical identityには保存されない。
 
 Batchは全operationを候補Sessionへ適用してから、成功時だけ1回commitする。`expectedSequence`の不一致はoperation開始前にBatch全体を拒否し、途中の失敗、非対応コマンド、名前の未解決・曖昧さでもCanonical Sessionは変更されない。Batchへ含められるのは、正準状態を変えるコマンドのうちTrack・Clip・Note・Music・Marker・Range・Automation・設定・Instrument割り当て・Effect・Deviceの編集である。読み取り(`session.get`、`session.inspect`、`history.get`など)、Undo / Redo、Project操作、Assetの取り込みと配置(`asset.import-midi`、`*-clip.add-asset`)、VST3 instrumentの設定(`instrument.vst3.set`)、master gainの設定、欠落依存の解決(`missing.*`)、Runtimeサービス(Render、Transport、Recordingなど)は含めない。`instrument.apply` は組み込みinstrumentに限りBatchへ含められ、`user:` instrumentは単独のcommandとして実行する。
@@ -145,7 +154,7 @@ riffra --attach --expected-sequence 23 music midi-clip resize `
 
 `music note list` はClipまたはTrackを一つだけ指定する。Track指定では範囲も必須である。listの範囲は半開区間で、Noteと範囲が重なるものを返す。Track指定の結果はClipごとにgroup化され、各NoteへClip IDを繰り返さない。通常結果は音楽座標だけで、IDは`--include-ids`、raw tick / MIDI値は`--raw`を指定したときだけ返る。
 
-`--raw` の結果ではClipの`startTick`がArrangement上の位置、Noteの`startTick`がClip相対位置になる。絶対tickが必要な場合は両者を加算する。raw結果には`timebase.ppq`と拍子も含まれる。
+`--raw` の結果ではNoteの`absoluteTick`がArrangement全体の位置、Noteの`startTick`がClip相対位置を表す。Clipの`startTick`もArrangement上の位置として返る。`position`は小節・拍・拍内の割合で表すArrangement全体の位置、`duration`は全音符を1とする長さである。拍内の分数は拍に対する割合で、たとえば`5:1+1/2`は5小節目の1拍目の半分だけ進んだ位置を表す。raw結果には`timebase.ppq`と拍子も含まれる。
 
 `music note transform` は、指定範囲内で開始するNoteだけを対象にする。範囲指定はClip開始位置に対する絶対的な音楽座標で、Track指定では必須である。`--pitch`と`--channel`は変形前の値に対して判定される。`--timing-offset`は符号付き音価（例：`+1/48`、`-1/48`）、`--velocity-offset`は0〜127へclampされ、`--transpose-semitones`がMIDI範囲外になる場合や移動後のNoteがClip外になる場合はMutation全体が失敗する。対象Noteが0件でも失敗する。
 
