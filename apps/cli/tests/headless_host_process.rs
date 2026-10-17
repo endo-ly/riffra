@@ -72,13 +72,17 @@ impl RunningHost {
         }
         let mut child = command.spawn().expect("riffra serve should start");
         let endpoint = data_root.path.join("control").join("host.json");
+        let mut endpoint_published = false;
         for _ in 0..200 {
             if endpoint.is_file() {
-                return Self {
-                    child,
-                    data_root,
-                    built_in_instruments_root: safe_mode_resources,
-                };
+                endpoint_published = true;
+                if host_is_discoverable(&data_root.path) {
+                    return Self {
+                        child,
+                        data_root,
+                        built_in_instruments_root: safe_mode_resources,
+                    };
+                }
             }
             if let Some(status) = child
                 .try_wait()
@@ -89,6 +93,9 @@ impl RunningHost {
                 panic!("riffra serve exited before publishing its endpoint ({status}): {stderr}");
             }
             thread::sleep(Duration::from_millis(50));
+        }
+        if endpoint_published {
+            panic!("riffra serve did not become discoverable within ten seconds");
         }
         panic!("riffra serve did not publish its endpoint within ten seconds");
     }
@@ -133,6 +140,26 @@ fn host_list() -> Output {
         .args(["host", "list"])
         .output()
         .expect("host list should start")
+}
+
+fn host_is_discoverable(data_root: &Path) -> bool {
+    let output = host_list();
+    if !output.status.success() {
+        return false;
+    }
+    let Ok(hosts) = serde_json::from_slice::<Value>(&output.stdout) else {
+        return false;
+    };
+    let data_root = data_root.to_string_lossy();
+    hosts.as_array().is_some_and(|hosts| {
+        hosts.iter().any(|host| {
+            host.get("dataRoot").and_then(Value::as_str) == Some(data_root.as_ref())
+                && host
+                    .get("instanceId")
+                    .and_then(Value::as_str)
+                    .is_some_and(|instance_id| !instance_id.is_empty())
+        })
+    })
 }
 
 fn attached(instance_id: &str, arguments: &[&str]) -> Output {
