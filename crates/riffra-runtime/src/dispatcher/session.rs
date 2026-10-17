@@ -1015,6 +1015,231 @@ mod tests {
     }
 
     #[test]
+    fn session_apply_rebuilds_tracks_and_mixer_after_removing_references() {
+        let root =
+            std::env::temp_dir().join(format!("riffra-dispatcher-apply-rebuild-{}", now_ms()));
+        let dispatcher = Dispatcher::open(
+            root.clone(),
+            crate::test_support::prepare_built_in_resource_root(&root),
+        )
+        .unwrap();
+        let mut dispatcher = dispatcher;
+        dispatcher.test_sidechain_capability =
+            Some(crate::api::output::DeviceSidechainCapability {
+                available: true,
+                mono: false,
+                stereo: true,
+                channels: 0,
+                reason: None,
+            });
+        dispatcher
+            .dispatch(
+                command(
+                    "session.apply",
+                    json!({
+                        "includeCreatedIds":true,
+                        "operations":[
+                            {"command":"track.add","params":{"name":"Lead","kind":"instrument"}},
+                            {"command":"track.add","params":{"name":"Drums","kind":"instrument"}},
+                            {"command":"instrument.vst3.set","params":{"trackName":"Lead","pluginPath":"C:\\Plugins\\OldLead.vst3"}},
+                            {"command":"instrument.vst3.set","params":{"trackName":"Drums","pluginPath":"C:\\Plugins\\OldDrums.vst3"}},
+                            {"command":"music.midi-clip.create","params":{"trackName":"Lead","name":"Verse","start":"1:1","end":"5:1"}},
+                            {"command":"music.note.insert","params":{"trackName":"Lead","clipName":"Verse","notes":[{"pitch":"C4","position":"1:1","duration":"1/4"}]}},
+                            {"command":"mixer.bus.add","params":{"name":"Group","kind":"group"}},
+                            {"command":"mixer.bus.add","params":{"name":"Reverb","kind":"return"}},
+                            {"command":"mixer.output.set","params":{"trackName":"Lead","busName":"Group"}},
+                            {"command":"mixer.send.add","params":{"trackName":"Lead","returnBusName":"Reverb","levelDb":-6}},
+                            {"command":"effect.add","params":{"owner":{"kind":"track","name":"Drums"},"pluginPath":"C:\\Plugins\\OldCompressor.vst3"}},
+                            {"command":"effect.add","params":{"owner":{"kind":"bus","name":"Group"},"pluginPath":"C:\\Plugins\\OldLimiter.vst3"}}
+                        ]
+                    }),
+                ),
+                None,
+            )
+            .unwrap();
+        let initial = dispatcher
+            .dispatch(command("session.get", json!({})), None)
+            .unwrap();
+        let initial_value = output_value(&initial);
+        let lead_id = initial_value["arrangement"]["tracks"][0]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let drums_id = initial_value["arrangement"]["tracks"][1]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let drums_effect_id = initial_value["arrangement"]["tracks"][1]["effects"][0]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let group_id = initial_value["arrangement"]["mixer"]["buses"][0]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let reverb_id = initial_value["arrangement"]["mixer"]["buses"][1]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let sidechain = dispatcher
+            .dispatch(
+                command(
+                    "mixer.sidechain.add",
+                    json!({
+                        "sourceTrackId":lead_id.clone(),
+                        "targetDeviceId":drums_effect_id,
+                        "levelDb":-9
+                    }),
+                ),
+                None,
+            )
+            .unwrap();
+        let sidechain_id = output_value(&sidechain)["createdEntityIds"]["sidechainSends"][0]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        dispatcher
+            .dispatch(
+                command(
+                    "automation.set",
+                    json!({
+                        "target":{"kind":"trackMix","trackId":lead_id.clone(),"parameter":"volume"},
+                        "interpolation":"linear",
+                        "points":[{"id":"point:lead","tick":0,"value":-3}]
+                    }),
+                ),
+                None,
+            )
+            .unwrap();
+        dispatcher
+            .dispatch(
+                command(
+                    "automation.set",
+                    json!({
+                        "target":{"kind":"sidechainSendLevel","sidechainSendId":sidechain_id},
+                        "interpolation":"linear",
+                        "points":[{"id":"point:sidechain","tick":0,"value":-6}]
+                    }),
+                ),
+                None,
+            )
+            .unwrap();
+        let before_rebuild = dispatcher
+            .dispatch(command("session.get", json!({})), None)
+            .unwrap();
+
+        let operations = json!([
+            {"command":"track.remove","params":{"trackName":"Lead"}},
+            {"command":"track.remove","params":{"trackName":"Drums"}},
+            {"command":"mixer.bus.remove","params":{"busId":group_id.clone()}},
+            {"command":"mixer.bus.remove","params":{"busId":reverb_id.clone()}},
+            {"command":"track.add","params":{"name":"Lead","kind":"instrument"}},
+            {"command":"track.add","params":{"name":"Drums","kind":"instrument"}},
+            {"command":"instrument.vst3.set","params":{"trackName":"Lead","pluginPath":"C:\\Plugins\\NewLead.vst3"}},
+            {"command":"instrument.vst3.set","params":{"trackName":"Drums","pluginPath":"C:\\Plugins\\NewDrums.vst3"}},
+            {"command":"music.midi-clip.create","params":{"trackName":"Lead","name":"Verse","start":"1:1","end":"5:1"}},
+            {"command":"music.note.insert","params":{"trackName":"Lead","clipName":"Verse","notes":[{"pitch":"D4","position":"1:1","duration":"1/4"}]}},
+            {"command":"mixer.bus.add","params":{"name":"Group","kind":"group"}},
+            {"command":"mixer.bus.add","params":{"name":"Reverb","kind":"return"}},
+            {"command":"mixer.output.set","params":{"trackName":"Lead","busName":"Group"}},
+            {"command":"mixer.send.add","params":{"trackName":"Lead","returnBusName":"Reverb","levelDb":-4}},
+            {"command":"effect.add","params":{"owner":{"kind":"track","name":"Drums"},"pluginPath":"C:\\Plugins\\NewCompressor.vst3"}},
+            {"command":"automation.set","params":{"target":{"kind":"masterGain"},"interpolation":"linear","points":[{"id":"point:master","tick":0,"value":-6}]}}
+        ]);
+        let mut failed_operations = operations.as_array().unwrap().clone();
+        failed_operations
+            .push(json!({"command":"track.remove","params":{"trackId":"track:missing"}}));
+        let failed = dispatcher.dispatch(
+            command("session.apply", json!({"operations":failed_operations})),
+            None,
+        );
+        assert!(failed.is_err());
+        let after_failure = dispatcher
+            .dispatch(command("session.get", json!({})), None)
+            .unwrap();
+        assert_eq!(after_failure.sequence, before_rebuild.sequence);
+        assert_eq!(output_value(&after_failure), output_value(&before_rebuild));
+
+        let rebuilt = dispatcher
+            .dispatch(
+                command(
+                    "session.apply",
+                    json!({"includeCreatedIds":true,"operations":operations}),
+                ),
+                None,
+            )
+            .unwrap();
+        assert_eq!(rebuilt.sequence, before_rebuild.sequence + 1);
+        assert_eq!(output_value(&rebuilt)["createdEntityCounts"]["tracks"], 2);
+        assert_eq!(
+            output_value(&rebuilt)["createdEntityCounts"]["midiClips"],
+            1
+        );
+        assert_eq!(
+            output_value(&rebuilt)["createdEntityCounts"]["midiNotes"],
+            1
+        );
+        assert_eq!(output_value(&rebuilt)["createdEntityCounts"]["buses"], 2);
+        assert_eq!(output_value(&rebuilt)["createdEntityCounts"]["sends"], 1);
+        assert_eq!(output_value(&rebuilt)["createdEntityCounts"]["devices"], 3);
+
+        let final_state = dispatcher
+            .dispatch(command("session.get", json!({})), None)
+            .unwrap();
+        let final_state_value = output_value(&final_state);
+        let final_arrangement = &final_state_value["arrangement"];
+        assert_eq!(final_arrangement["tracks"].as_array().unwrap().len(), 2);
+        assert_ne!(final_arrangement["tracks"][0]["id"], lead_id);
+        assert_ne!(final_arrangement["tracks"][1]["id"], drums_id);
+        assert_eq!(final_arrangement["tracks"][0]["name"], "Lead");
+        assert_eq!(
+            final_arrangement["tracks"][0]["instrument"]["source"]["path"],
+            "C:\\Plugins\\NewLead.vst3"
+        );
+        assert_eq!(
+            final_arrangement["tracks"][1]["effects"][0]["plugin"]["path"],
+            "C:\\Plugins\\NewCompressor.vst3"
+        );
+        assert_eq!(final_arrangement["midiClips"].as_array().unwrap().len(), 1);
+        assert_eq!(final_arrangement["midiClips"][0]["name"], "Verse");
+        assert_eq!(final_arrangement["midiClips"][0]["notes"][0]["note"], 62);
+        assert_eq!(
+            final_arrangement["mixer"]["buses"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(
+            final_arrangement["mixer"]["sends"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(
+            final_arrangement["mixer"]["sidechainSends"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            final_arrangement["automationLanes"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            final_arrangement["automationLanes"][0]["target"]["kind"],
+            "masterGain"
+        );
+        assert_ne!(final_arrangement["mixer"]["buses"][0]["id"], group_id);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn session_apply_returns_only_counts_unless_created_ids_are_requested() {
         let root =
             std::env::temp_dir().join(format!("riffra-dispatcher-apply-compact-{}", now_ms()));
