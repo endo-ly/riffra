@@ -12,6 +12,17 @@ use std::time::{Duration, Instant};
 
 pub type ProjectionStatusHook = Arc<dyn Fn(RuntimeProjectionStatus) + Send + Sync>;
 
+/// Outcome of waiting for a projection keyed by [`ProjectionKey`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ProjectionWait {
+    /// The projected graph for the requested key is active and idle.
+    Ready,
+    /// Nothing prepares the requested key and the runtime holds no projection
+    /// for it, for example in Safe Mode or before the first commit. Native
+    /// device reads may proceed with the live timeline state.
+    Missing,
+}
+
 struct ProjectionCoordinatorSync {
     state: Mutex<Machine>,
     worker_wake: Condvar,
@@ -193,6 +204,57 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
         }
     }
 
+    /// Blocks while the projection for `key` is still being prepared and
+    /// returns once its graph is active or nothing can produce it any more.
+    /// Completion is signalled through the coordinator wake instead of a fixed
+    /// polling sleep.
+    ///
+    /// # Errors
+    ///
+    /// Returns the recorded projection error when the projection for `key`
+    /// failed or was replaced by a newer canonical state, and
+    /// [`RuntimeError::Timeout`] when `timeout` elapses while it is still
+    /// being prepared.
+    pub(crate) fn wait_for_projection(
+        &self,
+        key: ProjectionKey,
+        timeout: Duration,
+    ) -> Result<ProjectionWait, RuntimeError> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            self.step(Input::GenerationObserved(self.driver.runtime_generation()));
+            let machine = self.state.state.lock().expect("projection lock poisoned");
+            if machine.ready_for(key) {
+                return Ok(ProjectionWait::Ready);
+            }
+            if !machine.pending_for(key) {
+                let status = machine.status();
+                drop(machine);
+                if status.last_error.is_none() && status.target_projection_sequence.is_none() {
+                    return Ok(ProjectionWait::Missing);
+                }
+                return Err(unreachable_projection(key, status));
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(RuntimeError::Timeout {
+                    message: format!(
+                        "projection for sequence {} did not become ready within {timeout:?}",
+                        key.sequence
+                    ),
+                });
+            }
+            let (next, _) = self
+                .state
+                .operation_wake
+                .wait_timeout(machine, remaining.min(Duration::from_millis(50)))
+                .map_err(|_| {
+                    RuntimeError::Internal("projection condition variable poisoned".into())
+                })?;
+            drop(next);
+        }
+    }
+
     pub(crate) fn notify(&self) {
         self.state.operation_wake.notify_all();
     }
@@ -299,6 +361,37 @@ fn timeout(request: &Request, maximum: Duration) -> Result<Duration, RuntimeErro
         })
     } else {
         Ok(remaining)
+    }
+}
+
+fn unreachable_projection(key: ProjectionKey, status: RuntimeProjectionStatus) -> RuntimeError {
+    let message = match status.last_error.as_deref() {
+        Some(error) => format!(
+            "projection for sequence {} cannot become ready: {error}",
+            key.sequence
+        ),
+        None => format!(
+            "projection for sequence {} cannot become ready and nothing prepares it",
+            key.sequence
+        ),
+    };
+    let targeting_other_key = matches!(
+        (status.target_projection_sequence, status.target_session_revision),
+        (Some(sequence), Some(revision))
+            if sequence != key.sequence || revision != key.session_revision
+    );
+    if status.last_error.is_some() && !targeting_other_key {
+        RuntimeError::Native {
+            kind: status
+                .last_error_code
+                .clone()
+                .unwrap_or_else(|| String::from("runtime")),
+            message,
+            operation: String::from("runtime.projection"),
+            details: None,
+        }
+    } else {
+        RuntimeError::Superseded { message }
     }
 }
 
@@ -621,6 +714,79 @@ mod tests {
             driver.prepare_started.load(Ordering::Acquire),
             prepares_after_failure
         );
-        assert_eq!(driver.loaded.lock().unwrap().last(), Some(&4));
+        assert_eq!(driver.loaded.lock().unwrap().last(), Some(&4),);
+    }
+
+    #[test]
+    fn wait_for_projection_unblocks_when_the_requested_key_becomes_active() {
+        // Arrange
+        let coordinator = ProjectionCoordinator::new(Arc::new(FakeProjectionDriver::new(
+            Duration::from_millis(5),
+        )))
+        .unwrap();
+        submit_canonical(&coordinator, snapshot(1), key(1, 1));
+
+        // Act
+        let wait = coordinator.wait_for_projection(key(1, 1), Duration::from_secs(2));
+
+        // Assert
+        assert!(matches!(wait, Ok(ProjectionWait::Ready)));
+    }
+
+    #[test]
+    fn wait_for_projection_when_the_runtime_holds_no_projection_lifecycle() {
+        // Arrange
+        let coordinator = ProjectionCoordinator::new(Arc::new(FakeProjectionDriver::new(
+            Duration::from_millis(1),
+        )))
+        .unwrap();
+
+        // Act / Assert
+        // Nothing prepared or failed yet (Safe Mode or a fresh runtime):
+        // device reads proceed with the live timeline state.
+        assert!(matches!(
+            coordinator.wait_for_projection(key(1, 1), Duration::from_secs(1)),
+            Ok(ProjectionWait::Missing)
+        ));
+    }
+
+    #[test]
+    fn wait_for_projection_reports_a_newer_canonical_state_as_superseded() {
+        // Arrange
+        let coordinator = ProjectionCoordinator::new(Arc::new(FakeProjectionDriver::new(
+            Duration::from_millis(50),
+        )))
+        .unwrap();
+        submit_canonical(&coordinator, snapshot(1), key(1, 1));
+        wait_until(|| coordinator.status().state == RuntimeProjectionState::Preparing);
+        submit_canonical(&coordinator, snapshot(2), key(2, 2));
+
+        // Act
+        let wait = coordinator.wait_for_projection(key(1, 1), Duration::from_secs(2));
+
+        // Assert
+        assert!(matches!(
+            wait,
+            Err(RuntimeError::Superseded { message }) if message.contains("sequence 1")
+        ));
+    }
+
+    #[test]
+    fn wait_for_projection_reports_remaining_preparation_as_timeout() {
+        // Arrange
+        let coordinator = ProjectionCoordinator::new(Arc::new(FakeProjectionDriver::new(
+            Duration::from_millis(2_000),
+        )))
+        .unwrap();
+        submit_canonical(&coordinator, snapshot(1), key(1, 1));
+
+        // Act
+        let wait = coordinator.wait_for_projection(key(1, 1), Duration::from_millis(30));
+
+        // Assert
+        assert!(matches!(
+            wait,
+            Err(RuntimeError::Timeout { message }) if message.contains("sequence 1")
+        ));
     }
 }

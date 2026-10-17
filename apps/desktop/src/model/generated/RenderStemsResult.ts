@@ -12,7 +12,7 @@ directory: string,
 /**
  * External directory containing the copied stem WAVs, when requested.
  */
-exportedDirectory: string | null,
+exportedDirectory: string | null, 
 /**
  * Project that supplied the rendered canonical state.
  */
@@ -20,7 +20,7 @@ projectId: string,
 /**
  * Timestamp used to identify this managed Render directory.
  */
-createdAtMs: number | null,
+createdAtMs: number | null, 
 /**
  * Canonical sequence captured when the job started.
  */

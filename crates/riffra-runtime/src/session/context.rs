@@ -69,6 +69,13 @@ impl<D: RuntimeDriver> SessionContext<'_, D> {
         );
         Ok((mutation, value))
     }
+
+    /// Drops the borrowed write lock held for a mutation whose canonical
+    /// commit already succeeded, so later stages (runtime waits) do not keep
+    /// other canonical readers waiting.
+    pub(crate) fn release_writer(&mut self) {
+        self.writer = None;
+    }
 }
 
 pub(crate) fn current_session<D: RuntimeDriver>(

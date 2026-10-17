@@ -115,6 +115,16 @@ int main(int argc, char** argv) {
             return 1;
         }
     }
+    const auto stuckApplied =
+        engine.setDeviceParameter(owner, "device:audio-effect", 4, 0.5f, error);
+    std::cerr << "stuck set result=" << stuckApplied << " error=<" << error << ">\n";
+    if (stuckApplied ||
+        error !=
+            "Plugin parameter 4 did not accept the requested value: requested 0.500000, "
+            "effective 0.000000.") {
+        std::cerr << "unapplied plugin parameter was not detected: " << error << '\n';
+        return 1;
+    }
     engine.setRealtimeOwner(riffra::RealtimeOwner::audio);
     while (engine.play().has_value()) {
     }

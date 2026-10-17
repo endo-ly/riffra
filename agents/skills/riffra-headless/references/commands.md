@@ -183,6 +183,8 @@ Noteのpitch、position、duration、velocity、channelの意味検証はCoreが
 | `music note update` の個別項目              | `clipId`、`noteId`、変更項目をparams直下へ |
 | `music harmony update --patch-json`         | patchの各項目をparams直下へ展開            |
 
+`<JSON|@file>` と書かれた引数はinlineのJSONか `@./path/to/file.json` の形のファイル参照を受け取る。ファイル参照はCLI側で読み取ってから解析し、読み取りに失敗したらusage errorを返す。
+
 低レベルAPIが独自に`patch`を持つ場合は、その契約を維持する。
 
 ```powershell
@@ -306,7 +308,7 @@ riffra --data-root ./riffra-data --interactive
 
 `mixdown get`と`mixdown set --settings-json <JSON|@file>`で楽曲終端Tick、Tail、Fade、Mastering目標、比較用のSample Rate・Block Sizeを参照・設定する。
 
-Masteringを有効にする場合は、`mixdown get`の設定全体を取得して`mastering`へ目標を設定する。無効化は`mastering: null`とする。
+Masteringを有効にする場合は、`mixdown get`の設定全体を取得して`mastering`へ目標を設定する。無効化は`mastering: null`とする。Masteringは目標ラウドネスへMix全体を一定のゲインで合わせる動作であり、上限を超えるとゲインを下げて完成wavを再測定する。結果の項目と警告の意味は[音声エンジンの設計](../../../../../docs/audio-engine.md)を参照する。
 
 ```powershell
 riffra --attach mixdown set --settings-json '{"musicalEndTick":0,"tailSeconds":2,"fadeOutSeconds":0.5,"mastering":{"integratedLufs":-14,"truePeakDb":-1,"loudnessRangeLu":11},"sampleRate":48000,"blockSize":1024}'
@@ -437,6 +439,40 @@ Pointは`id`、`tick`、`value`を持つ。Tickは楽曲全体の絶対位置で
 
 更新はLane IDを維持し、新規LaneのIDは`createdEntityIds.automationLanes`へ返す。空のPoint配列と`clear`はLaneを削除する。端点の保持、補間と静的値の復元は[音声エンジンの設計](../../../../../docs/audio-engine.md)を参照する。
 
+`session apply`は`automation.set`をBatchに含められる。対象はCLI引数ではなく`target`オブジェクトで指定し、`target.kind`ごとに必要なフィールドが決まる。
+
+| `target.kind`        | 必要なフィールド                          |
+| -------------------- | ----------------------------------------- |
+| `trackMix`           | `trackId` または `trackName`、`parameter` |
+| `busMix`             | `busId` または `busName`、`parameter`     |
+| `masterGain`         | -                                         |
+| `sendLevel`          | `sendId`                                  |
+| `sidechainSendLevel` | `sidechainSendId`                         |
+| `deviceParameter`    | `deviceId`、`parameterId`                 |
+
+```jsonl
+{
+  "command": "automation.set",
+  "params": {
+    "target": {
+      "kind": "trackMix",
+      "trackName": "Organ",
+      "parameter": "volume"
+    },
+    "interpolation": "linear",
+    "points": [
+      {
+        "id": "intro",
+        "position": "9:1",
+        "value": -6
+      }
+    ]
+  }
+}
+```
+
+Pointは`tick`または`position`の一方だけを持ち、`value`の意味は上の表と同じである。`position`はそのoperationの時点のテンポ・拍子からTickへ変換するため、同じBatchで拍子を変えた後の`position`は変えた後の拍子に従う。`trackName`と`busName`は同じBatchで追加したTrackとBusも解決する(mixer周りの名前参照と同じ規約)。Pointの制約に反する入力や解決できない名前が1つでもあればBatch全体が失敗し、正準状態は変更されない。
+
 音源制御は`instrument-event list --clip-id <id>`で参照する。`add --clip-id <id> --tick <tick> --kind-json <JSON|@file>`、`set --clip-id <id> --events-json <JSON|@file>`、`update --clip-id <id> --event-json <JSON|@file>`、`remove --clip-id <id> --event-id <id>`で編集する。TickはClip相対で終端を含む。種類は`sustainPedal`、`pitchBend`、`modWheel`、`aftertouch`、`parameterChange`。Parameter Changeは`parameter`と`nativeValue`を保持する。
 
 ### 低レベル MIDI Note
@@ -528,7 +564,7 @@ device inspectはmetadataとcapabilityだけを返し、stateData本体や全par
 
 Automationは`automatable: true`かつ`parameterId`が非nullのParameterを選び、そのIDを指定する。手動操作では`name`でParameterを特定し、離散値は `choices[].displayValue` から目的の状態を選んで、その `value` を `device parameter set --value` へ渡す。変更後は `device parameter list` を再取得し、他の Parameter の表示や選択肢の変化も確認する。Continuous の表示が空の場合も、値を Plugin 固有の単位へ変換して推測しない。Default への復元には `defaultValue` を渡す。
 
-`device parameter set`は`--value`と`--display`の一方だけを指定する。`--display "250.00 ms"`はLive HostのPluginに変換を依頼し、表示へ戻した結果が入力と等価な場合だけ適用する。単位の違い、未対応・不正な文字列はエラーとなり、正準状態は変更されない。Surge XT Effects 1.3.4のFX Typeは文字列変換に対応していないため、一覧で確認した正規化値を`--value`へ渡す。Live Hostでは停止中も対象Pluginの処理とController同期を終えてから設定成功を返す。
+`device parameter set`は`--value`と`--display`の一方だけを指定する。`--display "250.00 ms"`はLive HostのPluginに変換を依頼し、表示へ戻した結果が入力と等価な場合だけ適用する。単位の違い、未対応・不正な文字列はエラーとなり、正準状態は変更されない。両引数とも先頭がハイフンの値(`--value -0.25`、`--display "-60.00 dB"`)をそのまま受け取る。Surge XT Effects 1.3.4のFX Typeは文字列変換に対応していないため、一覧で確認した正規化値を`--value`へ渡す。Live Hostでは停止中も対象Pluginの処理とController同期を終えてから、読み戻した値が要求と等価であることを確認して設定成功を返す。
 
 `effect add` / `effect.add` は Effect Chain の末尾へ追加し、応答の `createdEntityIds.devices` に新しい Device ID を返す。`effect reorder` は Instrument を含めず、所有チャンネルのEffect ID 全件を一度ずつ処理順に並べる。
 

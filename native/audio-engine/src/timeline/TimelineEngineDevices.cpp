@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cmath>
 #include <thread>
 #include <utility>
 
@@ -51,6 +52,51 @@ bool isInstrumentDevice(const PreparedTimeline& graph, const EffectOwnerSpec& ow
     const auto* track =
         owner.kind == EffectOwnerKindSpec::track ? graph.findTrack(owner.id) : nullptr;
     return track != nullptr && isInstrumentDevice(*track, deviceId);
+}
+
+// Continuous parameters allow drifting by the plugin's normalized float
+// precision; discrete parameters accept the slot the plugin rounds into.
+constexpr float kAppliedParameterTolerance = 1.0e-4f;
+
+std::optional<float> expectedNormalizedValue(const PluginParameterReadback& readback,
+                                             const float requested) {
+    if (!readback.discrete || readback.stepCount < 2) return requested;
+    const auto slots = static_cast<float>(readback.stepCount - 1);
+    const auto slot = std::clamp(std::round(requested * slots), 0.0f, slots);
+    return slot / slots;
+}
+
+/// Verifies that the applied parameter reached the requested value, and that a
+/// requested display string renders equivalently. The plugin is read back on
+/// the message thread after controller synchronization completed.
+bool verifyDeviceParameterApplication(PluginRack& rack, const int parameterIndex,
+                                      const float requested,
+                                      const std::optional<juce::String>& requestedDisplay,
+                                      juce::String& error) {
+    const auto readback =
+        juce::MessageManager::callSync([&]() -> std::optional<PluginParameterReadback> {
+            return rack.parameterReadback(parameterIndex, error);
+        }).value_or(std::nullopt);
+    if (!readback.has_value()) return false;
+    const auto expected = expectedNormalizedValue(*readback, requested);
+    if (const auto drift = std::abs(readback->value - *expected);
+        drift > kAppliedParameterTolerance) {
+        error = juce::String::formatted(
+            "Plugin parameter %d did not accept the requested value: requested %.6f, "
+            "effective %.6f.",
+            parameterIndex, requested, readback->value);
+        return false;
+    }
+    if (!requestedDisplay.has_value()) return true;
+    if (!PluginRack::equivalentDisplayText(*requestedDisplay, readback->displayValue,
+                                           readback->label)) {
+        error = juce::String::formatted(
+            "Plugin parameter %d did not accept the requested value: requested \"%s\", "
+            "effective \"%s\".",
+            parameterIndex, requestedDisplay->toRawUTF8(), readback->displayValue.toRawUTF8());
+        return false;
+    }
+    return true;
 }
 
 }  // namespace
@@ -501,7 +547,8 @@ bool TimelineEngine::setDeviceParameter(const EffectOwnerSpec& deviceOwner,
         if (!normalized.has_value()) return false;
     }
     const HostEditScope edit(rack->hostEditInProgress);
-    return synchronizeDeviceParameters(*rack, error, parameterIndex, *normalized);
+    if (!synchronizeDeviceParameters(*rack, error, parameterIndex, *normalized)) return false;
+    return verifyDeviceParameterApplication(*rack, parameterIndex, *normalized, display, error);
 }
 
 bool TimelineEngine::setDevicePersistedState(const EffectOwnerSpec& deviceOwner,

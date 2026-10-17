@@ -177,7 +177,7 @@ Desktopのイベントゲートは現在の接続世代のイベントだけをW
 
 `getDeviceParameters` は制御側で最新のPlugin metadataを取得し、`deviceParameters` へ返す。パラメータの識別、表示文字列の扱い、変更の確定条件は audio-engine.md「パラメータと状態」を参照する。
 
-`device.parameter.set` は `value` または `display` の一方だけを受け付ける。表示文字列の変換規則は audio-engine.md「パラメータと状態」を参照する。
+`device.parameter.set` は `value` または `display` の一方だけを受け付ける。表示文字列の変換規則は audio-engine.md「パラメータと状態」を参照する。デバイスの読み書きは、直前の正準変更の投影が音声エンジンへ確定するのを待ってから実行する。
 
 `effect.add` と `instrument.vst3.set` は `pluginPath` または `pluginId` の一方だけを受け付ける。カタログIDからの解決と検証は audio-engine.md「カタログと解決」を参照する。
 

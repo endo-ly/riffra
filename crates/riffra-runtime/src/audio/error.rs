@@ -1,3 +1,4 @@
+use riffra_control::{ErrorCode, ProtocolError};
 use serde_json::Value;
 use std::fmt::{self, Display, Formatter};
 
@@ -126,6 +127,25 @@ impl NativeAudioError {
 
     pub fn requires_restart(&self) -> bool {
         matches!(self, Self::TransportLost { .. } | Self::Process { .. })
+    }
+
+    /// Maps this failure onto the shared Control error, keeping the native
+    /// failure kind in `details.kind` so upper layers can identify retryable
+    /// native errors.
+    pub fn protocol_error(&self) -> ProtocolError {
+        let descriptor = self.descriptor();
+        let code = match descriptor.kind.as_str() {
+            "deviceLost" | "transportLost" | "generationChanged" | "process" | "safeMode" => {
+                ErrorCode::RuntimeUnavailable
+            }
+            _ => ErrorCode::CommandFailed,
+        };
+        ProtocolError::new(code, descriptor.message).with_details(serde_json::json!({
+            "domain": "nativeAudio",
+            "kind": descriptor.kind,
+            "operation": descriptor.operation,
+            "details": descriptor.details,
+        }))
     }
 }
 

@@ -87,6 +87,15 @@ pub(super) fn commit_device_arrangement_with_created_ids<D: RuntimeDriver>(
             AdapterError::RuntimeUnavailable(message) => {
                 AdapterError::runtime(repair_previous_arrangement(context, message))
             }
+            AdapterError::Native(error) => AdapterError::Native({
+                let descriptor = error.descriptor();
+                crate::NativeAudioError::structured(
+                    descriptor.kind,
+                    repair_previous_arrangement(context, descriptor.message),
+                    descriptor.operation.as_deref().unwrap_or_default(),
+                    descriptor.details,
+                )
+            }),
             AdapterError::CommandFailed(message) => {
                 AdapterError::command(repair_previous_arrangement(context, message))
             }
@@ -116,6 +125,15 @@ pub(super) fn commit_device_arrangement_with_created_ids<D: RuntimeDriver>(
                 AdapterError::RuntimeUnavailable(message) => {
                     AdapterError::runtime(repair_previous_arrangement(context, message))
                 }
+                AdapterError::Native(error) => AdapterError::Native({
+                    let descriptor = error.descriptor();
+                    crate::NativeAudioError::structured(
+                        descriptor.kind,
+                        repair_previous_arrangement(context, descriptor.message),
+                        descriptor.operation.as_deref().unwrap_or_default(),
+                        descriptor.details,
+                    )
+                }),
                 AdapterError::CommandFailed(message) => {
                     AdapterError::command(repair_previous_arrangement(context, message))
                 }
@@ -280,6 +298,67 @@ pub fn set_device_bypassed(
     }
 }
 
+/// Normalized-value tolerance for plugin-side quantization when the projected
+/// runtime graph replays a committed plugin state.
+const PLUGIN_STATE_PROJECTION_TOLERANCE: f32 = 1.0e-3;
+
+/// Confirms that the committed plugin state survives the runtime projection:
+/// after the canonical save the new graph is awaited and the plugin value is
+/// re-read, so a graph that lost the saved parameter fails the set instead of
+/// reporting success.
+fn verify_committed_plugin_state_survives_projection<D: RuntimeDriver>(
+    context: &mut SessionContext<'_, D>,
+    owner: &riffra_core::EffectOwner,
+    device_id: &str,
+    parameter_index: usize,
+    canonical: &riffra_core::CanonicalState,
+) -> Result<(), AdapterError> {
+    let device = canonical
+        .session
+        .arrangement
+        .device(owner, device_id)
+        .map_err(|error| AdapterError::command(error.to_string()))?;
+    let stored = device
+        .plugin()
+        .and_then(|plugin| plugin.parameter_values.get(parameter_index))
+        .copied()
+        .ok_or_else(|| {
+            AdapterError::command(format!(
+                "plugin parameter {parameter_index} is missing from the committed state"
+            ))
+        })?;
+    if context.safe_mode {
+        return Ok(());
+    }
+    let key = riffra_core::ProjectionKey {
+        sequence: canonical.sequence,
+        session_revision: canonical.session.arrangement.revision,
+    };
+    match context
+        .runtime
+        .wait_for_native_projection(key)
+        .map_err(|error| AdapterError::CommandFailed(error.to_string()))?
+    {
+        crate::runtime::ProjectionWait::Missing => return Ok(()),
+        crate::runtime::ProjectionWait::Ready => {}
+    }
+    let fetched = context.audio.get_plugin_state(owner, device_id)?;
+    let received = fetched
+        .parameter_values
+        .get(parameter_index)
+        .ok_or_else(|| {
+            AdapterError::command(format!(
+                "plugin parameter {parameter_index} is not part of the projected runtime state"
+            ))
+        })?;
+    if (stored - received).abs() > PLUGIN_STATE_PROJECTION_TOLERANCE {
+        return Err(AdapterError::command(format!(
+            "plugin parameter {parameter_index} did not survive the runtime projection: stored {stored:.6}, received {received:.6}"
+        )));
+    }
+    Ok(())
+}
+
 pub fn set_device_parameter(
     context: &mut SessionContext<'_>,
     owner: &riffra_core::EffectOwner,
@@ -324,7 +403,19 @@ pub fn set_device_parameter(
         })
     })();
     match committed {
-        Ok((mutation, _)) => Ok(mutation),
+        Ok((mutation, _)) => {
+            // Release the canonical write lock before waiting on the runtime
+            // projection below.
+            context.release_writer();
+            verify_committed_plugin_state_survives_projection(
+                context,
+                owner,
+                device_id,
+                index,
+                &mutation.canonical,
+            )?;
+            Ok(mutation)
+        }
         Err(error) => {
             if let Err(rollback_error) = context.audio.set_plugin_state(owner, device_id, previous)
             {
@@ -357,8 +448,8 @@ pub fn open_plugin_editor(
         .map_err(|error| AdapterError::runtime(error.to_string()))?;
     context
         .audio
-        .open_plugin_editor(&project_id, owner, device_id)
-        .map_err(|error| AdapterError::runtime(error.to_string()))
+        .open_plugin_editor(&project_id, owner, device_id)?;
+    Ok(())
 }
 
 /// Rewrites every canonical Asset reference pointed to by `asset_id` to the

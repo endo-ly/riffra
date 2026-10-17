@@ -123,26 +123,36 @@ std::unique_ptr<OfflineRenderer> OfflineRenderer::prepare(const OfflineRenderReq
     timelineTimebase.tempoChanges = request.graph.timebase.tempoChanges;
     timelineTimebase.timeSignatureChanges = request.graph.timebase.timeSignatureChanges;
     const auto startSample = timelineTimebase.tickToSample(request.startTick, sampleRate);
-    auto musicalEndSample = timelineTimebase.tickToSample(request.endTick, sampleRate);
+    const auto musicalEndSample = timelineTimebase.tickToSample(request.endTick, sampleRate);
+    auto processFinalEvents = false;
     if (request.includeEndEvents) {
         for (const auto& track : request.graph.tracks) {
             for (const auto& clip : track.midiClips) {
-                for (const auto& control : clip.instrumentControlEvents)
-                    if (clip.startTick + control.tick == request.endTick)
-                        musicalEndSample = std::max(
-                            musicalEndSample,
-                            timelineTimebase.tickToSample(request.endTick, sampleRate) + 1);
-                for (const auto& note : clip.notes)
-                    if (clip.startTick + note.startTick + note.durationTicks == request.endTick)
-                        musicalEndSample = std::max(
-                            musicalEndSample,
-                            timelineTimebase.tickToSample(request.endTick, sampleRate) + 1);
+                if (std::any_of(clip.instrumentControlEvents.begin(),
+                                clip.instrumentControlEvents.end(),
+                                [&clip, &request](const auto& control) {
+                                    return clip.startTick + control.tick == request.endTick;
+                                }))
+                    processFinalEvents = true;
+                if (std::any_of(clip.notes.begin(), clip.notes.end(),
+                                [&clip, &request](const auto& note) {
+                                    return clip.startTick + note.startTick + note.durationTicks ==
+                                           request.endTick;
+                                }))
+                    processFinalEvents = true;
             }
         }
     }
-    const auto endSample = musicalEndSample + static_cast<std::int64_t>(
-                                                  std::llround(request.tailSeconds * sampleRate));
-    if (startSample < 0 || endSample <= startSample) {
+    // The WAV write window is defined by tempo map, ticks, sample rate, and tail alone. Notes
+    // and instrument controls ending exactly on the end tick need one extra processing sample
+    // so their release applies before the write window closes, which must stay invisible to
+    // the WAV length.
+    const auto outputEndSample =
+        musicalEndSample +
+        static_cast<std::int64_t>(std::llround(request.tailSeconds * sampleRate));
+    const auto processingEnd =
+        std::max(outputEndSample, processFinalEvents ? musicalEndSample + 1 : outputEndSample);
+    if (startSample < 0 || outputEndSample <= startSample) {
         error = "Offline Render range has no samples.";
         return nullptr;
     }
@@ -165,11 +175,17 @@ std::unique_ptr<OfflineRenderer> OfflineRenderer::prepare(const OfflineRenderReq
                                     : 0;
     const auto automationWarnings =
         status.graph ? status.graph->automationWarnings : std::vector<juce::String>{};
-    Plan renderPlan{destination,       sampleRate,
-                    blockSize,         startSample,
-                    endSample,         static_cast<float>(request.graph.masterGainDb),
-                    request.normalize, hostsPlugins(request.graph),
-                    latencySamples,    automationWarnings};
+    Plan renderPlan{destination,
+                    sampleRate,
+                    blockSize,
+                    startSample,
+                    outputEndSample,
+                    processingEnd,
+                    static_cast<float>(request.graph.masterGainDb),
+                    request.normalize,
+                    hostsPlugins(request.graph),
+                    latencySamples,
+                    automationWarnings};
     return std::unique_ptr<OfflineRenderer>(
         new OfflineRenderer(std::move(renderPlan), std::move(timelineEngine)));
 }
@@ -200,27 +216,33 @@ bool OfflineRenderer::render(juce::AudioFormatManager& formats, Result& result,
     if (writer == nullptr) return false;
 
     juce::AudioBuffer<float> buffer(2, plan.blockSize);
-    std::int64_t position = 0;
+    // Latency compensation shifts produced audio later in the callback stream, so the write
+    // window in engine-sample space is the requested timeline range moved by the latency.
+    const auto writeBegin = plan.startSample + plan.latencySamples;
+    const auto writeEnd = plan.outputEndSample + plan.latencySamples;
+    std::uint64_t writtenFrames = 0;
     float peak = 0.0f;
-    const auto processingEnd = plan.endSample + plan.latencySamples;
-    while (position < processingEnd) {
+    std::int64_t position = 0;
+    while (position < plan.processingEnd) {
         const auto count =
-            static_cast<int>(std::min<std::int64_t>(plan.blockSize, processingEnd - position));
+            static_cast<int>(std::min<std::int64_t>(plan.blockSize, plan.processingEnd - position));
         buffer.clear();
         engine->mix(buffer.getArrayOfWritePointers(), 2, count);
         engine->applyMasterGain(buffer.getArrayOfWritePointers(), 2, count, plan.masterGainDb);
-        const auto writeStart = static_cast<int>(std::min<std::int64_t>(
-            count, std::max<std::int64_t>(0, plan.startSample + plan.latencySamples - position)));
-        const auto writeCount = count - writeStart;
-        if (writeCount > 0) {
+        const auto stop = std::min(writeEnd, position + count);
+        if (stop > writeBegin) {
+            const auto from = std::max(writeBegin, position);
+            const auto offsetInBlock = static_cast<int>(from - position);
+            const auto writeCount = static_cast<int>(stop - from);
             for (int channel = 0; channel < 2; ++channel)
-                peak = std::max(peak, buffer.getMagnitude(channel, writeStart, writeCount));
-            if (!writer->writeFromAudioSampleBuffer(buffer, writeStart, writeCount)) {
+                peak = std::max(peak, buffer.getMagnitude(channel, offsetInBlock, writeCount));
+            if (!writer->writeFromAudioSampleBuffer(buffer, offsetInBlock, writeCount)) {
                 error = "Offline Render WAV could not be written.";
                 writer.reset();
                 partial.deleteFile();
                 return false;
             }
+            writtenFrames += static_cast<std::uint64_t>(writeCount);
         }
         position += count;
     }
@@ -242,7 +264,7 @@ bool OfflineRenderer::render(juce::AudioFormatManager& formats, Result& result,
         return false;
     }
 
-    result.frames = static_cast<std::uint64_t>(plan.endSample - plan.startSample);
+    result.frames = writtenFrames;
     result.sampleRate = plan.sampleRate;
     result.automationWarnings = plan.automationWarnings;
     return true;

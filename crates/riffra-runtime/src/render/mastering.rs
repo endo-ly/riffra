@@ -1,4 +1,7 @@
-//! Cancellable two-pass loudness mastering of the native float WAV.
+//! Cancellable integrated-loudness mastering of the native float WAV.
+//!
+//! Mastering applies one uniform gain towards the target integrated loudness,
+//! limited by the target true peak ceiling, and never reshapes dynamics.
 
 use crate::api::output::{
     AudioMeasurements, LoudnessMeasurement, LoudnessReadout, MasteringReport,
@@ -28,7 +31,7 @@ pub(super) fn master(
     target: &LoudnessMastering,
     sample_rate: u32,
     cancelled: Option<&AtomicBool>,
-) -> Result<(MasteringReport, LoudnessMeasurement), String> {
+) -> Result<MasteringReport, String> {
     let directory = input
         .parent()
         .ok_or("mastering input has no parent directory")?
@@ -38,57 +41,40 @@ pub(super) fn master(
     let temporary = TemporaryDirectory(directory);
     let normalized = temporary.0.join("normalized.wav");
     let corrected = temporary.0.join("corrected.wav");
-    let base = format!(
-        "loudnorm=I={}:TP={}:LRA={}",
-        target.integrated_lufs, target.true_peak_db, target.loudness_range_lu
-    );
-    let first = loudnorm(
+    let input_measurement = measurement(&loudnorm(
         input,
         None,
-        &(base.clone() + ":print_format=json"),
+        "loudnorm=print_format=json",
         sample_rate,
         &temporary.0,
         cancelled,
-    )?;
-    let input_measurement = measurement(&first)?;
-    let second_filter = format!(
-        "{base}:measured_I={}:measured_TP={}:measured_LRA={}:measured_thresh={}:offset={}:linear=true:print_format=json",
-        number(&first, "input_i")?,
-        number(&first, "input_tp")?,
-        number(&first, "input_lra")?,
-        number(&first, "input_thresh")?,
-        number(&first, "target_offset")?
-    );
-    let second = loudnorm(
+    )?)?;
+    let desired_gain_db = target.integrated_lufs - input_measurement.integrated_lufs;
+    let peak_headroom_db = target.true_peak_db - input_measurement.true_peak_db;
+    let applied_gain_db = desired_gain_db.min(peak_headroom_db);
+    run(
         input,
         Some(&normalized),
-        &second_filter,
+        &volume_filter(applied_gain_db),
         sample_rate,
         &temporary.0,
         cancelled,
     )?;
-    let normalization_type = second
-        .get("normalization_type")
-        .and_then(Value::as_str)
-        .ok_or("ffmpeg loudnorm report is missing normalization_type")?
-        .to_owned();
     let mut output = measurement(&loudnorm(
         &normalized,
         None,
-        &(base.clone() + ":print_format=json"),
+        "loudnorm=print_format=json",
         sample_rate,
         &temporary.0,
         cancelled,
     )?)?;
     let mut final_path = normalized.as_path();
-    let mut correction = 0.0;
     if output.true_peak_db > target.true_peak_db {
-        correction = target.true_peak_db - output.true_peak_db;
-        let filter = format!("volume={correction}dB");
+        let response = target.true_peak_db - output.true_peak_db;
         run(
             &normalized,
             Some(&corrected),
-            &filter,
+            &volume_filter(response),
             sample_rate,
             &temporary.0,
             cancelled,
@@ -96,7 +82,7 @@ pub(super) fn master(
         output = measurement(&loudnorm(
             &corrected,
             None,
-            &(base + ":print_format=json"),
+            "loudnorm=print_format=json",
             sample_rate,
             &temporary.0,
             cancelled,
@@ -109,29 +95,25 @@ pub(super) fn master(
             output.true_peak_db, target.true_peak_db
         ));
     }
-    let deviation = LoudnessMeasurement {
-        integrated_lufs: output.integrated_lufs - target.integrated_lufs,
-        true_peak_db: output.true_peak_db - target.true_peak_db,
-        loudness_range_lu: output.loudness_range_lu - target.loudness_range_lu,
-    };
     fs::copy(final_path, input)
         .map_err(|error| format!("mastered wav could not be saved: {error}"))?;
-    Ok((
-        MasteringReport {
-            target: target.clone(),
-            input: input_measurement,
-            deviation,
-            normalization_type,
-            true_peak_correction_db: correction,
+    Ok(MasteringReport {
+        target: target.clone(),
+        input: input_measurement,
+        deviation: LoudnessMeasurement {
+            integrated_lufs: output.integrated_lufs - target.integrated_lufs,
+            true_peak_db: output.true_peak_db - target.true_peak_db,
+            loudness_range_lu: output.loudness_range_lu - target.loudness_range_lu,
         },
-        output,
-    ))
+        normalization_type: "linear".into(),
+        true_peak_correction_db: (desired_gain_db - applied_gain_db).max(0.0),
+    })
 }
 
 pub(super) fn measure_output(
     input: &Path,
     sample_rate: u32,
-    mastered: Option<LoudnessMeasurement>,
+    mastering: Option<&MasteringReport>,
     target: Option<&LoudnessMastering>,
     cancelled: Option<&AtomicBool>,
 ) -> Result<(AudioMeasurements, Vec<String>), String> {
@@ -166,29 +148,25 @@ pub(super) fn measure_output(
         remaining -= count;
     }
     let sample_peak_dbfs = (peak > 0.0).then(|| 20.0 * peak.log10());
-    let loudness = if let Some(measurement) = mastered {
-        LoudnessReadout::Measured { measurement }
-    } else {
-        let directory = input
-            .parent()
-            .ok_or("completed wav has no parent directory")?
-            .join(format!("measure-{}", riffra_control::new_instance_id()));
-        fs::create_dir(&directory)
-            .map_err(|error| format!("measurement directory could not be created: {error}"))?;
-        let temporary = TemporaryDirectory(directory);
-        match loudnorm(
-            input,
-            None,
-            "loudnorm=print_format=json",
-            sample_rate,
-            &temporary.0,
-            cancelled,
-        )
-        .and_then(|report| measurement(&report))
-        {
-            Ok(measurement) => LoudnessReadout::Measured { measurement },
-            Err(reason) => LoudnessReadout::Unavailable { reason },
-        }
+    let directory = input
+        .parent()
+        .ok_or("completed wav has no parent directory")?
+        .join(format!("measure-{}", riffra_control::new_instance_id()));
+    fs::create_dir(&directory)
+        .map_err(|error| format!("measurement directory could not be created: {error}"))?;
+    let temporary = TemporaryDirectory(directory);
+    let loudness = match loudnorm(
+        input,
+        None,
+        "loudnorm=print_format=json",
+        sample_rate,
+        &temporary.0,
+        cancelled,
+    )
+    .and_then(|report| measurement(&report))
+    {
+        Ok(measurement) => LoudnessReadout::Measured { measurement },
+        Err(reason) => LoudnessReadout::Unavailable { reason },
     };
     if cancelled.is_some_and(|flag| flag.load(Ordering::Acquire)) {
         return Err("timeline render was cancelled".into());
@@ -197,16 +175,22 @@ pub(super) fn measure_output(
     if sample_peak_dbfs.is_some_and(|peak| peak > 0.0) {
         warnings.push("sample peak exceeds 0 dbfs".into());
     }
-    if let (LoudnessReadout::Measured { measurement }, Some(target)) = (&loudness, target) {
-        if measurement.true_peak_db > target.true_peak_db {
-            warnings.push("true peak exceeds the configured ceiling".into());
+    if let LoudnessReadout::Measured { measurement } = &loudness {
+        if mastering.is_some_and(|report| report.true_peak_correction_db > 0.0) {
+            warnings.push("true peak ceiling limited the gain towards the target loudness".into());
         }
-        if (measurement.integrated_lufs - target.integrated_lufs).abs() > 0.5 {
-            warnings
-                .push("integrated loudness differs from the target by more than 0.5 lufs".into());
-        }
-        if measurement.loudness_range_lu > target.loudness_range_lu + 0.5 {
-            warnings.push("loudness range exceeds the target by more than 0.5 lu".into());
+        if let Some(target) = target {
+            if measurement.true_peak_db > target.true_peak_db {
+                warnings.push("true peak exceeds the configured ceiling".into());
+            }
+            if (measurement.integrated_lufs - target.integrated_lufs).abs() > 0.5 {
+                warnings.push(
+                    "integrated loudness differs from the target by more than 0.5 lufs".into(),
+                );
+            }
+            if measurement.loudness_range_lu > target.loudness_range_lu + 0.5 {
+                warnings.push("loudness range exceeds the target by more than 0.5 lu".into());
+            }
         }
     }
     Ok((
@@ -216,6 +200,10 @@ pub(super) fn measure_output(
         },
         warnings,
     ))
+}
+
+fn volume_filter(gain_db: f64) -> String {
+    format!("volume={gain_db}dB")
 }
 
 fn loudnorm(
@@ -373,13 +361,30 @@ mod tests {
                 true_peak_db: -1.0,
                 loudness_range_lu: 11.0,
             };
-            let (report, output) = master(&path, &target, sample_rate, None).unwrap();
-            assert!(output.true_peak_db <= target.true_peak_db);
-            let expected_deviation = output.integrated_lufs - target.integrated_lufs;
-            let (final_measurements, _) =
-                measure_output(&path, sample_rate, Some(output), Some(&target), None).unwrap();
+            let report = master(&path, &target, sample_rate, None).unwrap();
+            assert!(report.deviation.true_peak_db <= 0.0);
+            assert!(report.true_peak_correction_db > 0.0);
+            let (final_measurements, warnings) =
+                measure_output(&path, sample_rate, Some(&report), Some(&target), None).unwrap();
             assert!(final_measurements.sample_peak_dbfs.unwrap() <= 0.0);
-            assert_eq!(report.deviation.integrated_lufs, expected_deviation);
+            let measurement = match &final_measurements.loudness {
+                LoudnessReadout::Measured { measurement } => measurement,
+                LoudnessReadout::Unavailable { reason } => panic!("reason: {reason}"),
+            };
+            assert!(
+                (measurement.integrated_lufs
+                    - target.integrated_lufs
+                    - report.deviation.integrated_lufs)
+                    .abs()
+                    < 1.0e-9
+            );
+            assert_eq!(
+                warnings,
+                [
+                    "true peak ceiling limited the gain towards the target loudness",
+                    "integrated loudness differs from the target by more than 0.5 lufs"
+                ]
+            );
         }
         assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
         fs::remove_dir_all(root).unwrap();

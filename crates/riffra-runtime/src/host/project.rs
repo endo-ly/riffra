@@ -375,7 +375,7 @@ fn command_error(message: impl Into<String>) -> ProtocolError {
 }
 
 fn audio_error(error: crate::NativeAudioError) -> ProtocolError {
-    ProtocolError::new(ErrorCode::RuntimeUnavailable, error.to_string())
+    error.protocol_error()
 }
 
 #[cfg(test)]

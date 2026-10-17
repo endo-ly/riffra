@@ -362,6 +362,46 @@ TEST(TimelineEngineTest, RendersBuiltInAndAutomatedVst3InstrumentsThroughOffline
     }
 }
 
+TEST(TimelineEngineTest, OfflineRendererReturnsIdenticalFrameCountWithAndWithoutTerminalNotes) {
+    // Arrange
+    juce::ScopedJuceInitialiser_GUI initialiser;
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    test::TemporaryDirectory directory;
+    auto terminalSnapshot = makeBuiltInInstrumentSnapshot("track:terminal");
+    terminalSnapshot.graph.tracks.front().midiClips.front().notes.front().durationTicks = 960;
+    auto plainSnapshot = makeBuiltInInstrumentSnapshot("track:plain");
+    OfflineRenderer::Result terminalResult;
+    OfflineRenderer::Result plainResult;
+    juce::String error;
+
+    // Act
+    const auto renderTo = [&](const ExecutionGraph& graph, const char* fileName) {
+        const OfflineRenderRequestSpec request{
+            graph,  directory.get().getChildFile(fileName).getFullPathName(),
+            0,      960,
+            48'000, 512,
+            false,  0.0,
+            true};
+        const auto renderer = OfflineRenderer::prepare(request, formats, error);
+        OfflineRenderer::Result result;
+        const auto success = renderer != nullptr && renderer->render(formats, result, error);
+        return std::pair(success, result);
+    };
+    const auto terminal = renderTo(terminalSnapshot.graph, "terminal.wav");
+    const auto plain = renderTo(plainSnapshot.graph, "plain.wav");
+
+    // Assert
+    ASSERT_TRUE(terminal.first) << error.toStdString();
+    ASSERT_TRUE(plain.first) << error.toStdString();
+    EXPECT_EQ(terminal.second.frames, plain.second.frames);
+    EXPECT_GT(terminal.second.frames, 0u);
+    const auto terminalReader = std::unique_ptr<juce::AudioFormatReader>(
+        formats.createReaderFor(directory.get().getChildFile("terminal.wav")));
+    ASSERT_NE(terminalReader, nullptr);
+    EXPECT_EQ(static_cast<std::uint64_t>(terminalReader->lengthInSamples), terminal.second.frames);
+}
+
 TEST(TimelineEngineTest, MonitorsAudioTrackInputThroughTheTrackEffectChain) {
     // Arrange
     juce::AudioFormatManager formats;

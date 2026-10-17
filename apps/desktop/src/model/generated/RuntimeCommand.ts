@@ -33,10 +33,10 @@ import type { ProjectRestoreParams } from "./ProjectRestoreParams";
 import type { RecordListParams } from "./RecordListParams";
 import type { RecordRenameParams } from "./RecordRenameParams";
 import type { RecordStartParams } from "./RecordStartParams";
-import type { RenderStartParams } from "./RenderStartParams";
-import type { RenderStemsParams } from "./RenderStemsParams";
 import type { RenderCleanParams } from "./RenderCleanParams";
 import type { RenderExportParams } from "./RenderExportParams";
+import type { RenderStartParams } from "./RenderStartParams";
+import type { RenderStemsParams } from "./RenderStemsParams";
 import type { SeekParams } from "./SeekParams";
 import type { SendLevelPreviewParams } from "./SendLevelPreviewParams";
 import type { SidechainSendLevelPreviewParams } from "./SidechainSendLevelPreviewParams";
@@ -49,95 +49,4 @@ import type { TrackIdParams } from "./TrackIdParams";
 /**
  * A command that requires the runtime services of a live Host.
  */
-export type RuntimeCommand =
-  | { command: "host.status"; params: EmptyParams }
-  | { command: "host.info"; params: EmptyParams }
-  | { command: "host.bootstrap"; params: EmptyParams }
-  | { command: "host.shutdown"; params: EmptyParams }
-  | { command: "runtime.projection.get"; params: EmptyParams }
-  | { command: "runtime.projection.retry"; params: EmptyParams }
-  | { command: "transport.play"; params: EmptyParams }
-  | { command: "transport.pause"; params: EmptyParams }
-  | { command: "transport.stop"; params: EmptyParams }
-  | { command: "transport.go-to-start"; params: EmptyParams }
-  | { command: "transport.seek"; params: SeekParams }
-  | { command: "audio.master-gain.preview"; params: MasterGainParams }
-  | { command: "mixer.send.preview"; params: SendLevelPreviewParams }
-  | { command: "mixer.sidechain.preview"; params: SidechainSendLevelPreviewParams }
-  | { command: "mixer.channel.preview"; params: ChannelMixParams }
-  | { command: "automation.preview"; params: AutomationPreviewParams }
-  | { command: "audio.status"; params: EmptyParams }
-  | { command: "audio.diagnostics"; params: AudioDiagnosticsParams }
-  | { command: "audio.probe"; params: EmptyParams }
-  | { command: "audio.channels.probe"; params: AudioChannelsProbeParams }
-  | { command: "audio.recover"; params: EmptyParams }
-  | { command: "audio.startup.retry"; params: EmptyParams }
-  | { command: "audio.driver.get"; params: EmptyParams }
-  | { command: "audio.driver.set"; params: AudioDriverConfig }
-  | { command: "audio.emergency-mute"; params: MuteParams }
-  | { command: "audio.feedback-protection.reset"; params: EmptyParams }
-  | { command: "asset.preview"; params: AssetPreviewParams }
-  | { command: "asset.preview.stop"; params: EmptyParams }
-  | { command: "instrument.preview"; params: InstrumentIdParams }
-  | { command: "instrument.preview.stop"; params: EmptyParams }
-  | { command: "midi.listening.enable"; params: EmptyParams }
-  | { command: "midi.listening.disable"; params: EmptyParams }
-  | { command: "midi.send"; params: MidiSendParams }
-  | { command: "midi.target.set"; params: LiveMidiTargetParams }
-  | { command: "midi.panic"; params: TrackIdParams }
-  | { command: "plugin.catalog.list"; params: EmptyParams }
-  | { command: "plugin.scan"; params: PluginScanParams }
-  | { command: "plugin.scan.start"; params: PluginScanParams }
-  | { command: "plugin.editor.open"; params: DeviceParams }
-  | { command: "plugin.audition.open"; params: PluginAuditionParams }
-  | { command: "device.inspect"; params: DeviceParams }
-  | { command: "device.parameter.list"; params: DeviceParams }
-  | { command: "device.parameter.get"; params: DeviceParameterGetParams }
-  | { command: "device.parameter.format"; params: DeviceParameterFormatParams }
-  | { command: "plugin.preset.list"; params: DeviceParams }
-  | { command: "plugin.preset.get"; params: DeviceParams }
-  | { command: "plugin.preset.set"; params: PluginPresetSetParams }
-  | { command: "plugin.state.get"; params: DeviceParams }
-  | { command: "plugin.state.set"; params: PluginStateSetParams }
-  | { command: "missing.list"; params: EmptyParams }
-  | { command: "record.start"; params: RecordStartParams }
-  | { command: "record.stop"; params: EmptyParams }
-  | { command: "record.status"; params: EmptyParams }
-  | { command: "record.list"; params: RecordListParams }
-  | { command: "record.rename"; params: RecordRenameParams }
-  | { command: "record.archive"; params: IdParams }
-  | { command: "record.promote"; params: IdParams }
-  | { command: "record.tag"; params: LibraryTagParams }
-  | { command: "record.delete"; params: IdParams }
-  | { command: "record.duplicates"; params: EmptyParams }
-  | { command: "take.activate"; params: TakeActivateParams }
-  | { command: "take.place-separate-clip"; params: TakeIdParams }
-  | { command: "audio-clip.take-variant.set"; params: TakeVariantParams }
-  | { command: "take.comparison.start"; params: TakeIdParams }
-  | { command: "take.comparison.switch"; params: TakeComparisonParams }
-  | { command: "take.comparison.stop"; params: EmptyParams }
-  | { command: "project.restore-generation"; params: ProjectRestoreParams }
-  | { command: "render.start"; params: RenderStartParams }
-  | { command: "render.stems"; params: RenderStemsParams }
-  | { command: "render.export"; params: RenderExportParams }
-  | { command: "render.list"; params: EmptyParams }
-  | { command: "render.clean"; params: RenderCleanParams }
-  | { command: "job.get"; params: IdParams }
-  | { command: "job.cancel"; params: IdParams }
-  | { command: "analysis.start"; params: AnalysisParams }
-  | { command: "library.search"; params: LibrarySearchParams }
-  | { command: "library.asset.update"; params: LibraryTagParams }
-  | { command: "library.related"; params: IdParams }
-  | { command: "library.instrument.list"; params: EmptyParams }
-  | { command: "library.instrument.favorite.set"; params: InstrumentFavoriteParams }
-  | { command: "library.instrument.category.list"; params: EmptyParams }
-  | { command: "library.instrument.category.set"; params: InstrumentCategoryParams }
-  | { command: "library.instrument.tags.set"; params: InstrumentTagsParams }
-  | { command: "library.instrument.collection.list"; params: EmptyParams }
-  | { command: "library.instrument.collection.create"; params: InstrumentCollectionCreateParams }
-  | { command: "library.instrument.collection.rename"; params: InstrumentCollectionRenameParams }
-  | { command: "library.instrument.collection.delete"; params: InstrumentCollectionIdParams }
-  | {
-      command: "library.instrument.collection.membership.set";
-      params: InstrumentCollectionMembershipParams;
-    };
+export type RuntimeCommand = { "command": "host.status", "params": EmptyParams } | { "command": "host.info", "params": EmptyParams } | { "command": "host.bootstrap", "params": EmptyParams } | { "command": "host.shutdown", "params": EmptyParams } | { "command": "runtime.projection.get", "params": EmptyParams } | { "command": "runtime.projection.retry", "params": EmptyParams } | { "command": "transport.play", "params": EmptyParams } | { "command": "transport.pause", "params": EmptyParams } | { "command": "transport.stop", "params": EmptyParams } | { "command": "transport.go-to-start", "params": EmptyParams } | { "command": "transport.seek", "params": SeekParams } | { "command": "audio.master-gain.preview", "params": MasterGainParams } | { "command": "mixer.send.preview", "params": SendLevelPreviewParams } | { "command": "mixer.sidechain.preview", "params": SidechainSendLevelPreviewParams } | { "command": "mixer.channel.preview", "params": ChannelMixParams } | { "command": "automation.preview", "params": AutomationPreviewParams } | { "command": "audio.status", "params": EmptyParams } | { "command": "audio.diagnostics", "params": AudioDiagnosticsParams } | { "command": "audio.probe", "params": EmptyParams } | { "command": "audio.channels.probe", "params": AudioChannelsProbeParams } | { "command": "audio.recover", "params": EmptyParams } | { "command": "audio.startup.retry", "params": EmptyParams } | { "command": "audio.driver.get", "params": EmptyParams } | { "command": "audio.driver.set", "params": AudioDriverConfig } | { "command": "audio.emergency-mute", "params": MuteParams } | { "command": "audio.feedback-protection.reset", "params": EmptyParams } | { "command": "asset.preview", "params": AssetPreviewParams } | { "command": "asset.preview.stop", "params": EmptyParams } | { "command": "instrument.preview", "params": InstrumentIdParams } | { "command": "instrument.preview.stop", "params": EmptyParams } | { "command": "midi.listening.enable", "params": EmptyParams } | { "command": "midi.listening.disable", "params": EmptyParams } | { "command": "midi.send", "params": MidiSendParams } | { "command": "midi.target.set", "params": LiveMidiTargetParams } | { "command": "midi.panic", "params": TrackIdParams } | { "command": "plugin.catalog.list", "params": EmptyParams } | { "command": "plugin.scan", "params": PluginScanParams } | { "command": "plugin.scan.start", "params": PluginScanParams } | { "command": "plugin.editor.open", "params": DeviceParams } | { "command": "plugin.audition.open", "params": PluginAuditionParams } | { "command": "device.inspect", "params": DeviceParams } | { "command": "device.parameter.list", "params": DeviceParams } | { "command": "device.parameter.get", "params": DeviceParameterGetParams } | { "command": "device.parameter.format", "params": DeviceParameterFormatParams } | { "command": "plugin.preset.list", "params": DeviceParams } | { "command": "plugin.preset.get", "params": DeviceParams } | { "command": "plugin.preset.set", "params": PluginPresetSetParams } | { "command": "plugin.state.get", "params": DeviceParams } | { "command": "plugin.state.set", "params": PluginStateSetParams } | { "command": "missing.list", "params": EmptyParams } | { "command": "record.start", "params": RecordStartParams } | { "command": "record.stop", "params": EmptyParams } | { "command": "record.status", "params": EmptyParams } | { "command": "record.list", "params": RecordListParams } | { "command": "record.rename", "params": RecordRenameParams } | { "command": "record.archive", "params": IdParams } | { "command": "record.promote", "params": IdParams } | { "command": "record.tag", "params": LibraryTagParams } | { "command": "record.delete", "params": IdParams } | { "command": "record.duplicates", "params": EmptyParams } | { "command": "take.activate", "params": TakeActivateParams } | { "command": "take.place-separate-clip", "params": TakeIdParams } | { "command": "audio-clip.take-variant.set", "params": TakeVariantParams } | { "command": "take.comparison.start", "params": TakeIdParams } | { "command": "take.comparison.switch", "params": TakeComparisonParams } | { "command": "take.comparison.stop", "params": EmptyParams } | { "command": "project.restore-generation", "params": ProjectRestoreParams } | { "command": "render.start", "params": RenderStartParams } | { "command": "render.stems", "params": RenderStemsParams } | { "command": "render.export", "params": RenderExportParams } | { "command": "render.list", "params": EmptyParams } | { "command": "render.clean", "params": RenderCleanParams } | { "command": "job.get", "params": IdParams } | { "command": "job.cancel", "params": IdParams } | { "command": "analysis.start", "params": AnalysisParams } | { "command": "library.search", "params": LibrarySearchParams } | { "command": "library.asset.update", "params": LibraryTagParams } | { "command": "library.related", "params": IdParams } | { "command": "library.instrument.list", "params": EmptyParams } | { "command": "library.instrument.favorite.set", "params": InstrumentFavoriteParams } | { "command": "library.instrument.category.list", "params": EmptyParams } | { "command": "library.instrument.category.set", "params": InstrumentCategoryParams } | { "command": "library.instrument.tags.set", "params": InstrumentTagsParams } | { "command": "library.instrument.collection.list", "params": EmptyParams } | { "command": "library.instrument.collection.create", "params": InstrumentCollectionCreateParams } | { "command": "library.instrument.collection.rename", "params": InstrumentCollectionRenameParams } | { "command": "library.instrument.collection.delete", "params": InstrumentCollectionIdParams } | { "command": "library.instrument.collection.membership.set", "params": InstrumentCollectionMembershipParams };

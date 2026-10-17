@@ -255,7 +255,7 @@ export function MixdownDialog(props: Props) {
                   />
                 </label>
                 <label>
-                  Target Loudness Range (LU){' '}
+                  Loudness Range ceiling, monitor only (LU){' '}
                   <input
                     type="number"
                     min={1}
@@ -378,10 +378,19 @@ export function MixdownDialog(props: Props) {
               <Measurements value={result.measurements} warnings={result.warnings} />
               {result.mastering && (
                 <p>
-                  Target {result.mastering.target.integratedLufs} LUFS · Input{' '}
-                  {result.mastering.input.integratedLufs.toFixed(2)} LUFS · Deviation{' '}
-                  {result.mastering.deviation.integratedLufs.toFixed(2)} LUFS · True Peak correction{' '}
-                  {result.mastering.truePeakCorrectionDb.toFixed(2)} dB
+                  Target {result.mastering.target.integratedLufs} LUFS · Completed{' '}
+                  {(
+                    result.mastering.target.integratedLufs +
+                    result.mastering.deviation.integratedLufs
+                  ).toFixed(2)}{' '}
+                  LUFS
+                  {result.mastering.truePeakCorrectionDb > 0 && (
+                    <>
+                      {' '}
+                      · True Peak ceiling limited the gain by{' '}
+                      {result.mastering.truePeakCorrectionDb.toFixed(2)} dB
+                    </>
+                  )}
                 </p>
               )}
             </section>

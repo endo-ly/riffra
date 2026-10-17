@@ -72,7 +72,7 @@ it.each(['measured', 'unavailable'] as const)(
               input: { integratedLufs: -21, truePeakDb: -7, loudnessRangeLu: 4 },
               deviation: { integratedLufs: -0.12, truePeakDb: -0.08, loudnessRangeLu: -7 },
               normalizationType: 'linear',
-              truePeakCorrectionDb: 0,
+              truePeakCorrectionDb: 0.08,
             }
           : null,
       measurements: {
@@ -161,7 +161,7 @@ it.each(['measured', 'unavailable'] as const)(
       expect(screen.getByText('-2.08 dBTP')).toBeInTheDocument();
       expect(screen.getByText('4.00 LU')).toBeInTheDocument();
       expect(screen.getByText('-3.01 dBFS')).toBeInTheDocument();
-      expect(screen.getByText(/True Peak correction/)).toHaveTextContent('Deviation -0.12 LUFS');
+      expect(screen.getByText(/True Peak ceiling limited the gain/)).toHaveTextContent('0.08 dB');
     } else {
       expect(screen.getByText('ffmpeg is unavailable')).toBeInTheDocument();
       expect(screen.getByText('1.94 dBFS')).toBeInTheDocument();
