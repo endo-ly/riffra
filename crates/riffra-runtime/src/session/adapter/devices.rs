@@ -346,10 +346,14 @@ pub fn set_device_parameter(
     // The device write only commits after the native graph accepted the
     // parameter, so verify-then-commit order keeps canonical and native alive
     // without a post-commit reconciliation against an already mutated state.
-    // The canonical write lock is dropped before the projection wait and the
-    // device calls: they can block, and must not keep other writers waiting.
+    // The projection wait can block for a long time, so it runs without
+    // holding the canonical write lock; holding it across the wait would
+    // stall every other canonical writer. Afterwards the lock is taken back
+    // and kept through the commit, so the native change, its recorded state,
+    // and the canonical commit cannot interleave with another device writer.
     context.release_writer();
     wait_for_device_projection(context)?;
+    context.reacquire_writer()?;
     let previous = context.audio.get_plugin_state(owner, device_id)?;
     if usize::try_from(parameter_index).is_ok_and(|index| index >= previous.parameter_values.len())
     {

@@ -42,20 +42,7 @@ impl<D: RuntimeDriver> SessionContext<'_, D> {
             writer
         } else {
             owned = self.project.write();
-            let current = owned.project().core.canonical_state();
-            let expected = &self.snapshot;
-            if current.project_id != expected.project_id {
-                return Err(AdapterError::ProjectConflict {
-                    expected_project_id: expected.project_id.clone(),
-                    current_project_id: current.project_id,
-                });
-            }
-            if current.sequence != expected.sequence {
-                return Err(AdapterError::Conflict {
-                    expected_sequence: expected.sequence,
-                    current_sequence: current.sequence,
-                });
-            }
+            self.validate_snapshot(&owned.project().core.canonical_state())?;
             &mut owned
         };
         let committed = writer.commit(edit)?;
@@ -68,6 +55,41 @@ impl<D: RuntimeDriver> SessionContext<'_, D> {
             },
         );
         Ok((mutation, value))
+    }
+
+    /// Re-acquires the canonical write lock and verifies the context snapshot
+    /// against the live canonical state after a lock-free stage such as a
+    /// device projection wait. Holding the lock from here through `commit`
+    /// serializes the native change, its recorded state, and the canonical
+    /// commit against concurrent canonical writers.
+    pub(crate) fn reacquire_writer(&mut self) -> Result<(), AdapterError> {
+        if self.writer.is_none() {
+            let project = self.project;
+            let owned = project.write();
+            self.validate_snapshot(&owned.project().core.canonical_state())?;
+            self.writer = Some(owned);
+        }
+        Ok(())
+    }
+
+    fn validate_snapshot(
+        &self,
+        current: &riffra_core::CanonicalState,
+    ) -> Result<(), AdapterError> {
+        let expected = &self.snapshot;
+        if current.project_id != expected.project_id {
+            return Err(AdapterError::ProjectConflict {
+                expected_project_id: expected.project_id.clone(),
+                current_project_id: current.project_id.clone(),
+            });
+        }
+        if current.sequence != expected.sequence {
+            return Err(AdapterError::Conflict {
+                expected_sequence: expected.sequence,
+                current_sequence: current.sequence,
+            });
+        }
+        Ok(())
     }
 
     /// Drops the borrowed write lock held for a mutation whose canonical
