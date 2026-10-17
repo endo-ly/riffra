@@ -1044,6 +1044,10 @@ impl HostState {
             RuntimeCommand::RenderStems(params) => {
                 ControlOutput::Job(Some(self.start_render_stems(current, params)?))
             }
+            RuntimeCommand::RenderExport(params) => ControlOutput::RenderExport(
+                render::export_render(&self.data_root, &params.render_id, &params.output_path)
+                    .map_err(command_error)?,
+            ),
             RuntimeCommand::JobGet(params) => ControlOutput::Job(
                 self.jobs
                     .status(&params.id)
@@ -1298,6 +1302,7 @@ impl HostState {
                     created_at_ms: riffra_host::now_ms(),
                     selection,
                     range: params.range,
+                    output_directory: params.output_directory,
                 },
                 cancelled.as_ref(),
             ) {

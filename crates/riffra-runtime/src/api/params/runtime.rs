@@ -49,6 +49,8 @@ pub struct RenderOptions {
     #[serde(default)]
     pub normalize: bool,
     pub track_id: Option<String>,
+    /// Absolute path for a completed WAV copy outside Riffra's render store.
+    pub output_path: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
@@ -168,6 +170,17 @@ pub struct RenderStemsParams {
     /// Shared arrangement range for every stem.
     #[serde(default)]
     pub range: RenderRange,
+    /// Absolute directory for completed WAV copies outside Riffra's render store.
+    pub output_directory: Option<String>,
+}
+
+/// Copies a completed render to another path without creating a new render.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct RenderExportParams {
+    pub render_id: String,
+    /// Absolute WAV path, or an existing directory for a stem render.
+    pub output_path: String,
 }
 
 /// Analyzes an Asset or a file; exactly one source is required.

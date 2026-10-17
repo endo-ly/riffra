@@ -421,6 +421,7 @@ control_commands! {
 
         RenderStart = "render.start" (RenderStartParams) -> Job, project;
         RenderStems = "render.stems" (RenderStemsParams) -> Job, project;
+        RenderExport = "render.export" (RenderExportParams) -> RenderExport, host;
         JobGet = "job.get" (IdParams) -> Job, host;
         JobCancel = "job.cancel" (IdParams) -> Job, host;
         AnalysisStart = "analysis.start" (AnalysisParams) -> Analysis, host;

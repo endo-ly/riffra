@@ -368,6 +368,7 @@ mod tests {
         let promotion = Arc::clone(&promoted);
         let result = RenderStemsResult {
             directory: "renders/render-1".into(),
+            exported_directory: None,
             project_id: "project-1".into(),
             source_sequence: 4,
             sample_rate: 48_000,

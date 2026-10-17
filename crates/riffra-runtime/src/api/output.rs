@@ -47,6 +47,7 @@ pub enum ControlOutput {
     InstrumentEvents(Vec<riffra_core::InstrumentControlEvent>),
     SessionInspection(SessionInspection),
     History(HistoryState),
+    RenderExport(RenderExportResult),
     ArrangementMutation(ArrangementMutationResult),
     BatchMutation(BatchMutationResult),
     AutomationLanes(Vec<AutomationLane>),

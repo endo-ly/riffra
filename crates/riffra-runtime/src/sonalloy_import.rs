@@ -487,6 +487,7 @@ mod tests {
                     range: Default::default(),
                     normalize: false,
                     track_id: None,
+                    output_path: None,
                 },
                 &cancelled,
             )

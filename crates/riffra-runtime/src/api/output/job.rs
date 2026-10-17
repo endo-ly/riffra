@@ -65,7 +65,11 @@ pub struct RenderResult {
     pub warnings: Vec<String>,
     pub mastering: Option<Box<MasteringReport>>,
     pub asset_id: AssetId,
+    /// Internal WAV path registered as an Asset.
     pub path: String,
+    /// External WAV copy requested for this job, when present.
+    #[serde(default)]
+    pub exported_path: Option<String>,
     pub sample_rate: u32,
     pub frames: u64,
     pub duration_ms: u64,
@@ -84,6 +88,9 @@ pub struct RenderResult {
 pub struct RenderStemsResult {
     /// Directory containing the WAV files and `render.json`.
     pub directory: String,
+    /// External directory containing the copied stem WAVs, when requested.
+    #[serde(default)]
+    pub exported_directory: Option<String>,
     /// Project that supplied the rendered canonical state.
     pub project_id: String,
     /// Canonical sequence captured when the job started.
@@ -100,6 +107,16 @@ pub struct RenderStemsResult {
     pub stems: Vec<RenderStem>,
     /// Tracks skipped by an all-Tracks request because they had no unmuted Clips.
     pub skipped_track_ids: Vec<String>,
+}
+
+/// Result of copying an existing Render without changing its internal files.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct RenderExportResult {
+    pub render_id: String,
+    pub source_path: String,
+    pub output_path: String,
+    pub file_count: usize,
 }
 
 /// The WAV and source Track represented by one stem result.

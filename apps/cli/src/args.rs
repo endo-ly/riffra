@@ -2495,6 +2495,7 @@ pub enum RenderCommand {
     /// under an attached one-shot, use `job wait` to follow it to a terminal state. `job wait`
     /// without --timeout-ms waits until a terminal state, and only a supplied --timeout-ms ends
     /// the wait early.
+    /// --out copies the completed WAV to an absolute path without replacing an existing file.
     Start(RenderStartArgs),
     /// Render several Tracks to aligned WAV stems under one job and directory.
     ///
@@ -2502,6 +2503,8 @@ pub enum RenderCommand {
     /// skips Tracks without unmuted Clips; explicit IDs must be unique and
     /// refer to Tracks with renderable Clips. Range options match render start.
     Stems(RenderStemsArgs),
+    /// Copy a completed Render to a WAV path, or copy all stems to an existing directory.
+    Export(RenderExportArgs),
 }
 
 #[derive(Debug, Args)]
@@ -2521,6 +2524,9 @@ pub struct RenderStartArgs {
     /// Render only this Track as a stem instead of the full mix.
     #[arg(long)]
     pub track_id: Option<String>,
+    /// Copy the completed WAV to this path without replacing an existing file.
+    #[arg(long)]
+    pub out: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -2540,6 +2546,19 @@ pub struct RenderStemsArgs {
     /// Time-selection end as an arrangement-absolute musical position; must be provided together with --start.
     #[arg(long)]
     pub end: Option<String>,
+    /// Copy completed stem WAVs to this existing directory without replacing files.
+    #[arg(long)]
+    pub out: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub struct RenderExportArgs {
+    /// Render directory name returned by render list.
+    #[arg(long)]
+    pub id: String,
+    /// Absolute or working-directory-relative WAV path, or an existing directory for stems.
+    #[arg(long)]
+    pub out: PathBuf,
 }
 
 #[derive(Debug, Subcommand)]
@@ -3557,6 +3576,11 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
         CliCommand::Render { command } => match command {
             RenderCommand::Start(args) => render_start(args)?,
             RenderCommand::Stems(args) => render_stems(args)?,
+            RenderCommand::Export(args) => Runtime::RenderExport(RenderExportParams {
+                render_id: args.id,
+                output_path: resolve_output_path(args.out)?,
+            })
+            .into(),
         },
         CliCommand::Job { command } => match command {
             JobCommand::Get(args) => Runtime::JobGet(IdParams { id: args.id }).into(),
@@ -3644,6 +3668,7 @@ fn render_start(args: RenderStartArgs) -> Result<ControlCommand, RequestError> {
             range,
             normalize: args.normalize.unwrap_or(false),
             track_id: args.track_id,
+            output_path: args.out.map(resolve_output_path).transpose()?,
         }),
     })
     .into())
@@ -3657,8 +3682,16 @@ fn render_stems(args: RenderStemsArgs) -> Result<ControlCommand, RequestError> {
         all_tracks: args.all_tracks,
         track_ids: args.track_ids,
         range: render_range(args.range, args.start, args.end, "/range")?,
+        output_directory: args.out.map(resolve_output_path).transpose()?,
     })
     .into())
+}
+
+fn resolve_output_path(path: PathBuf) -> Result<String, RequestError> {
+    let absolute = std::path::absolute(&path).map_err(|error| {
+        RequestError::Usage(format!("render output path could not be resolved: {error}"))
+    })?;
+    Ok(absolute.to_string_lossy().into_owned())
 }
 
 fn render_range(
@@ -4164,6 +4197,41 @@ mod tests {
         .request();
         assert!(missing_selection.is_err());
         assert!(conflicting_selection.is_err());
+    }
+
+    #[test]
+    fn render_output_paths_are_absolute_and_export_is_a_runtime_command() {
+        let render = wire(
+            Cli::try_parse_from(["riffra", "render", "start", "--out", "exports/mix.wav"]).unwrap(),
+        );
+        assert_eq!(render.name, "render.start");
+        assert!(
+            render.params["options"]["outputPath"]
+                .as_str()
+                .unwrap()
+                .starts_with(
+                    &std::env::current_dir()
+                        .unwrap()
+                        .to_string_lossy()
+                        .to_string()
+                )
+        );
+
+        let export = wire(
+            Cli::try_parse_from([
+                "riffra",
+                "render",
+                "export",
+                "--id",
+                "render-123-abcd",
+                "--out",
+                "exports/copy.wav",
+            ])
+            .unwrap(),
+        );
+        assert_eq!(export.name, "render.export");
+        assert_eq!(export.params["renderId"], "render-123-abcd");
+        assert!(std::path::Path::new(export.params["outputPath"].as_str().unwrap()).is_absolute());
     }
 
     #[test]
