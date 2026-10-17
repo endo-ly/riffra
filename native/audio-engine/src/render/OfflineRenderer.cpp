@@ -150,8 +150,6 @@ std::unique_ptr<OfflineRenderer> OfflineRenderer::prepare(const OfflineRenderReq
     const auto outputEndSample =
         musicalEndSample +
         static_cast<std::int64_t>(std::llround(request.tailSeconds * sampleRate));
-    const auto processingEnd =
-        std::max(outputEndSample, processFinalEvents ? musicalEndSample + 1 : outputEndSample);
     if (startSample < 0 || outputEndSample <= startSample) {
         error = "Offline Render range has no samples.";
         return nullptr;
@@ -173,6 +171,14 @@ std::unique_ptr<OfflineRenderer> OfflineRenderer::prepare(const OfflineRenderReq
     const auto latencySamples = status.graph.has_value()
                                     ? static_cast<std::int64_t>(status.graph->maximumLatencySamples)
                                     : 0;
+    // Latency compensation shifts each callback's audio later in the engine stream by the
+    // graph maximum latency, so processing must continue until the stream passes the shifted
+    // write window end. The shifted window already covers the extra processing sample for
+    // notes and instrument controls ending exactly on the end tick whenever the graph
+    // reports any latency.
+    const auto processingEnd = std::max(
+        outputEndSample + latencySamples,
+        processFinalEvents ? musicalEndSample + 1 : outputEndSample);
     const auto automationWarnings =
         status.graph ? status.graph->automationWarnings : std::vector<juce::String>{};
     Plan renderPlan{destination,
@@ -247,6 +253,15 @@ bool OfflineRenderer::render(juce::AudioFormatManager& formats, Result& result,
         position += count;
     }
     writer.reset();
+
+    // Every stream sample of the requested range must reach the writer; latency shifts the
+    // window, it never shrinks it.
+    const auto expectedFrames = static_cast<std::uint64_t>(plan.outputEndSample - plan.startSample);
+    if (writtenFrames != expectedFrames) {
+        error = "Offline Render WAV frame count does not match the requested range.";
+        partial.deleteFile();
+        return false;
+    }
 
     const auto normalizationGain = plan.normalize && peak > 0.0f ? 0.98f / peak : 1.0f;
     if (plan.normalize && std::abs(normalizationGain - 1.0f) > 0.000001f) {

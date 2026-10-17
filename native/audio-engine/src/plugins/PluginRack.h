@@ -208,6 +208,7 @@ private:
     };
 
     void updateParameterCount(juce::AudioProcessor& processor);
+    void refreshPreparedLatencySamples() noexcept;
     [[nodiscard]] juce::AudioProcessorEditor* createEditor(juce::String& error);
     [[nodiscard]] juce::String currentPluginName() const;
     /// Auxiliary input wiring resolved from the buses a processor was prepared with.
@@ -232,7 +233,7 @@ private:
     std::atomic<std::uint64_t> cancelledControlSequence{0};
     void queueParameterValue(int index, float value) noexcept;
     [[nodiscard]] bool canQueueParameterValue(int index, juce::String& error) const noexcept;
-    bool synchronizeParameterController(juce::String& error);
+    [[nodiscard]] bool hasQueuedParameterChanges() const noexcept;
     std::optional<float> parameterValueForText(int index, const juce::String& text,
                                                juce::String& error) const;
     [[nodiscard]] std::optional<juce::String> parameterDisplayValue(int index, float value,
@@ -299,7 +300,6 @@ private:
     std::atomic<std::uint64_t> destroyCount{0};
     std::atomic<bool> bypassed{false};
     std::atomic<bool> panicPending{false};
-    std::atomic<bool> parameterControllerSyncPending{false};
     std::atomic<bool> automationActive{false};
     const PluginParameterAutomation* activeBindings = nullptr;
     std::size_t activeBindingCount = 0;

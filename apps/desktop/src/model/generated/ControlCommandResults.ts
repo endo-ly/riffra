@@ -9,8 +9,8 @@ export type ControlCommandResults = {
   'session.apply': OutputValue<'batchMutation'>;
   'session.settings.update': OutputValue<'arrangementMutation'>;
   'history.get': OutputValue<'history'>;
-  'undo': OutputValue<'arrangementMutation'>;
-  'redo': OutputValue<'arrangementMutation'>;
+  undo: OutputValue<'arrangementMutation'>;
+  redo: OutputValue<'arrangementMutation'>;
   'audio.master-gain.set': OutputValue<'arrangementMutation'>;
   'mixer.get': OutputValue<'mixer'>;
   'mixer.bus.list': OutputValue<'mixBuses'>;

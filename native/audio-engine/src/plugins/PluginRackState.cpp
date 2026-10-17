@@ -30,7 +30,6 @@ void PluginRack::queueParameterValue(const int index, const float value) noexcep
     const auto normalized = juce::jlimit(0.0f, 1.0f, value);
     queue->values[offset].store(normalized, std::memory_order_release);
     queue->dirty[offset].store(true, std::memory_order_release);
-    parameterControllerSyncPending.store(true, std::memory_order_release);
 }
 
 void PluginRack::enqueueParameterChange(const int index, const float value) noexcept {
@@ -48,6 +47,14 @@ bool PluginRack::canQueueParameterValue(const int index, juce::String& error) co
         return false;
     }
     return true;
+}
+
+bool PluginRack::hasQueuedParameterChanges() const noexcept {
+    auto* queue = parameterQueue.get();
+    if (queue == nullptr) return false;
+    for (std::size_t index = 0; index < queue->capacity; ++index)
+        if (queue->dirty[index].load(std::memory_order_acquire)) return true;
+    return false;
 }
 
 bool PluginRack::hasPrograms() const noexcept {
@@ -149,7 +156,6 @@ bool PluginRack::setProgram(const int index, juce::String& error) {
             return false;
         }
         plugin->setCurrentProgram(index);
-        parameterControllerSyncPending.store(true, std::memory_order_release);
         updateParameterCount(*plugin);
         return true;
     } catch (const std::exception& exception) {
@@ -173,7 +179,6 @@ bool PluginRack::applyStateData(const juce::String& base64, juce::String& error)
         return false;
     }
     plugin->setStateInformation(state.getData(), static_cast<int>(state.getSize()));
-    parameterControllerSyncPending.store(true, std::memory_order_release);
     updateParameterCount(*plugin);
     return true;
 }
@@ -297,7 +302,6 @@ void PluginRack::restoreAutomation() noexcept {
             if (restore.parameter == nullptr) continue;
             restore.parameter->setValue(restore.value);
             restore.parameter = nullptr;
-            parameterControllerSyncPending.store(true, std::memory_order_release);
         }
     }
     activeBindings = nullptr;
@@ -439,29 +443,16 @@ std::optional<PluginParameterReadback> PluginRack::parameterReadback(const int i
     }
 }
 
-bool PluginRack::synchronizeParameterController(juce::String& error) {
-    if (!parameterControllerSyncPending.load(std::memory_order_acquire)) return true;
-    const juce::SpinLock::ScopedLockType lock(pluginLock);
-    try {
-        // The VST3 host cache records queued values as they are posted, so it can
-        // diverge from the values the processor actually accepted. Pending
-        // controller updates flush at the state-capture boundary, and re-applying
-        // the captured state makes the edit controller adopt the processor's
-        // parameter values, which rebuilds the host cache from plugin truth.
-        juce::MemoryBlock state;
-        plugin->getStateInformation(state);
-        plugin->setStateInformation(state.getData(), static_cast<int>(state.getSize()));
-        parameterControllerSyncPending.store(false, std::memory_order_release);
-        return true;
-    } catch (...) {
-        error = "VST3 parameter controller synchronization failed.";
-        return false;
-    }
-}
-
 void PluginRack::updateParameterCount(juce::AudioProcessor& processor) {
     cachedParameterCount.store(static_cast<std::size_t>(processor.getParameters().size()),
                                std::memory_order_release);
+}
+
+void PluginRack::refreshPreparedLatencySamples() noexcept {
+    const auto* processor = plugin.get();
+    if (processor == nullptr) return;
+    preparedLatencySamples.store(std::max(0, processor->getLatencySamples()),
+                                 std::memory_order_release);
 }
 
 PluginRackStatus PluginRack::status() const {

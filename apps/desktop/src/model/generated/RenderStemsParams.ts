@@ -16,8 +16,4 @@ trackIds: Array<string>,
 /**
  * Shared arrangement range for every stem.
  */
-range: RenderRange, 
-/**
- * Absolute directory for completed WAV copies outside Riffra's render store.
- */
-outputDirectory?: string | null, };
+range: RenderRange, outputDirectory?: string | null, };

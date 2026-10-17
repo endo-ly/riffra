@@ -53,8 +53,8 @@ private:
         /// Exclusive write end, derived from tick conversion and tail only. The latency
         /// compensation in `render()` shifts it later in the engine stream.
         std::int64_t outputEndSample = 0;
-        /// Exclusive internal processing end; may extend past the write window to process
-        /// final events exactly on the end tick.
+        /// Exclusive internal processing end; covers the latency-shifted write window and
+        /// extends further only for final events exactly on the end tick.
         std::int64_t processingEnd = 0;
         float masterGainDb = 0.0f;
         bool normalize = false;

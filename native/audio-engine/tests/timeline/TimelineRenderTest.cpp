@@ -402,6 +402,46 @@ TEST(TimelineEngineTest, OfflineRendererReturnsIdenticalFrameCountWithAndWithout
     EXPECT_EQ(static_cast<std::uint64_t>(terminalReader->lengthInSamples), terminal.second.frames);
 }
 
+TEST(TimelineEngineTest, OfflineRendererReturnsIdenticalFrameCountWithAndWithoutTrackLatency) {
+    // Arrange
+    juce::ScopedJuceInitialiser_GUI initialiser;
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    test::TemporaryDirectory directory;
+    auto effectSnapshot = makeBuiltInInstrumentSnapshot("track:latency-effect");
+    effectSnapshot.graph.tracks.front().effects.push_back(
+        {"fx:offline", RIFFRA_TEST_EFFECT_BUNDLE_PATH, {}});
+    OfflineRenderer::Result plainResult;
+    OfflineRenderer::Result effectResult;
+    juce::String error;
+
+    // Act
+    const auto renderTo = [&](const ExecutionGraph& graph, const char* fileName,
+                              OfflineRenderer::Result& result) {
+        const OfflineRenderRequestSpec request{
+            graph,  directory.get().getChildFile(fileName).getFullPathName(),
+            0,      960,
+            48'000, 512,
+            false,  0.0,
+            true};
+        const auto renderer = OfflineRenderer::prepare(request, formats, error);
+        return renderer != nullptr && renderer->render(formats, result, error);
+    };
+    const auto plain = renderTo(makeBuiltInInstrumentSnapshot("track:latency-plain").graph,
+                                "latency-plain.wav", plainResult);
+    const auto effect = renderTo(effectSnapshot.graph, "latency-effect.wav", effectResult);
+
+    // Assert
+    ASSERT_TRUE(plain) << error.toStdString();
+    ASSERT_TRUE(effect) << error.toStdString();
+    EXPECT_EQ(plainResult.frames, effectResult.frames);
+    EXPECT_GT(plainResult.frames, 0u);
+    const auto effectReader = std::unique_ptr<juce::AudioFormatReader>(
+        formats.createReaderFor(directory.get().getChildFile("latency-effect.wav")));
+    ASSERT_NE(effectReader, nullptr);
+    EXPECT_EQ(static_cast<std::uint64_t>(effectReader->lengthInSamples), effectResult.frames);
+}
+
 TEST(TimelineEngineTest, MonitorsAudioTrackInputThroughTheTrackEffectChain) {
     // Arrange
     juce::AudioFormatManager formats;

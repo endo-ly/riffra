@@ -51,7 +51,7 @@ pub(super) fn master(
     )?)?;
     let desired_gain_db = target.integrated_lufs - input_measurement.integrated_lufs;
     let peak_headroom_db = target.true_peak_db - input_measurement.true_peak_db;
-    let applied_gain_db = desired_gain_db.min(peak_headroom_db);
+    let mut applied_gain_db = desired_gain_db.min(peak_headroom_db);
     run(
         input,
         Some(&normalized),
@@ -71,6 +71,7 @@ pub(super) fn master(
     let mut final_path = normalized.as_path();
     if output.true_peak_db > target.true_peak_db {
         let response = target.true_peak_db - output.true_peak_db;
+        applied_gain_db += response;
         run(
             &normalized,
             Some(&corrected),
@@ -306,16 +307,8 @@ fn run(
 mod tests {
     use super::*;
 
-    #[test]
-    fn measures_float_samples_above_full_scale_and_reports_loudness_availability() {
-        let root = std::env::temp_dir().join(format!(
-            "riffra-output-measurement-{}",
-            riffra_control::new_instance_id()
-        ));
-        fs::create_dir(&root).unwrap();
-        let path = root.join("output.wav");
-        let sample_rate = 48_000_u32;
-        let frames = sample_rate * 4;
+    fn write_float_wav(path: &Path, sample_rate: u32, samples: &[f32]) {
+        let frames = samples.len() as u32;
         let mut bytes = Vec::new();
         bytes.extend_from_slice(b"RIFF");
         bytes.extend_from_slice(&(36 + frames * 4).to_le_bytes());
@@ -329,6 +322,51 @@ mod tests {
         bytes.extend_from_slice(&32_u16.to_le_bytes());
         bytes.extend_from_slice(b"data");
         bytes.extend_from_slice(&(frames * 4).to_le_bytes());
+        for sample in samples {
+            bytes.extend_from_slice(&sample.to_le_bytes());
+        }
+        fs::write(path, bytes).unwrap();
+    }
+
+    fn segment_mean_square(
+        path: &Path,
+        sample_rate: u32,
+        start_second: usize,
+        seconds: usize,
+    ) -> f64 {
+        let wav = riffra_host::read_wav_structure(path).unwrap();
+        use std::io::{Read, Seek, SeekFrom};
+        let width = usize::from(wav.bits_per_sample / 8);
+        let mut file = fs::File::open(path).unwrap();
+        file.seek(SeekFrom::Start(
+            wav.data_offset as u64 + u64::from(sample_rate) * start_second as u64 * width as u64,
+        ))
+        .unwrap();
+        let count = sample_rate as usize * seconds * width;
+        let mut chunk = vec![0_u8; count];
+        file.read_exact(&mut chunk).unwrap();
+        let sum: f64 = chunk
+            .chunks_exact(width)
+            .map(|raw| {
+                let sample: f64 =
+                    crate::analysis::decode_sample(raw, wav.format, wav.bits_per_sample).unwrap();
+                sample * sample
+            })
+            .sum();
+        sum / (chunk.len() / width) as f64
+    }
+
+    #[test]
+    fn measures_float_samples_above_full_scale_and_reports_loudness_availability() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-output-measurement-{}",
+            riffra_control::new_instance_id()
+        ));
+        fs::create_dir(&root).unwrap();
+        let path = root.join("output.wav");
+        let sample_rate = 48_000_u32;
+        let frames = sample_rate * 4;
+        let mut samples = Vec::new();
         for frame in 0..frames {
             let sample = if frame == sample_rate {
                 1.25_f32
@@ -337,9 +375,9 @@ mod tests {
                     as f32
                     * 0.25
             };
-            bytes.extend_from_slice(&sample.to_le_bytes());
+            samples.push(sample);
         }
-        fs::write(&path, bytes).unwrap();
+        write_float_wav(&path, sample_rate, &samples);
 
         let (measurements, warnings) =
             measure_output(&path, sample_rate, None, None, None).unwrap();
@@ -387,6 +425,53 @@ mod tests {
             );
         }
         assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn keeps_relative_segment_levels_when_limiting_shrinks_the_mastering_gain() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-mastering-ratio-{}",
+            riffra_control::new_instance_id()
+        ));
+        fs::create_dir(&root).unwrap();
+        let path = root.join("output.wav");
+        let sample_rate = 48_000_u32;
+        let mut samples = Vec::new();
+        for amplitude in [0.25_f32, 0.05_f32] {
+            for frame in 0..sample_rate as usize * 2 {
+                samples.push(
+                    (f64::from(frame as u32) * 440.0 * std::f64::consts::TAU
+                        / f64::from(sample_rate))
+                    .sin() as f32
+                        * amplitude,
+                );
+            }
+        }
+        write_float_wav(&path, sample_rate, &samples);
+
+        let target = LoudnessMastering {
+            integrated_lufs: -14.0,
+            true_peak_db: -20.0,
+            loudness_range_lu: 20.0,
+        };
+        let pre = segment_mean_square(&path, sample_rate, 0, 2);
+        let pre_ratio = pre / segment_mean_square(&path, sample_rate, 2, 2);
+        assert!(
+            (pre_ratio - (0.25_f64 / 0.05_f64).powi(2)).abs() < 0.05,
+            "pre {pre} ratio {pre_ratio}"
+        );
+        let report = master(&path, &target, sample_rate, None).unwrap();
+        assert!(report.true_peak_correction_db > 0.0);
+        let post_ratio = segment_mean_square(&path, sample_rate, 0, 2)
+            / segment_mean_square(&path, sample_rate, 2, 2);
+        assert!(
+            (post_ratio - pre_ratio).abs() < 0.02 * pre_ratio,
+            "limited master changed segment ratios: {pre_ratio} -> {post_ratio}"
+        );
+        // Every gain pass applies linearly, so the loudness the corrected wav
+        // loses against its target equals all gain the ceiling withheld.
+        assert!((report.true_peak_correction_db + report.deviation.integrated_lufs).abs() < 0.2);
         fs::remove_dir_all(root).unwrap();
     }
 }

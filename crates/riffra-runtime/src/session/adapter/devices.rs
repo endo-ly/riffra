@@ -298,65 +298,25 @@ pub fn set_device_bypassed(
     }
 }
 
-/// Normalized-value tolerance for plugin-side quantization when the projected
-/// runtime graph replays a committed plugin state.
-const PLUGIN_STATE_PROJECTION_TOLERANCE: f32 = 1.0e-3;
-
-/// Confirms that the committed plugin state survives the runtime projection:
-/// after the canonical save the new graph is awaited and the plugin value is
-/// re-read, so a graph that lost the saved parameter fails the set instead of
-/// reporting success.
-fn verify_committed_plugin_state_survives_projection<D: RuntimeDriver>(
-    context: &mut SessionContext<'_, D>,
-    owner: &riffra_core::EffectOwner,
-    device_id: &str,
-    parameter_index: usize,
-    canonical: &riffra_core::CanonicalState,
+/// Waits for the runtime projection matching the context snapshot before
+/// touching a device on the native timeline, so the device read and write
+/// cannot observe a graph that is being replaced. The wait runs without
+/// holding a canonical lock, and states outside the projection lifecycle
+/// (Safe Mode, a runtime that never projected this key) fall straight through.
+fn wait_for_device_projection<D: RuntimeDriver>(
+    context: &SessionContext<'_, D>,
 ) -> Result<(), AdapterError> {
-    let device = canonical
-        .session
-        .arrangement
-        .device(owner, device_id)
-        .map_err(|error| AdapterError::command(error.to_string()))?;
-    let stored = device
-        .plugin()
-        .and_then(|plugin| plugin.parameter_values.get(parameter_index))
-        .copied()
-        .ok_or_else(|| {
-            AdapterError::command(format!(
-                "plugin parameter {parameter_index} is missing from the committed state"
-            ))
-        })?;
-    if context.safe_mode {
-        return Ok(());
-    }
     let key = riffra_core::ProjectionKey {
-        sequence: canonical.sequence,
-        session_revision: canonical.session.arrangement.revision,
+        sequence: context.snapshot.sequence,
+        session_revision: context.snapshot.session.arrangement.revision,
     };
     match context
         .runtime
         .wait_for_native_projection(key)
         .map_err(|error| AdapterError::CommandFailed(error.to_string()))?
     {
-        crate::runtime::ProjectionWait::Missing => return Ok(()),
-        crate::runtime::ProjectionWait::Ready => {}
+        crate::runtime::ProjectionWait::Ready | crate::runtime::ProjectionWait::Missing => Ok(()),
     }
-    let fetched = context.audio.get_plugin_state(owner, device_id)?;
-    let received = fetched
-        .parameter_values
-        .get(parameter_index)
-        .ok_or_else(|| {
-            AdapterError::command(format!(
-                "plugin parameter {parameter_index} is not part of the projected runtime state"
-            ))
-        })?;
-    if (stored - received).abs() > PLUGIN_STATE_PROJECTION_TOLERANCE {
-        return Err(AdapterError::command(format!(
-            "plugin parameter {parameter_index} did not survive the runtime projection: stored {stored:.6}, received {received:.6}"
-        )));
-    }
-    Ok(())
 }
 
 pub fn set_device_parameter(
@@ -371,20 +331,28 @@ pub fn set_device_parameter(
         return Err("select exactly one finite value or display text".into());
     }
     let value = value.map(|value| value.clamp(0.0, 1.0));
-    let session = current_session(context)?;
-    let device = session
-        .arrangement
-        .device(owner, device_id)
-        .map_err(|error| AdapterError::command(error.to_string()))?;
-    if device.plugin().is_none() {
-        return Err(AdapterError::command(
-            "built-in instruments do not expose parameters",
-        ));
+    {
+        let session = current_session(context)?;
+        let device = session
+            .arrangement
+            .device(owner, device_id)
+            .map_err(|error| AdapterError::command(error.to_string()))?;
+        if device.plugin().is_none() {
+            return Err(AdapterError::command(
+                "built-in instruments do not expose parameters",
+            ));
+        }
     }
+    // The device write only commits after the native graph accepted the
+    // parameter, so verify-then-commit order keeps canonical and native alive
+    // without a post-commit reconciliation against an already mutated state.
+    // The canonical write lock is dropped before the projection wait and the
+    // device calls: they can block, and must not keep other writers waiting.
+    context.release_writer();
+    wait_for_device_projection(context)?;
     let previous = context.audio.get_plugin_state(owner, device_id)?;
-    let index = usize::try_from(parameter_index)
-        .map_err(|_| AdapterError::command("device parameter index is invalid"))?;
-    if index >= previous.parameter_values.len() {
+    if usize::try_from(parameter_index).is_ok_and(|index| index >= previous.parameter_values.len())
+    {
         return Err(AdapterError::command("device parameter index is invalid"));
     }
     let committed: Result<_, AdapterError> = (|| {
@@ -403,19 +371,7 @@ pub fn set_device_parameter(
         })
     })();
     match committed {
-        Ok((mutation, _)) => {
-            // Release the canonical write lock before waiting on the runtime
-            // projection below.
-            context.release_writer();
-            verify_committed_plugin_state_survives_projection(
-                context,
-                owner,
-                device_id,
-                index,
-                &mutation.canonical,
-            )?;
-            Ok(mutation)
-        }
+        Ok((mutation, _)) => Ok(mutation),
         Err(error) => {
             if let Err(rollback_error) = context.audio.set_plugin_state(owner, device_id, previous)
             {

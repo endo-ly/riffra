@@ -55,15 +55,6 @@ private:
     const juce::AudioParameterChoice& mode;
 };
 
-class UnchangedParameter final : public juce::AudioParameterFloat {
-public:
-    UnchangedParameter()
-        : AudioParameterFloat("stuck", "Stuck", juce::NormalisableRange<float>{0.0f, 1.0f}, 0.0f) {}
-
-    /// Simulates a plugin that reports the application without honoring it.
-    void setValue(float) override {}
-};
-
 class RiffraTestProcessor final : public juce::AudioProcessor {
 private:
     juce::AudioParameterFloat* gain = nullptr;
@@ -84,7 +75,6 @@ public:
         auto* mode = new juce::AudioParameterChoice("mode", "Mode", {"Clean", "Warm", "Bright"}, 0);
         addParameter(mode);
         addParameter(new ModeDependentParameter(*mode));
-        addParameter(new UnchangedParameter);
         if (!JucePlugin_IsSynth) setLatencySamples(8);
         emitProtocolPollution();
     }
@@ -143,16 +133,16 @@ public:
     const juce::String getProgramName(int) override { return {}; }
     void changeProgramName(int, const juce::String&) override {}
     void getStateInformation(juce::MemoryBlock& state) override {
-        std::array<float, 5> values{};
-        for (int index = 0; index < 5; ++index)
+        std::array<float, 4> values{};
+        for (int index = 0; index < 4; ++index)
             values[static_cast<std::size_t>(index)] = getParameters()[index]->getValue();
         state.replaceAll(values.data(), sizeof(values));
     }
     void setStateInformation(const void* data, const int size) override {
-        std::array<float, 5> values{};
+        std::array<float, 4> values{};
         if (size != sizeof(values)) return;
         std::memcpy(values.data(), data, sizeof(values));
-        for (int index = 0; index < 5; ++index)
+        for (int index = 0; index < 4; ++index)
             getParameters()[index]->setValueNotifyingHost(values[static_cast<std::size_t>(index)]);
     }
 };

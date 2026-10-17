@@ -68,7 +68,8 @@ std::optional<float> expectedNormalizedValue(const PluginParameterReadback& read
 
 /// Verifies that the applied parameter reached the requested value, and that a
 /// requested display string renders equivalently. The plugin is read back on
-/// the message thread after controller synchronization completed.
+/// the message thread after the application block completed, so the default
+/// VST3 synchronization has already published the effective value.
 bool verifyDeviceParameterApplication(PluginRack& rack, const int parameterIndex,
                                       const float requested,
                                       const std::optional<juce::String>& requestedDisplay,
@@ -476,10 +477,13 @@ bool TimelineEngine::synchronizeDeviceParameters(PluginRack& rack, juce::String&
                                                  const int parameterIndex,
                                                  const float value) noexcept {
     if (rack.isAutomationActive()) return true;
-    if (parameterIndex < 0 &&
-        !rack.parameterControllerSyncPending.load(std::memory_order_acquire)) {
+    if (parameterIndex < 0 && !rack.hasQueuedParameterChanges()) {
+        // Persisted-state and program operations already ran on the message
+        // thread; without queued changes only the cached count and latency
+        // need a refresh.
         return juce::MessageManager::callSync([&] {
                    rack.updateParameterCount(*rack.plugin);
+                   rack.refreshPreparedLatencySamples();
                    return true;
                })
             .value_or(false);
@@ -507,14 +511,12 @@ bool TimelineEngine::synchronizeDeviceParameters(PluginRack& rack, juce::String&
         error = "Plugin parameter application timed out.";
         return false;
     }
-    const auto synchronized = juce::MessageManager::callSync([&] {
-        if (!rack.synchronizeParameterController(error)) return false;
-        rack.updateParameterCount(*rack.plugin);
-        rack.preparedLatencySamples.store(std::max(0, rack.plugin->getLatencySamples()),
-                                          std::memory_order_release);
-        return true;
-    });
-    return synchronized.value_or(false);
+    return juce::MessageManager::callSync([&] {
+               rack.updateParameterCount(*rack.plugin);
+               rack.refreshPreparedLatencySamples();
+               return true;
+           })
+        .value_or(false);
 }
 
 bool TimelineEngine::setDeviceParameter(const EffectOwnerSpec& deviceOwner,

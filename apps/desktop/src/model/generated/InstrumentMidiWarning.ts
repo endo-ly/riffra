@@ -2,6 +2,6 @@
 import type { InstrumentMidiWarningReason } from "./InstrumentMidiWarningReason";
 
 /**
- * A note that cannot be represented, is outside its playable range, or maps to a Keyswitch.
+ * A note that cannot be represented as a valid MIDI note or is outside the configured range.
  */
 export type InstrumentMidiWarning = { clipId: string, noteId: string, sourceNote: number, outputNote: number | null, reason: InstrumentMidiWarningReason, };
