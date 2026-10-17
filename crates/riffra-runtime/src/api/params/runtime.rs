@@ -183,6 +183,13 @@ pub struct RenderExportParams {
     pub output_path: String,
 }
 
+/// Removes one managed Render after every reference has been checked.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct RenderCleanParams {
+    pub render_id: String,
+}
+
 /// Analyzes an Asset or a file; exactly one source is required.
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]

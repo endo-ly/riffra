@@ -2505,6 +2505,10 @@ pub enum RenderCommand {
     Stems(RenderStemsArgs),
     /// Copy a completed Render to a WAV path, or copy all stems to an existing directory.
     Export(RenderExportArgs),
+    /// List Renders stored in the managed Render history.
+    List,
+    /// Delete a Render after checking every known project, recording, and Asset reference.
+    Clean(RenderCleanArgs),
 }
 
 #[derive(Debug, Args)]
@@ -2559,6 +2563,13 @@ pub struct RenderExportArgs {
     /// Absolute or working-directory-relative WAV path, or an existing directory for stems.
     #[arg(long)]
     pub out: PathBuf,
+}
+
+#[derive(Debug, Args)]
+pub struct RenderCleanArgs {
+    /// Render directory name returned by render list.
+    #[arg(long)]
+    pub id: String,
 }
 
 #[derive(Debug, Subcommand)]
@@ -3581,6 +3592,10 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
                 output_path: resolve_output_path(args.out)?,
             })
             .into(),
+            RenderCommand::List => Runtime::RenderList(EmptyParams {}).into(),
+            RenderCommand::Clean(args) => {
+                Runtime::RenderClean(RenderCleanParams { render_id: args.id }).into()
+            }
         },
         CliCommand::Job { command } => match command {
             JobCommand::Get(args) => Runtime::JobGet(IdParams { id: args.id }).into(),
@@ -4232,6 +4247,16 @@ mod tests {
         assert_eq!(export.name, "render.export");
         assert_eq!(export.params["renderId"], "render-123-abcd");
         assert!(std::path::Path::new(export.params["outputPath"].as_str().unwrap()).is_absolute());
+
+        assert_eq!(
+            wire(Cli::try_parse_from(["riffra", "render", "list"]).unwrap()).name,
+            "render.list"
+        );
+        let clean = wire(
+            Cli::try_parse_from(["riffra", "render", "clean", "--id", "render-123-abcd"]).unwrap(),
+        );
+        assert_eq!(clean.name, "render.clean");
+        assert_eq!(clean.params["renderId"], "render-123-abcd");
     }
 
     #[test]

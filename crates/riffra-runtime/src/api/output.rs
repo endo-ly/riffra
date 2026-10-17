@@ -48,6 +48,8 @@ pub enum ControlOutput {
     SessionInspection(SessionInspection),
     History(HistoryState),
     RenderExport(RenderExportResult),
+    RenderList(Vec<RenderHistoryEntry>),
+    RenderDelete(RenderDeleteResult),
     ArrangementMutation(ArrangementMutationResult),
     BatchMutation(BatchMutationResult),
     AutomationLanes(Vec<AutomationLane>),

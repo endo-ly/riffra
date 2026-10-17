@@ -65,6 +65,12 @@ pub struct RenderResult {
     pub warnings: Vec<String>,
     pub mastering: Option<Box<MasteringReport>>,
     pub asset_id: AssetId,
+    /// Project that supplied the canonical state, when rendered from a Project.
+    #[serde(default)]
+    pub project_id: Option<String>,
+    /// Timestamp used to identify this managed Render directory.
+    #[serde(default)]
+    pub created_at_ms: Option<u64>,
     /// Internal WAV path registered as an Asset.
     pub path: String,
     /// External WAV copy requested for this job, when present.
@@ -93,6 +99,9 @@ pub struct RenderStemsResult {
     pub exported_directory: Option<String>,
     /// Project that supplied the rendered canonical state.
     pub project_id: String,
+    /// Timestamp used to identify this managed Render directory.
+    #[serde(default)]
+    pub created_at_ms: Option<u64>,
     /// Canonical sequence captured when the job started.
     pub source_sequence: u64,
     /// Shared WAV sample rate.
@@ -117,6 +126,51 @@ pub struct RenderExportResult {
     pub source_path: String,
     pub output_path: String,
     pub file_count: usize,
+}
+
+/// Render kind represented by one managed Render directory.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum RenderKind {
+    Timeline,
+    Stems,
+    Unknown,
+}
+
+/// File and Asset consistency for one WAV in the Render store.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct RenderFileStatus {
+    pub path: String,
+    pub asset_id: Option<AssetId>,
+    pub file_exists: bool,
+    pub asset_registered: bool,
+    pub file_size_bytes: Option<u64>,
+}
+
+/// One item in the Render history, including diagnostics for damaged output.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct RenderHistoryEntry {
+    pub render_id: String,
+    pub kind: RenderKind,
+    pub project_id: Option<String>,
+    pub created_at_ms: Option<u64>,
+    pub files: Vec<RenderFileStatus>,
+    pub file_count: usize,
+    pub file_size_bytes: Option<u64>,
+    pub sample_rate: Option<u32>,
+    pub duration_ms: Option<u64>,
+    pub measurements: Vec<AudioMeasurements>,
+    pub diagnostics: Vec<String>,
+}
+
+/// Result of removing a managed Render and its Asset registrations.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct RenderDeleteResult {
+    pub render_id: String,
+    pub deleted_file_count: usize,
 }
 
 /// The WAV and source Track represented by one stem result.

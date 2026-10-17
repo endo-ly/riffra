@@ -252,6 +252,55 @@ impl SessionStore {
         Ok(candidates)
     }
 
+    /// Reads the active Session and every saved generation for reference audits.
+    ///
+    /// # Errors
+    /// Returns an error if any saved Session cannot be validated safely.
+    pub fn saved_sessions(&self) -> io::Result<Vec<CreativeSession>> {
+        let current = self.current_path()?;
+        let mut sessions = Vec::new();
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_file() => {
+                sessions.push(self.read_active(&current)?);
+            }
+            Ok(_) => {
+                return Err(invalid_data("current Session is not a regular file"));
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+        let generations = self.generations_dir()?;
+        let mut paths = Vec::new();
+        for entry in fs::read_dir(generations)? {
+            let entry = entry?;
+            let path = entry.path();
+            if !path
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("json"))
+            {
+                continue;
+            }
+            if !entry.file_type()?.is_file() {
+                return Err(invalid_data(format!(
+                    "Session generation is not a regular file: {}",
+                    path.display()
+                )));
+            }
+            paths.push(path);
+        }
+        paths.sort_by(|left, right| right.file_name().cmp(&left.file_name()));
+        for path in paths {
+            sessions.push(self.read_generation(&path)?);
+        }
+        if sessions.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "project has no saved Session to inspect",
+            ));
+        }
+        Ok(sessions)
+    }
+
     /// Restores one validated generation as the active session.
     ///
     /// # Errors

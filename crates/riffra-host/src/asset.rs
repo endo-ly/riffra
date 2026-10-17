@@ -326,6 +326,167 @@ pub fn discard_output_registration(
         .map_err(|error| format!("output discard could not be committed: {error}"))
 }
 
+/// Removes registrations owned by one managed Render after verifying that no
+/// other Asset depends on them.
+///
+/// # Errors
+/// Returns an error when an Asset is missing, its location changed, another
+/// Asset depends on it, or the deletion transaction fails.
+pub fn remove_render_assets(data_root: &Path, assets: &[(AssetId, String)]) -> Result<(), String> {
+    let mut seen = std::collections::HashSet::new();
+    if assets.iter().any(|(id, _)| !seen.insert(id.as_str())) {
+        return Err("render manifest contains a duplicate Asset ID".into());
+    }
+    let mut connection = open(data_root)?;
+    let transaction = connection
+        .transaction()
+        .map_err(|error| format!("render Asset deletion transaction could not start: {error}"))?;
+    for (id, expected_location) in assets {
+        let location = transaction
+            .query_row(
+                "SELECT content_location FROM assets WHERE id = ?1",
+                params![id.as_str()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|error| format!("render Asset {id} could not be inspected: {error}"))?
+            .ok_or_else(|| format!("render Asset is not registered: {id}"))?;
+        if location != *expected_location {
+            return Err(format!(
+                "render Asset {id} points to an unexpected file: {location}"
+            ));
+        }
+        let other_owner = transaction
+            .query_row(
+                "SELECT id FROM assets WHERE content_location = ?1 AND id != ?2 LIMIT 1",
+                params![expected_location, id.as_str()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|error| format!("render file ownership could not be inspected: {error}"))?;
+        if let Some(other_owner) = other_owner {
+            return Err(format!(
+                "render file {} is also owned by Asset {other_owner}",
+                expected_location
+            ));
+        }
+        let dependent = transaction
+            .query_row(
+                "SELECT asset_id FROM asset_relations WHERE related_asset_id = ?1 LIMIT 1",
+                params![id.as_str()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|error| format!("render Asset references could not be inspected: {error}"))?;
+        if let Some(dependent) = dependent {
+            return Err(format!(
+                "render Asset {id} is referenced by Asset {dependent}"
+            ));
+        }
+    }
+    for (id, expected_location) in assets {
+        let removed = transaction
+            .execute(
+                "DELETE FROM assets WHERE id = ?1 AND content_location = ?2",
+                params![id.as_str(), expected_location],
+            )
+            .map_err(|error| format!("render Asset {id} could not be removed: {error}"))?;
+        if removed != 1 {
+            return Err(format!("render Asset {id} changed during deletion"));
+        }
+        transaction
+            .execute(
+                "DELETE FROM asset_relations WHERE asset_id = ?1",
+                params![id.as_str()],
+            )
+            .map_err(|error| format!("render Asset relations could not be removed: {error}"))?;
+    }
+    transaction
+        .commit()
+        .map_err(|error| format!("render Asset deletion could not be committed: {error}"))
+}
+
+/// Returns how many Asset IDs from a Render manifest still have registrations.
+///
+/// # Errors
+/// Returns an error when the Asset store cannot be inspected.
+pub fn registered_render_asset_count(data_root: &Path, ids: &[AssetId]) -> Result<usize, String> {
+    let connection = open(data_root)?;
+    let mut statement = connection
+        .prepare("SELECT 1 FROM assets WHERE id = ?1")
+        .map_err(|error| format!("render Asset lookup could not be prepared: {error}"))?;
+    let mut count = 0;
+    for id in ids {
+        if statement
+            .exists(params![id.as_str()])
+            .map_err(|error| format!("render Asset {id} could not be inspected: {error}"))?
+        {
+            count += 1;
+        }
+    }
+    Ok(count)
+}
+
+/// Lists Assets that depend on any of the supplied Render Assets.
+///
+/// # Errors
+/// Returns an error when the Asset store cannot be inspected.
+pub fn render_asset_dependents(
+    data_root: &Path,
+    ids: &[AssetId],
+) -> Result<Vec<(AssetId, AssetId)>, String> {
+    let connection = open(data_root)?;
+    let mut statement = connection
+        .prepare("SELECT asset_id FROM asset_relations WHERE related_asset_id = ?1")
+        .map_err(|error| format!("render Asset reference lookup could not be prepared: {error}"))?;
+    let mut dependents = Vec::new();
+    for id in ids {
+        let rows = statement
+            .query_map(params![id.as_str()], |row| row.get::<_, String>(0))
+            .map_err(|error| {
+                format!("render Asset {id} references could not be inspected: {error}")
+            })?;
+        for row in rows {
+            let dependent = row.map_err(|error| {
+                format!("render Asset {id} reference could not be read: {error}")
+            })?;
+            let dependent = AssetId::from_normalized(dependent).map_err(|error| {
+                format!("render Asset reference contains an invalid id: {error}")
+            })?;
+            dependents.push((dependent, id.clone()));
+        }
+    }
+    Ok(dependents)
+}
+
+/// Returns canonical Assets that claim any of the supplied Render file paths.
+///
+/// # Errors
+/// Returns an error when the Asset store or one of its matching rows cannot be read.
+pub fn render_asset_location_owners(
+    data_root: &Path,
+    locations: &[String],
+) -> Result<Vec<(AssetId, String)>, String> {
+    let connection = open(data_root)?;
+    let mut statement = connection
+        .prepare("SELECT id FROM assets WHERE content_location = ?1")
+        .map_err(|error| format!("render Asset location lookup could not be prepared: {error}"))?;
+    let mut owners = Vec::new();
+    for location in locations {
+        let rows = statement
+            .query_map(params![location], |row| row.get::<_, String>(0))
+            .map_err(|error| format!("render file owners could not be inspected: {error}"))?;
+        for row in rows {
+            let id =
+                row.map_err(|error| format!("render file owner could not be read: {error}"))?;
+            let id = AssetId::from_normalized(id)
+                .map_err(|error| format!("render file owner has an invalid Asset ID: {error}"))?;
+            owners.push((id, location.clone()));
+        }
+    }
+    Ok(owners)
+}
+
 /// Updates management metadata without changing the production content or id.
 pub fn update_metadata(
     data_root: &Path,

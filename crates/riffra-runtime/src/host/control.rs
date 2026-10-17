@@ -1039,7 +1039,7 @@ impl HostState {
             }
 
             RuntimeCommand::RenderStart(params) => {
-                ControlOutput::Job(Some(self.start_render(current.session, params.options)?))
+                ControlOutput::Job(Some(self.start_render(current, params.options)?))
             }
             RuntimeCommand::RenderStems(params) => {
                 ControlOutput::Job(Some(self.start_render_stems(current, params)?))
@@ -1047,6 +1047,20 @@ impl HostState {
             RuntimeCommand::RenderExport(params) => ControlOutput::RenderExport(
                 render::export_render(&self.data_root, &params.render_id, &params.output_path)
                     .map_err(command_error)?,
+            ),
+            RuntimeCommand::RenderList(_) => ControlOutput::RenderList(
+                render::list_renders(&self.data_root).map_err(command_error)?,
+            ),
+            RuntimeCommand::RenderClean(params) => ControlOutput::RenderDelete(
+                render::delete_render(
+                    &self.data_root,
+                    &self.project_store,
+                    &current.project_id,
+                    &current.session,
+                    &self.jobs,
+                    &params.render_id,
+                )
+                .map_err(command_error)?,
             ),
             RuntimeCommand::JobGet(params) => ControlOutput::Job(
                 self.jobs
@@ -1232,9 +1246,11 @@ impl HostState {
 
     fn start_render(
         &self,
-        session: riffra_core::CreativeSession,
+        current: CanonicalState,
         options: Option<RenderOptions>,
     ) -> Result<BackgroundJobStatus, ProtocolError> {
+        let session = current.session;
+        let project_id = current.project_id;
         let options = options.unwrap_or_default();
         let data_root = self.data_root.clone();
         let built_in_instruments = Arc::clone(&self.built_in_instruments);
@@ -1248,13 +1264,16 @@ impl HostState {
         let worker_jobs = jobs.clone();
         jobs.spawn_worker(&id, "riffra-render-job", move || {
             worker_jobs.set_running(&job_id, "Rendering the canonical arrangement.");
-            match render::render_timeline_with_cancellation(
+            match render::render_timeline_with_project_cancellation(
                 &worker,
-                &data_root,
-                built_in_instruments.as_ref(),
-                &session,
-                riffra_host::now_ms(),
-                options,
+                render::TimelineRenderContext {
+                    data_root: &data_root,
+                    built_in_instruments: built_in_instruments.as_ref(),
+                    session: &session,
+                    project_id: Some(&project_id),
+                    created_at_ms: riffra_host::now_ms(),
+                    options,
+                },
                 cancelled.as_ref(),
             ) {
                 Ok(result) => match serde_json::to_value(result) {

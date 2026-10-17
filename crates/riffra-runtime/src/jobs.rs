@@ -217,6 +217,29 @@ impl JobRegistry {
         record.status.lock().ok().map(|status| status.clone())
     }
 
+    pub(crate) fn active_render_job_ids(&self) -> Result<Vec<String>, String> {
+        let records = self
+            .records
+            .lock()
+            .map_err(|error| format!("render jobs could not be inspected: {error}"))?;
+        let mut active = Vec::new();
+        for (id, record) in records.iter() {
+            let status = record
+                .status
+                .lock()
+                .map_err(|error| format!("render job {id} could not be inspected: {error}"))?;
+            if matches!(status.kind, JobKind::Render | JobKind::RenderStems)
+                && matches!(
+                    status.state,
+                    JobState::Queued | JobState::Running | JobState::Cancelling
+                )
+            {
+                active.push(id.clone());
+            }
+        }
+        Ok(active)
+    }
+
     pub fn cancel(&self, id: &str) -> Option<JobStatus> {
         let record = self.records.lock().ok()?.get(id).cloned()?;
         if let Ok(mut status) = record.status.lock() {
@@ -370,6 +393,7 @@ mod tests {
             directory: "renders/render-1".into(),
             exported_directory: None,
             project_id: "project-1".into(),
+            created_at_ms: None,
             source_sequence: 4,
             sample_rate: 48_000,
             start_tick: 0,
