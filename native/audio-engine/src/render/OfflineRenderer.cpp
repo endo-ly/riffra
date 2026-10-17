@@ -176,9 +176,9 @@ std::unique_ptr<OfflineRenderer> OfflineRenderer::prepare(const OfflineRenderReq
     // write window end. The shifted window already covers the extra processing sample for
     // notes and instrument controls ending exactly on the end tick whenever the graph
     // reports any latency.
-    const auto processingEnd = std::max(
-        outputEndSample + latencySamples,
-        processFinalEvents ? musicalEndSample + 1 : outputEndSample);
+    const auto processingEnd =
+        std::max(outputEndSample + latencySamples,
+                 processFinalEvents ? musicalEndSample + 1 : outputEndSample);
     const auto automationWarnings =
         status.graph ? status.graph->automationWarnings : std::vector<juce::String>{};
     Plan renderPlan{destination,
