@@ -4,10 +4,10 @@
 
 コマンド引数はロングフラグ(camelCase を kebab-case 化)で渡し、完全な一覧は `riffra <command> --help` で確認できる。各系統に含まれるコマンドと実行できる場所は次のとおり。
 
-| 系統             | 主なコマンド                                                                                          | 実行できる場所                 |
-| ---------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------ |
-| 正準状態の編集   | session / track / music / clip / midi-note / marker / automation / instrument / effect / missing 復旧 | すべての実行形態               |
-| Runtime サービス | transport / audio / midi 送信 / record / render / job / library / plugin 実体の操作                   | Live Host(`serve`)+ `--attach` |
+| 系統             | 主なコマンド                                                                                               | 実行できる場所                 |
+| ---------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------ |
+| 正準状態の編集   | session / track / music / clip / midi-note / marker / automation / instrument / effect / missing 復旧      | すべての実行形態               |
+| Runtime サービス | transport / audio / midi 送信 / record / render / job / library / plugin 実体の操作 / device parameter set | Live Host(`serve`)+ `--attach` |
 
 Live Host が必要なコマンドを Standalone で実行すると、引数の内容にかかわらず `runtimeUnavailable` になる。
 
@@ -546,7 +546,9 @@ Control Commandでは`owner`を `{"kind":"track","id":"..."}`、`{"kind":"bus","
 
 `--plugin-path`と`--plugin-id`は一方だけを指定する。IDは現在のDataRootのCatalogにあるValidated・Role一致のPluginへ解決され、Projectには解決後のパスが保存される。未登録・重複ID・未Validated・Role不一致・実パス欠落はエラーとなる。IDはインストールパスに依存するため、別PCへ持ち運べる識別子ではない。
 
-Standalone ではパスだけを登録し実体のロードは Runtime が行うため、VST3 が無い環境でも安全に実行できる。`device inspect`、`device parameter list/get`、下記の `plugin state` / `plugin preset` は実体のPluginを扱うため Live Host 専用である。
+Standalone ではパスだけを登録し実体のロードは Runtime が行うため、VST3 が無い環境でも安全に実行できる。`device inspect`、`device parameter list/get/set`、下記の `plugin state` / `plugin preset` は実体のPluginを扱うため Live Host 専用である。
+
+`device parameter set`はLive Host専用で、応答の`mutation`に正準変更、`parameter`に対象の読み戻し値、`changedParameters`に名前・表示値・値が変わったほかのParameterをindex順で返す。`session apply`内では正規化値だけを正準状態へ書き、`--display`は使えない。Batch後はLive Hostの`device parameter list`で表示値を確認する。
 
 device inspectはmetadataとcapabilityだけを返し、stateData本体や全parameter配列を返さない。Built-in instrumentはparameter、state、preset、editorをサポートしない。VST3 の `device parameter list/get` は現在の Plugin metadata を返す。返却値を使って Parameter の意味を読み、normalized 値から単位や音色を推測しない。
 

@@ -75,13 +75,13 @@ mod tests {
         dispatcher
             .dispatch(
                 command(
-                    "device.parameter.set",
-                    json!({
+                    "session.apply",
+                    json!({"operations":[{"command":"device.parameter.set","params":{
                         "owner": {"kind":"track","id":track_id},
                         "deviceId": device_id,
                         "parameterIndex": 0,
                         "value": 0.5
-                    }),
+                    }}]}),
                 ),
                 None,
             )
@@ -96,6 +96,15 @@ mod tests {
             )
             .unwrap();
 
+        let session = dispatcher
+            .dispatch(command("session.get", json!({})), None)
+            .unwrap();
+        assert_eq!(mutated_session(&instrument).arrangement.tracks.len(), 1);
+        assert_eq!(
+            output_value(&session)["arrangement"]["tracks"][0]["instrument"]["source"]["parameterValues"]
+                [0],
+            0.5
+        );
         let listed = output_value(
             &dispatcher
                 .dispatch(command("track.list", json!({})), None)

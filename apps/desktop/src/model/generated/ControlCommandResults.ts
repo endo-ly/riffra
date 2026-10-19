@@ -118,7 +118,7 @@ export type ControlCommandResults = {
   'effect.remove': OutputValue<'arrangementMutation'>;
   'effect.reorder': OutputValue<'arrangementMutation'>;
   'device.bypass': OutputValue<'arrangementMutation'>;
-  'device.parameter.set': OutputValue<'arrangementMutation'>;
+  'device.parameter.set': OutputValue<'deviceParameterMutation'>;
   'missing.relink': OutputValue<'arrangementMutation'>;
   'missing.disable-plugin': OutputValue<'arrangementMutation'>;
   'missing.replace-plugin': OutputValue<'arrangementMutation'>;

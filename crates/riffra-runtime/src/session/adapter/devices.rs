@@ -326,7 +326,7 @@ pub fn set_device_parameter(
     parameter_index: u32,
     value: Option<f32>,
     display: Option<String>,
-) -> Result<crate::api::output::ArrangementMutationResult, AdapterError> {
+) -> Result<crate::api::output::DeviceParameterMutationResult, AdapterError> {
     if value.is_some() == display.is_some() || value.is_some_and(|value| !value.is_finite()) {
         return Err("select exactly one finite value or display text".into());
     }
@@ -355,6 +355,7 @@ pub fn set_device_parameter(
     wait_for_device_projection(context)?;
     context.reacquire_writer()?;
     let previous = context.audio.get_plugin_state(owner, device_id)?;
+    let before = context.audio.list_device_parameters(owner, device_id)?;
     if usize::try_from(parameter_index).is_ok_and(|index| index >= previous.parameter_values.len())
     {
         return Err(AdapterError::command("device parameter index is invalid"));
@@ -375,7 +376,16 @@ pub fn set_device_parameter(
         })
     })();
     match committed {
-        Ok((mutation, _)) => Ok(mutation),
+        Ok((mutation, _)) => {
+            let after = context.audio.list_device_parameters(owner, device_id)?;
+            let (parameter, changed_parameters) =
+                parameter_changes(&before, after, parameter_index)?;
+            Ok(crate::api::output::DeviceParameterMutationResult {
+                mutation,
+                parameter,
+                changed_parameters,
+            })
+        }
         Err(error) => {
             if let Err(rollback_error) = context.audio.set_plugin_state(owner, device_id, previous)
             {
@@ -386,6 +396,36 @@ pub fn set_device_parameter(
             Err(error)
         }
     }
+}
+
+fn parameter_changes(
+    before: &[crate::api::output::DeviceParameterInfo],
+    mut after: Vec<crate::api::output::DeviceParameterInfo>,
+    parameter_index: u32,
+) -> Result<
+    (
+        crate::api::output::DeviceParameterInfo,
+        Vec<crate::api::output::DeviceParameterInfo>,
+    ),
+    AdapterError,
+> {
+    let target = after
+        .iter()
+        .position(|parameter| parameter.index == parameter_index)
+        .ok_or_else(|| AdapterError::command("device parameter missing after setting"))?;
+    let parameter = after.remove(target);
+    after.retain(|current| {
+        before
+            .iter()
+            .find(|previous| previous.index == current.index)
+            .is_none_or(|previous| {
+                previous.name != current.name
+                    || previous.display_value != current.display_value
+                    || previous.value != current.value
+            })
+    });
+    after.sort_by_key(|parameter| parameter.index);
+    Ok((parameter, after))
 }
 
 pub fn open_plugin_editor(
@@ -501,6 +541,37 @@ mod tests {
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
+
+    #[test]
+    fn parameter_readback_reports_target_and_sorted_changes() {
+        let parameter = |index| {
+            serde_json::from_value::<crate::api::output::DeviceParameterInfo>(serde_json::json!({
+                "parameterId":null,"index":index,"name":"Gain","value":0.5,
+                "defaultValue":0.5,"automatable":true,"displayValue":"50%",
+                "label":"","discrete":false,"stepCount":0,"choices":[]
+            }))
+            .unwrap()
+        };
+        let before: Vec<_> = (0..5).map(parameter).collect();
+        let mut after = before.clone();
+        after[0].value = 0.75;
+        after[1].display_value = "new display".into();
+        after[3].name = Some("new name".into());
+        after[4].value = 0.25;
+        after.reverse();
+
+        let (target, changed) = parameter_changes(&before, after, 0).unwrap();
+
+        assert_eq!(target.index, 0);
+        assert_eq!(target.value, 0.75);
+        assert_eq!(
+            changed.iter().map(|p| p.index).collect::<Vec<_>>(),
+            [1, 3, 4]
+        );
+        assert_eq!(changed[0].display_value, "new display");
+        assert_eq!(changed[1].name.as_deref(), Some("new name"));
+        assert_eq!(changed[2].value, 0.25);
+    }
 
     struct CandidateRuntimeDriver {
         fail_prepare: AtomicBool,

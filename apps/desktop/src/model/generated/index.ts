@@ -77,6 +77,7 @@ export type { DeviceParameterChoice } from './DeviceParameterChoice';
 export type { DeviceParameterFormatParams } from './DeviceParameterFormatParams';
 export type { DeviceParameterGetParams } from './DeviceParameterGetParams';
 export type { DeviceParameterInfo } from './DeviceParameterInfo';
+export type { DeviceParameterMutationResult } from './DeviceParameterMutationResult';
 export type { DeviceParameterSetParams } from './DeviceParameterSetParams';
 export type { DeviceParams } from './DeviceParams';
 export type { DeviceSidechainCapability } from './DeviceSidechainCapability';
