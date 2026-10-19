@@ -60,6 +60,8 @@ Timebaseのテンポ・拍子は `timebase update` で変更できる。MIDI cha
 
 複数の正準Mutationを事前に決めている場合は、CLI側でIDを受け渡すスクリプトを書かずに `session apply` へJSONLを渡す。空行は無視され、外側の要求だけが `expectedSequence` を持つ。
 
+`--replace`はProjectの同一性を保ち、Sessionを初期状態に戻してからJSONLを適用する。音声クリップ、録音Take参照、Bus、Master FX、Timebase、Mixdown設定も置き換わるが、録音素材ファイルは残る。全操作が成功した場合だけ1回コミットし、Undo 1回で置き換え前へ戻せる。空のJSONLは指定できない。
+
 ```powershell
 riffra --data-root ./riffra-data --expected-sequence 42 session apply `
   --file ./song.jsonl

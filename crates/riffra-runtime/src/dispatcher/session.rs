@@ -28,7 +28,11 @@ impl HostDispatcher<'_> {
         let applied_commands = params.operations.len();
         let mut candidate = riffra_core::AppCore::new(
             canonical.project_id.clone(),
-            canonical.session,
+            if params.replace {
+                canonical.session.emptied()
+            } else {
+                canonical.session
+            },
             canonical.sequence,
         );
         let memory = super::MemorySessionStorage;
@@ -1088,7 +1092,7 @@ mod tests {
     }
 
     #[test]
-    fn session_apply_rebuilds_tracks_and_mixer_after_removing_references() {
+    fn session_apply_rebuilds_tracks_and_mixer_with_replace() {
         let root =
             std::env::temp_dir().join(format!("riffra-dispatcher-apply-rebuild-{}", now_ms()));
         let dispatcher = Dispatcher::open(
@@ -1123,7 +1127,9 @@ mod tests {
                             {"command":"mixer.output.set","params":{"trackName":"Lead","busName":"Group"}},
                             {"command":"mixer.send.add","params":{"trackName":"Lead","returnBusName":"Reverb","levelDb":-6}},
                             {"command":"effect.add","params":{"owner":{"kind":"track","name":"Drums"},"pluginPath":"C:\\Plugins\\OldCompressor.vst3"}},
-                            {"command":"effect.add","params":{"owner":{"kind":"bus","name":"Group"},"pluginPath":"C:\\Plugins\\OldLimiter.vst3"}}
+                            {"command":"effect.add","params":{"owner":{"kind":"bus","name":"Group"},"pluginPath":"C:\\Plugins\\OldLimiter.vst3"}},
+                            {"command":"effect.add","params":{"owner":{"kind":"master"},"pluginPath":"Master.vst3"}},
+                            {"command":"marker.add","params":{"name":"Old","position":"1:1"}}
                         ]
                     }),
                 ),
@@ -1147,10 +1153,6 @@ mod tests {
             .unwrap()
             .to_owned();
         let group_id = initial_value["arrangement"]["mixer"]["buses"][0]["id"]
-            .as_str()
-            .unwrap()
-            .to_owned();
-        let reverb_id = initial_value["arrangement"]["mixer"]["buses"][1]["id"]
             .as_str()
             .unwrap()
             .to_owned();
@@ -1202,10 +1204,6 @@ mod tests {
             .unwrap();
 
         let operations = json!([
-            {"command":"track.remove","params":{"trackName":"Lead"}},
-            {"command":"track.remove","params":{"trackName":"Drums"}},
-            {"command":"mixer.bus.remove","params":{"busId":group_id.clone()}},
-            {"command":"mixer.bus.remove","params":{"busId":reverb_id.clone()}},
             {"command":"track.add","params":{"name":"Lead","kind":"instrument"}},
             {"command":"track.add","params":{"name":"Drums","kind":"instrument"}},
             {"command":"instrument.vst3.set","params":{"trackName":"Lead","pluginPath":"C:\\Plugins\\NewLead.vst3"}},
@@ -1223,7 +1221,10 @@ mod tests {
         failed_operations
             .push(json!({"command":"track.remove","params":{"trackId":"track:missing"}}));
         let failed = dispatcher.dispatch(
-            command("session.apply", json!({"operations":failed_operations})),
+            command(
+                "session.apply",
+                json!({"replace":true,"operations":failed_operations}),
+            ),
             None,
         );
         assert!(failed.is_err());
@@ -1237,7 +1238,7 @@ mod tests {
             .dispatch(
                 command(
                     "session.apply",
-                    json!({"includeCreatedIds":true,"operations":operations}),
+                    json!({"replace":true,"includeCreatedIds":true,"operations":operations}),
                 ),
                 None,
             )
@@ -1309,6 +1310,16 @@ mod tests {
         );
         assert_ne!(final_arrangement["mixer"]["buses"][0]["id"], group_id);
 
+        assert_eq!(final_arrangement["markers"], json!([]));
+        assert_eq!(final_arrangement["mixer"]["masterEffects"], json!([]));
+        let undone = dispatcher
+            .dispatch(command("undo", json!({})), None)
+            .unwrap();
+        let restored = &output_value(&undone)["canonical"]["session"];
+        let mut expected = output_value(&before_rebuild);
+        expected["arrangement"]["revision"] = restored["arrangement"]["revision"].clone();
+        expected["updatedAtMs"] = restored["updatedAtMs"].clone();
+        assert_eq!(*restored, expected);
         let _ = fs::remove_dir_all(root);
     }
 

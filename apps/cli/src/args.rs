@@ -315,6 +315,9 @@ pub enum SessionCommand {
 
 #[derive(Debug, Args)]
 pub struct SessionApplyArgs {
+    /// Replace session contents before applying the operations in one commit.
+    #[arg(long)]
+    pub replace: bool,
     /// UTF-8 JSON Lines file; one operation per non-empty line, each holding `command` and `params`; empty lines are ignored and a file with no operations fails.
     #[arg(long)]
     pub file: PathBuf,
@@ -3928,6 +3931,7 @@ fn session_apply(args: SessionApplyArgs) -> Result<ControlCommand, RequestError>
     Ok(Canonical::SessionApply(SessionApplyParams {
         operations,
         include_created_ids: args.include_created_ids,
+        replace: args.replace,
     })
     .into())
 }
@@ -5293,6 +5297,7 @@ mod tests {
             "--file",
             path.to_str().unwrap(),
             "--include-created-ids",
+            "--replace",
         ])
         .unwrap();
         let request = wire(cli);
@@ -5300,6 +5305,7 @@ mod tests {
         assert_eq!(request.params["operations"].as_array().unwrap().len(), 2);
         assert_eq!(request.params["operations"][0]["command"], "track.add");
         assert_eq!(request.params["includeCreatedIds"], true);
+        assert_eq!(request.params["replace"], true);
         let _ = std::fs::remove_file(path);
     }
 

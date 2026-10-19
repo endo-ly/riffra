@@ -55,7 +55,7 @@ Sonalloy Bundleから制作を始める場合は`project import-sonalloy <BUNDLE
 
 ### まとめて構築する場合
 
-楽曲の初期構築や、事前に決めた複数の正準編集は `session apply` を第一候補にする。Control Commandを1行ずつJSONLへ書き、全operationが成功したときだけ1回のcommitとして適用されるため、途中で失敗してもそれまでのoperationは残らない。
+生成したJSONLでSessionを作り直すときは `--replace` を指定する。楽曲の初期構築や、事前に決めた複数の正準編集は `session apply` を第一候補にする。Control Commandを1行ずつJSONLへ書き、全operationが成功したときだけ1回のcommitとして適用されるため、途中で失敗してもそれまでのoperationは残らない。
 
 途中結果を確認して次の編集を決める場合や、1操作ずつUndoしたい場合は `session apply` ではなく `--interactive` を使う。JSONLの書式、名前解決、失敗時のdetailsは `commands.md` の「複数操作の一括適用」を参照。
 
