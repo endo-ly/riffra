@@ -10,9 +10,11 @@ description: >-
 
 # Riffra CLI ヘッドレス操作
 
-`riffra`(`apps/cli`)は GUI を使わずに制作状態を照会・編集・運用するヘッドレス用 CLI であり、Desktop アプリと同じ正準状態(`riffra-core`)を共有する。本書は全操作に共通する基盤(実行形態、制作フロー、入力契約、プロトコル、エラーコード)を扱う。コマンド別の引数・例文・値域は [references/commands.md](references/commands.md) を参照。
+`riffra`(`apps/cli`)は GUI を使わずに制作状態を照会・編集・運用するヘッドレス用 CLI であり、Desktop アプリと同じ正準状態(`riffra-core`)を共有する。本書は全操作に共通する基盤(実行形態、制作フロー、入力契約、プロトコル、エラーコード)を扱う。
 
-以下、実行ファイルは `riffra` と表記する(リポジトリでは `cargo run -p riffra-cli --` またはビルド済み `target/debug/riffra`、インストール済み環境ではデスクトップ実行ファイルと同じディレクトリの `riffra.exe`(既定 `%LOCALAPPDATA%\Riffra`)に読み替える)。
+各コマンドの引数・値域・排他規則は `riffra <command> --help` が正本である。コマンドの選び方、構造入力の書式、応答の読み方は [references/commands.md](references/commands.md) を参照。
+
+以下、実行ファイルは `riffra` と表記する(リポジトリでは `cargo run -p riffra-cli --`、インストール済み環境ではデスクトップ実行ファイルと同じディレクトリの `riffra.exe`(既定 `%LOCALAPPDATA%\Riffra`)に読み替える)。
 
 ## 実行モード
 
@@ -25,10 +27,6 @@ description: >-
 
 正準状態は操作ごとに DataRoot へ永続化されるため、編集自体はプロセスを跨いで引き継がれる。履歴(Undo / Redo)と `expectedSequence` のRevision tokenはプロセスまたはHostの寿命に紐づくため、音声を伴わない編集は Standalone(単発はワンショット、連続操作や Undo / Redo は `--interactive`)、Audio Runtime を伴う操作は `serve` で起動した Host へ `--attach` する。
 
-- `--interactive` はワンショットコマンドと併用できない
-- `serve` は `--attach` / `--interactive` / `--expected-sequence` と併用できない
-- `--attach` は `--data-root` と併用しない
-
 ## コマンドの 2 系統
 
 コマンドは「正準状態の編集」と「Runtime サービス」の 2 系統しかなく、4 つの実行形態は同じコマンドへの要求経路の違いである。
@@ -36,14 +34,12 @@ description: >-
 - **正準状態の編集**はすべての実行形態で同じ引数が使える
 - **Runtime サービス**は Live Host + `--attach` が必要で、Standalone では `runtimeUnavailable`
 
-各系統に含まれるコマンドの一覧と引数は `commands.md` を参照。
-
 ## 制作の基本手順
 
 既存のSessionを編集するときは、全体を確認してから、音楽上のまとまりが大きい順に組み立てる。
 
 1. `session inspect` で現在の構造と `sequence` を確認する
-2. トラック、音源、テンポ、リージョンを必要な範囲で設定する。Effect が必要なら `plugin catalog list` で検証済み Effect を選び、`plugin effect` で末尾へ追加し、応答の `createdEntityIds.devices` から Device ID を得る
+2. トラック、音源、テンポ、リージョンを必要な範囲で設定する。Effect が必要なら `plugin catalog list` で検証済み Effect を選び、`effect add` で末尾へ追加し、応答の `createdEntityIds.devices` から Device ID を得る
 3. `music harmony`、リズムパターン、`music phrase` で和声や反復パターンを配置する
 4. Noteは `music note list` で必要な範囲だけ取得し、一括調整は `music note transform`、個別の更新・削除だけ `--include-ids` で取得したIDを使う。raw tickやMIDI値が必要なときだけ `--raw` を付ける
 5. `session inspect` または `track list` で結果を確認する
@@ -51,13 +47,11 @@ description: >-
 7. `render start` で音声を書き出し、完了を `job wait`(ワンショット)または `job get`(interactive)で確認する
 8. 書き出し結果の`measurements.sections`で区間ごとのラウドネス・ピーク位置・帯域バランスを確認する。素材の解析には`analysis start`、実行状態の確認には`audio diagnostics`を使い、必要なら編集へ戻る
 
-Sonalloy Bundleから制作を始める場合は`project import-sonalloy <BUNDLE_DIRECTORY>`を使う。新しいProjectへ切り替わったら通常のTrack、MIDI Clip、音源制御イベントを編集する。インポートはProject単位の操作であり、`session apply`へ含めない。コマンドの入力とMixdown設定は`commands.md`を参照。
+Sonalloy Bundleから制作を始める場合は`project import-sonalloy <BUNDLE_DIRECTORY>`を使う。新しいProjectへ切り替わったら通常のTrack、MIDI Clip、音源制御イベントを編集する。インポートはProject単位の操作であり、`session apply`へ含めない。
 
 ### まとめて構築する場合
 
-生成したJSONLでSessionを作り直すときは `--replace` を指定する。楽曲の初期構築や、事前に決めた複数の正準編集は `session apply` を第一候補にする。Control Commandを1行ずつJSONLへ書き、全operationが成功したときだけ1回のcommitとして適用されるため、途中で失敗してもそれまでのoperationは残らない。
-
-途中結果を確認して次の編集を決める場合や、1操作ずつUndoしたい場合は `session apply` ではなく `--interactive` を使う。JSONLの書式、名前解決、失敗時のdetailsは `commands.md` の「複数操作の一括適用」を参照。
+生成したJSONLでSessionを作り直すときは `--replace` を指定する。楽曲の初期構築や、事前に決めた複数の正準編集は `session apply` を第一候補にする。全operationが成功したときだけ1回のcommitとして適用されるため、途中で失敗してもそれまでのoperationは残らない。途中結果を確認して次の編集を決める場合や、1操作ずつUndoしたい場合は `session apply` ではなく `--interactive` を使う。
 
 ### 音源選択
 
@@ -73,63 +67,35 @@ Sonalloy Bundleから制作を始める場合は`project import-sonalloy <BUNDLE
 音高: C4、F#4、Bb3
 ```
 
-通常のNoteの参照・作成・更新・削除・配置には、音楽座標を扱う `music note` と `music midi-clip` を使う。`midi-note` は、音楽座標に相当する操作がない量子化・変形・複製など、既存Noteをraw tickやMIDI値で直接編集する操作に使う。`midi-*` はCC、Pitch Bendなど音楽上の基本操作に含まれないMIDIイベントを直接編集するときにも使う。
+コマンドの使い分けは次のとおり。
 
-既存Noteの通常の調整に `session get` で全Sessionを取得したりNote IDを列挙して再挿入したりする必要はない。`midi-note transform` は、既知のNote IDをraw tick / MIDI値で直接操作するときだけ使う。
+- `music note` / `music midi-clip`: 音楽座標によるNoteとMIDI Clipの参照・作成・更新・削除・配置。通常のNote操作はこちらを使う
+- `midi-note`: 量子化・変形・複製など、既知のNote IDをraw tick・MIDI値で直接編集する操作
+- `midi-clip`・`instrument-event` のraw tick系操作: CCやPitch Bendなど音楽上の基本操作に含まれないMIDIイベントの、tickによる直接編集
 
-TimelineのPPQは `session inspect.project.ppq` を正とし、固定値を再定義しない。Instrument previewの `ticksPerBeat` はpreview固有の値であり、Timelineのtick計算には使わない。
+既存Noteの通常の調整に `session get` で全Sessionを取得したりNote IDを列挙して再挿入したりする必要はない。和声の解決、Phrase / Rhythmの展開、bar・beatからtickへの変換、Clip相対位置はエージェント側で計算せず、Coreが解決・展開して正準セッションへ保存する。TimelineのPPQは `session inspect.project.ppq` を正とし、固定値を再定義しない。Instrument previewの `ticksPerBeat` はpreview固有の値であり、Timelineのtick計算には使わない。
 
-`marker add` やRange操作は `bar:beat` の音楽座標を受け取る。MIDI NoteやClipの低レベル編集ではtickを使い、MarkerとRangeはプロジェクトの拍子に応じて内部でTimeline tickへ変換する。
-
-小さな構造入力はinline JSON、大きな構造入力は `--*-file`、連続操作はinteractive JSONLを使う。CLI入力とControl Protocolのparamsの対応は `commands.md` を参照する。
+小さな構造入力はinline JSON、大きな構造入力は `--*-file`、連続操作はinteractive JSONLを使う。
 
 ### 和声・フレーズ・リズム
 
-和声は一般的なChord Symbolをそのまま `music harmony insert` へ渡す。解釈を確認したいときは `music harmony resolve` を使う。parserで表現できない音集合の指定とupdateのpatch契約は `commands.md` の Harmony 節を参照。
+和声は一般的なChord Symbolをそのまま `music harmony insert` へ渡す。解釈を確認したいときは `music harmony resolve` を使う。
 
-反復する旋律やモチーフは、半音差で表す `PhrasePattern` と複数の `placements` を `music phrase insert` へ渡す。コードヒットの反復は `music harmony realize` の `RhythmPattern` で指定する。同じ音高を繰り返すドラムパターンもPhraseで表現できるため、KickやSnareなどのNoteを大量に列挙する前に利用を検討する。
-
-和声の解決、Phrase / Rhythmの展開、bar・beatからtickへの変換、Clip相対位置はエージェント側で計算せず、Coreが解決・展開して正準セッションへ保存する。
-
-Patternの時間は2種類に分けて考える。`Position` は `bar:beat` または `bar:beat+fraction-of-beat` で、たとえば `5:1+1/2` は5小節1拍目から半拍後を表す。`length`、`offset`、`duration` は全音符を1とする音価の分数で、`1/8` は8分音符、`1/4` は4分音符、`1/2` は2分音符である。
-
-Phraseを挿入する前に展開規模とClip内への収まりを確認する場合は `music phrase preview` を使う。書式と例は `commands.md` の Phrase 節を参照。
+反復する旋律やモチーフは、半音差で表す `PhrasePattern` と複数の `placements` を `music phrase insert` へ渡す。コードヒットの反復は `music harmony realize` の `RhythmPattern` で指定する。同じ音高を繰り返すKickやSnareなどのドラムパターンもPhraseで表現できるため、Noteを大量に列挙する前に利用を検討する。挿入前に展開規模を確認するときは `music phrase preview` を使う。
 
 ## ミックス
 
-ミックスの正本は既存の正準状態であり、BusやSendのようなMixer専用の正準モデルは存在しない。TrackとClipのパラメータ、Master音量、Automationの組み合わせで表現する。Gain / VolumeはdB、Panは-1.0(左)..1.0(右)。編集コマンド、値域、Solo / MuteとAutomationの挙動は `commands.md` のミックスを参照。ミックス状態は `track list` と `session inspect` で確認し、聞こえの確認はRenderで行う。
+ミックスの正本は既存の正準状態であり、BusやSendのようなMixer専用の正準モデルは存在しない。TrackとClipのパラメータ、Master音量、Automationの組み合わせで表現する。Group・Return・Send・Sidechainは `mixer` コマンド群で編集する。ミックス状態は `track list` と `session inspect` で確認し、聞こえの確認はRenderで行う。
 
 ## Host discoveryとDataRoot
 
-Standaloneと`serve`では既定の場所はなく `--data-root` が必須である(慣例は `./riffra-data`、作った場所は呼び出し側が引き回す)。同じDataRootを同時に所有できるプロセスは1つだけである。AttachedはDataRootを開かず、current-user registryから稼働中のHostプロセスを発見する。候補が1件なら自動選択し、複数件なら `--host <instance-id>` を要求し、指定がなければエラーを返す。再試行はHostの検出と初回handshakeの段階に限り有限回数で、以降は要求が自動再送されることはない。
+Standaloneと`serve`では `--data-root` が必須である(慣例は `./riffra-data`、作った場所は呼び出し側が引き回す)。同じDataRootを同時に所有できるプロセスは1つだけである。
 
-```text
-<data_root>/
-├─ workspace.json           # Active Projectの識別
-├─ .riffra.lock             # DataRootの排他所有
-├─ projects/<project-id>/   # canonical Project（session.json / generations/）
-├─ library/riffra.db        # ライブラリ索引(SQLite)
-├─ assets/imports/          # 外部Assetの取り込み先
-├─ recordings/              # inbox / archive / library
-├─ renders/                 # 音声Renderの出力
-└─ control/host.json        # 接続情報(稼働中の Host のみ出力)
-
-<user-runtime-root>/riffra/hosts/
-└─ <instance-id>.json       # 同一OSユーザーの稼働Host一覧
-```
-
-Host一覧は次で確認する。
-
-```powershell
-riffra host list
-riffra --attach --host <instance-id> session inspect
-```
-
-`host list` はcurrent-user registryのローカル操作である。registryの各候補をhandshakeで検証し、稼働HostのDataRoot、PID、instance ID、起動時刻を表示する。登録を削除するのは、そのプロセスが存在しないか、接続先が登録内容と異なるHostであると確定したときだけである。一時的に接続できないだけなら、一覧から外すのみで登録は残す。
+AttachedはDataRootを開かず、current-user registryから稼働中のHostプロセスを発見する。候補が1件なら自動選択し、複数件なら `--host <instance-id>` を要求する。Host一覧は `riffra host list` で確認する。
 
 ## 制御プロトコル(JSON Lines)
 
-階層化された CLI 引数は内部的に次の要求へ変換される。対話モードでは標準入力へ 1 行 1 要求を書き、標準出力から 1 行 1 応答を読む。空行は無視される。
+対話モードでは標準入力へ 1 行 1 要求を書き、標準出力から 1 行 1 応答を読む。空行は無視される。ワンショットも内部的には同じ要求へ変換される。
 
 ```json
 {
@@ -145,7 +111,7 @@ riffra --attach --host <instance-id> session inspect
 - `expectedSequence`: 任意。指定すると正準シーケンスが一致するときだけ実行する。ワンショットでは `--expected-sequence <n>` フラグ
 - `params`: コマンドごとの引数。キー名は camelCase
 
-`session inspect`、Mutation、`render start`、`undo`、`redo` は `expectedSequence` を検証する。
+`session inspect`、Mutation、`render start`、`undo`、`redo` は `expectedSequence` を検証する。interactive JSONLで操作を連鎖させる場合は、1つの要求を送り、応答を受け取ってから次の要求を組み立て、`expectedSequence` には直前の応答の `sequence` を渡す。
 
 成功応答:
 
@@ -154,16 +120,11 @@ riffra --attach --host <instance-id> session inspect
   "requestId": "42",
   "ok": true,
   "sequence": 19,
-  "result": { "type": "session", "value": { "...": "..." } }
+  "result": { "type": "mutation", "value": { "...": "..." } }
 }
 ```
 
-- `sequence`: その結果が対応する正準シーケンス。直前の応答から取って次の操作の `expectedSequence` に使える
-- 正準Mutationの成功応答は `result.type: "mutation"` となるreceiptである。`result.value.createdEntityIds` には、そのMutationで新しく生成されたIDだけが種類ごとに含まれ、生成IDがないMutationでは `{}` になる。現在のSession全体は後続の `session inspect` または `track list` で確認する
-
-後続の操作でIDが必要な場合は、応答の `createdEntityIds` を使う。たとえば `track add` の応答からTrack IDを取り出して `instrument apply` や `track update` へ渡す。
-
-interactive JSONLで操作を連鎖させる場合は、1つの要求を送り、応答を受け取ってから次の要求を組み立てる。`expectedSequence` には直前の応答の `sequence` を渡す。
+`sequence` はその結果が対応する正準シーケンスであり、直前の応答から取って次の操作の `expectedSequence` に使える。正準Mutationの成功応答は `result.type: "mutation"` となるreceiptであり、`result.value.createdEntityIds` にはそのMutationで新しく生成されたIDだけが種類ごとのキー(`tracks`、`midiClips`、`devices` など)で含まれる。後続の操作でIDが必要な場合はこの応答から取り出して渡す。現在のSession全体は後続の `session inspect` または `track list` で確認する。
 
 失敗応答:
 
