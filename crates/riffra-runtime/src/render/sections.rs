@@ -139,14 +139,18 @@ pub(super) fn measure_loudness(
     log: &str,
     timebase: &ProjectTimebase,
     start_tick: u64,
+    sample_rate: u32,
+    audio_duration: f64,
 ) -> Result<(), String> {
     let frames = parse_frames(log)?;
     let origin = timebase.ticks_to_seconds(start_tick);
+    let samples_per_second = f64::from(sample_rate);
     for section in sections {
         let blocks: Vec<_> = frames
             .iter()
             .filter(|frame| {
-                frame.end - 0.4 >= section.start_seconds - 0.001
+                frame.end < audio_duration
+                    && frame.end - 0.4 >= section.start_seconds - 0.001
                     && frame.end <= section.end_seconds + 0.001
                     && frame.momentary > -70.0
             })
@@ -159,7 +163,10 @@ pub(super) fn measure_loudness(
             .collect();
         let mut peak: Option<SectionPeak> = None;
         for frame in &frames {
-            let seconds = (frame.end - 0.1).max(0.0);
+            // FFmpeg reports the last sample time to microsecond precision.
+            let seconds =
+                ((frame.end + 1.0 / samples_per_second - 0.1) * 1_000_000.0).round() / 1_000_000.0;
+            let seconds = seconds.max(0.0);
             if seconds >= section.start_seconds
                 && seconds < section.end_seconds
                 && frame.peak.is_finite()
@@ -390,18 +397,18 @@ mod tests {
                 -2.0
             } else if i >= 21 {
                 f64::NEG_INFINITY
-            } else if i == 15 || i == 16 {
+            } else if i == 11 || i == 15 || i == 16 {
                 -1.0
             } else {
                 -10.0
             };
             log.push_str(&format!(
                 "t: {} M: {loudness} FTPK: {peak} {peak} dBFS\n",
-                f64::from(i) / 10.0
+                f64::from(i) / 10.0 - 1.0 / 48_000.0
             ));
         }
 
-        measure_loudness(&mut sections, &log, &timebase, 0).unwrap();
+        measure_loudness(&mut sections, &log, &timebase, 0, 48_000, 3.2).unwrap();
 
         let first = sections[0].loudness.as_ref().unwrap();
         let second = sections[1].loudness.as_ref().unwrap();
@@ -409,7 +416,7 @@ mod tests {
         assert!((second.integrated_lufs.unwrap() + 40.0).abs() < 0.001);
         let peak = second.true_peak.as_ref().unwrap();
         assert_eq!(peak.db, -1.0);
-        assert!((peak.seconds - 1.4).abs() < 1.0e-9);
+        assert!((peak.seconds - 1.0).abs() < 1.0e-9);
         assert_eq!(
             peak.position,
             timebase.tick_to_musical_position(timebase.seconds_to_ticks(peak.seconds))

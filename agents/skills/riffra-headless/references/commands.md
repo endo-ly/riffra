@@ -736,7 +736,7 @@ riffra --attach render stems --track-ids track:bass,track:drums --start 9:1 --en
 
 Job結果と`render.json`の`measurements`には完成WAVのSample Peakとラウドネス測定を含め、警告は`warnings`へ返す。通常RenderでFFmpegを利用できない場合は、成功結果のラウドネス測定に`unavailable`と理由を返す。Masteringを要求したJobのFFmpeg失敗はJob失敗になる。全体の測定に成功して区間のFFmpeg実行や解析に失敗した場合もJob失敗になる。結果の形は[IPC契約](../../../../docs/ipc.md#6-境界-d-オフラインレンダリングriffra-render)を参照する。
 
-区間ごとの音量や帯域バランスの判断には`measurements.sections`を使う。通常Renderと各StemのJob結果・`render.json`に同じ計測値が含まれる。Markerがなければ空配列となる。区間は書き出し開始から始まり、開始以前の最後のMarker名を引き継ぐ。該当するMarkerがなければ名前は`null`になる。範囲内のMarkerで区切り、同じTickでは正準順で最後のMarkerを採用する。書き出し終端以降のMarkerは無視し、最後の区間にはTailを含める。
+区間ごとの音量や帯域バランスの判断には`measurements.sections`を使う。通常Renderと各StemのJob結果・`render.json`に同じ計測値が含まれる。Markerがなければ空配列となる。区間は書き出し開始から始まり、開始以前の最後のMarker名を引き継ぐ。該当するMarkerがなければ名前は`null`になる。範囲内のMarkerで区切り、同じTickでは正準順で最後のMarkerを採用する。書き出し終端以降のMarkerは無視し、最後の区間にはTailを含める。True Peakの100msフレームは、時刻を補正した開始位置が属する半開区間へ割り当てるため、Marker時刻から始まるフレームは後続区間に属する。末尾の端数も計測できるよう解析時だけ入力の後ろへ無音を追加し、400msラウドネスにはWAV内で完結するブロックだけを使う。
 
 | 項目                               | 読み方                                                                                                                                      |
 | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |

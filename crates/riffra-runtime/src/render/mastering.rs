@@ -179,10 +179,13 @@ pub(super) fn measure_output(
         return Err("timeline render was cancelled".into());
     }
     if !sections.is_empty() && matches!(loudness, LoudnessReadout::Measured { .. }) {
+        let bytes_per_sample_frame = f64::from(wav.channels) * f64::from(wav.bits_per_sample / 8);
+        let audio_duration =
+            wav.data_len as f64 / (bytes_per_sample_frame * f64::from(wav.sample_rate));
         let log = run(
             input,
             None,
-            "ebur128=peak=true:framelog=verbose",
+            "apad=pad_dur=0.1,ebur128=peak=true:framelog=verbose",
             sample_rate,
             &temporary.0,
             cancelled,
@@ -193,6 +196,8 @@ pub(super) fn measure_output(
             &log,
             section_plan.timebase,
             section_plan.start_tick,
+            wav.sample_rate,
+            audio_duration,
         )?;
     }
     let mut warnings = Vec::new();
