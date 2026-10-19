@@ -10,6 +10,8 @@ use ts_rs::TS;
 pub struct SessionApplyParams {
     pub operations: Vec<BatchOperation>,
     #[serde(default)]
+    pub replace: bool,
+    #[serde(default)]
     pub include_created_ids: bool,
 }
 

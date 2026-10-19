@@ -853,27 +853,7 @@ impl HostDispatcher<'_> {
                 )?,
                 application,
             ),
-            CanonicalCommand::DeviceParameterSet(params) => self.edited(
-                application.set_device_parameter(
-                    &params.owner,
-                    &params.device_id,
-                    params.parameter_index as usize,
-                    match (params.value, params.display) {
-                        (Some(value), None) => value,
-                        (None, Some(_)) => {
-                            return Err(DispatchError::CommandFailed(
-                                "display parameter input requires a live Host".into(),
-                            ));
-                        }
-                        _ => {
-                            return Err(DispatchError::CommandFailed(
-                                "select exactly one of value or display".into(),
-                            ));
-                        }
-                    },
-                )?,
-                application,
-            ),
+            CanonicalCommand::DeviceParameterSet(_) => Err(DispatchError::requires_live_host()),
             CanonicalCommand::MissingRelink(params) => self.relink_missing(application, params),
             CanonicalCommand::MissingDisablePlugin(params) => self.edited(
                 application.disable_missing_plugin(&params.device_id)?,

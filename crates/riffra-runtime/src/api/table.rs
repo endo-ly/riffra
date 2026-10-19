@@ -333,7 +333,7 @@ control_commands! {
         EffectRemove = "effect.remove" (DeviceParams) -> ArrangementMutation, mutation(batch), project;
         EffectReorder = "effect.reorder" (EffectReorderParams) -> ArrangementMutation, mutation(batch), project;
         DeviceBypass = "device.bypass" (DeviceBypassParams) -> ArrangementMutation, mutation(batch), project;
-        DeviceParameterSet = "device.parameter.set" (DeviceParameterSetParams) -> ArrangementMutation, mutation(batch), project;
+        DeviceParameterSet = "device.parameter.set" (DeviceParameterSetParams) -> DeviceParameterMutation, mutation(batch), project;
         MissingRelink = "missing.relink" (MissingRelinkParams) -> ArrangementMutation, mutation, project;
         MissingDisablePlugin = "missing.disable-plugin" (DeviceIdParams) -> ArrangementMutation, mutation, project;
         MissingReplacePlugin = "missing.replace-plugin" (MissingPluginReplaceParams) -> ArrangementMutation, mutation, project(long);

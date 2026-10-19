@@ -77,10 +77,11 @@ export async function setDeviceParameter(
   parameterIndex: number,
   value: number,
 ): Promise<ArrangementMutationResult> {
-  return dispatchControl({
+  const result = await dispatchControl({
     command: 'device.parameter.set',
     params: { owner, deviceId, parameterIndex, value },
   });
+  return result.mutation;
 }
 
 export async function openPluginEditor(owner: EffectOwner, deviceId: string): Promise<void> {

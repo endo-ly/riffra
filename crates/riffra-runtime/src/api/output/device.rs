@@ -68,6 +68,17 @@ pub struct DeviceParameterInfo {
     pub choices: Vec<DeviceParameterChoice>,
 }
 
+/// Result of setting one plugin parameter on a live Host.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceParameterMutationResult {
+    pub mutation: super::ArrangementMutationResult,
+    /// The parameter that was set, read back after the change.
+    pub parameter: DeviceParameterInfo,
+    /// Other parameters whose name, display value, or value changed.
+    pub changed_parameters: Vec<DeviceParameterInfo>,
+}
+
 /// One program exposed by a plugin host.
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]

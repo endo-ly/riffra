@@ -213,14 +213,19 @@ impl HostState {
                 &params.device_id,
                 params.bypassed,
             ),
-            CanonicalCommand::DeviceParameterSet(params) => session_adapter::set_device_parameter(
-                &mut context,
-                &params.owner,
-                &params.device_id,
-                params.parameter_index,
-                params.value,
-                params.display,
-            ),
+            CanonicalCommand::DeviceParameterSet(params) => {
+                let result = session_adapter::set_device_parameter(
+                    &mut context,
+                    &params.owner,
+                    &params.device_id,
+                    params.parameter_index,
+                    params.value,
+                    params.display,
+                )
+                .map_err(|error| error.protocol_error())?;
+                let sequence = result.mutation.canonical.sequence;
+                return Ok((ControlOutput::DeviceParameterMutation(result), sequence));
+            }
             CanonicalCommand::MissingRelink(params) => {
                 let asset_id =
                     riffra_core::AssetId::from_normalized(&params.asset_id).map_err(|error| {

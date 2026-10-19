@@ -4,10 +4,10 @@
 
 コマンド引数はロングフラグ(camelCase を kebab-case 化)で渡し、完全な一覧は `riffra <command> --help` で確認できる。各系統に含まれるコマンドと実行できる場所は次のとおり。
 
-| 系統             | 主なコマンド                                                                                          | 実行できる場所                 |
-| ---------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------ |
-| 正準状態の編集   | session / track / music / clip / midi-note / marker / automation / instrument / effect / missing 復旧 | すべての実行形態               |
-| Runtime サービス | transport / audio / midi 送信 / record / render / job / library / plugin 実体の操作                   | Live Host(`serve`)+ `--attach` |
+| 系統             | 主なコマンド                                                                                               | 実行できる場所                 |
+| ---------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------ |
+| 正準状態の編集   | session / track / music / clip / midi-note / marker / automation / instrument / effect / missing 復旧      | すべての実行形態               |
+| Runtime サービス | transport / audio / midi 送信 / record / render / job / library / plugin 実体の操作 / device parameter set | Live Host(`serve`)+ `--attach` |
 
 Live Host が必要なコマンドを Standalone で実行すると、引数の内容にかかわらず `runtimeUnavailable` になる。
 
@@ -59,6 +59,8 @@ Timebaseのテンポ・拍子は `timebase update` で変更できる。MIDI cha
 ### 複数操作の一括適用
 
 複数の正準Mutationを事前に決めている場合は、CLI側でIDを受け渡すスクリプトを書かずに `session apply` へJSONLを渡す。空行は無視され、外側の要求だけが `expectedSequence` を持つ。
+
+`--replace`はProjectの同一性を保ち、Sessionを初期状態に戻してからJSONLを適用する。音声クリップ、録音Take参照、Bus、Master FX、Timebase、Mixdown設定も置き換わるが、録音素材ファイルは残る。全操作が成功した場合だけ1回コミットし、Undo 1回で置き換え前へ戻せる。空のJSONLは指定できない。
 
 ```powershell
 riffra --data-root ./riffra-data --expected-sequence 42 session apply `
@@ -308,7 +310,7 @@ riffra --data-root ./riffra-data --interactive
 
 `mixdown get`と`mixdown set --settings-json <JSON|@file>`で楽曲終端Tick、Tail、Fade、Mastering目標、比較用のSample Rate・Block Sizeを参照・設定する。
 
-Masteringを有効にする場合は、`mixdown get`の設定全体を取得して`mastering`へ目標を設定する。無効化は`mastering: null`とする。Masteringは目標ラウドネスへMix全体を一定のゲインで合わせる動作であり、上限を超えるとゲインを下げて完成wavを再測定する。結果の項目と警告の意味は[音声エンジンの設計](../../../../../docs/audio-engine.md)を参照する。
+Masteringを有効にする場合は、`mixdown get`の設定全体を取得して`mastering`へ目標を設定する。無効化は`mastering: null`とする。Masteringは目標ラウドネスへMix全体を一定のゲインで合わせる動作であり、上限を超えるとゲインを下げて完成wavを再測定する。`mastering.input`はMastering前の測定値である。`mastering.deviation.integratedLufs`は最終ラウドネス − 目標で、負なら目標に届いていない。`mastering.truePeakCorrectionDb`はTrue Peakの上限に合わせるために下げたゲインで、0より大きければ上限で止まったことを示す。一定ゲインではLoudness Rangeが変わらないため、`loudnessRangeLu`はゲイン決定に関わらない参考量である。上限に当たったピークの位置は`measurements.sections[].loudness.truePeak`で確認する。
 
 ```powershell
 riffra --attach mixdown set --settings-json '{"musicalEndTick":0,"tailSeconds":2,"fadeOutSeconds":0.5,"mastering":{"integratedLufs":-14,"truePeakDb":-1,"loudnessRangeLu":11},"sampleRate":48000,"blockSize":1024}'
@@ -544,7 +546,9 @@ Control Commandでは`owner`を `{"kind":"track","id":"..."}`、`{"kind":"bus","
 
 `--plugin-path`と`--plugin-id`は一方だけを指定する。IDは現在のDataRootのCatalogにあるValidated・Role一致のPluginへ解決され、Projectには解決後のパスが保存される。未登録・重複ID・未Validated・Role不一致・実パス欠落はエラーとなる。IDはインストールパスに依存するため、別PCへ持ち運べる識別子ではない。
 
-Standalone ではパスだけを登録し実体のロードは Runtime が行うため、VST3 が無い環境でも安全に実行できる。`device inspect`、`device parameter list/get`、下記の `plugin state` / `plugin preset` は実体のPluginを扱うため Live Host 専用である。
+Standalone ではパスだけを登録し実体のロードは Runtime が行うため、VST3 が無い環境でも安全に実行できる。`device inspect`、`device parameter list/get/set`、下記の `plugin state` / `plugin preset` は実体のPluginを扱うため Live Host 専用である。
+
+`device parameter set`はLive Host専用で、応答の`mutation`に正準変更、`parameter`に対象の読み戻し値、`changedParameters`に名前・表示値・値が変わったほかのParameterをindex順で返す。`session apply`内では正規化値だけを正準状態へ書き、`--display`は使えない。Batch後はLive Hostの`device parameter list`で表示値を確認する。
 
 device inspectはmetadataとcapabilityだけを返し、stateData本体や全parameter配列を返さない。Built-in instrumentはparameter、state、preset、editorをサポートしない。VST3 の `device parameter list/get` は現在の Plugin metadata を返す。返却値を使って Parameter の意味を読み、normalized 値から単位や音色を推測しない。
 
@@ -730,7 +734,19 @@ riffra --attach render stems --track-ids track:bass,track:drums --start 9:1 --en
 
 単一Trackと各Stemは、選択TrackのGroup・Return・Master FXを通り、そのTrack由来のSendだけを合成する。External Audioの依存元は音声処理を維持する。共有する非線形Effectでは、Stemの合計と全体Mixが一致しない場合がある。
 
-Job結果と`render.json`の`measurements`には完成WAVのSample Peakとラウドネス測定を含め、警告は`warnings`へ返す。通常RenderでFFmpegを利用できない場合は、成功結果のラウドネス測定に`unavailable`と理由を返す。Masteringを要求したJobのFFmpeg失敗はJob失敗になる。結果の形は[IPC契約](../../../../docs/ipc.md#6-境界-d-オフラインレンダリングriffra-render)を参照する。
+Job結果と`render.json`の`measurements`には完成WAVのSample Peakとラウドネス測定を含め、警告は`warnings`へ返す。通常RenderでFFmpegを利用できない場合は、成功結果のラウドネス測定に`unavailable`と理由を返す。Masteringを要求したJobのFFmpeg失敗はJob失敗になる。全体の測定に成功して区間のFFmpeg実行や解析に失敗した場合もJob失敗になる。結果の形は[IPC契約](../../../../docs/ipc.md#6-境界-d-オフラインレンダリングriffra-render)を参照する。
+
+区間ごとの音量や帯域バランスの判断には`measurements.sections`を使う。通常Renderと各StemのJob結果・`render.json`に同じ計測値が含まれる。Markerがなければ空配列となる。区間は書き出し開始から始まり、開始以前の最後のMarker名を引き継ぐ。該当するMarkerがなければ名前は`null`になる。範囲内のMarkerで区切り、同じTickでは正準順で最後のMarkerを採用する。書き出し終端以降のMarkerは無視し、最後の区間にはTailを含める。True Peakの100msフレームは、時刻を補正した開始位置が属する半開区間へ割り当てるため、Marker時刻から始まるフレームは後続区間に属する。末尾の端数も計測できるよう解析時だけ入力の後ろへ無音を追加し、400msラウドネスにはWAV内で完結するブロックだけを使う。
+
+| 項目                               | 読み方                                                                                                                                      |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name` / `start` / `end`           | Marker名と区間の音楽座標                                                                                                                    |
+| `startSeconds` / `endSeconds`      | WAV先頭からの区間境界（秒）                                                                                                                 |
+| `loudness.integratedLufs`          | 区間内に収まる400msブロックのゲート処理後の統合ラウドネス。有効なブロックがない無音区間や400ms未満の区間では`null`                          |
+| `loudness.truePeak`                | 最大True Peakの`db`、WAV先頭からの`seconds`、音楽座標の`position`。無音なら`null`。位置はピークを含む100msフレームの開始で、精度も100ms単位 |
+| `bands.lowDb` / `midDb` / `highDb` | 250Hz未満・250Hz〜4kHz・4kHz超のRMSレベル（dBFS）。無音なら`null`。帯域間の相対比較の目安であり、精密なスペクトル解析ではない               |
+
+全体の`measurements.loudness`が`unavailable`なら、各区間の`loudness`は`null`になり、理由は全体の測定結果に含まれる。帯域値はFFmpegに依存せず計算する。
 
 ### Library・解析・Preview
 

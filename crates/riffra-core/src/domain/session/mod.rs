@@ -38,6 +38,19 @@ pub struct CreativeSession {
     pub settings: SessionSettings,
 }
 
+impl Default for SessionSettings {
+    fn default() -> Self {
+        Self {
+            mixdown: MixdownSettings::default(),
+            master_db: 0.0,
+            loop_enabled: false,
+            count_in_beats: 0,
+            metronome_enabled: false,
+            note: String::new(),
+        }
+    }
+}
+
 impl CreativeSession {
     /// Creates a fresh session with an empty arrangement and neutral playback
     /// settings.
@@ -47,14 +60,21 @@ impl CreativeSession {
             updated_at_ms: now_ms,
             project_name: None,
             arrangement: Arrangement::default(),
-            settings: SessionSettings {
-                mixdown: MixdownSettings::default(),
-                master_db: 0.0,
-                loop_enabled: false,
-                count_in_beats: 0,
-                metronome_enabled: false,
-                note: String::new(),
+            settings: SessionSettings::default(),
+        }
+    }
+
+    /// Returns an empty session preserving project identity and advancing its revision.
+    pub fn emptied(&self) -> Self {
+        Self {
+            session_id: self.session_id.clone(),
+            project_name: self.project_name.clone(),
+            updated_at_ms: self.updated_at_ms,
+            arrangement: Arrangement {
+                revision: self.arrangement.revision + 1,
+                ..Arrangement::default()
             },
+            settings: SessionSettings::default(),
         }
     }
 
@@ -126,5 +146,26 @@ impl MixdownSettings {
             return Err("invalid loudness mastering targets".into());
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn emptied_preserves_identity_and_resets_contents() {
+        let mut session = CreativeSession::new(123);
+        session.project_name = Some("Song".into());
+        session.arrangement.revision = 42;
+        session.settings.master_db = -12.0;
+        session.settings.note = "notes".into();
+
+        let emptied = session.emptied();
+
+        let mut expected = CreativeSession::new(123);
+        expected.project_name = session.project_name.clone();
+        expected.arrangement.revision = 43;
+        assert_eq!(emptied, expected);
     }
 }
