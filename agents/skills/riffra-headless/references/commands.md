@@ -308,7 +308,7 @@ riffra --data-root ./riffra-data --interactive
 
 `mixdown get`と`mixdown set --settings-json <JSON|@file>`で楽曲終端Tick、Tail、Fade、Mastering目標、比較用のSample Rate・Block Sizeを参照・設定する。
 
-Masteringを有効にする場合は、`mixdown get`の設定全体を取得して`mastering`へ目標を設定する。無効化は`mastering: null`とする。Masteringは目標ラウドネスへMix全体を一定のゲインで合わせる動作であり、上限を超えるとゲインを下げて完成wavを再測定する。結果の項目と警告の意味は[音声エンジンの設計](../../../../../docs/audio-engine.md)を参照する。
+Masteringを有効にする場合は、`mixdown get`の設定全体を取得して`mastering`へ目標を設定する。無効化は`mastering: null`とする。Masteringは目標ラウドネスへMix全体を一定のゲインで合わせる動作であり、上限を超えるとゲインを下げて完成wavを再測定する。`mastering.input`はMastering前の測定値である。`mastering.deviation.integratedLufs`は最終ラウドネス − 目標で、負なら目標に届いていない。`mastering.truePeakCorrectionDb`はTrue Peakの上限に合わせるために下げたゲインで、0より大きければ上限で止まったことを示す。一定ゲインではLoudness Rangeが変わらないため、`loudnessRangeLu`はゲイン決定に関わらない参考量である。上限に当たったピークの位置は`measurements.sections[].loudness.truePeak`で確認する。
 
 ```powershell
 riffra --attach mixdown set --settings-json '{"musicalEndTick":0,"tailSeconds":2,"fadeOutSeconds":0.5,"mastering":{"integratedLufs":-14,"truePeakDb":-1,"loudnessRangeLu":11},"sampleRate":48000,"blockSize":1024}'
