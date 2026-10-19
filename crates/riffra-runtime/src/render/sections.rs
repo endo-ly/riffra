@@ -403,7 +403,7 @@ mod tests {
                 -10.0
             };
             log.push_str(&format!(
-                "t: {} M: {loudness} FTPK: {peak} {peak} dBFS\n",
+                "t: {:.6} M: {loudness} FTPK: {peak} {peak} dBFS\n",
                 f64::from(i) / 10.0 - 1.0 / 48_000.0
             ));
         }
