@@ -76,6 +76,7 @@ it.each(['measured', 'unavailable'] as const)(
             }
           : null,
       measurements: {
+        sections: [],
         samplePeakDbfs: state === 'measured' ? -3.01 : 1.94,
         loudness:
           state === 'measured'

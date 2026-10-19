@@ -734,7 +734,19 @@ riffra --attach render stems --track-ids track:bass,track:drums --start 9:1 --en
 
 単一Trackと各Stemは、選択TrackのGroup・Return・Master FXを通り、そのTrack由来のSendだけを合成する。External Audioの依存元は音声処理を維持する。共有する非線形Effectでは、Stemの合計と全体Mixが一致しない場合がある。
 
-Job結果と`render.json`の`measurements`には完成WAVのSample Peakとラウドネス測定を含め、警告は`warnings`へ返す。通常RenderでFFmpegを利用できない場合は、成功結果のラウドネス測定に`unavailable`と理由を返す。Masteringを要求したJobのFFmpeg失敗はJob失敗になる。結果の形は[IPC契約](../../../../docs/ipc.md#6-境界-d-オフラインレンダリングriffra-render)を参照する。
+Job結果と`render.json`の`measurements`には完成WAVのSample Peakとラウドネス測定を含め、警告は`warnings`へ返す。通常RenderでFFmpegを利用できない場合は、成功結果のラウドネス測定に`unavailable`と理由を返す。Masteringを要求したJobのFFmpeg失敗はJob失敗になる。全体の測定に成功して区間のFFmpeg実行や解析に失敗した場合もJob失敗になる。結果の形は[IPC契約](../../../../docs/ipc.md#6-境界-d-オフラインレンダリングriffra-render)を参照する。
+
+区間ごとの音量や帯域バランスの判断には`measurements.sections`を使う。通常Renderと各StemのJob結果・`render.json`に同じ計測値が含まれる。Markerがなければ空配列となる。区間は書き出し開始から始まり、開始以前の最後のMarker名を引き継ぐ。該当するMarkerがなければ名前は`null`になる。範囲内のMarkerで区切り、同じTickでは正準順で最後のMarkerを採用する。書き出し終端以降のMarkerは無視し、最後の区間にはTailを含める。
+
+| 項目                               | 読み方                                                                                                                                      |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name` / `start` / `end`           | Marker名と区間の音楽座標                                                                                                                    |
+| `startSeconds` / `endSeconds`      | WAV先頭からの区間境界（秒）                                                                                                                 |
+| `loudness.integratedLufs`          | 区間内に収まる400msブロックのゲート処理後の統合ラウドネス。有効なブロックがない無音区間や400ms未満の区間では`null`                          |
+| `loudness.truePeak`                | 最大True Peakの`db`、WAV先頭からの`seconds`、音楽座標の`position`。無音なら`null`。位置はピークを含む100msフレームの開始で、精度も100ms単位 |
+| `bands.lowDb` / `midDb` / `highDb` | 250Hz未満・250Hz〜4kHz・4kHz超のRMSレベル（dBFS）。無音なら`null`。帯域間の相対比較の目安であり、精密なスペクトル解析ではない               |
+
+全体の`measurements.loudness`が`unavailable`なら、各区間の`loudness`は`null`になり、理由は全体の測定結果に含まれる。帯域値はFFmpegに依存せず計算する。
 
 ### Library・解析・Preview
 

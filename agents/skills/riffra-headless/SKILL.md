@@ -49,7 +49,7 @@ description: >-
 5. `session inspect` または `track list` で結果を確認する
 6. Live Host で `device inspect` と `device parameter list` を読み、Parameter の意味と表示値を確認して `device parameter set` で音を調整する。離散値は `choices` の表示から選び、その `value` を渡す。設定後は応答の`parameter`で対象の読み戻し値、`changedParameters`でほかのParameterへの影響を確認する。順序・Bypass・公開 Preset は `effect reorder`、`device bypass`、`plugin preset` を使う。ミックスのバランスを `track update`、`audio-clip update`、`automation set`、`session settings update --master-db` で整える
 7. `render start` で音声を書き出し、完了を `job wait`(ワンショット)または `job get`(interactive)で確認する
-8. `analysis start` または `audio diagnostics` で結果を確認し、必要なら編集へ戻る
+8. 書き出し結果の`measurements.sections`で区間ごとのラウドネス・ピーク位置・帯域バランスを確認する。素材の解析には`analysis start`、実行状態の確認には`audio diagnostics`を使い、必要なら編集へ戻る
 
 Sonalloy Bundleから制作を始める場合は`project import-sonalloy <BUNDLE_DIRECTORY>`を使う。新しいProjectへ切り替わったら通常のTrack、MIDI Clip、音源制御イベントを編集する。インポートはProject単位の操作であり、`session apply`へ含めない。コマンドの入力とMixdown設定は`commands.md`を参照。
 

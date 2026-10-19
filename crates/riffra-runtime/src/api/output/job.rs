@@ -217,6 +217,8 @@ pub struct AudioMeasurements {
     /// Actual PCM sample peak. `None` represents digital silence (negative infinity).
     pub sample_peak_dbfs: Option<f64>,
     pub loudness: LoudnessReadout,
+    /// Per-marker sections; empty when the session has no marker.
+    pub sections: Vec<SectionMeasurement>,
 }
 
 /// FFmpeg loudness measurements, or the reason they could not be obtained.
@@ -225,4 +227,50 @@ pub struct AudioMeasurements {
 pub enum LoudnessReadout {
     Measured { measurement: LoudnessMeasurement },
     Unavailable { reason: String },
+}
+
+/// Measurements of one marker section, including the final render tail.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct SectionMeasurement {
+    /// Marker name; `None` for the part before the first marker.
+    pub name: Option<String>,
+    pub start: riffra_core::MusicalPosition,
+    pub end: riffra_core::MusicalPosition,
+    /// Seconds from the start of the WAV.
+    pub start_seconds: f64,
+    /// Seconds from the start of the WAV.
+    pub end_seconds: f64,
+    /// `None` when whole-file loudness is unavailable.
+    pub loudness: Option<SectionLoudness>,
+    pub bands: BandLevels,
+}
+
+/// Gated integrated loudness and frame true peak of a section.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct SectionLoudness {
+    /// `None` when no complete 400 ms block passes the gates.
+    pub integrated_lufs: Option<f64>,
+    /// `None` for digital silence.
+    pub true_peak: Option<SectionPeak>,
+}
+
+/// True peak with the location of its 100 ms frame.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct SectionPeak {
+    pub db: f64,
+    /// Start of the peak's 100 ms frame, in seconds from the start of the WAV.
+    pub seconds: f64,
+    pub position: riffra_core::MusicalPosition,
+}
+
+/// RMS level per band in dBFS; `None` for silence.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct BandLevels {
+    pub low_db: Option<f64>,
+    pub mid_db: Option<f64>,
+    pub high_db: Option<f64>,
 }

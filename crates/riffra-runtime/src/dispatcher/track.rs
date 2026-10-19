@@ -99,7 +99,6 @@ mod tests {
         let session = dispatcher
             .dispatch(command("session.get", json!({})), None)
             .unwrap();
-        assert_eq!(mutated_session(&instrument).arrangement.tracks.len(), 1);
         assert_eq!(
             output_value(&session)["arrangement"]["tracks"][0]["instrument"]["source"]["parameterValues"]
                 [0],

@@ -16,6 +16,7 @@ use std::{
 mod ffmpeg;
 mod history;
 mod mastering;
+mod sections;
 mod worker;
 
 #[cfg(test)]
@@ -310,11 +311,20 @@ fn render_timeline_with_renderer_for_project(
     } else {
         None
     };
+    let (_, rendered_frames) = riffra_host::read_wav_metadata(&plan.output_path)?;
+    let section_plan = sections::SectionPlan::new(
+        &session.arrangement.markers,
+        &session.arrangement.timebase,
+        plan.start_tick,
+        plan.end_tick,
+        rendered_frames as f64 / f64::from(plan.sample_rate),
+    );
     let (measurements, mut warnings) = mastering::measure_output(
         &plan.output_path,
         plan.sample_rate,
         mastering.as_deref(),
         session.settings.mixdown.mastering.as_ref(),
+        &section_plan,
         cancelled,
     )?;
     warnings.extend(plan.dependency_warnings.iter().cloned());
@@ -604,6 +614,7 @@ fn render_stems_with_renderer(
     };
     let mut completed = Vec::with_capacity(selected_tracks.len());
     let mut frames = None;
+    let mut section_plan = None;
 
     for (index, track) in selected_tracks.into_iter().enumerate() {
         if cancelled.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire)) {
@@ -656,8 +667,23 @@ fn render_stems_with_renderer(
             return Err("Rendered stems do not have a shared frame count.".into());
         }
         frames = Some(stem_frames);
-        let (measurements, mut warnings) =
-            mastering::measure_output(&plan.output_path, sample_rate, None, None, cancelled)?;
+        let section_plan = section_plan.get_or_insert_with(|| {
+            sections::SectionPlan::new(
+                &session.arrangement.markers,
+                &session.arrangement.timebase,
+                conditions.start_tick,
+                conditions.end_tick,
+                stem_frames as f64 / f64::from(sample_rate),
+            )
+        });
+        let (measurements, mut warnings) = mastering::measure_output(
+            &plan.output_path,
+            sample_rate,
+            None,
+            None,
+            section_plan,
+            cancelled,
+        )?;
         warnings.extend(plan.dependency_warnings.iter().cloned());
         warnings.append(&mut automation_warnings);
         completed.push((
