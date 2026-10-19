@@ -13,6 +13,7 @@ use std::{
     sync::atomic::AtomicBool,
 };
 
+mod ffmpeg;
 mod history;
 mod mastering;
 mod worker;
