@@ -74,7 +74,7 @@ AI Slopの典型:
   - 強弱と音価が、グルーヴと旋律の表情になっているか
   - 指摘への修正が、曲全体を損なっていないか
 
-Riffraへ和声を入力するときは `music harmony resolve` でコード記号を確認し、和声イベントを `music harmony realize` で伴奏へ展開する。反復モチーフは `music phrase preview` で確認して `insert` で配置する。複数パートの組立には `session apply` を使う。音楽座標の変換や反復展開はこれらのCore機能へ委ねる。具体的な構造入力とRender後の評価手順は [ヘッドレス操作ガイド](../riffra-headless/references/commands.md) を参照。
+Riffraへ和声を入力するときは `music harmony resolve` でコード記号を確認し、和声イベントを `music harmony realize` で伴奏へ展開する。反復モチーフは `music phrase preview` で確認して `insert` で配置する。複数パートの組立には `session apply` を使う。具体的な構造入力とRender後の評価手順は [ヘッドレス操作ガイド](../riffra-headless/references/commands.md) を参照。
 
 ## 参照マップ
 

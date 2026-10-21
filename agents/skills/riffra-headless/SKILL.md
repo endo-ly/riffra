@@ -85,13 +85,13 @@ Sonalloy Bundleから制作を始める場合は`project import-sonalloy <BUNDLE
 
 ## ミックス
 
-ミックスは正準状態のMixer、MixBus、Send、SidechainSendとTrack・Clipのパラメータ、Automationで表現する。Group・Return・Send・Sidechainは `mixer` コマンド群で編集する。ミックス状態は `mixer get`、`track list`、`session inspect` で確認し、聞こえと測定値の確認はRenderで行う。
+Track・Clipの音量や定位に加え、バスへの接続やセンドを使ってミックスを組み立てる。Group・Return・Send・Sidechainは `mixer` コマンド群で編集する。ミックス状態は `mixer get`、`track list`、`session inspect` で確認し、聞こえと測定値の確認はRenderで行う。
 
 ## 書き出しと評価
 
 楽曲を編集したら `render start`、各パートを比較するなら `render stems` でWAVを作成する。返されたJob IDを `job wait` へ渡し、完了結果を確認する。区間や比較対象を変えて測定するだけなら、`render list` のRender IDまたは保存済みWAVを `analysis measure` へ渡す。測定は楽曲やMarkerを編集せず、再レンダリングも行わない。音源・ノート・ミックスを変更した音を評価するときは、新しいWAVを書き出す。
 
-`analysis start` は波形やRMSを同期的に返す。複数WAV・複数区間のラウドネス、True Peak、帯域レベルには非同期Jobの `analysis measure` を使う。入力例と測定状態の読み方は [コマンドガイド](references/commands.md#保存済みwavの区間測定) を参照。
+区間測定の入力例と結果の読み方は [コマンドガイド](references/commands.md#保存済みwavの区間測定) を参照。
 
 ## Host discoveryとDataRoot
 

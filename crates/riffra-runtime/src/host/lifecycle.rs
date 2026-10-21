@@ -51,7 +51,6 @@ impl DawHost {
                 HostError::DataRoot(error.to_string())
             }
         })?;
-        render::migrate_measurement_states(&config.data_root).map_err(HostError::State)?;
         let project_store = ProjectStore::new(&config.data_root);
         let built_in_instruments =
             crate::instrument::BuiltInInstrumentCatalog::load(&config.built_in_instruments_root)

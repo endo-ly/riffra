@@ -14,15 +14,14 @@ use std::{
 };
 
 mod history;
+mod manifest;
 mod mastering;
-mod migration;
 mod sections;
 mod worker;
 
 #[cfg(test)]
 use history::{RenderDeletionMarker, write_deletion_marker};
 pub(crate) use history::{delete_render, export_render, list_renders, resolve_measurement_sources};
-pub(crate) use migration::migrate_measurement_states;
 pub(crate) use worker::RenderWorker;
 
 /// Platform-independent request for rendering a prepared Execution Graph.
@@ -1664,7 +1663,7 @@ mod tests {
         }
         let manifest_path = pending.output.directory.join("render.json");
         fs::write(&manifest_path, serde_json::to_vec(&old_manifest).unwrap()).unwrap();
-        migrate_measurement_states(&root).unwrap();
+        manifest::read(&manifest_path).unwrap();
         let upgraded: RenderStemsResult =
             serde_json::from_slice(&fs::read(manifest_path).unwrap()).unwrap();
         for (actual, expected) in upgraded.stems.iter().zip(&pending.result.stems) {
@@ -2492,22 +2491,33 @@ mod tests {
             .unwrap()
             .remove("sectionLoudnessState");
         fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        let original = fs::read(&manifest_path).unwrap();
+        let blocked_temporary = manifest_path.with_extension("json.tmp");
+        fs::create_dir(&blocked_temporary).unwrap();
         let dispatcher = crate::Dispatcher::open(
             root.clone(),
             crate::test_support::prepare_built_in_resource_root(&root),
         )
         .unwrap();
         drop(dispatcher);
+        assert_eq!(fs::read(&manifest_path).unwrap(), original);
+        let inaccessible = list_renders(&root).unwrap();
+        assert!(inaccessible[0].diagnostics[0].contains("could not be saved"));
+        assert_eq!(fs::read(&manifest_path).unwrap(), original);
+        fs::remove_dir(&blocked_temporary).unwrap();
+        resolve_measurement_sources(&root, &render_id).unwrap();
         let migrated = fs::read(&manifest_path).unwrap();
         let saved: RenderResult = serde_json::from_slice(&migrated).unwrap();
         assert!(matches!(
             saved.measurements.section_loudness_state,
             crate::api::output::MeasurementState::Measured
         ));
-        migrate_measurement_states(&root).unwrap();
+        fs::create_dir(&blocked_temporary).unwrap();
+        let sources = resolve_measurement_sources(&root, &render_id).unwrap();
         assert_eq!(fs::read(&manifest_path).unwrap(), migrated);
+        fs::remove_dir(&blocked_temporary).unwrap();
         assert_eq!(
-            resolve_measurement_sources(&root, &render_id).unwrap()[0].path,
+            sources[0].path,
             Path::new(&render.path).canonicalize().unwrap()
         );
         export_render(&root, &render_id, output.to_str().unwrap()).unwrap();
@@ -2557,11 +2567,6 @@ mod tests {
             b"not a render manifest",
         )
         .unwrap();
-        migrate_measurement_states(&root).unwrap();
-        assert_eq!(
-            fs::read(malformed_directory.join("render.json")).unwrap(),
-            b"not a render manifest"
-        );
         let listed = list_renders(&root).unwrap();
         let damaged = listed
             .iter()
@@ -2570,6 +2575,11 @@ mod tests {
         assert_eq!(damaged.kind, RenderKind::Unknown);
         assert_eq!(damaged.created_at_ms, Some(32));
         assert_eq!(damaged.diagnostics.len(), 1);
+        assert_eq!(
+            fs::read(malformed_directory.join("render.json")).unwrap(),
+            b"not a render manifest"
+        );
+
         fs::remove_dir_all(malformed_directory).unwrap();
 
         let project = riffra_host::ProjectStore::new(&root).initialize().unwrap();

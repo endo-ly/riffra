@@ -2046,9 +2046,24 @@ mod tests {
                 data_root.join("sonalloy"),
             ),
         };
+        std::fs::create_dir_all(data_root.join("renders/render-inaccessible/render.json")).unwrap();
         let host = DawHost::open(config, Arc::new(crate::NoopHostEventSink)).unwrap();
         let expected_project_id = host.bootstrap().unwrap().project_state.active_project_id;
         let descriptor = read_endpoint(&data_root).unwrap();
+        let history = host.dispatch_control(ControlRequest::new(
+            "history",
+            "render.list",
+            serde_json::json!({}),
+            None,
+        ));
+        assert!(history.ok);
+        let ControlOutput::RenderList(renders) =
+            ControlOutput::try_from(history.result.unwrap()).unwrap()
+        else {
+            panic!("render.list returns history diagnostics");
+        };
+        assert_eq!(renders.len(), 1);
+        assert!(!renders[0].diagnostics.is_empty());
 
         {
             let mut stream = transport::connect(descriptor.endpoint()).unwrap();

@@ -433,7 +433,7 @@ DesktopのTauri command境界とLive HostのControl Serverの機能分担は次�
 - `render start` は接続先Hostの `RenderWorker` にジョブを開始しIDを返す。部分Renderは音楽座標の `start` / `end` と任意の `trackId` で指定する。状態は `job get`、停止は `job cancel` で行う。Workerの所有者は接続先Hostである
 - `render.stems` は `allTracks` または `trackIds` のいずれか一方と共有 `range` を受け取り、接続先Hostの `RenderWorker` で1つの `renderStems` ジョブを開始する。結果には共通の開始・終了Tick、Sample Rate、フレーム数と各TrackのAsset ID・パスを含み、同じ内容を出力ディレクトリの `render.json` に保存する。明示IDが不正な要求はジョブ開始前に拒否する
 - `render.start` と `render.stems` は任意の出力先を指定でき、既存ファイルを上書きしない。`render.export` は完了済みRenderを指定先へコピーする
-- `analysis.measure` は `renderId` または `paths` と秒数区間 `ranges` を受け取り、既存WAVを測定する `analysisMeasure` Jobを返す。保存済みステムはTrack情報を保持し、結果は要求順に返す。進捗・中止は既存Job契約を用い、正準状態とRender Historyは変更しない。`analysis.start` は波形・RMS等の解析結果を同期的に返す
+- `analysis.measure` は保存済みWAVの区間測定を非同期Jobとして実行し、進捗・中止は既存Job契約を用いる。解析は楽曲や保存済みの測定値を変更しない。`analysis.start` は波形・RMS等の解析結果を同期的に返す
 - `render.list` は管理対象Renderを一覧表示する。`render.clean` はほかから参照されていない管理対象Renderを削除し、外部へExportしたファイルは削除しない
 - `instrument.midi.get` はTrack InstrumentのMIDI設定と現在のClip Noteに対する警告を返す。`instrument.midi.set` は設定を保存し、Batch・Undo・Redoで扱える。演奏可能音域外でもMIDI範囲内のNoteは再生し、0〜127を超えるNoteは送信しない
 - 結果は全Stemの生成後にだけジョブへ設定される。キャンセルまたは失敗が先に確定した場合、作成済みのファイルとAsset登録を破棄する

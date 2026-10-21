@@ -1,6 +1,6 @@
+use super::manifest::{self, StoredRender};
 use crate::api::output::{
     RenderDeleteResult, RenderExportResult, RenderFileStatus, RenderHistoryEntry, RenderKind,
-    RenderResult, RenderStemsResult,
 };
 use crate::asset;
 use riffra_core::{AssetId, CreativeSession};
@@ -21,43 +21,38 @@ pub(crate) fn export_render(
 ) -> Result<RenderExportResult, String> {
     let source_directory = managed_render_directory(data_root, render_id)?;
     let manifest_path = source_directory.join("render.json");
-    let manifest = fs::read(&manifest_path)
-        .map_err(|error| format!("render manifest could not be read: {error}"))?;
-    let (sources, source_path, destination) =
-        match serde_json::from_slice::<StoredRender>(&manifest)
-            .map_err(|error| format!("render manifest is invalid: {error}"))?
-        {
-            StoredRender::Timeline(render) => {
-                let destination = validate_output_file_path(output_path)?;
-                let source = managed_render_file(&source_directory, &render.path)?;
+    let (sources, source_path, destination) = match manifest::read(&manifest_path)? {
+        StoredRender::Timeline(render) => {
+            let destination = validate_output_file_path(output_path)?;
+            let source = managed_render_file(&source_directory, &render.path)?;
+            if !source.is_file() {
+                return Err(format!("render WAV is missing: {}", source.display()));
+            }
+            (
+                vec![(source.clone(), destination.clone())],
+                source,
+                destination,
+            )
+        }
+        StoredRender::Stems(render) => {
+            let destination_directory = validate_output_directory(output_path)?;
+            let mut sources = Vec::with_capacity(render.stems.len());
+            for stem in render.stems {
+                let source = managed_render_file(&source_directory, &stem.path)?;
                 if !source.is_file() {
-                    return Err(format!("render WAV is missing: {}", source.display()));
+                    return Err(format!("render stem WAV is missing: {}", source.display()));
                 }
-                (
-                    vec![(source.clone(), destination.clone())],
-                    source,
-                    destination,
-                )
+                let name = source
+                    .file_name()
+                    .ok_or_else(|| {
+                        format!("render stem path has no file name: {}", source.display())
+                    })?
+                    .to_os_string();
+                sources.push((source, destination_directory.join(name)));
             }
-            StoredRender::Stems(render) => {
-                let destination_directory = validate_output_directory(output_path)?;
-                let mut sources = Vec::with_capacity(render.stems.len());
-                for stem in render.stems {
-                    let source = managed_render_file(&source_directory, &stem.path)?;
-                    if !source.is_file() {
-                        return Err(format!("render stem WAV is missing: {}", source.display()));
-                    }
-                    let name = source
-                        .file_name()
-                        .ok_or_else(|| {
-                            format!("render stem path has no file name: {}", source.display())
-                        })?
-                        .to_os_string();
-                    sources.push((source, destination_directory.join(name)));
-                }
-                (sources, source_directory, destination_directory)
-            }
-        };
+            (sources, source_directory, destination_directory)
+        }
+    };
     copy_files_no_clobber(&sources)?;
     Ok(RenderExportResult {
         render_id: render_id.to_owned(),
@@ -72,10 +67,7 @@ pub(crate) fn resolve_measurement_sources(
     render_id: &str,
 ) -> Result<Vec<crate::analysis::MeasurementSource>, String> {
     let directory = managed_render_directory(data_root, render_id)?;
-    let bytes = fs::read(directory.join("render.json"))
-        .map_err(|error| format!("render manifest could not be read: {error}"))?;
-    let manifest = serde_json::from_slice::<StoredRender>(&bytes)
-        .map_err(|error| format!("render manifest is invalid: {error}"))?;
+    let manifest = manifest::read(&directory.join("render.json"))?;
     match manifest {
         StoredRender::Timeline(render) => Ok(vec![crate::analysis::MeasurementSource {
             path: managed_render_file(&directory, &render.path)?,
@@ -160,12 +152,7 @@ fn read_render_history_entry(
     render_id: &str,
 ) -> RenderHistoryEntry {
     let manifest_path = directory.join("render.json");
-    let parse = fs::read(&manifest_path)
-        .map_err(|error| format!("render manifest could not be read: {error}"))
-        .and_then(|bytes| {
-            serde_json::from_slice::<StoredRender>(&bytes)
-                .map_err(|error| format!("render manifest is invalid: {error}"))
-        });
+    let parse = manifest::read(&manifest_path);
     let mut entry = RenderHistoryEntry {
         render_id: render_id.to_owned(),
         kind: RenderKind::Unknown,
@@ -316,10 +303,7 @@ pub(crate) fn delete_render<'a>(
         return Err(format!("render is not registered: {render_id}"));
     }
     let manifest_path = directory.join("render.json");
-    let bytes = fs::read(&manifest_path)
-        .map_err(|error| format!("render manifest could not be read: {error}"))?;
-    let manifest = serde_json::from_slice::<StoredRender>(&bytes)
-        .map_err(|error| format!("render manifest is invalid: {error}"))?;
+    let manifest = manifest::read(&manifest_path)?;
     let file_assets = manifest_file_assets(manifest);
     let files = verify_owned_render_directory(data_root, &directory, &manifest_path, &file_assets)?;
     let asset_ids = file_assets
@@ -465,7 +449,7 @@ fn render_directory_path(data_root: &Path, render_id: &str) -> Result<PathBuf, S
     Ok(data_root.join("renders").join(relative))
 }
 
-pub(super) fn render_store_root(data_root: &Path) -> Result<Option<PathBuf>, String> {
+fn render_store_root(data_root: &Path) -> Result<Option<PathBuf>, String> {
     let root = data_root.join("renders");
     match fs::symlink_metadata(&root) {
         Ok(metadata) if metadata.file_type().is_symlink() => {
@@ -758,13 +742,6 @@ fn finish_interrupted_render_deletion(
     } else {
         Ok(None)
     }
-}
-
-#[derive(serde::Deserialize)]
-#[serde(untagged)]
-pub(super) enum StoredRender {
-    Stems(RenderStemsResult),
-    Timeline(RenderResult),
 }
 
 fn managed_render_directory(data_root: &Path, render_id: &str) -> Result<PathBuf, String> {
