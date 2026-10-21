@@ -102,6 +102,7 @@ pub fn to_background_status(status: JobStatus) -> Result<BackgroundJobStatus, St
 }
 
 struct JobRecord {
+    source_render_id: Option<String>,
     status: Mutex<JobStatus>,
     cancelled: Arc<AtomicBool>,
 }
@@ -111,14 +112,35 @@ pub struct JobRegistry {
     records: Arc<Mutex<HashMap<String, Arc<JobRecord>>>>,
     workers: Arc<Mutex<HashMap<String, JoinHandle<()>>>>,
     sequence: Arc<AtomicU64>,
+    render_access: Arc<Mutex<()>>,
 }
 
 impl JobRegistry {
     pub fn start(&self, kind: JobKind) -> (String, JobStatus) {
+        self.start_with_source(kind, None)
+    }
+
+    /// Excludes Render deletion while resolving and registering a managed-WAV job.
+    pub(crate) fn lock_render_access(&self) -> Result<std::sync::MutexGuard<'_, ()>, String> {
+        self.render_access
+            .lock()
+            .map_err(|_| "render access lock was poisoned".into())
+    }
+
+    pub(crate) fn start_analysis_measure(&self, render_id: Option<String>) -> (String, JobStatus) {
+        self.start_with_source(JobKind::AnalysisMeasure, render_id)
+    }
+
+    fn start_with_source(
+        &self,
+        kind: JobKind,
+        source_render_id: Option<String>,
+    ) -> (String, JobStatus) {
         let label = kind.label();
         let sequence = self.sequence.fetch_add(1, Ordering::Relaxed);
         let id = format!("job:{label}:{sequence}");
         let record = Arc::new(JobRecord {
+            source_render_id,
             status: Mutex::new(JobStatus {
                 id: id.clone(),
                 kind,
@@ -242,7 +264,7 @@ impl JobRegistry {
         record.status.lock().ok().map(|status| status.clone())
     }
 
-    pub(crate) fn active_render_job_ids(&self) -> Result<Vec<String>, String> {
+    pub(crate) fn render_deletion_blockers(&self, render_id: &str) -> Result<Vec<String>, String> {
         let records = self
             .records
             .lock()
@@ -253,7 +275,8 @@ impl JobRegistry {
                 .status
                 .lock()
                 .map_err(|error| format!("render job {id} could not be inspected: {error}"))?;
-            if matches!(status.kind, JobKind::Render | JobKind::RenderStems)
+            if (matches!(status.kind, JobKind::Render | JobKind::RenderStems)
+                || record.source_render_id.as_deref() == Some(render_id))
                 && matches!(
                     status.state,
                     JobState::Queued | JobState::Running | JobState::Cancelling
@@ -390,6 +413,39 @@ pub fn serialize_result<T: Serialize>(result: &T) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn render_sources_are_protected_until_the_worker_reaches_a_terminal_state() {
+        for terminal in [JobState::Completed, JobState::Failed, JobState::Cancelled] {
+            let jobs = JobRegistry::default();
+            let (id, _) = jobs.start_analysis_measure(Some("render-source".into()));
+            jobs.start_analysis_measure(None);
+            jobs.start_analysis_measure(Some("render-other".into()));
+
+            assert_eq!(
+                jobs.render_deletion_blockers("render-source").unwrap(),
+                std::slice::from_ref(&id)
+            );
+            jobs.set_running(&id, "measuring");
+            if terminal == JobState::Cancelled {
+                jobs.cancel(&id).unwrap();
+                assert_eq!(
+                    jobs.render_deletion_blockers("render-source").unwrap(),
+                    std::slice::from_ref(&id)
+                );
+                jobs.mark_cancelled(&id);
+            } else if terminal == JobState::Completed {
+                jobs.complete(&id, serde_json::json!({}), "done");
+            } else {
+                jobs.fail(&id, "failed");
+            }
+            assert!(
+                jobs.render_deletion_blockers("render-source")
+                    .unwrap()
+                    .is_empty()
+            );
+        }
+    }
 
     #[test]
     fn cancellation_prevents_completion_from_promoting_a_result() {

@@ -1344,10 +1344,17 @@ impl HostState {
         &self,
         params: crate::api::params::AnalysisMeasureParams,
     ) -> Result<BackgroundJobStatus, ProtocolError> {
+        let jobs = self.jobs.clone();
+        let render_access = params
+            .render_id
+            .as_ref()
+            .map(|_| jobs.lock_render_access())
+            .transpose()
+            .map_err(command_error)?;
         let sources =
             analysis::measurement_sources(&self.data_root, &params).map_err(command_error)?;
-        let jobs = self.jobs.clone();
-        let (id, status) = jobs.start(JobKind::AnalysisMeasure);
+        let (id, status) = jobs.start_analysis_measure(params.render_id.clone());
+        drop(render_access);
         let cancelled = jobs
             .cancellation_flag(&id)
             .ok_or_else(|| command_error("analysis job could not be registered"))?;

@@ -15,12 +15,14 @@ use std::{
 
 mod history;
 mod mastering;
+mod migration;
 mod sections;
 mod worker;
 
 #[cfg(test)]
 use history::{RenderDeletionMarker, write_deletion_marker};
 pub(crate) use history::{delete_render, export_render, list_renders, resolve_measurement_sources};
+pub(crate) use migration::migrate_measurement_states;
 pub(crate) use worker::RenderWorker;
 
 /// Platform-independent request for rendering a prepared Execution Graph.
@@ -1653,6 +1655,35 @@ mod tests {
         )
         .unwrap();
         assert_eq!(manifest, serde_json::to_value(&pending.result).unwrap());
+        let mut old_manifest = manifest;
+        for stem in old_manifest["stems"].as_array_mut().unwrap() {
+            stem["measurements"]
+                .as_object_mut()
+                .unwrap()
+                .remove("sectionLoudnessState");
+        }
+        let manifest_path = pending.output.directory.join("render.json");
+        fs::write(&manifest_path, serde_json::to_vec(&old_manifest).unwrap()).unwrap();
+        migrate_measurement_states(&root).unwrap();
+        let upgraded: RenderStemsResult =
+            serde_json::from_slice(&fs::read(manifest_path).unwrap()).unwrap();
+        for (actual, expected) in upgraded.stems.iter().zip(&pending.result.stems) {
+            assert!(matches!(
+                actual.measurements.section_loudness_state,
+                crate::api::output::MeasurementState::Measured
+            ));
+            let mut actual = serde_json::to_value(actual).unwrap();
+            let mut expected = serde_json::to_value(expected).unwrap();
+            actual["measurements"]
+                .as_object_mut()
+                .unwrap()
+                .remove("sectionLoudnessState");
+            expected["measurements"]
+                .as_object_mut()
+                .unwrap()
+                .remove("sectionLoudnessState");
+            assert_eq!(actual, expected);
+        }
         let render_id = Path::new(&pending.result.directory)
             .file_name()
             .unwrap()
@@ -2451,6 +2482,34 @@ mod tests {
             .unwrap()
             .to_string_lossy()
             .into_owned();
+        let manifest_path = Path::new(&render.path)
+            .parent()
+            .unwrap()
+            .join("render.json");
+        let mut manifest = serde_json::to_value(&render).unwrap();
+        manifest["measurements"]
+            .as_object_mut()
+            .unwrap()
+            .remove("sectionLoudnessState");
+        fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        let dispatcher = crate::Dispatcher::open(
+            root.clone(),
+            crate::test_support::prepare_built_in_resource_root(&root),
+        )
+        .unwrap();
+        drop(dispatcher);
+        let migrated = fs::read(&manifest_path).unwrap();
+        let saved: RenderResult = serde_json::from_slice(&migrated).unwrap();
+        assert!(matches!(
+            saved.measurements.section_loudness_state,
+            crate::api::output::MeasurementState::Measured
+        ));
+        migrate_measurement_states(&root).unwrap();
+        assert_eq!(fs::read(&manifest_path).unwrap(), migrated);
+        assert_eq!(
+            resolve_measurement_sources(&root, &render_id).unwrap()[0].path,
+            Path::new(&render.path).canonicalize().unwrap()
+        );
         export_render(&root, &render_id, output.to_str().unwrap()).unwrap();
 
         let listed = list_renders(&root).unwrap();
@@ -2464,6 +2523,33 @@ mod tests {
         assert!(listed[0].files[0].asset_registered);
         assert!(listed[0].diagnostics.is_empty());
 
+        let jobs = crate::jobs::JobRegistry::default();
+        let (analysis_id, _) = jobs.start_analysis_measure(Some(render_id.clone()));
+        let _ = jobs.start_analysis_measure(None);
+        let _ = jobs.start_analysis_measure(Some("render-unrelated".into()));
+        let store = riffra_host::ProjectStore::new(&root);
+        let project = store.initialize().unwrap();
+        for phase in 0..3 {
+            if phase == 1 {
+                jobs.set_running(&analysis_id, "measuring");
+            }
+            if phase == 2 {
+                jobs.cancel(&analysis_id).unwrap();
+            }
+            let error = delete_render(
+                &root,
+                &store,
+                &project.project_id,
+                &CreativeSession::new(1),
+                std::iter::empty(),
+                &jobs,
+                &render_id,
+            )
+            .unwrap_err();
+            assert!(error.contains(&analysis_id));
+            assert!(Path::new(&render.path).is_file());
+        }
+        jobs.mark_cancelled(&analysis_id);
         let malformed_directory = root.join("renders").join("render-32-damaged");
         fs::create_dir(&malformed_directory).unwrap();
         fs::write(
@@ -2471,6 +2557,11 @@ mod tests {
             b"not a render manifest",
         )
         .unwrap();
+        migrate_measurement_states(&root).unwrap();
+        assert_eq!(
+            fs::read(malformed_directory.join("render.json")).unwrap(),
+            b"not a render manifest"
+        );
         let listed = list_renders(&root).unwrap();
         let damaged = listed
             .iter()
@@ -2482,7 +2573,6 @@ mod tests {
         fs::remove_dir_all(malformed_directory).unwrap();
 
         let project = riffra_host::ProjectStore::new(&root).initialize().unwrap();
-        let jobs = crate::jobs::JobRegistry::default();
         let deleted = delete_render(
             &root,
             &riffra_host::ProjectStore::new(&root),
@@ -2532,7 +2622,7 @@ mod tests {
             &render_id,
         )
         .unwrap_err();
-        assert!(active_job_error.contains("active Render jobs"));
+        assert!(active_job_error.contains("active jobs"));
         let current_error = delete_render(
             &root,
             &store,

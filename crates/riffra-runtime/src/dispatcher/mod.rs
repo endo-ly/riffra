@@ -257,6 +257,7 @@ impl HostDispatcher<'static> {
     pub fn open(data_root: PathBuf, built_in_instruments_root: PathBuf) -> Result<Self, String> {
         let lease = DataRootLease::acquire(&data_root)
             .map_err(|error| format!("data root could not be opened: {error}"))?;
+        crate::render::migrate_measurement_states(&data_root)?;
         let built_in_instruments =
             Arc::new(BuiltInInstrumentCatalog::load(built_in_instruments_root)?);
         let project_store = ProjectStore::new(&data_root);

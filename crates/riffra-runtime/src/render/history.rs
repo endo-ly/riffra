@@ -299,6 +299,14 @@ pub(crate) fn delete_render<'a>(
     jobs: &crate::jobs::JobRegistry,
     render_id: &str,
 ) -> Result<RenderDeleteResult, String> {
+    let _render_access = jobs.lock_render_access()?;
+    let active_jobs = jobs.render_deletion_blockers(render_id)?;
+    if !active_jobs.is_empty() {
+        return Err(format!(
+            "render deletion is blocked by active jobs: {}",
+            active_jobs.join(", ")
+        ));
+    }
     let _ = render_store_root(data_root)?;
     let directory = render_directory_path(data_root, render_id)?;
     if let Some(result) = finish_interrupted_render_deletion(data_root, render_id)? {
@@ -391,13 +399,6 @@ pub(crate) fn delete_render<'a>(
             "render deletion is blocked by Asset {dependent}, which depends on {source}"
         ));
     }
-    let active_jobs = jobs.active_render_job_ids()?;
-    if !active_jobs.is_empty() {
-        return Err(format!(
-            "render deletion is blocked by active Render jobs: {}",
-            active_jobs.join(", ")
-        ));
-    }
     let render_root = directory
         .parent()
         .expect("managed render directory has a parent");
@@ -464,7 +465,7 @@ fn render_directory_path(data_root: &Path, render_id: &str) -> Result<PathBuf, S
     Ok(data_root.join("renders").join(relative))
 }
 
-fn render_store_root(data_root: &Path) -> Result<Option<PathBuf>, String> {
+pub(super) fn render_store_root(data_root: &Path) -> Result<Option<PathBuf>, String> {
     let root = data_root.join("renders");
     match fs::symlink_metadata(&root) {
         Ok(metadata) if metadata.file_type().is_symlink() => {
@@ -761,7 +762,7 @@ fn finish_interrupted_render_deletion(
 
 #[derive(serde::Deserialize)]
 #[serde(untagged)]
-enum StoredRender {
+pub(super) enum StoredRender {
     Stems(RenderStemsResult),
     Timeline(RenderResult),
 }

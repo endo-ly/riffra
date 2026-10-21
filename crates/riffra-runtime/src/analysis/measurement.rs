@@ -6,7 +6,6 @@ use crate::api::{
     params::MeasurementRange,
 };
 use serde_json::Value;
-use std::collections::BTreeMap;
 use std::{
     fs,
     path::Path,
@@ -192,14 +191,36 @@ impl Biquad {
 
 struct BandMeter {
     filters: Vec<[Biquad; 4]>,
-    bounds: Vec<(u64, u64)>,
-    boundaries: BTreeMap<u64, [f64; 3]>,
+    bounds: Vec<(usize, usize)>,
+    boundaries: Vec<(u64, [f64; 3])>,
+    next_boundary: usize,
     totals: [f64; 3],
     sample: u64,
 }
 
 impl BandMeter {
     fn new(sample_rate: u32, channels: u16, sections: &[AnalysisSectionMeasurement]) -> Self {
+        let sample =
+            |seconds: f64| (seconds * f64::from(sample_rate)).round() as u64 * u64::from(channels);
+        let mut positions: Vec<_> = sections
+            .iter()
+            .flat_map(|section| [sample(section.start_seconds), sample(section.end_seconds)])
+            .collect();
+        positions.sort_unstable();
+        positions.dedup();
+        let bounds = sections
+            .iter()
+            .map(|section| {
+                (
+                    positions
+                        .binary_search(&sample(section.start_seconds))
+                        .expect("start boundary was collected"),
+                    positions
+                        .binary_search(&sample(section.end_seconds))
+                        .expect("end boundary was collected"),
+                )
+            })
+            .collect();
         Self {
             filters: vec![
                 [
@@ -210,27 +231,12 @@ impl BandMeter {
                 ];
                 usize::from(channels)
             ],
-            bounds: sections
-                .iter()
-                .map(|s| {
-                    (
-                        (s.start_seconds * f64::from(sample_rate)).round() as u64,
-                        (s.end_seconds * f64::from(sample_rate)).round() as u64,
-                    )
-                })
-                .collect(),
-            boundaries: sections
-                .iter()
-                .flat_map(|s| {
-                    [
-                        (s.start_seconds * f64::from(sample_rate)).round() as u64
-                            * u64::from(channels),
-                        (s.end_seconds * f64::from(sample_rate)).round() as u64
-                            * u64::from(channels),
-                    ]
-                })
+            bounds,
+            boundaries: positions
+                .into_iter()
                 .map(|sample| (sample, [0.0; 3]))
                 .collect(),
+            next_boundary: 0,
             totals: [0.0; 3],
             sample: 0,
         }
@@ -241,9 +247,7 @@ impl BandMeter {
             return;
         }
         let channel = self.sample as usize % self.filters.len();
-        if let Some(snapshot) = self.boundaries.get_mut(&self.sample) {
-            *snapshot = self.totals;
-        }
+        self.capture_boundary();
         self.sample += 1;
         let [low, mid_high, mid_low, high] = &mut self.filters[channel];
         let values = [
@@ -256,16 +260,21 @@ impl BandMeter {
         }
     }
 
-    fn finish(mut self, sections: &mut [AnalysisSectionMeasurement]) {
-        if let Some(snapshot) = self.boundaries.get_mut(&self.sample) {
-            *snapshot = self.totals;
+    fn capture_boundary(&mut self) {
+        if let Some((sample, sums)) = self.boundaries.get_mut(self.next_boundary)
+            && *sample == self.sample
+        {
+            *sums = self.totals;
+            self.next_boundary += 1;
         }
+    }
+
+    fn finish(mut self, sections: &mut [AnalysisSectionMeasurement]) {
+        self.capture_boundary();
         for ((start, end), section) in self.bounds.into_iter().zip(sections) {
-            let start = start * self.filters.len() as u64;
-            let end = end * self.filters.len() as u64;
-            let count = end - start;
+            let count = self.boundaries[end].0 - self.boundaries[start].0;
             let sums = std::array::from_fn::<_, 3, _>(|i| {
-                self.boundaries[&end][i] - self.boundaries[&start][i]
+                self.boundaries[end].1[i] - self.boundaries[start].1[i]
             });
             let [low_db, mid_db, high_db] = sums
                 .map(|sum| (sum > 0.0 && count > 0).then(|| 10.0 * (sum / count as f64).log10()));
