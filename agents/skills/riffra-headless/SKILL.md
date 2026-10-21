@@ -91,8 +91,6 @@ Track・Clipの音量や定位に加え、バスへの接続やセンドを使�
 
 楽曲を編集したら `render start`、各パートを比較するなら `render stems` でWAVを作成する。返されたJob IDを `job wait` へ渡し、完了結果を確認する。区間や比較対象を変えて測定するだけなら、`render list` のRender IDまたは保存済みWAVを `analysis measure` へ渡す。測定は楽曲やMarkerを編集せず、再レンダリングも行わない。音源・ノート・ミックスを変更した音を評価するときは、新しいWAVを書き出す。
 
-区間測定の入力例と結果の読み方は [コマンドガイド](references/commands.md#保存済みwavの区間測定) を参照。
-
 ## Host discoveryとDataRoot
 
 Standaloneと`serve`では `--data-root` が必須である(慣例は `./riffra-data`、作った場所は呼び出し側が引き回す)。同じDataRootを同時に所有できるプロセスは1つだけである。
