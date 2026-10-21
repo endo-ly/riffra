@@ -111,6 +111,9 @@ impl UserInstrumentStore {
         definition_path: &Path,
         instrument_id: Option<&str>,
     ) -> Result<ResolvedUserInstrument, String> {
+        let instrument_id = instrument_id
+            .map(normalize_user_instrument_id)
+            .transpose()?;
         let definition_path = fs::canonicalize(definition_path)
             .map_err(|error| format!("instrument definition could not be resolved: {error}"))?;
         if !definition_path.is_file() {
@@ -122,7 +125,6 @@ impl UserInstrumentStore {
         self.inspect(&definition_path)?;
         let (instrument_id, created_at_ms) = match instrument_id {
             Some(instrument_id) => {
-                let instrument_id = normalize_user_instrument_id(instrument_id)?;
                 let existing = self.resolve(&instrument_id)?;
                 (instrument_id, existing.manifest.created_at_ms)
             }
@@ -381,13 +383,13 @@ fn parse_user_instrument_id(value: &str) -> Result<String, String> {
     let uuid = value
         .strip_prefix("user:")
         .filter(|uuid| !uuid.is_empty())
-        .ok_or_else(|| format!("invalid User Instrument ID: {value}"))?;
+        .ok_or_else(|| format!("invalid user instrument id {value:?}; expected user:<canonical-lowercase-uuid> for an existing instrument; omit instrumentId to generate a new id"))?;
     let parsed =
-        Uuid::parse_str(uuid).map_err(|_| format!("invalid User Instrument ID: {value}"))?;
+        Uuid::parse_str(uuid).map_err(|_| format!("invalid user instrument id {value:?}; expected user:<canonical-lowercase-uuid> for an existing instrument; omit instrumentId to generate a new id"))?;
     let normalized = parsed.to_string();
     if normalized != uuid {
         return Err(format!(
-            "User Instrument ID must use canonical lowercase UUID form: {value}"
+            "invalid user instrument id {value:?}; expected user:<canonical-lowercase-uuid> for an existing instrument; omit instrumentId to generate a new id"
         ));
     }
     Ok(normalized)
@@ -549,6 +551,13 @@ mod tests {
         );
         assert!(parse_user_instrument_id("builtin:01-bass").is_err());
         assert!(parse_user_instrument_id("user:ABC").is_err());
+        let store =
+            UserInstrumentStore::new(Path::new("missing-root"), Path::new("missing-sonalloy"));
+        let error = store
+            .save(Path::new("missing-definition.json"), Some("user:ABC"))
+            .unwrap_err();
+        assert!(error.contains("user:<canonical-lowercase-uuid>"));
+        assert!(error.contains("omit instrumentId"));
     }
 
     #[test]

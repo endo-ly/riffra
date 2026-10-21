@@ -193,6 +193,8 @@ Instrumentの割り当ては `instrument apply`(`builtin:<presetId>` または `
 riffra --attach instrument midi set --track-id track:01j... --settings-json '{"transposeSemitones":12,"playableNotes":{"type":"range","start":36,"end":84},"keyswitches":[{"note":24,"name":"C0"}]}'
 ```
 
+User Instrumentは `instrument save` で登録し、応答のIDを割当へ渡す。定義から素材への参照を保つため、定義JSONと相対パスの素材を同じパッケージ構成で用意する。複数Trackへまとめて割り当てるときは、`session apply` に `instrument.apply` を含める。
+
 ### Missing 復旧
 
 欠落AssetやPluginは `missing relink` / `disable-plugin` / `replace-plugin` で復旧する。欠落の一覧表示(`missing list`)は Live Host 専用である。
@@ -227,7 +229,7 @@ riffra --data-root ./riffra-data serve --safe-mode
 
 ### レンダリング(非同期ジョブ)
 
-`render start` の `--expected-sequence` はRender対象のCanonical snapshotを固定する。ConflictならWAVを作成せず、最新状態をInspectしてからRenderし直す。応答は `type: "job"` のジョブIDで、ワンショットは `job wait`(無指定ならterminal stateまで待機)、interactiveは `job get` の繰り返しで追跡し、停止には `job cancel` を使う。出力はDataRootの `renders/` 配下へ書き出される。`plugin scan-start` も同じ非同期ジョブである。
+`render start` の `--expected-sequence` はRender対象のCanonical snapshotを固定する。ConflictならWAVを作成せず、最新状態をInspectしてからRenderし直す。応答は `type: "job"` のジョブIDで、ワンショットは `job wait`(無指定ならterminal stateまで待機)、interactiveは `job get` の繰り返しで追跡し、停止には `job cancel` を使う。出力はDataRootの `renders/` 配下へ書き出される。`plugin scan-start` と `analysis measure` も同じ非同期ジョブである。`ok: true` は状態取得の成功を表し、Job自体の成功は `state: "completed"` で判断する。
 
 Stem Render(`render stems`)は一度の要求で複数Trackを同じ時間基準のWAVへ書き出す。全WAVで開始Tick、終了Tick、Sample Rate、フレーム数を揃え、個別の正規化とMasteringは行わない。共有する非線形Effectでは、Stemの合計と全体Mixが一致しない場合がある。StemとMasteringの設計上の扱いは[音声エンジンの設計](../../../../docs/audio-engine.md)を参照。
 
@@ -240,7 +242,30 @@ Job結果と`render.json`の`measurements`には完成WAVのSample Peakとラウ
 | `loudness.truePeak`                | 最大True Peakの`db`・`seconds`・`position`。無音なら`null`。位置は100msフレーム単位 |
 | `bands.lowDb` / `midDb` / `highDb` | 250Hz未満・250Hz〜4kHz・4kHz超のRMSレベル(dBFS)。無音なら`null`。帯域間比較の目安   |
 
-区間の切り分けは書き出し時点の正準Markerで決まり、全体の`measurements.loudness`が`unavailable`なら各区間の`loudness`も`null`になる。
+区間の切り分けは書き出し時点の正準Markerで決まる。`measurements.sectionLoudnessState.state` が `measured` なら無音・短区間の値が `null` でも測定は正常に完了している。`unavailable` なら `reason` を確認する。全体と区間のラウドネスは独立して測定し、区間ラウドネスの測定が失敗してもWAVと帯域値は保持する。
+
+### 保存済みWAVの区間測定
+
+セクション間の音量差やステム間の帯域バランスを比較するときは、比較したい区間をまとめて `analysis measure` へ渡す。Render IDは `render list` の結果から取得する。
+
+```json
+{
+  "renderId": "render-...",
+  "ranges": [
+    { "name": "Intro", "startSeconds": 0, "endSeconds": 8 },
+    { "name": "Verse", "startSeconds": 8, "endSeconds": 24 }
+  ]
+}
+```
+
+外部WAVの比較では、上の入力の `renderId` を `"paths": ["C:/music/drums.wav", "C:/music/bass.wav"]` に置き換える。
+
+```powershell
+riffra --attach analysis measure --file measurements.json
+riffra --attach job wait --id job:analysis-measure:0 --timeout-ms 120000
+```
+
+待機には開始応答のJob IDを使い、結果の `sources` のパス・Track情報を比較対象と照合する。区間True Peakの位置はWAV先頭からの秒数なので、プロジェクト上の位置と混同しない。帯域値・測定状態の読み方はRenderと共通である。
 
 ### Library・解析・Preview
 

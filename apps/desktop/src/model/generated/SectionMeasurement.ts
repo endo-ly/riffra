@@ -22,7 +22,7 @@ export type SectionMeasurement = {
    */
   endSeconds: number;
   /**
-   * `None` when whole-file loudness is unavailable.
+   * `None` when section loudness measurement is unavailable.
    */
   loudness: SectionLoudness | null;
   bands: BandLevels;

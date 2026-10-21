@@ -1126,6 +1126,9 @@ impl HostState {
                     .transpose()
                     .map_err(command_error)?,
             ),
+            RuntimeCommand::AnalysisMeasure(params) => {
+                ControlOutput::Job(Some(self.start_analysis_measure(params)?))
+            }
             RuntimeCommand::AnalysisStart(params) => {
                 let path = if let Some(asset_id) = params.asset_id {
                     let id = riffra_core::AssetId::from_normalized(&asset_id).map_err(|error| {
@@ -1337,6 +1340,44 @@ impl HostState {
         jobs::to_background_status(status).map_err(command_error)
     }
 
+    fn start_analysis_measure(
+        &self,
+        params: crate::api::params::AnalysisMeasureParams,
+    ) -> Result<BackgroundJobStatus, ProtocolError> {
+        let jobs = self.jobs.clone();
+        let render_access = params
+            .render_id
+            .as_ref()
+            .map(|_| jobs.lock_render_access())
+            .transpose()
+            .map_err(command_error)?;
+        let sources =
+            analysis::measurement_sources(&self.data_root, &params).map_err(command_error)?;
+        let (id, status) = jobs.start_analysis_measure(params.render_id.clone());
+        drop(render_access);
+        let cancelled = jobs
+            .cancellation_flag(&id)
+            .ok_or_else(|| command_error("analysis job could not be registered"))?;
+        let job_id = id.clone();
+        let worker_jobs = jobs.clone();
+        let data_root = self.data_root.clone();
+        if let Err(error) = jobs.spawn_worker(&id, "riffra-analysis-measure-job", move || {
+            worker_jobs.set_running(&job_id, "Measuring existing WAV files.");
+            match analysis::measure_sources(sources, params, &cancelled, |p, m| {
+                worker_jobs.set_progress(&job_id, p, m)
+            })
+            .and_then(|result| jobs::serialize_result(&result))
+            {
+                Ok(value) => worker_jobs.complete(&job_id, value, "WAV measurements completed."),
+                Err(error) => jobs::fail(&worker_jobs, &data_root, &job_id, error),
+            }
+        }) {
+            jobs.fail(&id, error.clone());
+            return Err(command_error(error));
+        }
+        jobs::to_background_status(status).map_err(command_error)
+    }
+
     fn start_render_stems(
         &self,
         current: CanonicalState,
@@ -1374,6 +1415,7 @@ impl HostState {
                     output_directory: params.output_directory,
                 },
                 cancelled.as_ref(),
+                |p, m| worker_jobs.set_progress(&job_id, p, m),
             ) {
                 Ok(pending) => match jobs::serialize_result(&pending.result) {
                     Ok(value) => {
@@ -2004,9 +2046,24 @@ mod tests {
                 data_root.join("sonalloy"),
             ),
         };
+        std::fs::create_dir_all(data_root.join("renders/render-inaccessible/render.json")).unwrap();
         let host = DawHost::open(config, Arc::new(crate::NoopHostEventSink)).unwrap();
         let expected_project_id = host.bootstrap().unwrap().project_state.active_project_id;
         let descriptor = read_endpoint(&data_root).unwrap();
+        let history = host.dispatch_control(ControlRequest::new(
+            "history",
+            "render.list",
+            serde_json::json!({}),
+            None,
+        ));
+        assert!(history.ok);
+        let ControlOutput::RenderList(renders) =
+            ControlOutput::try_from(history.result.unwrap()).unwrap()
+        else {
+            panic!("render.list returns history diagnostics");
+        };
+        assert_eq!(renders.len(), 1);
+        assert!(!renders[0].diagnostics.is_empty());
 
         {
             let mut stream = transport::connect(descriptor.endpoint()).unwrap();

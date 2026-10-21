@@ -161,7 +161,18 @@ export function RenderHistoryPanel({ api, refreshToken }: Props) {
                       <dt>True peak</dt>
                       <dd>{measurement.loudness.measurement.truePeakDb.toFixed(2)} dBTP</dd>
                     </>
-                  ) : null}
+                  ) : (
+                    <>
+                      <dt>Loudness measurement</dt>
+                      <dd>{measurement.loudness.reason}</dd>
+                    </>
+                  )}
+                  {measurement.sectionLoudnessState.state === 'unavailable' && (
+                    <>
+                      <dt>Section loudness measurement</dt>
+                      <dd>{measurement.sectionLoudnessState.reason}</dd>
+                    </>
+                  )}
                 </dl>
               ))}
               {render.diagnostics.map((diagnostic) => (

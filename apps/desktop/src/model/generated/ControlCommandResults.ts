@@ -203,6 +203,7 @@ export type ControlCommandResults = {
   'render.clean': OutputValue<'renderDelete'>;
   'job.get': OutputValue<'job'>;
   'job.cancel': OutputValue<'job'>;
+  'analysis.measure': OutputValue<'job'>;
   'analysis.start': OutputValue<'analysis'>;
   'library.search': OutputValue<'library'>;
   'library.asset.update': OutputValue<'libraryAsset'>;

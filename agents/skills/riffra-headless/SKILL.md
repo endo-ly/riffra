@@ -85,7 +85,11 @@ Sonalloy Bundleから制作を始める場合は`project import-sonalloy <BUNDLE
 
 ## ミックス
 
-ミックスの正本は既存の正準状態であり、BusやSendのようなMixer専用の正準モデルは存在しない。TrackとClipのパラメータ、Master音量、Automationの組み合わせで表現する。Group・Return・Send・Sidechainは `mixer` コマンド群で編集する。ミックス状態は `track list` と `session inspect` で確認し、聞こえの確認はRenderで行う。
+Track・Clipの音量や定位に加え、バスへの接続やセンドを使ってミックスを組み立てる。Group・Return・Send・Sidechainは `mixer` コマンド群で編集する。ミックス状態は `mixer get`、`track list`、`session inspect` で確認し、聞こえと測定値の確認はRenderで行う。
+
+## 書き出しと評価
+
+楽曲を編集したら `render start`、各パートを比較するなら `render stems` でWAVを作成する。返されたJob IDを `job wait` へ渡し、完了結果を確認する。区間や比較対象を変えて測定するだけなら、`render list` のRender IDまたは保存済みWAVを `analysis measure` へ渡す。測定は楽曲やMarkerを編集せず、再レンダリングも行わない。音源・ノート・ミックスを変更した音を評価するときは、新しいWAVを書き出す。
 
 ## Host discoveryとDataRoot
 

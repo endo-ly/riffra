@@ -166,6 +166,33 @@ mod tests {
                 .len(),
             1
         );
+        let pasted = dispatcher
+            .dispatch(
+                command(
+                    "clip.paste",
+                    json!({"midiClipIds":[clip_id], "startTick":3840}),
+                ),
+                None,
+            )
+            .unwrap();
+        assert_eq!(mutated_session(&pasted).arrangement.midi_clips.len(), 2);
+        let removed = dispatcher
+            .dispatch(
+                command("clip.remove", json!({"midiClipIds":[clip_id]})),
+                None,
+            )
+            .unwrap();
+        assert_eq!(mutated_session(&removed).arrangement.midi_clips.len(), 1);
+        assert!(
+            dispatcher
+                .dispatch(command("clip.remove", json!({})), None)
+                .is_err()
+        );
+        assert!(
+            dispatcher
+                .dispatch(command("clip.paste", json!({"startTick":0})), None)
+                .is_err()
+        );
         let _ = fs::remove_dir_all(root);
     }
 }

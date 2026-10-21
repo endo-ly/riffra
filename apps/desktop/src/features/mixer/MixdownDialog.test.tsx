@@ -77,6 +77,10 @@ it.each(['measured', 'unavailable'] as const)(
           : null,
       measurements: {
         sections: [],
+        sectionLoudnessState:
+          state === 'measured'
+            ? { state: 'measured' }
+            : { state: 'unavailable', reason: 'section log is invalid' },
         samplePeakDbfs: state === 'measured' ? -3.01 : 1.94,
         loudness:
           state === 'measured'
@@ -165,6 +169,7 @@ it.each(['measured', 'unavailable'] as const)(
       expect(screen.getByText(/True Peak ceiling limited the gain/)).toHaveTextContent('0.08 dB');
     } else {
       expect(screen.getByText('ffmpeg is unavailable')).toBeInTheDocument();
+      expect(screen.getByText('section log is invalid')).toBeInTheDocument();
       expect(screen.getByText('1.94 dBFS')).toBeInTheDocument();
       expect(screen.getByRole('alert')).toHaveTextContent('sample peak exceeds 0 dbfs');
     }

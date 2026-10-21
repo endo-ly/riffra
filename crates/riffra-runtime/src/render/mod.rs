@@ -13,15 +13,15 @@ use std::{
     sync::atomic::AtomicBool,
 };
 
-mod ffmpeg;
 mod history;
+mod manifest;
 mod mastering;
 mod sections;
 mod worker;
 
 #[cfg(test)]
 use history::{RenderDeletionMarker, write_deletion_marker};
-pub(crate) use history::{delete_render, export_render, list_renders};
+pub(crate) use history::{delete_render, export_render, list_renders, resolve_measurement_sources};
 pub(crate) use worker::RenderWorker;
 
 /// Platform-independent request for rendering a prepared Execution Graph.
@@ -554,11 +554,13 @@ pub(crate) fn render_stems_with_cancellation(
     renderer: &RenderWorker,
     context: StemRenderContext<'_>,
     cancelled: &AtomicBool,
+    progress: impl FnMut(f32, String),
 ) -> Result<PendingRenderStems, String> {
     render_stems_with_renderer(
         context,
         |request| renderer.render_timeline_offline_cancellable(request, cancelled),
         Some(cancelled),
+        progress,
     )
 }
 
@@ -566,6 +568,7 @@ fn render_stems_with_renderer(
     context: StemRenderContext<'_>,
     mut render: impl FnMut(OfflineRenderRequest) -> Result<Vec<String>, String>,
     cancelled: Option<&AtomicBool>,
+    mut progress: impl FnMut(f32, String),
 ) -> Result<PendingRenderStems, String> {
     let StemRenderContext {
         data_root,
@@ -616,7 +619,19 @@ fn render_stems_with_renderer(
     let mut frames = None;
     let mut section_plan = None;
 
+    let total = selected_tracks.len();
+    progress(0.0, format!("starting {total} stems"));
     for (index, track) in selected_tracks.into_iter().enumerate() {
+        progress(
+            index as f32 / total as f32,
+            format!(
+                "rendering stem {}/{}: {} ({})",
+                index + 1,
+                total,
+                track.name,
+                track.id
+            ),
+        );
         if cancelled.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire)) {
             return Err("Timeline render was cancelled.".into());
         }
@@ -635,7 +650,8 @@ fn render_stems_with_renderer(
             &options,
             Some(&conditions),
             Some(output_path),
-        )?;
+        )
+        .map_err(|e| format!("stem {} ({}) preparation failed: {e}", track.name, track.id))?;
         if cancelled.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire)) {
             return Err("Timeline render was cancelled.".into());
         }
@@ -649,22 +665,35 @@ fn render_stems_with_renderer(
             sample_rate: plan.sample_rate,
             block_size: plan.block_size,
             normalize: false,
-        })?;
+        })
+        .map_err(|e| format!("stem {} ({}) rendering failed: {e}", track.name, track.id))?;
         if cancelled.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire)) {
             return Err("Timeline render was cancelled.".into());
         }
         if !plan.output_path.is_file() {
-            return Err("Native Offline Render completed without producing its WAV output.".into());
+            return Err(format!(
+                "stem {} ({}) rendering completed without wav output",
+                track.name, track.id
+            ));
         }
-        let (sample_rate, stem_frames) = riffra_host::read_wav_metadata(&plan.output_path)?;
+        let (sample_rate, stem_frames) = riffra_host::read_wav_metadata(&plan.output_path)
+            .map_err(|e| {
+                format!(
+                    "stem {} ({}) wav validation failed: {e}",
+                    track.name, track.id
+                )
+            })?;
         if sample_rate != conditions.sample_rate {
             return Err(format!(
-                "Rendered stem sample rate differs from the shared rate: expected {}, got {sample_rate}.",
-                conditions.sample_rate
+                "stem {} ({}) wav validation failed: expected sample rate {}, got {sample_rate}",
+                track.name, track.id, conditions.sample_rate
             ));
         }
         if frames.is_some_and(|expected| expected != stem_frames) {
-            return Err("Rendered stems do not have a shared frame count.".into());
+            return Err(format!(
+                "stem {} ({}) wav validation failed: stems do not have a shared frame count",
+                track.name, track.id
+            ));
         }
         frames = Some(stem_frames);
         let section_plan = section_plan.get_or_insert_with(|| {
@@ -676,6 +705,16 @@ fn render_stems_with_renderer(
                 stem_frames as f64 / f64::from(sample_rate),
             )
         });
+        progress(
+            index as f32 / total as f32,
+            format!(
+                "measuring stem {}/{}: {} ({})",
+                index + 1,
+                total,
+                track.name,
+                track.id
+            ),
+        );
         let (measurements, mut warnings) = mastering::measure_output(
             &plan.output_path,
             sample_rate,
@@ -683,7 +722,8 @@ fn render_stems_with_renderer(
             None,
             section_plan,
             cancelled,
-        )?;
+        )
+        .map_err(|e| format!("stem {} ({}) measurement failed: {e}", track.name, track.id))?;
         warnings.extend(plan.dependency_warnings.iter().cloned());
         warnings.append(&mut automation_warnings);
         completed.push((
@@ -693,6 +733,10 @@ fn render_stems_with_renderer(
             measurements,
             warnings,
         ));
+        progress(
+            (index + 1) as f32 / total as f32,
+            format!("completed {}/{} stems", index + 1, total),
+        );
     }
 
     if cancelled.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire)) {
@@ -1330,6 +1374,7 @@ mod tests {
                 Ok(Vec::new())
             },
             None,
+            |_, _| {},
         )
         .unwrap();
 
@@ -1518,6 +1563,7 @@ mod tests {
         )
         .unwrap();
         let mut requests = Vec::new();
+        let mut stages = Vec::new();
         let pending = render_stems_with_renderer(
             StemRenderContext {
                 data_root: &root,
@@ -1552,6 +1598,7 @@ mod tests {
                 Ok(Vec::new())
             },
             None,
+            |p, message| stages.push((p, message)),
         )
         .unwrap();
 
@@ -1570,6 +1617,16 @@ mod tests {
                 && request.5 == requests[0].5
                 && !request.6
         }));
+        assert!(stages.windows(2).all(|pair| pair[0].0 <= pair[1].0));
+        assert!(
+            stages
+                .iter()
+                .any(|(_, message)| message.contains("rendering stem 2/3")
+                    && message.contains("solo"))
+        );
+        assert!(stages.iter().any(
+            |(_, message)| message.contains("measuring stem 3/3") && message.contains("other")
+        ));
         assert_eq!(pending.result.start_tick, 0);
         assert_eq!(pending.result.end_tick, 3_840);
         assert_eq!(pending.result.sample_rate, 44_100);
@@ -1597,6 +1654,62 @@ mod tests {
         )
         .unwrap();
         assert_eq!(manifest, serde_json::to_value(&pending.result).unwrap());
+        let mut old_manifest = manifest;
+        for stem in old_manifest["stems"].as_array_mut().unwrap() {
+            stem["measurements"]
+                .as_object_mut()
+                .unwrap()
+                .remove("sectionLoudnessState");
+        }
+        let manifest_path = pending.output.directory.join("render.json");
+        fs::write(&manifest_path, serde_json::to_vec(&old_manifest).unwrap()).unwrap();
+        manifest::read(&manifest_path).unwrap();
+        let upgraded: RenderStemsResult =
+            serde_json::from_slice(&fs::read(manifest_path).unwrap()).unwrap();
+        for (actual, expected) in upgraded.stems.iter().zip(&pending.result.stems) {
+            assert!(matches!(
+                actual.measurements.section_loudness_state,
+                crate::api::output::MeasurementState::Measured
+            ));
+            let mut actual = serde_json::to_value(actual).unwrap();
+            let mut expected = serde_json::to_value(expected).unwrap();
+            actual["measurements"]
+                .as_object_mut()
+                .unwrap()
+                .remove("sectionLoudnessState");
+            expected["measurements"]
+                .as_object_mut()
+                .unwrap()
+                .remove("sectionLoudnessState");
+            assert_eq!(actual, expected);
+        }
+        let render_id = Path::new(&pending.result.directory)
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap();
+        let params = crate::api::params::AnalysisMeasureParams {
+            render_id: Some(render_id.into()),
+            paths: None,
+            ranges: vec![crate::api::params::MeasurementRange {
+                name: None,
+                start_seconds: 0.0,
+                end_seconds: 128.0 / 44_100.0,
+            }],
+        };
+        let sources = crate::analysis::measurement_sources(&root, &params).unwrap();
+        assert_eq!(sources.len(), 3);
+        for (source, stem) in sources.iter().zip(&pending.result.stems) {
+            assert_eq!(source.path, Path::new(&stem.path).canonicalize().unwrap());
+            assert_eq!(source.track_id.as_deref(), Some(stem.track_id.as_str()));
+            assert_eq!(source.track_name.as_deref(), Some(stem.track_name.as_str()));
+        }
+        let mut invalid_params = params.clone();
+        invalid_params.paths = Some(vec!["unused.wav".into()]);
+        assert!(crate::analysis::measurement_sources(&root, &invalid_params).is_err());
+        invalid_params = params;
+        invalid_params.ranges[0].end_seconds = 1.0;
+        assert!(crate::analysis::measurement_sources(&root, &invalid_params).is_err());
         let directory = PathBuf::from(&pending.result.directory);
         let asset_ids = pending
             .result
@@ -1834,6 +1947,7 @@ mod tests {
                 output_directory: None,
             },
             &AtomicBool::new(false),
+            |_, _| {},
         )
         .unwrap();
 
@@ -1993,12 +2107,17 @@ mod tests {
                 Ok(Vec::new())
             },
             None,
+            |_, _| {},
         );
 
         let Err(error) = result else {
             panic!("different frame counts should fail the stem render");
         };
-        assert_eq!(error, "Rendered stems do not have a shared frame count.");
+        assert!(
+            error.contains("bass")
+                && error.contains("wav validation failed")
+                && error.contains("shared frame count")
+        );
         assert_eq!(calls, 2);
         assert_eq!(fs::read_dir(root.join("renders")).unwrap().count(), 0);
         assert!(
@@ -2076,6 +2195,7 @@ mod tests {
                 Ok(Vec::new())
             },
             None,
+            |_, _| {},
         );
 
         assert!(matches!(
@@ -2361,6 +2481,45 @@ mod tests {
             .unwrap()
             .to_string_lossy()
             .into_owned();
+        let manifest_path = Path::new(&render.path)
+            .parent()
+            .unwrap()
+            .join("render.json");
+        let mut manifest = serde_json::to_value(&render).unwrap();
+        manifest["measurements"]
+            .as_object_mut()
+            .unwrap()
+            .remove("sectionLoudnessState");
+        fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        let original = fs::read(&manifest_path).unwrap();
+        let blocked_temporary = manifest_path.with_extension("json.tmp");
+        fs::create_dir(&blocked_temporary).unwrap();
+        let dispatcher = crate::Dispatcher::open(
+            root.clone(),
+            crate::test_support::prepare_built_in_resource_root(&root),
+        )
+        .unwrap();
+        drop(dispatcher);
+        assert_eq!(fs::read(&manifest_path).unwrap(), original);
+        let inaccessible = list_renders(&root).unwrap();
+        assert!(inaccessible[0].diagnostics[0].contains("could not be saved"));
+        assert_eq!(fs::read(&manifest_path).unwrap(), original);
+        fs::remove_dir(&blocked_temporary).unwrap();
+        resolve_measurement_sources(&root, &render_id).unwrap();
+        let migrated = fs::read(&manifest_path).unwrap();
+        let saved: RenderResult = serde_json::from_slice(&migrated).unwrap();
+        assert!(matches!(
+            saved.measurements.section_loudness_state,
+            crate::api::output::MeasurementState::Measured
+        ));
+        fs::create_dir(&blocked_temporary).unwrap();
+        let sources = resolve_measurement_sources(&root, &render_id).unwrap();
+        assert_eq!(fs::read(&manifest_path).unwrap(), migrated);
+        fs::remove_dir(&blocked_temporary).unwrap();
+        assert_eq!(
+            sources[0].path,
+            Path::new(&render.path).canonicalize().unwrap()
+        );
         export_render(&root, &render_id, output.to_str().unwrap()).unwrap();
 
         let listed = list_renders(&root).unwrap();
@@ -2374,6 +2533,33 @@ mod tests {
         assert!(listed[0].files[0].asset_registered);
         assert!(listed[0].diagnostics.is_empty());
 
+        let jobs = crate::jobs::JobRegistry::default();
+        let (analysis_id, _) = jobs.start_analysis_measure(Some(render_id.clone()));
+        let _ = jobs.start_analysis_measure(None);
+        let _ = jobs.start_analysis_measure(Some("render-unrelated".into()));
+        let store = riffra_host::ProjectStore::new(&root);
+        let project = store.initialize().unwrap();
+        for phase in 0..3 {
+            if phase == 1 {
+                jobs.set_running(&analysis_id, "measuring");
+            }
+            if phase == 2 {
+                jobs.cancel(&analysis_id).unwrap();
+            }
+            let error = delete_render(
+                &root,
+                &store,
+                &project.project_id,
+                &CreativeSession::new(1),
+                std::iter::empty(),
+                &jobs,
+                &render_id,
+            )
+            .unwrap_err();
+            assert!(error.contains(&analysis_id));
+            assert!(Path::new(&render.path).is_file());
+        }
+        jobs.mark_cancelled(&analysis_id);
         let malformed_directory = root.join("renders").join("render-32-damaged");
         fs::create_dir(&malformed_directory).unwrap();
         fs::write(
@@ -2389,10 +2575,14 @@ mod tests {
         assert_eq!(damaged.kind, RenderKind::Unknown);
         assert_eq!(damaged.created_at_ms, Some(32));
         assert_eq!(damaged.diagnostics.len(), 1);
+        assert_eq!(
+            fs::read(malformed_directory.join("render.json")).unwrap(),
+            b"not a render manifest"
+        );
+
         fs::remove_dir_all(malformed_directory).unwrap();
 
         let project = riffra_host::ProjectStore::new(&root).initialize().unwrap();
-        let jobs = crate::jobs::JobRegistry::default();
         let deleted = delete_render(
             &root,
             &riffra_host::ProjectStore::new(&root),
@@ -2442,7 +2632,7 @@ mod tests {
             &render_id,
         )
         .unwrap_err();
-        assert!(active_job_error.contains("active Render jobs"));
+        assert!(active_job_error.contains("active jobs"));
         let current_error = delete_render(
             &root,
             &store,
@@ -2775,6 +2965,7 @@ mod tests {
                 Ok(Vec::new())
             },
             None,
+            |_, _| {},
         )
         .unwrap();
         assert_eq!(

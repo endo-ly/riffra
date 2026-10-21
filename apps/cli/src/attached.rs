@@ -13,6 +13,12 @@ use std::io::{BufRead, Write};
 use std::thread;
 use std::time::{Duration, Instant};
 
+/// A terminal Job response and its success outcome for one-shot CLI output.
+pub(super) struct WaitedJob {
+    pub(super) response: ControlResponse,
+    pub(super) completed: bool,
+}
+
 /// Client-only backend for commands owned by a running Riffra Host.
 pub struct AttachedBackend {
     client: LocalHostClient,
@@ -57,11 +63,7 @@ impl AttachedBackend {
     }
 
     /// Polls an existing background job until it reaches a terminal state.
-    pub fn wait_for_job(
-        &self,
-        job_id: &str,
-        timeout_ms: Option<u64>,
-    ) -> Result<ControlResponse, String> {
+    pub fn wait_for_job(&self, job_id: &str, timeout_ms: Option<u64>) -> Result<WaitedJob, String> {
         let deadline =
             timeout_ms.map(|timeout_ms| Instant::now() + Duration::from_millis(timeout_ms));
         loop {
@@ -75,7 +77,10 @@ impl AttachedBackend {
                 None,
             )?;
             if !response.ok {
-                return Ok(response);
+                return Ok(WaitedJob {
+                    response,
+                    completed: false,
+                });
             }
             let result = response
                 .result
@@ -85,7 +90,8 @@ impl AttachedBackend {
                 Ok(ControlOutput::Job(Some(
                     BackgroundJobStatus::Scan { state, .. }
                     | BackgroundJobStatus::Render { state, .. }
-                    | BackgroundJobStatus::RenderStems { state, .. },
+                    | BackgroundJobStatus::RenderStems { state, .. }
+                    | BackgroundJobStatus::AnalysisMeasure { state, .. },
                 ))) => state,
                 Ok(ControlOutput::Job(None)) => {
                     return Err(format!("background job was not found: {job_id}"));
@@ -96,7 +102,10 @@ impl AttachedBackend {
                 state,
                 JobState::Cancelled | JobState::Completed | JobState::Failed
             ) {
-                return Ok(response);
+                return Ok(WaitedJob {
+                    response,
+                    completed: state == JobState::Completed,
+                });
             }
             if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
                 return Err(format!("timed out waiting for background job: {job_id}"));

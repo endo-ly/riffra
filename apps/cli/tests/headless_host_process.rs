@@ -401,6 +401,8 @@ fn headless_host_process_covers_lifecycle_and_mode_contracts() {
         assert_eq!(audio["result"]["type"], "audioStatus");
     }
 
+    assert_measurement_jobs(&mut host, instance_id);
+
     let shutdown = success_json(
         attached(instance_id, &["host", "shutdown"]),
         "host.shutdown",
@@ -422,4 +424,128 @@ fn headless_host_process_covers_lifecycle_and_mode_contracts() {
     );
     assert_eq!(reopened["result"]["type"], "session");
     assert_eq!(reopened["sequence"], 0);
+}
+
+fn assert_measurement_jobs(host: &mut RunningHost, instance_id: &str) {
+    let root = host.data_root().to_path_buf();
+    let before = success_json(
+        attached(instance_id, &["session", "get"]),
+        "session before measurement",
+    );
+    let write_wav = |path: &Path, seconds: u32| {
+        let size = 48_000 * seconds * 2;
+        let mut file = File::create(path).unwrap();
+        file.write_all(b"RIFF").unwrap();
+        file.write_all(&(36 + size).to_le_bytes()).unwrap();
+        file.write_all(b"WAVEfmt ").unwrap();
+        file.write_all(&16_u32.to_le_bytes()).unwrap();
+        file.write_all(&1_u16.to_le_bytes()).unwrap();
+        file.write_all(&1_u16.to_le_bytes()).unwrap();
+        file.write_all(&48_000_u32.to_le_bytes()).unwrap();
+        file.write_all(&96_000_u32.to_le_bytes()).unwrap();
+        file.write_all(&2_u16.to_le_bytes()).unwrap();
+        file.write_all(&16_u16.to_le_bytes()).unwrap();
+        file.write_all(b"data").unwrap();
+        file.write_all(&size.to_le_bytes()).unwrap();
+        file.write_all(&vec![0; size as usize]).unwrap();
+    };
+    let first = root.join("first.wav");
+    let second = root.join("second.wav");
+    write_wav(&first, 1);
+    write_wav(&second, 2);
+    let input = root.join("measure.json");
+    let ranges = serde_json::json!([
+        {"name":"later","startSeconds":0.5,"endSeconds":1.0},
+        {"name":"overlap","startSeconds":0.25,"endSeconds":0.75}
+    ]);
+    fs::write(
+        &input,
+        serde_json::to_vec(&serde_json::json!({"paths":[second, first], "ranges":ranges})).unwrap(),
+    )
+    .unwrap();
+    let started = success_json(
+        attached(
+            instance_id,
+            &["analysis", "measure", "--file", input.to_str().unwrap()],
+        ),
+        "analysis.measure",
+    );
+    let id = started["result"]["value"]["id"].as_str().unwrap();
+
+    let completed = success_json(
+        attached(
+            instance_id,
+            &["job", "wait", "--id", id, "--timeout-ms", "30000"],
+        ),
+        "completed job wait",
+    );
+    assert_eq!(completed["result"]["value"]["state"], "completed");
+    assert_eq!(completed["result"]["value"]["kind"], "analysisMeasure");
+    let sources = &completed["result"]["value"]["result"]["sources"];
+    assert_eq!(sources[0]["path"], second.to_string_lossy().as_ref());
+    assert_eq!(sources[1]["path"], first.to_string_lossy().as_ref());
+    assert_eq!(sources[0]["sections"][0]["name"], "later");
+    assert_eq!(sources[0]["sections"][1]["name"], "overlap");
+    let after = success_json(
+        attached(instance_id, &["session", "get"]),
+        "session after measurement",
+    );
+    assert_eq!(before["sequence"], after["sequence"]);
+    assert_eq!(before["result"], after["result"]);
+
+    let failed = success_json(
+        attached(instance_id, &["render", "start"]),
+        "empty render job start",
+    );
+    let id = failed["result"]["value"]["id"].as_str().unwrap();
+    let failure = structured_failure_json(
+        attached(
+            instance_id,
+            &["job", "wait", "--id", id, "--timeout-ms", "30000"],
+        ),
+        "failed job wait",
+    );
+    assert_eq!(failure["ok"], true);
+    assert_eq!(failure["result"]["value"]["state"], "failed");
+    assert!(
+        !failure["result"]["value"]["message"]
+            .as_str()
+            .unwrap()
+            .is_empty()
+    );
+
+    write_wav(&second, 120);
+    fs::write(
+        &input,
+        serde_json::to_vec(&serde_json::json!({"paths":vec![second; 20], "ranges":ranges}))
+            .unwrap(),
+    )
+    .unwrap();
+    let started = success_json(
+        attached(
+            instance_id,
+            &["analysis", "measure", "--file", input.to_str().unwrap()],
+        ),
+        "long analysis start",
+    );
+    let id = started["result"]["value"]["id"].as_str().unwrap();
+    let timeout = attached(
+        instance_id,
+        &["job", "wait", "--id", id, "--timeout-ms", "0"],
+    );
+    assert!(!timeout.status.success());
+    assert!(String::from_utf8_lossy(&timeout.stderr).contains("timed out"));
+    success_json(
+        attached(instance_id, &["job", "cancel", "--id", id]),
+        "analysis cancellation",
+    );
+    let cancelled = structured_failure_json(
+        attached(
+            instance_id,
+            &["job", "wait", "--id", id, "--timeout-ms", "30000"],
+        ),
+        "cancelled job wait",
+    );
+    assert_eq!(cancelled["ok"], true);
+    assert_eq!(cancelled["result"]["value"]["state"], "cancelled");
 }

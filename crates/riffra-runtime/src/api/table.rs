@@ -428,6 +428,7 @@ control_commands! {
         RenderClean = "render.clean" (RenderCleanParams) -> RenderDelete, project;
         JobGet = "job.get" (IdParams) -> Job, host;
         JobCancel = "job.cancel" (IdParams) -> Job, host;
+        AnalysisMeasure = "analysis.measure" (AnalysisMeasureParams) -> Job, host;
         AnalysisStart = "analysis.start" (AnalysisParams) -> Analysis, host;
 
         LibrarySearch = "library.search" (LibrarySearchParams) -> Library, host;

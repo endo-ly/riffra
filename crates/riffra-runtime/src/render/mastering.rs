@@ -3,28 +3,14 @@
 //! Mastering applies one uniform gain towards the target integrated loudness,
 //! limited by the target true peak ceiling, and never reshapes dynamics.
 
-use super::ffmpeg::run;
-use super::sections::{self, BandMeter, SectionPlan};
+use super::sections::SectionPlan;
+use crate::analysis::ffmpeg::run;
+use crate::analysis::measurement::{TemporaryDirectory, loudnorm, measurement};
 use crate::api::output::{
     AudioMeasurements, LoudnessMeasurement, LoudnessReadout, MasteringReport,
 };
 use riffra_core::LoudnessMastering;
-use serde_json::Value;
-use std::{
-    fs,
-    path::Path,
-    sync::atomic::{AtomicBool, Ordering},
-};
-
-struct TemporaryDirectory(std::path::PathBuf);
-
-impl Drop for TemporaryDirectory {
-    fn drop(&mut self) {
-        if let Err(error) = fs::remove_dir_all(&self.0) {
-            tracing::error!(%error, "mastering temporary files could not be removed");
-        }
-    }
-}
+use std::{fs, path::Path, sync::atomic::AtomicBool};
 
 pub(super) fn master(
     input: &Path,
@@ -121,84 +107,51 @@ pub(super) fn measure_output(
     section_plan: &SectionPlan<'_>,
     cancelled: Option<&AtomicBool>,
 ) -> Result<(AudioMeasurements, Vec<String>), String> {
-    let wav = riffra_host::read_wav_structure(input)?;
-    if !matches!(wav.format, 1 | 3)
-        || !matches!(wav.bits_per_sample, 8 | 16 | 24 | 32)
-        || (wav.format == 3 && wav.bits_per_sample != 32)
-    {
-        return Err("completed wav sample format is unsupported".into());
+    let ranges = section_plan
+        .ranges
+        .iter()
+        .map(|s| crate::api::params::MeasurementRange {
+            name: s.name.clone(),
+            start_seconds: s.start_seconds,
+            end_seconds: s.end_seconds,
+        })
+        .collect::<Vec<_>>();
+    let measured = crate::analysis::measurement::measure(input, &ranges, cancelled)?;
+    if measured.sample_rate != sample_rate {
+        return Err("completed wav sample rate differs from render plan".into());
     }
-    use std::io::{Read, Seek, SeekFrom};
-    let mut file = fs::File::open(input)
-        .map_err(|error| format!("completed wav could not be opened: {error}"))?;
-    file.seek(SeekFrom::Start(wav.data_offset as u64))
-        .map_err(|error| format!("completed wav samples could not be located: {error}"))?;
-    let width = usize::from(wav.bits_per_sample / 8);
-    let mut buffer = [0_u8; 24_576];
-    let mut remaining = wav.data_len;
-    let mut peak = 0.0_f64;
+    let crate::api::output::AnalysisMeasuredSource {
+        sample_peak_dbfs,
+        loudness,
+        section_loudness_state,
+        sections: measured_sections,
+        ..
+    } = measured;
+    if target.is_some()
+        && let LoudnessReadout::Unavailable { reason } = &loudness
+    {
+        return Err(format!(
+            "mastered wav final loudness measurement failed: {reason}"
+        ));
+    }
+    let origin = section_plan
+        .timebase
+        .ticks_to_seconds(section_plan.start_tick);
     let mut sections = section_plan.ranges.clone();
-    let mut bands = BandMeter::new(wav.sample_rate, wav.channels, &sections);
-    while remaining > 0 {
-        if cancelled.is_some_and(|flag| flag.load(Ordering::Acquire)) {
-            return Err("timeline render was cancelled".into());
-        }
-        let count = remaining.min(buffer.len());
-        file.read_exact(&mut buffer[..count])
-            .map_err(|error| format!("completed wav samples could not be read: {error}"))?;
-        for sample in buffer[..count].chunks_exact(width) {
-            let value = crate::analysis::decode_sample(sample, wav.format, wav.bits_per_sample)?;
-            peak = peak.max(value.abs());
-            bands.push(value);
-        }
-        remaining -= count;
-    }
-    bands.finish(&mut sections);
-    let sample_peak_dbfs = (peak > 0.0).then(|| 20.0 * peak.log10());
-    let directory = input
-        .parent()
-        .ok_or("completed wav has no parent directory")?
-        .join(format!("measure-{}", riffra_control::new_instance_id()));
-    fs::create_dir(&directory)
-        .map_err(|error| format!("measurement directory could not be created: {error}"))?;
-    let temporary = TemporaryDirectory(directory);
-    let loudness = match loudnorm(
-        input,
-        None,
-        "loudnorm=print_format=json",
-        sample_rate,
-        &temporary.0,
-        cancelled,
-    )
-    .and_then(|report| measurement(&report))
-    {
-        Ok(measurement) => LoudnessReadout::Measured { measurement },
-        Err(reason) => LoudnessReadout::Unavailable { reason },
-    };
-    if cancelled.is_some_and(|flag| flag.load(Ordering::Acquire)) {
-        return Err("timeline render was cancelled".into());
-    }
-    if !sections.is_empty() && matches!(loudness, LoudnessReadout::Measured { .. }) {
-        let bytes_per_sample_frame = f64::from(wav.channels) * f64::from(wav.bits_per_sample / 8);
-        let audio_duration =
-            wav.data_len as f64 / (bytes_per_sample_frame * f64::from(wav.sample_rate));
-        let log = run(
-            input,
-            None,
-            "apad=pad_dur=0.1,ebur128=peak=true:framelog=verbose",
-            sample_rate,
-            &temporary.0,
-            cancelled,
-            "verbose",
-        )?;
-        sections::measure_loudness(
-            &mut sections,
-            &log,
-            section_plan.timebase,
-            section_plan.start_tick,
-            wav.sample_rate,
-            audio_duration,
-        )?;
+    for (section, measured) in sections.iter_mut().zip(measured_sections) {
+        section.bands = measured.bands;
+        section.loudness = measured
+            .loudness
+            .map(|l| crate::api::output::SectionLoudness {
+                integrated_lufs: l.integrated_lufs,
+                true_peak: l.true_peak.map(|p| crate::api::output::SectionPeak {
+                    db: p.db,
+                    seconds: p.seconds,
+                    position: section_plan.timebase.tick_to_musical_position(
+                        section_plan.timebase.seconds_to_ticks(origin + p.seconds),
+                    ),
+                }),
+            });
     }
     let mut warnings = Vec::new();
     if sample_peak_dbfs.is_some_and(|peak| peak > 0.0) {
@@ -225,6 +178,7 @@ pub(super) fn measure_output(
     Ok((
         AudioMeasurements {
             sample_peak_dbfs,
+            section_loudness_state,
             loudness,
             sections,
         },
@@ -234,54 +188,6 @@ pub(super) fn measure_output(
 
 fn volume_filter(gain_db: f64) -> String {
     format!("volume={gain_db}dB")
-}
-
-fn loudnorm(
-    input: &Path,
-    output: Option<&Path>,
-    filter: &str,
-    sample_rate: u32,
-    directory: &Path,
-    cancelled: Option<&AtomicBool>,
-) -> Result<Value, String> {
-    let text = run(
-        input,
-        output,
-        filter,
-        sample_rate,
-        directory,
-        cancelled,
-        "info",
-    )?;
-    for (index, character) in text.char_indices() {
-        if character != '{' {
-            continue;
-        }
-        let mut stream = serde_json::Deserializer::from_str(&text[index..]).into_iter::<Value>();
-        if let Some(Ok(report)) = stream.next()
-            && report.get("input_i").is_some()
-        {
-            return Ok(report);
-        }
-    }
-    Err("ffmpeg loudnorm did not emit a json report".into())
-}
-
-fn number(report: &Value, field: &str) -> Result<f64, String> {
-    report
-        .get(field)
-        .and_then(Value::as_str)
-        .and_then(|value| value.parse::<f64>().ok())
-        .filter(|value| value.is_finite())
-        .ok_or_else(|| format!("ffmpeg loudnorm report is missing finite {field}"))
-}
-
-fn measurement(report: &Value) -> Result<LoudnessMeasurement, String> {
-    Ok(LoudnessMeasurement {
-        integrated_lufs: number(report, "input_i")?,
-        true_peak_db: number(report, "input_tp")?,
-        loudness_range_lu: number(report, "input_lra")?,
-    })
 }
 
 #[cfg(test)]
@@ -418,6 +324,16 @@ mod tests {
                 ]
             );
         }
+        write_float_wav(&path, sample_rate, &vec![0.0; frames as usize]);
+        let target = LoudnessMastering {
+            integrated_lufs: -14.0,
+            true_peak_db: -1.0,
+            loudness_range_lu: 11.0,
+        };
+        let error =
+            measure_output(&path, sample_rate, None, Some(&target), &sections, None).unwrap_err();
+        assert!(error.contains("final loudness measurement failed"));
+        assert!(master(&path, &target, sample_rate, None).is_err());
         assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
         fs::remove_dir_all(root).unwrap();
     }
@@ -448,12 +364,14 @@ mod tests {
         let mut samples = Vec::new();
         for amplitude in [0.25_f32, 0.05_f32] {
             for frame in 0..sample_rate as usize * 2 {
-                samples.push(
+                samples.push(if frame >= sample_rate as usize * 2 - 480 {
+                    0.0
+                } else {
                     (f64::from(frame as u32) * 440.0 * std::f64::consts::TAU
                         / f64::from(sample_rate))
                     .sin() as f32
-                        * amplitude,
-                );
+                        * amplitude
+                });
             }
         }
         write_float_wav(&path, sample_rate, &samples);
@@ -467,7 +385,74 @@ mod tests {
         let (measurements, _) =
             measure_output(&path, sample_rate, None, None, &sections, None).unwrap();
         assert_eq!(measurements.sections.len(), 2);
-        if matches!(measurements.loudness, LoudnessReadout::Unavailable { .. }) {
+        let ranges = vec![
+            crate::api::params::MeasurementRange {
+                name: Some("First".into()),
+                start_seconds: 0.0,
+                end_seconds: 2.0,
+            },
+            crate::api::params::MeasurementRange {
+                name: Some("Second".into()),
+                start_seconds: 2.0,
+                end_seconds: 4.0,
+            },
+            crate::api::params::MeasurementRange {
+                name: Some("Overlap".into()),
+                start_seconds: 1.0,
+                end_seconds: 3.0,
+            },
+        ];
+        let copy = root.join("copy.wav");
+        fs::copy(&path, &copy).unwrap();
+        let params = crate::api::params::AnalysisMeasureParams {
+            render_id: None,
+            paths: Some(vec![
+                copy.to_string_lossy().into_owned(),
+                path.to_string_lossy().into_owned(),
+            ]),
+            ranges,
+        };
+        let sources = crate::analysis::measurement_sources(&root, &params).unwrap();
+        let mut progress = Vec::new();
+        let analyzed =
+            crate::analysis::measure_sources(sources, params, &AtomicBool::new(false), |p, _| {
+                progress.push(p)
+            })
+            .unwrap();
+        assert_eq!(analyzed.sources.len(), 2);
+        assert_eq!(Path::new(&analyzed.sources[0].path), copy);
+        assert_eq!(Path::new(&analyzed.sources[1].path), path);
+        assert_eq!(progress, [0.0, 0.5, 0.5, 1.0]);
+        for source in &analyzed.sources {
+            for (actual, expected) in source.sections.iter().zip(&measurements.sections) {
+                assert_eq!(
+                    serde_json::to_value(&actual.bands).unwrap(),
+                    serde_json::to_value(&expected.bands).unwrap()
+                );
+                assert_eq!(
+                    actual.loudness.as_ref().map(|l| l.integrated_lufs),
+                    expected.loudness.as_ref().map(|l| l.integrated_lufs)
+                );
+                assert_eq!(
+                    actual
+                        .loudness
+                        .as_ref()
+                        .and_then(|l| l.true_peak.as_ref())
+                        .map(|p| (p.db, p.seconds)),
+                    expected
+                        .loudness
+                        .as_ref()
+                        .and_then(|l| l.true_peak.as_ref())
+                        .map(|p| (p.db, p.seconds))
+                );
+            }
+            assert_eq!(source.sections[2].name.as_deref(), Some("Overlap"));
+        }
+
+        if matches!(
+            measurements.section_loudness_state,
+            crate::api::output::MeasurementState::Unavailable { .. }
+        ) {
             assert!(
                 measurements
                     .sections
@@ -475,7 +460,10 @@ mod tests {
                     .all(|section| section.loudness.is_none())
             );
         }
-        if matches!(measurements.loudness, LoudnessReadout::Measured { .. }) {
+        if matches!(
+            measurements.section_loudness_state,
+            crate::api::output::MeasurementState::Measured
+        ) {
             let first = measurements.sections[0].loudness.as_ref().unwrap();
             let second = measurements.sections[1].loudness.as_ref().unwrap();
             let expected_difference = 20.0 * (0.25_f64 / 0.05).log10();
@@ -488,7 +476,12 @@ mod tests {
             );
             let peak = first.true_peak.as_ref().unwrap();
             assert!(peak.seconds < 0.1);
-            assert!(peak.db > second.true_peak.as_ref().unwrap().db + 13.0);
+            assert!(
+                peak.db > second.true_peak.as_ref().unwrap().db + 13.0,
+                "first {} second {}",
+                peak.db,
+                second.true_peak.as_ref().unwrap().db
+            );
             assert_eq!(
                 peak.position,
                 timebase.tick_to_musical_position(timebase.seconds_to_ticks(peak.seconds))
