@@ -67,6 +67,35 @@ pub(crate) fn export_render(
     })
 }
 
+pub(crate) fn resolve_measurement_sources(
+    data_root: &Path,
+    render_id: &str,
+) -> Result<Vec<crate::analysis::MeasurementSource>, String> {
+    let directory = managed_render_directory(data_root, render_id)?;
+    let bytes = fs::read(directory.join("render.json"))
+        .map_err(|error| format!("render manifest could not be read: {error}"))?;
+    let manifest = serde_json::from_slice::<StoredRender>(&bytes)
+        .map_err(|error| format!("render manifest is invalid: {error}"))?;
+    match manifest {
+        StoredRender::Timeline(render) => Ok(vec![crate::analysis::MeasurementSource {
+            path: managed_render_file(&directory, &render.path)?,
+            track_id: render.track_id,
+            track_name: None,
+        }]),
+        StoredRender::Stems(render) => render
+            .stems
+            .into_iter()
+            .map(|stem| {
+                Ok(crate::analysis::MeasurementSource {
+                    path: managed_render_file(&directory, &stem.path)?,
+                    track_id: Some(stem.track_id),
+                    track_name: Some(stem.track_name),
+                })
+            })
+            .collect(),
+    }
+}
+
 pub(crate) fn list_renders(data_root: &Path) -> Result<Vec<RenderHistoryEntry>, String> {
     let Some(root) = render_store_root(data_root)? else {
         return Ok(Vec::new());

@@ -187,11 +187,13 @@ Built-in instrumentはparameter、state、preset、editorをサポートしな�
 
 `effect add` は Effect Chain の末尾へ追加し、応答の `createdEntityIds.devices` に新しい Device ID を返す。
 
-Instrumentの割り当ては `instrument apply`(`builtin:<presetId>` または `user:<id>`)で行う。Built-in instrumentの割り当てはSafe Modeでも実行できる。Instrument毎のMIDI設定は `instrument midi set --settings-json` で置換し、`transposeSemitones`、`playableNotes`(`{"type":"range","start":36,"end":84}`、`{"type":"set","notes":[...]}`、制限なしの`null`)、`keyswitches`(`[{"note":24,"name":"C0"}]`)を持つ。
+Instrumentの割り当ては `instrument apply`(`builtin:<presetId>` または `user:<canonical-lowercase-uuid>`)で行う。Built-in instrumentの割り当てはSafe Modeでも実行できる。Instrument毎のMIDI設定は `instrument midi set --settings-json` で置換し、`transposeSemitones`、`playableNotes`(`{"type":"range","start":36,"end":84}`、`{"type":"set","notes":[...]}`、制限なしの`null`)、`keyswitches`(`[{"note":24,"name":"C0"}]`)を持つ。
 
 ```powershell
 riffra --attach instrument midi set --track-id track:01j... --settings-json '{"transposeSemitones":12,"playableNotes":{"type":"range","start":36,"end":84},"keyswitches":[{"note":24,"name":"C0"}]}'
 ```
+
+User Instrumentは `instrument save` で定義JSONをパッケージとして登録し、応答のIDを割当へ渡す。新規登録ではIDを省略する。明示したIDは既存User Instrumentの更新に使う。パッケージ内のサンプル等は定義からの相対パスを保って保存される。`session apply` でも `instrument.apply` にこのIDと `trackName` または `trackId` を指定でき、Projectに音源のスナップショットを保存する。
 
 ### Missing 復旧
 
@@ -227,7 +229,7 @@ riffra --data-root ./riffra-data serve --safe-mode
 
 ### レンダリング(非同期ジョブ)
 
-`render start` の `--expected-sequence` はRender対象のCanonical snapshotを固定する。ConflictならWAVを作成せず、最新状態をInspectしてからRenderし直す。応答は `type: "job"` のジョブIDで、ワンショットは `job wait`(無指定ならterminal stateまで待機)、interactiveは `job get` の繰り返しで追跡し、停止には `job cancel` を使う。出力はDataRootの `renders/` 配下へ書き出される。`plugin scan-start` も同じ非同期ジョブである。
+`render start` の `--expected-sequence` はRender対象のCanonical snapshotを固定する。ConflictならWAVを作成せず、最新状態をInspectしてからRenderし直す。応答は `type: "job"` のジョブIDで、ワンショットは `job wait`(無指定ならterminal stateまで待機)、interactiveは `job get` の繰り返しで追跡し、停止には `job cancel` を使う。出力はDataRootの `renders/` 配下へ書き出される。`plugin scan-start` と `analysis measure` も同じ非同期ジョブである。`job wait` は完了で終了コード0、失敗・中止・待機タイムアウトで非ゼロを返す。失敗・中止でも取得したJob応答は標準出力に1回だけ出る。`ok: true` は状態取得の成功を表し、Job自体の成功は `state: "completed"` で判断する。
 
 Stem Render(`render stems`)は一度の要求で複数Trackを同じ時間基準のWAVへ書き出す。全WAVで開始Tick、終了Tick、Sample Rate、フレーム数を揃え、個別の正規化とMasteringは行わない。共有する非線形Effectでは、Stemの合計と全体Mixが一致しない場合がある。StemとMasteringの設計上の扱いは[音声エンジンの設計](../../../../docs/audio-engine.md)を参照。
 
@@ -240,7 +242,32 @@ Job結果と`render.json`の`measurements`には完成WAVのSample Peakとラウ
 | `loudness.truePeak`                | 最大True Peakの`db`・`seconds`・`position`。無音なら`null`。位置は100msフレーム単位 |
 | `bands.lowDb` / `midDb` / `highDb` | 250Hz未満・250Hz〜4kHz・4kHz超のRMSレベル(dBFS)。無音なら`null`。帯域間比較の目安   |
 
-区間の切り分けは書き出し時点の正準Markerで決まり、全体の`measurements.loudness`が`unavailable`なら各区間の`loudness`も`null`になる。
+区間の切り分けは書き出し時点の正準Markerで決まる。`measurements.sectionLoudnessState.state` が `measured` なら無音・短区間の値が `null` でも測定は正常に完了している。`unavailable` なら `reason` を確認する。全体と区間のラウドネスは独立して測定し、区間ラウドネスの測定が失敗してもWAVと帯域値は保持する。
+
+### 保存済みWAVの区間測定
+
+WAVを書き出した後、比較したい区間をJSONにまとめ、`analysis measure --file measurements.json` へ渡す。Render IDは `render list` の管理対象IDを使う。ステムRenderなら全ステムを保存時のTrack ID・名前と対応付けて測定する。
+
+```json
+{
+  "renderId": "render-...",
+  "ranges": [
+    { "name": "Intro", "startSeconds": 0, "endSeconds": 8 },
+    { "name": "Verse", "startSeconds": 8, "endSeconds": 24 }
+  ]
+}
+```
+
+手元の複数WAVを比較する場合は `renderId` の代わりに `"paths": ["C:/music/drums.wav", "C:/music/bass.wav"]` を指定する。秒数は各WAVの先頭基準で、範囲は各ファイルの実際の長さに収める。重複区間や時間順でない指定も使える。
+
+```powershell
+riffra --attach analysis measure --file measurements.json
+riffra --attach job wait --id job:analysis-measure:0 --timeout-ms 120000
+```
+
+返されたJob IDを待機に使う。結果の `sources` はファイルの要求順、各 `sections` は区間の要求順であり、`sourceRenderId` は元Renderの識別情報である。各ファイルの `path`、`trackId` / `trackName`、`sampleRate`、`durationSeconds` と測定結果を照合する。区間の `loudness.truePeak` は `db` とWAV先頭からの `seconds` を持つ。帯域値・測定状態の読み方はRenderと共通である。
+
+Jobの `progress` は完了ファイル数の割合で、`message` は現在のファイルを示す。ステムRenderも同じ情報で処理番号・対象Track・レンダリングまたは測定の工程を追跡できる。中断する場合は `job cancel` を使う。
 
 ### Library・解析・Preview
 

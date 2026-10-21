@@ -25,6 +25,7 @@ use std::time::Duration;
 /// while a local CLI failure stays on stderr as plain text.
 enum RunFailure {
     Protocol(Box<ControlResponse>),
+    Job(Box<ControlResponse>),
     Local(String),
 }
 
@@ -84,7 +85,7 @@ fn main() {
     }
     match run(cli) {
         Ok(()) => {}
-        Err(RunFailure::Protocol(response)) => {
+        Err(RunFailure::Protocol(response) | RunFailure::Job(response)) => {
             if let Err(error) = write_response(&response) {
                 eprintln!("riffra: {error}");
             }
@@ -172,11 +173,14 @@ fn run(cli: Cli) -> Result<(), RunFailure> {
             return Err("job wait cannot be combined with --expected-sequence".into());
         }
         let attached = AttachedBackend::from_discovery(select_host(host_id.as_deref())?);
-        let response = attached.wait_for_job(&job_id, timeout_ms)?;
-        if response.ok {
-            return write_response(&response).map_err(RunFailure::Local);
+        let waited = attached.wait_for_job(&job_id, timeout_ms)?;
+        if !waited.response.ok {
+            return Err(RunFailure::Protocol(Box::new(waited.response)));
         }
-        return Err(RunFailure::Protocol(Box::new(response)));
+        if !waited.completed {
+            return Err(RunFailure::Job(Box::new(waited.response)));
+        }
+        return write_response(&waited.response).map_err(RunFailure::Local);
     }
     let command = if interactive {
         if expected_sequence.is_some() {

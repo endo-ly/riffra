@@ -4,4 +4,4 @@
  * Background job kind. Acts as the `kind` discriminator of
  * [`BackgroundJobStatus`] and fixes the type of the result payload.
  */
-export type JobKind = "scan" | "render" | "renderStems";
+export type JobKind = 'scan' | 'render' | 'renderStems' | 'analysisMeasure';

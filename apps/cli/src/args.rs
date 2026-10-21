@@ -212,7 +212,7 @@ pub enum CliCommand {
         #[command(subcommand)]
         command: LibraryCommand,
     },
-    /// Start background analysis of an Asset.
+    /// Analyze WAV files or measure existing Render output.
     Analysis {
         #[command(subcommand)]
         command: AnalysisCommand,
@@ -303,8 +303,8 @@ pub enum SessionCommand {
     /// instrument-event.update, instrument-event.remove;
     /// loop-range.set, punch-range.set; automation.set, automation.clear; instrument.apply,
     /// instrument.clear; effect.add, effect.remove, effect.reorder; device.bypass,
-    /// device.parameter.set. instrument.apply accepts only `builtin:` instruments in a batch;
-    /// `user:` instruments are rejected.
+    /// device.parameter.set. instrument.apply accepts `builtin:` and `user:` instruments;
+    /// User Instrument assignments create Project-owned package snapshots atomically with the batch.
     Apply(SessionApplyArgs),
     /// Read or update session settings such as project name, master gain, loop, and metronome.
     Settings {
@@ -1906,14 +1906,15 @@ pub struct SonalloyArgs {
 pub struct InstrumentSaveArgs {
     /// Path to the Sonalloy definition JSON to save as a User Instrument.
     pub definition_path: PathBuf,
-    /// Explicit User Instrument id; omit to allocate one.
+    /// Existing User Instrument ID to update: user:<canonical-lowercase-uuid>.
+    /// Omit for a new automatically generated ID.
     #[arg(long)]
     pub instrument_id: Option<String>,
 }
 
 #[derive(Debug, Args)]
 pub struct InstrumentExportArgs {
-    /// Id of the User Instrument to export, such as `user:<id>`.
+    /// Id of the User Instrument to export, such as `user:<canonical-lowercase-uuid>`.
     #[arg(long)]
     pub instrument_id: String,
     /// Output path for the exported Instrument package.
@@ -1926,7 +1927,8 @@ pub struct InstrumentApplyArgs {
     /// Id of the Instrument Track that receives the Instrument.
     #[arg(long)]
     pub track_id: String,
-    /// Instrument id: `builtin:<preset-id>` for a built-in Instrument or `user:<id>` for a User Instrument.
+    /// Instrument id: `builtin:<preset-id>` for a built-in Instrument or `user:<canonical-lowercase-uuid>` for a User Instrument.
+    /// Also available as instrument.apply in session apply batches.
     #[arg(long)]
     pub instrument_id: String,
 }
@@ -2342,8 +2344,19 @@ pub struct LibraryIdArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum AnalysisCommand {
-    /// Start background analysis of an Asset as a Job; requires a running Riffra Host accessed with --attach.
+    /// Analyze WAV waveform, RMS, peak, and correlation synchronously; requires --attach.
     Start(AnalysisStartArgs),
+    /// Measure existing WAVs asynchronously; returns a Job for job wait (--attach required).
+    Measure(AnalysisMeasureArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct AnalysisMeasureArgs {
+    /// JSON object: exactly one of renderId or nonempty paths, and nonempty ranges.
+    /// Each range has optional name, finite startSeconds >= 0, and endSeconds > startSeconds
+    /// within every WAV's duration. Ranges are half-open, may overlap, and retain input order.
+    #[arg(long)]
+    pub file: PathBuf,
 }
 
 #[derive(Debug, Args)]
@@ -3563,6 +3576,15 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
             }
         },
         CliCommand::Analysis { command } => match command {
+            AnalysisCommand::Measure(args) => {
+                let encoded = fs::read_to_string(&args.file).map_err(|error| {
+                    format!("analysis measurement file could not be read: {error}")
+                })?;
+                Runtime::AnalysisMeasure(decode_params(serde_json::from_str(&encoded).map_err(
+                    |error| format!("analysis measurement file is invalid JSON: {error}"),
+                )?)?)
+                .into()
+            }
             AnalysisCommand::Start(args) => Runtime::AnalysisStart(AnalysisParams {
                 asset_id: args.asset_id,
                 path: args.path,

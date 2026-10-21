@@ -1,5 +1,6 @@
 use crate::api::output::{
-    BackgroundJobStatus, JobKind, JobState, RenderResult, RenderStemsResult, ScanReport,
+    AnalysisMeasureResult, BackgroundJobStatus, JobKind, JobState, RenderResult, RenderStemsResult,
+    ScanReport,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -19,6 +20,7 @@ impl JobKind {
             Self::Scan => "scan",
             Self::Render => "render",
             Self::RenderStems => "render-stems",
+            Self::AnalysisMeasure => "analysis-measure",
         }
     }
 }
@@ -84,6 +86,18 @@ pub fn to_background_status(status: JobStatus) -> Result<BackgroundJobStatus, St
                 .transpose()
                 .map_err(|error| format!("render stems result could not be decoded: {error}"))?,
         },
+        JobKind::AnalysisMeasure => BackgroundJobStatus::AnalysisMeasure {
+            id,
+            state,
+            progress,
+            message,
+            result: result
+                .map(serde_json::from_value::<AnalysisMeasureResult>)
+                .transpose()
+                .map_err(|error| {
+                    format!("analysis measure result could not be decoded: {error}")
+                })?,
+        },
     })
 }
 
@@ -145,11 +159,22 @@ impl JobRegistry {
 
     pub fn set_running(&self, id: &str, message: impl Into<String>) {
         self.update(id, |status, _| {
-            if status.state == JobState::Cancelling {
+            if status.state != JobState::Queued {
                 return;
             }
             status.state = JobState::Running;
             status.message = message.into();
+        });
+    }
+
+    /// Updates running work without reviving a cancelled or terminal job.
+    pub(crate) fn set_progress(&self, id: &str, progress: f32, message: impl Into<String>) {
+        self.update(id, |status, _| {
+            if status.state == JobState::Running {
+                status.progress =
+                    Some(status.progress.unwrap_or(0.0).max(progress.clamp(0.0, 1.0)));
+                status.message = message.into();
+            }
         });
     }
 
@@ -331,7 +356,12 @@ impl JobRegistry {
         else {
             return;
         };
-        if let Ok(mut status) = record.status.lock() {
+        if let Ok(mut status) = record.status.lock()
+            && !matches!(
+                status.state,
+                JobState::Completed | JobState::Failed | JobState::Cancelled
+            )
+        {
             update(&mut status, &record);
         }
     }
@@ -367,7 +397,14 @@ mod tests {
         let (id, status) = registry.start(JobKind::Scan);
         assert_eq!(status.state, JobState::Queued);
         registry.set_running(&id, "running");
+        registry.set_progress(&id, 0.5, "half done");
+        registry.set_progress(&id, 0.25, "still measuring");
+        assert_eq!(registry.status(&id).unwrap().progress, Some(0.5));
         registry.cancel(&id).expect("job should exist");
+        registry.set_running(&id, "late running");
+        registry.set_progress(&id, 0.75, "late progress");
+        assert_eq!(registry.status(&id).unwrap().state, JobState::Cancelling);
+        assert_eq!(registry.status(&id).unwrap().progress, Some(0.5));
         let promoted = Arc::new(AtomicBool::new(false));
         let promotion = Arc::clone(&promoted);
         assert!(!registry.complete_if_not_cancelled(
@@ -380,6 +417,10 @@ mod tests {
         assert_eq!(status.state, JobState::Cancelled);
         assert!(status.result.is_none());
         assert!(!promoted.load(Ordering::Acquire));
+        registry.set_running(&id, "late running");
+        registry.set_progress(&id, 1.0, "late progress");
+        registry.fail(&id, "late failure");
+        assert_eq!(registry.status(&id).unwrap().state, JobState::Cancelled);
     }
 
     #[test]
@@ -423,6 +464,10 @@ mod tests {
         assert_eq!(actual.sample_rate, result.sample_rate);
         assert_eq!(actual.frames, result.frames);
         assert!(promoted.load(Ordering::Acquire));
+        registry.set_running(&id, "late running");
+        registry.set_progress(&id, 0.5, "late progress");
+        registry.fail(&id, "late failure");
+        assert_eq!(registry.status(&id).unwrap().state, JobState::Completed);
     }
 
     #[test]

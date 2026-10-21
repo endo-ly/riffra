@@ -27,6 +27,8 @@ pub enum JobKind {
     Render,
     /// A single job that produces several aligned Track stems.
     RenderStems,
+    /// Measures existing WAV files without editing a Project.
+    AnalysisMeasure,
 }
 
 /// Typed view of a background job, produced from the job registry at the IPC
@@ -55,6 +57,13 @@ pub enum BackgroundJobStatus {
         progress: Option<f32>,
         message: String,
         result: Option<RenderStemsResult>,
+    },
+    AnalysisMeasure {
+        id: String,
+        state: JobState,
+        progress: Option<f32>,
+        message: String,
+        result: Option<AnalysisMeasureResult>,
     },
 }
 
@@ -217,6 +226,7 @@ pub struct AudioMeasurements {
     /// Actual PCM sample peak. `None` represents digital silence (negative infinity).
     pub sample_peak_dbfs: Option<f64>,
     pub loudness: LoudnessReadout,
+    pub section_loudness_state: MeasurementState,
     /// Per-marker sections; empty when the session has no marker.
     pub sections: Vec<SectionMeasurement>,
 }
@@ -241,7 +251,7 @@ pub struct SectionMeasurement {
     pub start_seconds: f64,
     /// Seconds from the start of the WAV.
     pub end_seconds: f64,
-    /// `None` when whole-file loudness is unavailable.
+    /// `None` when section loudness measurement is unavailable.
     pub loudness: Option<SectionLoudness>,
     pub bands: BandLevels,
 }
@@ -273,4 +283,62 @@ pub struct BandLevels {
     pub low_db: Option<f64>,
     pub mid_db: Option<f64>,
     pub high_db: Option<f64>,
+}
+
+/// Completion of an optional measurement, independent of silent values.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(tag = "state", rename_all = "camelCase")]
+pub enum MeasurementState {
+    Measured,
+    Unavailable { reason: String },
+}
+
+/// True peak location relative to the measured WAV.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct RangePeak {
+    pub db: f64,
+    pub seconds: f64,
+}
+
+/// Gated loudness and frame peak without musical coordinates.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct RangeLoudness {
+    pub integrated_lufs: Option<f64>,
+    pub true_peak: Option<RangePeak>,
+}
+
+/// Measurements of a half-open interval relative to the WAV start.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalysisSectionMeasurement {
+    pub name: Option<String>,
+    pub start_seconds: f64,
+    pub end_seconds: f64,
+    pub loudness: Option<RangeLoudness>,
+    pub bands: BandLevels,
+}
+
+/// Measurements and identification of one existing WAV.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalysisMeasuredSource {
+    pub path: String,
+    pub track_id: Option<String>,
+    pub track_name: Option<String>,
+    pub sample_rate: u32,
+    pub duration_seconds: f64,
+    pub sample_peak_dbfs: Option<f64>,
+    pub loudness: LoudnessReadout,
+    pub section_loudness_state: MeasurementState,
+    pub sections: Vec<AnalysisSectionMeasurement>,
+}
+
+/// Existing-WAV measurements in request order.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalysisMeasureResult {
+    pub source_render_id: Option<String>,
+    pub sources: Vec<AnalysisMeasuredSource>,
 }

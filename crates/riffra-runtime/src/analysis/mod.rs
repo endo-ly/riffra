@@ -1,5 +1,81 @@
+pub(crate) mod ffmpeg;
+pub(crate) mod measurement;
+
 use crate::api::output::AudioAnalysis;
 use std::{fs, path::Path};
+
+pub(crate) struct MeasurementSource {
+    pub(crate) path: std::path::PathBuf,
+    pub(crate) track_id: Option<String>,
+    pub(crate) track_name: Option<String>,
+}
+
+pub(crate) fn measurement_sources(
+    data_root: &Path,
+    params: &crate::api::params::AnalysisMeasureParams,
+) -> Result<Vec<MeasurementSource>, String> {
+    if params.ranges.is_empty() {
+        return Err("analysis.measure requires at least one range".into());
+    }
+    let sources = match (&params.render_id, &params.paths) {
+        (Some(id), None) => crate::render::resolve_measurement_sources(data_root, id)?,
+        (None, Some(paths)) if !paths.is_empty() => paths
+            .iter()
+            .map(|path| MeasurementSource {
+                path: path.into(),
+                track_id: None,
+                track_name: None,
+            })
+            .collect(),
+        _ => {
+            return Err(
+                "analysis.measure requires exactly one of renderId or nonempty paths".into(),
+            );
+        }
+    };
+    if sources.is_empty() {
+        return Err("render contains no wav files".into());
+    }
+    for source in &sources {
+        measurement::validate_wav(&source.path, &params.ranges)
+            .map_err(|e| format!("{}: {e}", source.path.display()))?;
+    }
+    Ok(sources)
+}
+
+pub(crate) fn measure_sources(
+    sources: Vec<MeasurementSource>,
+    params: crate::api::params::AnalysisMeasureParams,
+    cancelled: &std::sync::atomic::AtomicBool,
+    mut progress: impl FnMut(f32, String),
+) -> Result<crate::api::output::AnalysisMeasureResult, String> {
+    let total = sources.len();
+    let mut measured = Vec::with_capacity(total);
+    for (index, source) in sources.into_iter().enumerate() {
+        progress(
+            index as f32 / total as f32,
+            format!(
+                "measuring file {}/{}: {}",
+                index + 1,
+                total,
+                source.path.display()
+            ),
+        );
+        let mut result = measurement::measure(&source.path, &params.ranges, Some(cancelled))
+            .map_err(|e| format!("measurement failed for {}: {e}", source.path.display()))?;
+        result.track_id = source.track_id;
+        result.track_name = source.track_name;
+        measured.push(result);
+        progress(
+            (index + 1) as f32 / total as f32,
+            format!("measured {}/{} files", index + 1, total),
+        );
+    }
+    Ok(crate::api::output::AnalysisMeasureResult {
+        source_render_id: params.render_id,
+        sources: measured,
+    })
+}
 
 const WAVEFORM_BINS: usize = 128;
 

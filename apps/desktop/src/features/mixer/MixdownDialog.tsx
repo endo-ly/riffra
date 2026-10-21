@@ -64,6 +64,12 @@ function Measurements({
             <dd>{value.loudness.reason}</dd>
           </>
         )}
+        {value.sectionLoudnessState.state === 'unavailable' && (
+          <>
+            <dt>Section loudness measurement</dt>
+            <dd>{value.sectionLoudnessState.reason}</dd>
+          </>
+        )}
       </dl>
       {warnings.map((warning) => (
         <p key={warning} role="alert">
@@ -187,7 +193,10 @@ export function MixdownDialog(props: Props) {
       if (alive.current) setError(failure instanceof Error ? failure.message : String(failure));
     }
   };
-  const result = job?.state === 'completed' && job.kind !== 'scan' ? job.result : null;
+  const result =
+    job?.state === 'completed' && (job.kind === 'render' || job.kind === 'renderStems')
+      ? job.result
+      : null;
   return (
     <div className={styles.routingOverlay} role="presentation">
       <section

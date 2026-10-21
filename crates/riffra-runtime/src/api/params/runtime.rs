@@ -240,3 +240,23 @@ pub struct SidechainSendLevelPreviewParams {
     pub sidechain_send_id: String,
     pub level_db: f64,
 }
+
+/// A half-open time range measured from the WAV start.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[ts(optional_fields = nullable)]
+pub struct MeasurementRange {
+    pub name: Option<String>,
+    pub start_seconds: f64,
+    pub end_seconds: f64,
+}
+
+/// Measures either one managed Render or an ordered list of WAV paths.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[ts(optional_fields = nullable)]
+pub struct AnalysisMeasureParams {
+    pub render_id: Option<String>,
+    pub paths: Option<Vec<String>>,
+    pub ranges: Vec<MeasurementRange>,
+}

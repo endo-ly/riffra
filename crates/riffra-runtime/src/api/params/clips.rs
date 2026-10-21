@@ -162,14 +162,18 @@ pub struct MidiNoteDuplicateParams {
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ClipRemoveParams {
+    #[serde(default)]
     pub audio_clip_ids: Vec<String>,
+    #[serde(default)]
     pub midi_clip_ids: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ClipPasteParams {
+    #[serde(default)]
     pub audio_clip_ids: Vec<String>,
+    #[serde(default)]
     pub midi_clip_ids: Vec<String>,
     pub start_tick: u64,
 }
