@@ -1,6 +1,6 @@
 [package]
 name = "riffra-desktop"
-version = "2026.10.19"
+version = "2026.10.23"
 description = "Windows-first integrated music production workbench"
 authors = ["Riffra contributors"]
 edition = "2024"
