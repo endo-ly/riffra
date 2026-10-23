@@ -9,67 +9,12 @@
 #include <vector>
 
 #include "MixAutomation.h"
+#include "MixRouteDelay.h"
 #include "TrackRuntime.h"
 #include "contract/ExecutionGraph.h"
 #include "plugins/PluginChain.h"
 
 namespace riffra {
-
-/// Prepared stereo delay used on every edge entering a mixing junction.
-class MixRouteDelay final {
-public:
-    void prepare(const int samples) {
-        delaySamples = samples;
-        buffer.setSize(2, samples + 1);
-        reset();
-    }
-
-    void reset() noexcept {
-        buffer.clear();
-        position = 0;
-        lowLatencyActive = false;
-    }
-
-    void add(const juce::AudioBuffer<float>& source, juce::AudioBuffer<float>& destination,
-             const int sampleCount, const float gain, const bool audible, const bool lowLatency,
-             AutomationRuntime::Cursor* automation = nullptr,
-             const std::int64_t rangeStart = 0) noexcept {
-        if (lowLatency != lowLatencyActive) {
-            buffer.clear();
-            position = 0;
-            lowLatencyActive = lowLatency;
-        }
-        if (delaySamples == 0 && automation == nullptr) {
-            if (audible)
-                for (int channel = 0; channel < 2; ++channel)
-                    juce::FloatVectorOperations::addWithMultiply(
-                        destination.getWritePointer(channel), source.getReadPointer(channel), gain,
-                        sampleCount);
-            return;
-        }
-        for (int sample = 0; sample < sampleCount; ++sample) {
-            const auto read = (position + 1) % buffer.getNumSamples();
-            const auto sampleGain =
-                automation != nullptr
-                    ? juce::Decibels::decibelsToGain(automation->valueAt(rangeStart + sample, 0.0f))
-                    : gain;
-            for (int channel = 0; channel < 2; ++channel) {
-                const auto value = audible ? source.getSample(channel, sample) * sampleGain : 0.0f;
-                buffer.setSample(channel, position, value);
-                destination.addSample(
-                    channel, sample,
-                    lowLatency || delaySamples == 0 ? value : buffer.getSample(channel, read));
-            }
-            position = read;
-        }
-    }
-
-private:
-    juce::AudioBuffer<float> buffer;
-    int delaySamples = 0;
-    int position = 0;
-    bool lowLatencyActive = false;
-};
 
 /// Prepared effect processing and mix controls shared by Groups and Returns.
 struct MixerChannel final {
@@ -87,6 +32,7 @@ struct MixerChannel final {
     AutomationRuntime gainAutomation;
     AutomationRuntime panAutomation;
     bool unityCenterStereo = true;
+    bool linearBalance = false;
     bool audible = true;
     bool hasInput = false;
     bool hasAudibleInput = false;
@@ -106,28 +52,14 @@ struct MixerChannel final {
         effects->process(input.getArrayOfReadPointers(), 2, output.getArrayOfWritePointers(), 2,
                          sampleCount, nullptr, deviceAutomation, rangeStart - inputLatency, playing,
                          &effectAlignment);
-        if (playing && (!gainAutomation.empty() || !panAutomation.empty())) {
-            MixAutomationCursor cursor(gainAutomation, panAutomation, rangeStart - outputLatency,
-                                       sampleCount, gainDb.load(std::memory_order_acquire),
-                                       pan.load(std::memory_order_acquire), unityCenterStereo, true,
-                                       gainPreview.current(), panPreview.current());
-            for (int sample = 0; sample < sampleCount; ++sample) {
-                const auto gains = cursor.next();
-                output.setSample(0, sample,
-                                 audible ? output.getSample(0, sample) * gains.left : 0.0f);
-                output.setSample(1, sample,
-                                 audible ? output.getSample(1, sample) * gains.right : 0.0f);
-            }
-        } else {
-            const auto angle = (pan.load(std::memory_order_acquire) + 1.0f) *
-                               juce::MathConstants<float>::pi * 0.25f;
-            const auto gain =
-                juce::Decibels::decibelsToGain(gainDb.load(std::memory_order_acquire));
-            const auto scale = unityCenterStereo ? std::sqrt(2.0f) : 1.0f;
-            output.applyGain(0, 0, sampleCount,
-                             audible ? gain * std::min(1.0f, std::cos(angle) * scale) : 0.0f);
-            output.applyGain(1, 0, sampleCount,
-                             audible ? gain * std::min(1.0f, std::sin(angle) * scale) : 0.0f);
+        MixAutomationCursor cursor(gainAutomation, panAutomation, rangeStart - outputLatency,
+                                   sampleCount, gainDb.load(std::memory_order_acquire),
+                                   pan.load(std::memory_order_acquire), unityCenterStereo, playing,
+                                   gainPreview.current(), panPreview.current(), linearBalance);
+        for (int sample = 0; sample < sampleCount; ++sample) {
+            const auto gains = cursor.next();
+            output.setSample(0, sample, audible ? output.getSample(0, sample) * gains.left : 0.0f);
+            output.setSample(1, sample, audible ? output.getSample(1, sample) * gains.right : 0.0f);
         }
         meter.recordBlock(
             output.getMagnitude(0, 0, sampleCount), output.getMagnitude(1, 0, sampleCount),

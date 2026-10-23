@@ -1,5 +1,4 @@
 #pragma once
-
 #include <JuceHeader.h>
 
 #include <algorithm>
@@ -14,6 +13,7 @@
 #include "AutomationRuntime.h"
 #include "MidiNoteTransform.h"
 #include "MidiScheduler.h"
+#include "MixRouteDelay.h"
 #include "instruments/InstrumentRuntime.h"
 #include "plugins/PluginChain.h"
 #include "recording/RecordingCaptureRuntime.h"
@@ -217,6 +217,7 @@ public:
     void resetForTransportDiscontinuity() noexcept { requestTransportDiscontinuity(); }
 
     void requestTransportDiscontinuity() noexcept {
+        restoreInstrumentControls = true;
         if (instrumentBlock->runtime != nullptr)
             instrumentBlock->runtime->resetForTransportDiscontinuity();
         effectChain->allNotesOff();
@@ -272,7 +273,20 @@ public:
     juce::AudioBuffer<float> preFaderOutputBuffer;
     bool mainOutputAudible = true;
     std::int64_t routeLatencySamples = 0;
-    TrackRuntime* externalAudioSource = nullptr;
+    struct ExternalInput final {
+        TrackRuntime* source = nullptr;
+        MixRouteDelay delay;
+    };
+    std::vector<ExternalInput> externalAudioSources;
+    juce::AudioBuffer<float> externalInputBuffer;
+    std::int64_t externalInputLatency = 0;
+    void mixExternalInput(const int count) noexcept {
+        externalInputBuffer.clear(0, count);
+        for (auto& input : externalAudioSources)
+            input.delay.add(input.source->routedOutputBuffer, externalInputBuffer, count, 1.0f,
+                            true, false);
+    }
+    bool linearBalance = false;
     bool unityCenterStereo = false;
     std::uint64_t windowProcessingTotalUs = 0;
     std::uint64_t windowProcessingMaximumUs = 0;
@@ -315,6 +329,7 @@ public:
     std::vector<SonalloyEvent> instrumentEvents;
     std::vector<InstrumentEventOrder> instrumentEventOrdering;
     std::size_t instrumentEventCount = 0;
+    bool restoreInstrumentControls = true;
 
 private:
     void updateLiveActivity(const juce::MidiMessage& message) noexcept {

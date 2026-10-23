@@ -99,7 +99,8 @@ public:
                                                 std::int64_t rangeStart, int sampleCount,
                                                 SonalloyEvent* destination,
                                                 InstrumentEventOrder* ordering,
-                                                std::size_t capacity) noexcept;
+                                                std::size_t capacity,
+                                                bool restoreControls = false) noexcept;
 };
 
 }  // namespace riffra

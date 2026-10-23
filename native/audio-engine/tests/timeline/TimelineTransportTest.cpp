@@ -8,7 +8,7 @@ TEST(TimelineEngineTest, ProcessesAnInstrumentRuntimeOncePerTransportChunk) {
     // Arrange
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();
-    TimelineEngine engine(true);
+    TimelineEngine engine;
     juce::String error;
     constexpr int kBlockSamples = 512;
     ASSERT_TRUE(loadTestSnapshot(engine, makeInstrumentSnapshot("track:live-fade"), formats,
@@ -42,7 +42,7 @@ TEST(TimelineEngineTest, ProcessesAnAudioEffectChainOncePerTransportChunk) {
     // Arrange
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();
-    TimelineEngine engine(true);
+    TimelineEngine engine;
     juce::String error;
     constexpr int kBlockSamples = 512;
     ASSERT_TRUE(loadTestSnapshot(engine, makeAudioTrackSnapshot(1, true, false), formats, 48'000.0,
@@ -282,19 +282,22 @@ TEST(TimelineEngineTest, MonitorsAudioTrackInputOncePerAudioCallback) {
 
 TEST(TimelineEngineTest, TransportBoundariesConvergeWithoutAOneSampleCut) {
     // Arrange
-    test::TemporaryDirectory directory;
-    const auto rawFile = directory.get().getChildFile("transport-raw.wav");
-    const auto processedFile = directory.get().getChildFile("transport-processed.wav");
-    ASSERT_TRUE(writePcmWave(rawFile, 48'000, 1, 1024, 1'638));
-    ASSERT_TRUE(writePcmWave(processedFile, 48'000, 1, 1024, 3'277));
-    auto snapshot = makeRawAndProcessedClipSnapshot(rawFile, processedFile, 1024);
+    auto snapshot = makeInstrumentSnapshot("track:transport");
+    snapshot.graph.tracks.front().midiClips.push_back(MidiClipSpec{
+        "midi:held", 0, 3840, false, false, {{0, 4, 60, 100, 1}, {4, 3836, 60, 100, 1}}, {}});
 
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();
-    TimelineEngine engine(true);
+    TimelineEngine engine;
     juce::String error;
     ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, 48'000.0, 64, error))
         << error.toStdString();
+    InstrumentTrace trace;
+    auto instrument = PluginRackTestPeer::installInstrument(
+        std::make_unique<TestInstrumentProcessor>(trace), 48'000.0, 64, error);
+    ASSERT_NE(instrument, nullptr) << error.toStdString();
+    ASSERT_TRUE(TimelineEngineTestPeer::installTrackInstrument(
+        engine, "track:transport", "instrument:transport", std::move(instrument)));
     constexpr int kBlockSamples = 64;
     std::array<float, kBlockSamples> left{};
     std::array<float, kBlockSamples> right{};
@@ -322,7 +325,7 @@ TEST(TimelineEngineTest, TransportBoundariesConvergeWithoutAOneSampleCut) {
     EXPECT_GT(previous, 0.02f);
     EXPECT_GT(stopFirst, 0.02f);
     EXPECT_GT(stopLast, 0.02f);
-    EXPECT_LT(stopStep, 0.02f);
+    EXPECT_NEAR(stopStep / stopFirst, 63.0f / 240.0f, 0.005f);
     for (int block = 0; block < 16; ++block) {
         std::fill(left.begin(), left.end(), 0.0f);
         std::fill(right.begin(), right.end(), 0.0f);
@@ -349,7 +352,7 @@ TEST(TimelineEngineTest, StopAdvancesThePlayheadOnlyThroughTheFadeBoundary) {
 
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();
-    TimelineEngine engine(true);
+    TimelineEngine engine;
     juce::String error;
     constexpr int kBlockSamples = 512;
     ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, 48'000.0, kBlockSamples, error))

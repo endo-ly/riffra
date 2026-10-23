@@ -222,6 +222,7 @@ int SonalloyInstrumentRuntime::eventPriority(const SonalloyEvent& event) noexcep
             return 4;
         case SONALLOY_EVENT_AFTERTOUCH:
             return 5;
+        case SONALLOY_EVENT_PARAMETER_RAMP:
         case SONALLOY_EVENT_PARAMETER_CHANGE:
             return 2;
         case SONALLOY_EVENT_NOTE_ON:
@@ -455,7 +456,8 @@ void SonalloyInstrumentRuntime::process(float* const* outputChannels, const int 
         const auto& event = context.timelineEvents[index];
         if (event.sample_offset >= static_cast<std::uint32_t>(numSamples) ||
             eventCount >= kMaximumEventsPerBlock ||
-            (event.event_type == SONALLOY_EVENT_PARAMETER_CHANGE &&
+            ((event.event_type == SONALLOY_EVENT_PARAMETER_CHANGE ||
+              event.event_type == SONALLOY_EVENT_PARAMETER_RAMP) &&
              event.parameter_catalog_revision !=
                  sonalloy_compiled_parameter_catalog_revision(compiled.get()))) {
             failBlock(SONALLOY_INVALID_ARGUMENT, outputChannels, outputChannelCount, numSamples);
@@ -536,6 +538,13 @@ bool SonalloyInstrumentRuntime::prepareParameterEvent(SonalloyEvent& event,
         compiled.get(), event.parameter_handle, event.value, &event.value);
     if (normalized != SONALLOY_OK) {
         error = "Instrument parameter value is out of range: " + parameter;
+        return false;
+    }
+    if (event.event_type == SONALLOY_EVENT_PARAMETER_RAMP &&
+        sonalloy_compiled_parameter_normalize(compiled.get(), event.parameter_handle,
+                                              event.target_value,
+                                              &event.target_value) != SONALLOY_OK) {
+        error = "Instrument parameter ramp target is out of range: " + parameter;
         return false;
     }
     event.parameter_catalog_revision = sonalloy_compiled_parameter_catalog_revision(compiled.get());

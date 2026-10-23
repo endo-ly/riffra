@@ -232,5 +232,33 @@ TEST(MidiSchedulerTest, OrdersAdjacentClipsAndAllocatesDifferentLoopNoteIds) {
     EXPECT_EQ(events[1].event_type, SONALLOY_EVENT_NOTE_ON);
 }
 
+TEST(MidiSchedulerTest, ParameterRampUsesVariablePpqTempoMapAndRestoresSeekState) {
+    MidiClip source;
+    source.durationTicks = 13440;
+    source.directInstrumentEvents = true;
+    source.instrumentControlEvents = {
+        {"ramp", 0, 0, "parameterRamp", false, 0.25f, "tone", 0.75f, 6720}};
+    TimelineTimebase timebase{3360, {{0, 120.0}, {3360, 60.0}}, {{0, 4, 4}}};
+    CompiledMidiClip compiled;
+    juce::String error;
+    ASSERT_TRUE(MidiScheduler::compile(source, timebase, 48000.0, compiled, error)) << error;
+    ASSERT_EQ(compiled.events.size(), 1u);
+    EXPECT_EQ(compiled.events[0].instrumentEvent->duration_frames, 72000u);
+    std::array<SonalloyEvent, 4> events{};
+    std::array<InstrumentEventOrder, 4> ordering{};
+    auto count = MidiScheduler::scheduleInstrumentEvents({compiled}, 36000, 256, events.data(),
+                                                         ordering.data(), events.size(), true);
+    ASSERT_EQ(count, 1u);
+    EXPECT_EQ(events[0].event_type, SONALLOY_EVENT_PARAMETER_RAMP);
+    EXPECT_FLOAT_EQ(events[0].value, 0.5f);
+    EXPECT_FLOAT_EQ(events[0].target_value, 0.75f);
+    EXPECT_EQ(events[0].duration_frames, 36000u);
+    count = MidiScheduler::scheduleInstrumentEvents({compiled}, 80000, 256, events.data(),
+                                                    ordering.data(), events.size(), true);
+    ASSERT_EQ(count, 1u);
+    EXPECT_EQ(events[0].event_type, SONALLOY_EVENT_PARAMETER_CHANGE);
+    EXPECT_FLOAT_EQ(events[0].value, 0.75f);
+}
+
 }  // namespace
 }  // namespace riffra

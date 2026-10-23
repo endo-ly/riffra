@@ -168,11 +168,25 @@ juce::String instrumentId(const std::optional<InstrumentSpec>& instrument) {
 AutomationRuntime prepareLane(const AutomationLaneSpec& lane, const PreparedTimeline& prepared) {
     AutomationRuntime runtime;
     std::vector<AutomationRuntime::Point> points;
-    points.reserve(lane.points.size());
-    for (const auto& point : lane.points)
-        points.push_back({prepared.timebase.tickToSample(point.tick, prepared.outputSampleRate),
-                          static_cast<float>(point.value)});
-    runtime.setPoints(std::move(points), lane.interpolation == AutomationInterpolationSpec::step);
+    const auto amplitude = lane.interpolation == AutomationInterpolationSpec::linearAmplitude;
+    points.reserve(lane.points.size() * (amplitude ? 2 : 1));
+    for (const auto& point : lane.points) {
+        const auto sample = prepared.timebase.tickToSample(point.tick, prepared.outputSampleRate);
+        const auto value = amplitude ? static_cast<float>(std::pow(10.0, point.value / 20.0))
+                                     : static_cast<float>(std::max(-1000.0, point.value));
+        if (amplitude && !points.empty()) {
+            const auto previous = points.back().value;
+            while (!points.empty() && points.back().sample >= sample) points.pop_back();
+            points.push_back({sample, previous});
+            points.push_back(
+                {sample + std::max<std::int64_t>(
+                              1, std::llround(lane.transitionSeconds * prepared.outputSampleRate)),
+                 value});
+        } else
+            points.push_back({sample, value});
+    }
+    runtime.setPoints(std::move(points), lane.interpolation == AutomationInterpolationSpec::step,
+                      amplitude);
     return runtime;
 }
 
@@ -422,6 +436,14 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
         }
         track->runtime->midiEventCapacity =
             MidiScheduler::maximumEventsPerBlock(track->runtime->midiClips, maximumBlockSize);
+        std::size_t controlCapacity = 0;
+        for (const auto& clip : track->runtime->midiClips)
+            for (const auto& event : clip.events)
+                if (event.instrumentEvent &&
+                    event.instrumentEvent->event_type != SONALLOY_EVENT_NOTE_ON &&
+                    event.instrumentEvent->event_type != SONALLOY_EVENT_NOTE_OFF)
+                    ++controlCapacity;
+        track->runtime->midiEventCapacity += controlCapacity;
         track->runtime->instrumentEvents.resize(track->runtime->midiEventCapacity);
         track->runtime->instrumentEventOrdering.resize(track->runtime->midiEventCapacity);
         if (!MidiScheduler::prepareBuffer(track->runtime->midiBuffer,
@@ -490,7 +512,8 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
             for (auto& clip : track->runtime->midiClips) {
                 for (auto& event : clip.events) {
                     if (event.instrumentEvent &&
-                        event.instrumentEvent->event_type == SONALLOY_EVENT_PARAMETER_CHANGE &&
+                        (event.instrumentEvent->event_type == SONALLOY_EVENT_PARAMETER_CHANGE ||
+                         event.instrumentEvent->event_type == SONALLOY_EVENT_PARAMETER_RAMP) &&
                         !sonalloy->prepareParameterEvent(*event.instrumentEvent, event.parameter,
                                                          error)) {
                         error = track->id + ": " + error;
@@ -563,6 +586,8 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
         track->runtime->trackOutputBuffer.setSize(2, maximumBlockSize, false, true, false);
         track->runtime->routedOutputBuffer.setSize(2, maximumBlockSize, false, true, false);
         track->runtime->preFaderOutputBuffer.setSize(2, maximumBlockSize, false, true, false);
+        track->runtime->linearBalance = trackSpec.panLaw == "linearBalance";
+        track->runtime->externalInputBuffer.setSize(2, maximumBlockSize);
         track->runtime->unityCenterStereo = trackSpec.panLaw == "unityCenterStereo";
         track->runtime->postEffectClipBuffer.setSize(2, maximumBlockSize, false, true, false);
         track->runtime->liveInputBuffer.setSize(2, maximumBlockSize, false, true, false);
@@ -574,22 +599,21 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
     for (std::size_t index = 0; index < prepared->tracks.size(); ++index) {
         auto& runtime = *prepared->tracks[index]->runtime;
         auto* sonalloy = dynamic_cast<SonalloyInstrumentRuntime*>(runtime.instrument());
-        const auto& sourceId = snapshot.graph.tracks[index].externalAudioSourceTrackId;
-        if ((sonalloy != nullptr && sonalloy->requiredInputChannels() > 0) !=
-            sourceId.has_value()) {
+        const auto& sourceIds = snapshot.graph.tracks[index].externalAudioSourceTrackIds;
+        if ((sonalloy != nullptr && sonalloy->requiredInputChannels() > 0) != !sourceIds.empty()) {
             error = prepared->tracks[index]->id +
                     ": instrument external audio input does not match the route.";
             return false;
         }
-        if (sourceId) {
-            auto* source = prepared->findTrack(*sourceId);
+        for (const auto& sourceId : sourceIds) {
+            auto* source = prepared->findTrack(sourceId);
             if (source == nullptr || source == prepared->tracks[index].get()) {
                 error = prepared->tracks[index]->id +
                         ": external audio source is missing or refers to itself.";
                 return false;
             }
-            runtime.externalAudioSource = source->runtime.get();
-            trackDependencies[index].push_back(runtime.externalAudioSource);
+            runtime.externalAudioSources.push_back({source->runtime.get(), {}});
+            trackDependencies[index].push_back(source->runtime.get());
         }
         const auto& effects = prepared->tracks[index]->effects;
         for (const auto& send : snapshot.graph.mixer.sidechainSends) {
@@ -626,9 +650,13 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
         }
         for (auto* track : stage) {
             auto& runtime = *track->runtime;
-            const auto sourceLatency = runtime.externalAudioSource == nullptr
-                                           ? 0
-                                           : runtime.externalAudioSource->routeLatencySamples;
+            for (const auto& input : runtime.externalAudioSources)
+                runtime.externalInputLatency =
+                    std::max(runtime.externalInputLatency, input.source->routeLatencySamples);
+            const auto sourceLatency = runtime.externalInputLatency;
+            for (auto& input : runtime.externalAudioSources)
+                input.delay.prepare(
+                    static_cast<int>(sourceLatency - input.source->routeLatencySamples));
             const auto instrumentLatency =
                 runtime.instrument() != nullptr ? runtime.instrument()->latencySamples() : 0;
             std::vector<SidechainAlignment> entries;
@@ -667,10 +695,10 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
 
     const auto originalTimebaseChanges = prepared->timebaseChangeSamples;
     for (auto& track : prepared->tracks) {
-        if (track->runtime->externalAudioSource != nullptr)
+        if (!track->runtime->externalAudioSources.empty())
             for (const auto change : originalTimebaseChanges)
-                prepared->timebaseChangeSamples.push_back(
-                    change + track->runtime->externalAudioSource->routeLatencySamples);
+                prepared->timebaseChangeSamples.push_back(change +
+                                                          track->runtime->externalInputLatency);
     }
     if (!prepareMixer(graph, *prepared, processingMode, sendsByTargetDevice, error)) return false;
     organizeSidechainRoutes(*prepared, levels);
@@ -735,6 +763,7 @@ bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, Prepared
             prepareAutomation(graph, prepared, AutomationTargetKind::busPan, spec.id);
         bus->gainDb.store(static_cast<float>(spec.gainDb));
         bus->pan.store(static_cast<float>(spec.pan));
+        bus->linearBalance = spec.panLaw == "linearBalance";
         bus->unityCenterStereo = spec.panLaw == "unityCenterStereo";
         bus->audible = false;
         bus->input.setSize(2, blockSize);
@@ -829,7 +858,9 @@ bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, Prepared
                         [&](const auto& send) { return send.trackId == spec.id && send.enabled; });
         const auto hasExternalAudioDependents =
             std::any_of(prepared.tracks.begin(), prepared.tracks.end(), [&](const auto& candidate) {
-                return candidate->runtime->externalAudioSource == &track;
+                return std::any_of(candidate->runtime->externalAudioSources.begin(),
+                                   candidate->runtime->externalAudioSources.end(),
+                                   [&](const auto& input) { return input.source == &track; });
             });
         const auto isSidechainSource =
             std::any_of(graph.mixer.sidechainSends.begin(), graph.mixer.sidechainSends.end(),
@@ -848,7 +879,7 @@ bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, Prepared
         const auto lowLatencyPdcCandidate =
             (track.instrumentTrack || track.monitorInput) && !hasEnabledSend &&
             !isSidechainSource && !ownsSidechainTarget &&
-            !spec.externalAudioSourceTrackId.has_value() && !hasExternalAudioDependents &&
+            spec.externalAudioSourceTrackIds.empty() && !hasExternalAudioDependents &&
             track.volumeAutomation.empty() && track.panAutomation.empty();
         addTrackRoute(track, spec.outputBusId ? mixer.findBus(*spec.outputBusId) : nullptr, false,
                       1.0f, mainSelected && !spec.muted, lowLatencyPdcCandidate, {});

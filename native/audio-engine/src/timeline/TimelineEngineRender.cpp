@@ -219,7 +219,9 @@ void TimelineEngine::scheduleMidi(const PreparedTimeline& prepared, Track& track
     MidiScheduler::schedule(runtime.midiClips, midiRangeStart, sampleCount, runtime.midiBuffer);
     runtime.instrumentEventCount = MidiScheduler::scheduleInstrumentEvents(
         runtime.midiClips, midiRangeStart, sampleCount, runtime.instrumentEvents.data(),
-        runtime.instrumentEventOrdering.data(), runtime.instrumentEvents.size());
+        runtime.instrumentEventOrdering.data(), runtime.instrumentEvents.size(),
+        runtime.restoreInstrumentControls);
+    runtime.restoreInstrumentControls = false;
 }
 
 void TimelineEngine::processTracks(PreparedTimeline& prepared,
@@ -368,17 +370,15 @@ void TimelineEngine::processInstrumentTrack(const PreparedTimeline& prepared, Tr
                                             const std::int64_t rangeStart) noexcept {
     auto& runtime = *track.runtime;
     if (runtime.instrument() != nullptr) {
-        const auto inputLatency = runtime.externalAudioSource == nullptr
-                                      ? 0
-                                      : runtime.externalAudioSource->routeLatencySamples;
+        const auto inputLatency = runtime.externalInputLatency;
         auto context = instrumentProcessContext(prepared, rangeStart - inputLatency, true);
         context.automation = runtime.deviceAutomation;
         context.timelineSample = rangeStart - inputLatency;
         context.timelineEvents = runtime.instrumentEvents.data();
         context.timelineEventCount = runtime.instrumentEventCount;
-        if (runtime.externalAudioSource != nullptr) {
-            context.externalInput =
-                runtime.externalAudioSource->routedOutputBuffer.getArrayOfReadPointers();
+        if (!runtime.externalAudioSources.empty()) {
+            runtime.mixExternalInput(sampleCount);
+            context.externalInput = runtime.externalInputBuffer.getArrayOfReadPointers();
             context.externalInputChannelCount = 2;
         }
         runtime.instrument()->process(runtime.mixBuffer.getArrayOfWritePointers(), 2, sampleCount,
@@ -401,16 +401,16 @@ void TimelineEngine::processLiveInstrumentTrack(const PreparedTimeline& prepared
     auto& runtime = *track.runtime;
     runtime.liveInputBuffer.clear(0, sampleCount);
     if (runtime.instrument() == nullptr ||
-        (!runtime.liveMidiActive() && runtime.externalAudioSource == nullptr)) {
+        (!runtime.liveMidiActive() && runtime.externalAudioSources.empty())) {
         runtime.processedBuffer.clear(0, sampleCount);
         return;
     }
     auto context = instrumentProcessContext(prepared, rangeStart, playing);
     context.automation = runtime.deviceAutomation;
     context.timelineSample = rangeStart;
-    if (runtime.externalAudioSource != nullptr) {
-        context.externalInput =
-            runtime.externalAudioSource->routedOutputBuffer.getArrayOfReadPointers();
+    if (!runtime.externalAudioSources.empty()) {
+        runtime.mixExternalInput(sampleCount);
+        context.externalInput = runtime.externalInputBuffer.getArrayOfReadPointers();
         context.externalInputChannelCount = 2;
     }
     runtime.instrument()->process(runtime.liveInputBuffer.getArrayOfWritePointers(), 2, sampleCount,
@@ -466,7 +466,7 @@ void TimelineEngine::mixTrackOutput(Track& track, const std::int64_t rangeStart,
         runtime.volumeAutomation, runtime.panAutomation, rangeStart - runtime.routeLatencySamples,
         sampleCount, runtime.gainDb.load(std::memory_order_acquire),
         runtime.pan.load(std::memory_order_acquire), runtime.unityCenterStereo, playing,
-        runtime.gainPreview.current(), runtime.panPreview.current());
+        runtime.gainPreview.current(), runtime.panPreview.current(), runtime.linearBalance);
     float peakLeft = 0.0f;
     float peakRight = 0.0f;
     double sumSquaresLeft = 0.0;
@@ -579,6 +579,7 @@ void TimelineEngine::clearPlaybackTrackState(PreparedTimeline& prepared) noexcep
         runtime.midiBuffer.clear();
         runtime.instrumentEventCount = 0;
         runtime.routedOutputBuffer.clear();
+        for (auto& input : runtime.externalAudioSources) input.delay.reset();
         runtime.postEffectDelayBuffer.clear();
         runtime.postEffectDelayWritePosition = 0;
         runtime.postEffectLowLatencyBypassActive = false;
@@ -596,6 +597,14 @@ void TimelineEngine::resetRecordingTrackState(PreparedTimeline& prepared) noexce
 }
 
 void TimelineEngine::beginTransportFade(const bool fadeIn, const double sampleRate) noexcept {
+    if (offlineMode) {
+        realtime.transportGain = fadeIn ? 1.0f : 0.0f;
+        realtime.transportFadeStep = 0.0f;
+        realtime.transportFadeRemaining = 0;
+        realtime.renderTransportState =
+            fadeIn ? RenderTransportState::playing : RenderTransportState::stopped;
+        return;
+    }
     const auto fadeSamples =
         std::max(1, static_cast<int>(std::ceil(std::max(1.0, sampleRate) * kTransportFadeSeconds)));
     if (fadeIn) {
