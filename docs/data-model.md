@@ -84,7 +84,7 @@ ProjectはDataRoot内の制作単位であり、`projects/<project-id>/` で識�
 
 音源制御イベントはSustain、Pitch Bend、Mod Wheel、Aftertouch、Parameter Changeを保持する。IDとClip相対Tickに加えて定義順を保存し、Parameter Changeは音源のパラメータIDとネイティブ値を正本にする。同音程が重なるNoteもそれぞれのIDでNote On/Offを対応させる。
 
-External Audioは1つのSource TrackからInstrumentへ音声を渡す。複数のConsumerを許可し、自己参照と循環は検証で排除する。Sourceを削除すると接続は解除され、入力を必要とするConsumerの実行診断に反映される。Pan Lawは通常のTrackで `equalPower`、中央ステレオを減衰させない構成で `unityCenterStereo` を選ぶ。
+External Audioは複数のSource TrackからInstrumentへ音声を渡す。複数のConsumerを許可し、自己参照と循環は検証で排除する。Sourceを削除すると接続は解除され、入力を必要とするConsumerの実行診断に反映される。Pan Lawは通常のTrackで `equalPower`、中央ステレオを減衰させない構成で `unityCenterStereo` を選ぶ。
 
 ### 3.3 ミキサー
 
@@ -300,7 +300,7 @@ flowchart TD
 
 ## 10. セッション文書の版
 
-`session.json`・世代ファイル・`.riffra` の `session.json` は `{"schemaVersion": 1, "session": {...}}` 形式のセッション文書である。読み込みでは版を先に読み、現行の版(`SESSION_SCHEMA_VERSION`)だけを採用する。
+`session.json`・世代ファイル・`.riffra` の `session.json` は `{"schemaVersion": 2, "session": {...}}` 形式のセッション文書である。読み込みでは版を先に読み、対応する保存形式を現行の正準状態へ変換して検証する。版1の単一外部音声参照は配列へ移し、未接続のnullは空配列とする。保存時は常に現行の版(`SESSION_SCHEMA_VERSION`)を書き込む。
 
 | 方針         | 内容                                                                                                                                                                                                               |
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
