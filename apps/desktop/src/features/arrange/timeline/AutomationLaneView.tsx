@@ -1,9 +1,11 @@
+import { secondsToTicks, ticksToSeconds } from '@/shared/session/timebase';
 import { useEffect, useRef, useState, type MutableRefObject } from 'react';
 import type {
   AutomationInterpolation,
   AutomationLane,
   AutomationPoint,
   AutomationTarget,
+  ProjectTimebase,
 } from '@/model/domain';
 import { automationTargetKey, type AutomationOption } from '../model/automation-targets';
 import { isEditableTarget } from '@/features/arrange/model/interaction';
@@ -14,6 +16,7 @@ import styles from '../WorkspaceArrange.module.css';
 const HEIGHT = 128;
 
 interface AutomationLaneViewProps {
+  timebase: ProjectTimebase;
   option: AutomationOption;
   options: AutomationOption[];
   lane?: AutomationLane;
@@ -80,7 +83,7 @@ export function AutomationLaneView(props: AutomationLaneViewProps) {
   const effectiveValue =
     baseValue === undefined
       ? undefined
-      : automationValueAt(points, interpolation, props.playheadTick, baseValue);
+      : automationValueAt(points, interpolation, props.playheadTick, baseValue, props.timebase);
   const effectiveText = useAutomationValueDisplay(effectiveValue, formatValue);
 
   const yForValue = (value: number) => ((max - value) / (max - min)) * HEIGHT;
@@ -145,7 +148,13 @@ export function AutomationLaneView(props: AutomationLaneViewProps) {
       );
       setPoints(preview);
       queuePreview(
-        automationValueAt(preview, interpolation, props.playheadTickRef.current, baseValue ?? 0),
+        automationValueAt(
+          preview,
+          interpolation,
+          props.playheadTickRef.current,
+          baseValue ?? 0,
+          props.timebase,
+        ),
         previewToken,
       );
     };
@@ -209,7 +218,7 @@ export function AutomationLaneView(props: AutomationLaneViewProps) {
         </select>
         <select
           aria-label="Automation interpolation"
-          value={interpolation}
+          value={typeof interpolation === 'string' ? interpolation : 'linearAmplitude'}
           disabled={!points.length}
           onChange={(event) =>
             void props.onCommit(points, event.target.value as AutomationInterpolation)
@@ -217,6 +226,9 @@ export function AutomationLaneView(props: AutomationLaneViewProps) {
         >
           <option value="linear" disabled={props.option.discrete}>
             Linear
+          </option>
+          <option value="linearAmplitude" disabled>
+            Amplitude transition
           </option>
           <option value="step">Step</option>
         </select>
@@ -258,6 +270,29 @@ export function AutomationLaneView(props: AutomationLaneViewProps) {
                     ...points.flatMap((point, index) => {
                       const x = point.tick * props.pixelsPerTick;
                       const current = `${x},${yForValue(point.value)}`;
+                      if (typeof interpolation === 'object' && index > 0) {
+                        const start = ticksToSeconds(point.tick, props.timebase);
+                        const end = Math.min(
+                          start + interpolation.linearAmplitude.durationSeconds,
+                          points[index + 1]
+                            ? ticksToSeconds(points[index + 1].tick, props.timebase)
+                            : Infinity,
+                        );
+                        return Array.from({ length: 9 }, (_, step) => {
+                          const tick = secondsToTicks(
+                            start + ((end - start) * step) / 8,
+                            props.timebase,
+                          );
+                          const value = automationValueAt(
+                            points,
+                            interpolation,
+                            tick,
+                            baseValue ?? 0,
+                            props.timebase,
+                          );
+                          return `${tick * props.pixelsPerTick},${yForValue(value)}`;
+                        });
+                      }
                       return interpolation === 'step' && index > 0
                         ? [`${x},${yForValue(points[index - 1].value)}`, current]
                         : [current];

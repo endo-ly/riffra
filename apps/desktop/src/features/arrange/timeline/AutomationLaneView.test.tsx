@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { defaultSession } from '@/native/browser-defaults';
 import '@testing-library/jest-dom/vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useState } from 'react';
@@ -22,7 +23,9 @@ it('switches step interpolation at the point tick like Native automation', () =>
   ];
 
   // Act
-  const values = [959, 960, 961].map((tick) => automationValueAt(points, 'step', tick, 0.5));
+  const values = [959, 960, 961].map((tick) =>
+    automationValueAt(points, 'step', tick, 0.5, defaultSession().arrangement.timebase),
+  );
 
   // Assert
   expect(values).toEqual([0, 1, 1]);
@@ -54,6 +57,7 @@ it('previews point drags, cancels transient values, and commits one canonical la
     });
     return (
       <AutomationLaneView
+        timebase={defaultSession().arrangement.timebase}
         option={option}
         options={[option]}
         lane={lane}
@@ -170,6 +174,7 @@ it('coalesces pending drag previews and sends the final clear after an in-flight
   const committed = vi.fn();
   render(
     <AutomationLaneView
+      timebase={defaultSession().arrangement.timebase}
       option={option}
       options={[option]}
       lane={{
@@ -232,6 +237,7 @@ it('limits VST3 display formatting to the latest playhead value at four requests
   const formatter = vi.fn(async (value: number) => `${value.toFixed(2)} Hz`);
   const view = (playheadTick: number) => (
     <AutomationLaneView
+      timebase={defaultSession().arrangement.timebase}
       option={option}
       options={[option]}
       lane={{
