@@ -164,6 +164,7 @@ export type { MarkerAddParams } from './MarkerAddParams';
 export type { MarkerIdParams } from './MarkerIdParams';
 export type { MarkerUpdateParams } from './MarkerUpdateParams';
 export type { MasterGainParams } from './MasterGainParams';
+export type { MasteringDeviation } from './MasteringDeviation';
 export type { MasteringReport } from './MasteringReport';
 export type { MeasurementRange } from './MeasurementRange';
 export type { MeasurementState } from './MeasurementState';

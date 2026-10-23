@@ -1,14 +1,12 @@
 //! Cancellable integrated-loudness mastering of the native float WAV.
 //!
-//! Mastering applies one uniform gain towards the target integrated loudness,
-//! limited by the target true peak ceiling, and never reshapes dynamics.
+//! Mastering combines fixed input gain with oversampled peak limiting, then
+//! verifies integrated loudness and true peak before replacing the output.
 
 use super::sections::SectionPlan;
 use crate::analysis::ffmpeg::run;
 use crate::analysis::measurement::{TemporaryDirectory, loudnorm, measurement};
-use crate::api::output::{
-    AudioMeasurements, LoudnessMeasurement, LoudnessReadout, MasteringReport,
-};
+use crate::api::output::{AudioMeasurements, LoudnessReadout, MasteringDeviation, MasteringReport};
 use riffra_core::LoudnessMastering;
 use std::{fs, path::Path, sync::atomic::AtomicBool};
 
@@ -35,68 +33,83 @@ pub(super) fn master(
         &temporary.0,
         cancelled,
     )?)?;
-    let desired_gain_db = target.integrated_lufs - input_measurement.integrated_lufs;
-    let peak_headroom_db = target.true_peak_db - input_measurement.true_peak_db;
-    let mut applied_gain_db = desired_gain_db.min(peak_headroom_db);
-    run(
-        input,
-        Some(&normalized),
-        &volume_filter(applied_gain_db),
-        sample_rate,
-        &temporary.0,
-        cancelled,
-        "info",
-    )?;
-    let mut output = measurement(&loudnorm(
-        &normalized,
-        None,
-        "loudnorm=print_format=json",
-        sample_rate,
-        &temporary.0,
-        cancelled,
-    )?)?;
-    let mut final_path = normalized.as_path();
-    if output.true_peak_db > target.true_peak_db {
-        let response = target.true_peak_db - output.true_peak_db;
-        applied_gain_db += response;
+    let oversampled_rate = sample_rate
+        .checked_mul(4)
+        .ok_or("oversampled sample rate overflows")?;
+    let limit = 10.0_f64.powf(target.true_peak_db / 20.0);
+    let mut gain_db = target.integrated_lufs - input_measurement.integrated_lufs;
+    for _ in 0..8 {
+        let filter = format!(
+            "volume={gain_db}dB:precision=double,aresample={oversampled_rate},alimiter=limit={limit}:attack=5:release=50:level=0:latency=1,aresample={sample_rate}"
+        );
         run(
-            &normalized,
-            Some(&corrected),
-            &volume_filter(response),
+            input,
+            Some(&normalized),
+            &filter,
             sample_rate,
             &temporary.0,
             cancelled,
             "info",
         )?;
-        output = measurement(&loudnorm(
-            &corrected,
+        let mut output = measurement(&loudnorm(
+            &normalized,
             None,
             "loudnorm=print_format=json",
             sample_rate,
             &temporary.0,
             cancelled,
         )?)?;
-        final_path = &corrected;
+        let mut final_path = normalized.as_path();
+        let mut correction_db = 0.0;
+        if output.true_peak_db >= target.true_peak_db {
+            // loudnorm reports hundredths of a decibel; reserve one quantum.
+            correction_db = output.true_peak_db - target.true_peak_db + 0.01;
+            run(
+                &normalized,
+                Some(&corrected),
+                &volume_filter(-correction_db),
+                sample_rate,
+                &temporary.0,
+                cancelled,
+                "info",
+            )?;
+            output = measurement(&loudnorm(
+                &corrected,
+                None,
+                "loudnorm=print_format=json",
+                sample_rate,
+                &temporary.0,
+                cancelled,
+            )?)?;
+            final_path = &corrected;
+        }
+        let deviation = output.integrated_lufs - target.integrated_lufs;
+        if deviation.abs() <= 0.5 && output.true_peak_db <= target.true_peak_db {
+            fs::copy(final_path, input)
+                .map_err(|error| format!("mastered wav could not be saved: {error}"))?;
+            return Ok(MasteringReport {
+                target: target.clone(),
+                input: input_measurement,
+                deviation: MasteringDeviation {
+                    integrated_lufs: deviation,
+                    true_peak_db: output.true_peak_db - target.true_peak_db,
+                    loudness_range_lu: target
+                        .loudness_range_lu
+                        .map(|target| output.loudness_range_lu - target),
+                },
+                normalization_type: "limited".into(),
+                true_peak_correction_db: correction_db,
+            });
+        }
+        if output.true_peak_db > target.true_peak_db {
+            break;
+        }
+        gain_db -= deviation;
     }
-    if output.true_peak_db > target.true_peak_db {
-        return Err(format!(
-            "completed wav true peak {} dbtp exceeds target {} dbtp after gain correction",
-            output.true_peak_db, target.true_peak_db
-        ));
-    }
-    fs::copy(final_path, input)
-        .map_err(|error| format!("mastered wav could not be saved: {error}"))?;
-    Ok(MasteringReport {
-        target: target.clone(),
-        input: input_measurement,
-        deviation: LoudnessMeasurement {
-            integrated_lufs: output.integrated_lufs - target.integrated_lufs,
-            true_peak_db: output.true_peak_db - target.true_peak_db,
-            loudness_range_lu: output.loudness_range_lu - target.loudness_range_lu,
-        },
-        normalization_type: "linear".into(),
-        true_peak_correction_db: (desired_gain_db - applied_gain_db).max(0.0),
-    })
+    Err(format!(
+        "master target not reached: target {} lufs / {} dbtp",
+        target.integrated_lufs, target.true_peak_db
+    ))
 }
 
 pub(super) fn measure_output(
@@ -159,7 +172,7 @@ pub(super) fn measure_output(
     }
     if let LoudnessReadout::Measured { measurement } = &loudness {
         if mastering.is_some_and(|report| report.true_peak_correction_db > 0.0) {
-            warnings.push("true peak ceiling limited the gain towards the target loudness".into());
+            warnings.push("true peak measurement required output gain correction".into());
         }
         if let Some(target) = target {
             if measurement.true_peak_db > target.true_peak_db {
@@ -170,7 +183,10 @@ pub(super) fn measure_output(
                     "integrated loudness differs from the target by more than 0.5 lufs".into(),
                 );
             }
-            if measurement.loudness_range_lu > target.loudness_range_lu + 0.5 {
+            if target
+                .loudness_range_lu
+                .is_some_and(|target| measurement.loudness_range_lu > target + 0.5)
+            {
                 warnings.push("loudness range exceeds the target by more than 0.5 lu".into());
             }
         }
@@ -187,7 +203,7 @@ pub(super) fn measure_output(
 }
 
 fn volume_filter(gain_db: f64) -> String {
-    format!("volume={gain_db}dB")
+    format!("volume={gain_db}dB:precision=double")
 }
 
 #[cfg(test)]
@@ -290,11 +306,12 @@ mod tests {
             let target = LoudnessMastering {
                 integrated_lufs: -14.0,
                 true_peak_db: -1.0,
-                loudness_range_lu: 11.0,
+                loudness_range_lu: Some(11.0),
             };
             let report = master(&path, &target, sample_rate, None).unwrap();
             assert!(report.deviation.true_peak_db <= 0.0);
-            assert!(report.true_peak_correction_db > 0.0);
+            assert!(report.deviation.integrated_lufs.abs() <= 0.5);
+            assert_eq!(report.normalization_type, "limited");
             let (final_measurements, warnings) = measure_output(
                 &path,
                 sample_rate,
@@ -316,19 +333,13 @@ mod tests {
                     .abs()
                     < 1.0e-9
             );
-            assert_eq!(
-                warnings,
-                [
-                    "true peak ceiling limited the gain towards the target loudness",
-                    "integrated loudness differs from the target by more than 0.5 lufs"
-                ]
-            );
+            assert!(warnings.is_empty());
         }
         write_float_wav(&path, sample_rate, &vec![0.0; frames as usize]);
         let target = LoudnessMastering {
             integrated_lufs: -14.0,
             true_peak_db: -1.0,
-            loudness_range_lu: 11.0,
+            loudness_range_lu: Some(11.0),
         };
         let error =
             measure_output(&path, sample_rate, None, Some(&target), &sections, None).unwrap_err();
@@ -339,7 +350,7 @@ mod tests {
     }
 
     #[test]
-    fn keeps_relative_segment_levels_when_limiting_shrinks_the_mastering_gain() {
+    fn measures_relative_segment_levels_and_overlapping_analysis_ranges() {
         let root = std::env::temp_dir().join(format!(
             "riffra-mastering-ratio-{}",
             riffra_control::new_instance_id()
@@ -485,24 +496,6 @@ mod tests {
             assert_eq!(
                 peak.position,
                 timebase.tick_to_musical_position(timebase.seconds_to_ticks(peak.seconds))
-            );
-            let target = LoudnessMastering {
-                integrated_lufs: -14.0,
-                true_peak_db: -20.0,
-                loudness_range_lu: 20.0,
-            };
-            let report = master(&path, &target, sample_rate, None).unwrap();
-            assert!(report.true_peak_correction_db > 0.0);
-            let post_ratio = segment_mean_square(&path, sample_rate, 0, 2)
-                / segment_mean_square(&path, sample_rate, 2, 2);
-            assert!(
-                (post_ratio - pre_ratio).abs() < 0.02 * pre_ratio,
-                "limited master changed segment ratios: {pre_ratio} -> {post_ratio}"
-            );
-            // Every gain pass applies linearly, so the loudness the corrected
-            // wav loses against its target equals all gain the ceiling withheld.
-            assert!(
-                (report.true_peak_correction_db + report.deviation.integrated_lufs).abs() < 0.2
             );
         }
         fs::remove_dir_all(root).unwrap();

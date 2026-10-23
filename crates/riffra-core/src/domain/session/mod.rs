@@ -115,13 +115,13 @@ pub struct MixdownSettings {
     pub block_size: Option<u32>,
 }
 
-/// FFmpeg two-pass loudness normalization targets.
+/// Integrated loudness, peak ceiling, and optional loudness-range targets.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct LoudnessMastering {
     pub integrated_lufs: f64,
     pub true_peak_db: f64,
-    pub loudness_range_lu: f64,
+    pub loudness_range_lu: Option<f64>,
 }
 
 impl MixdownSettings {
@@ -140,8 +140,9 @@ impl MixdownSettings {
                 || !(-70.0..=-5.0).contains(&master.integrated_lufs)
                 || !master.true_peak_db.is_finite()
                 || !(-9.0..=0.0).contains(&master.true_peak_db)
-                || !master.loudness_range_lu.is_finite()
-                || !(1.0..=50.0).contains(&master.loudness_range_lu))
+                || master
+                    .loudness_range_lu
+                    .is_some_and(|value| !value.is_finite() || value < 0.0))
         {
             return Err("invalid loudness mastering targets".into());
         }
