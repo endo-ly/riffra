@@ -260,6 +260,50 @@ TEST(MidiSchedulerTest, ParameterRampUsesVariablePpqTempoMapAndRestoresSeekState
     EXPECT_FLOAT_EQ(events[0].value, 0.75f);
 }
 
+TEST(MidiSchedulerTest, RestoresLoopControlsFromPreviousIterationAndContinuesCurrentRamp) {
+    MidiClip source;
+    source.durationTicks = 1920;
+    source.loop = true;
+    source.directInstrumentEvents = true;
+    source.instrumentControlEvents = {
+        {"ramp", 1536, 0, "parameterRamp", false, 0.2f, "tone", 0.8f, 192},
+        {"change", 1536, 1, "parameterChange", false, 0.8f, "level"}};
+    CompiledMidiClip compiled;
+    juce::String error;
+    ASSERT_TRUE(MidiScheduler::compile(source, TimelineTimebase{}, 48000.0, compiled, error))
+        << error;
+    for (auto& event : compiled.events)
+        event.instrumentEvent->parameter_handle = event.parameter == "tone" ? 7 : 8;
+    std::array<SonalloyEvent, 4> events{};
+    std::array<InstrumentEventOrder, 4> ordering{};
+
+    EXPECT_EQ(MidiScheduler::scheduleInstrumentEvents({compiled}, 9600, 256, events.data(),
+                                                      ordering.data(), events.size(), true),
+              0u);
+    for (const auto sample : {48000, 57600, 88800}) {
+        const auto count = MidiScheduler::scheduleInstrumentEvents(
+            {compiled}, sample, 256, events.data(), ordering.data(), events.size(), true);
+        ASSERT_EQ(count, 2u);
+        const auto ramp =
+            std::find_if(events.begin(), events.begin() + count,
+                         [](const auto& event) { return event.parameter_handle == 7; });
+        const auto change =
+            std::find_if(events.begin(), events.begin() + count,
+                         [](const auto& event) { return event.parameter_handle == 8; });
+        ASSERT_NE(ramp, events.begin() + count);
+        ASSERT_NE(change, events.begin() + count);
+        EXPECT_FLOAT_EQ(change->value, 0.8f);
+        if (sample == 88800) {
+            EXPECT_EQ(ramp->event_type, SONALLOY_EVENT_PARAMETER_RAMP);
+            EXPECT_FLOAT_EQ(ramp->value, 0.5f);
+            EXPECT_EQ(ramp->duration_frames, 2400u);
+        } else {
+            EXPECT_EQ(ramp->event_type, SONALLOY_EVENT_PARAMETER_CHANGE);
+            EXPECT_FLOAT_EQ(ramp->value, 0.8f);
+        }
+    }
+}
+
 TEST(MidiSchedulerTest, RestoresLatestParameterAcrossClipsByTimePriorityAndSourceOrder) {
     const auto clip = [](const std::int64_t start, const int priority,
                          const std::uint32_t sourceOrder, const float value) {
@@ -294,6 +338,15 @@ TEST(MidiSchedulerTest, RestoresLatestParameterAcrossClipsByTimePriorityAndSourc
         ASSERT_EQ(count, 1u);
         EXPECT_FLOAT_EQ(events[0].value, 0.9f);
     }
+    const std::vector tied{recent, clip(200, 2, 0, 0.6f)};
+    ASSERT_EQ(MidiScheduler::scheduleInstrumentEvents(tied, 200, 1, events.data(), ordering.data(),
+                                                      events.size()),
+              2u);
+    EXPECT_FLOAT_EQ(events[1].value, 0.6f);
+    ASSERT_EQ(MidiScheduler::scheduleInstrumentEvents(tied, 300, 1, events.data(), ordering.data(),
+                                                      events.size(), true),
+              1u);
+    EXPECT_FLOAT_EQ(events[0].value, 0.6f);
 }
 
 }  // namespace

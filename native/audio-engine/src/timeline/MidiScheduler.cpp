@@ -420,54 +420,60 @@ std::size_t MidiScheduler::scheduleInstrumentEvents(
     if (restoreControls) {
         for (const auto& clip : clips) {
             if (clip.muted || rangeStart <= clip.startSample || clip.lengthSamples <= 0) continue;
-            const auto iteration =
+            const auto lastIteration =
                 clip.loop ? (rangeStart - clip.startSample) / clip.lengthSamples : 0;
-            const auto start = clip.startSample + iteration * clip.lengthSamples;
-            for (const auto& source : clip.events) {
-                if (start + source.sampleOffset >= rangeStart) break;
-                if (!source.instrumentEvent) continue;
-                auto event = *source.instrumentEvent;
-                if (event.event_type == SONALLOY_EVENT_NOTE_ON ||
-                    event.event_type == SONALLOY_EVENT_NOTE_OFF)
-                    continue;
-                const auto parameter = event.event_type == SONALLOY_EVENT_PARAMETER_CHANGE ||
-                                       event.event_type == SONALLOY_EVENT_PARAMETER_RAMP;
-                auto position = count;
-                for (std::size_t index = 0; index < count; ++index) {
-                    const auto& previous = destination[index];
-                    const auto previousParameter =
-                        previous.event_type == SONALLOY_EVENT_PARAMETER_CHANGE ||
-                        previous.event_type == SONALLOY_EVENT_PARAMETER_RAMP;
-                    if ((parameter && previousParameter &&
-                         previous.parameter_handle == event.parameter_handle) ||
-                        (!parameter && previous.event_type == event.event_type)) {
-                        position = index;
-                        break;
+            const auto firstIteration = std::max<std::int64_t>(0, lastIteration - 1);
+            for (auto iteration = firstIteration; iteration <= lastIteration; ++iteration) {
+                const auto start = clip.startSample + iteration * clip.lengthSamples;
+                for (const auto& source : clip.events) {
+                    if (start + source.sampleOffset >= rangeStart) break;
+                    if (!source.instrumentEvent) continue;
+                    auto event = *source.instrumentEvent;
+                    if (event.event_type == SONALLOY_EVENT_NOTE_ON ||
+                        event.event_type == SONALLOY_EVENT_NOTE_OFF)
+                        continue;
+                    const auto parameter = event.event_type == SONALLOY_EVENT_PARAMETER_CHANGE ||
+                                           event.event_type == SONALLOY_EVENT_PARAMETER_RAMP;
+                    auto position = count;
+                    for (std::size_t index = 0; index < count; ++index) {
+                        const auto& previous = destination[index];
+                        const auto previousParameter =
+                            previous.event_type == SONALLOY_EVENT_PARAMETER_CHANGE ||
+                            previous.event_type == SONALLOY_EVENT_PARAMETER_RAMP;
+                        if ((parameter && previousParameter &&
+                             previous.parameter_handle == event.parameter_handle) ||
+                            (!parameter && previous.event_type == event.event_type)) {
+                            position = index;
+                            break;
+                        }
                     }
-                }
-                const InstrumentEventOrder order{
-                    clip.startTick + static_cast<std::uint64_t>(iteration) * clip.durationTicks +
-                        source.originalTick,
-                    source.ordering, source.sourceOrder, start + source.sampleOffset};
-                if (position < count && eventKey(order) <= eventKey(ordering[position])) continue;
-                if (position == capacity) return capacity + 1;
-                if (position == count) ++count;
-                if (event.event_type == SONALLOY_EVENT_PARAMETER_RAMP) {
-                    const auto elapsed =
-                        static_cast<std::uint64_t>(rangeStart - start - source.sampleOffset);
-                    const auto duration = event.duration_frames;
-                    if (elapsed >= duration) {
-                        event.event_type = SONALLOY_EVENT_PARAMETER_CHANGE;
-                        event.value = event.target_value;
-                    } else {
-                        event.value += (event.target_value - event.value) *
-                                       static_cast<float>(elapsed) / static_cast<float>(duration);
-                        event.duration_frames -= static_cast<std::uint32_t>(elapsed);
+                    const InstrumentEventOrder order{
+                        clip.startTick +
+                            static_cast<std::uint64_t>(iteration) * clip.durationTicks +
+                            source.originalTick,
+                        source.ordering, source.sourceOrder, start + source.sampleOffset};
+                    if (position < count && eventKey(order) < eventKey(ordering[position]))
+                        continue;
+                    if (position == capacity) return capacity + 1;
+                    if (position == count) ++count;
+                    if (event.event_type == SONALLOY_EVENT_PARAMETER_RAMP) {
+                        const auto elapsed =
+                            static_cast<std::uint64_t>(rangeStart - start - source.sampleOffset);
+                        const auto duration = event.duration_frames;
+                        if (elapsed >= duration) {
+                            event.event_type = SONALLOY_EVENT_PARAMETER_CHANGE;
+                            event.value = event.target_value;
+                        } else {
+                            event.value += (event.target_value - event.value) *
+                                           static_cast<float>(elapsed) /
+                                           static_cast<float>(duration);
+                            event.duration_frames -= static_cast<std::uint32_t>(elapsed);
+                        }
                     }
+                    event.sample_offset = 0;
+                    destination[position] = event;
+                    ordering[position] = order;
                 }
-                event.sample_offset = 0;
-                destination[position] = event;
-                ordering[position] = order;
             }
         }
     }
