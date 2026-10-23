@@ -209,7 +209,6 @@ impl UserInstrumentStore {
         fs::create_dir_all(self.project_instruments_root()).map_err(|error| error.to_string())?;
         fs::create_dir(&destination).map_err(|error| error.to_string())?;
         let result = (|| {
-            copy_package(source, definition, &destination)?;
             let source = fs::canonicalize(source).map_err(|error| error.to_string())?;
             let mut document: serde_json::Value = serde_json::from_str(
                 &fs::read_to_string(definition).map_err(|error| error.to_string())?,
@@ -455,24 +454,26 @@ fn collect_score_resources(
                 }
                 require_regular_file(&source, "instrument resource")?;
                 let source = fs::canonicalize(source).map_err(|error| error.to_string())?;
-                if let Ok(relative) = source.strip_prefix(source_root) {
-                    *path = relative.to_string_lossy().replace('\\', "/");
-                } else if let Some(relative) = resources.get(&source) {
+                if let Some(relative) = resources.get(&source) {
                     path.clone_from(relative);
                 } else {
-                    let directory = destination.join(".score-resources");
-                    fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
-                    let name = format!(
-                        "{}-{}",
-                        new_instance_id(),
-                        source
-                            .file_name()
-                            .ok_or("resource has no filename")?
-                            .to_string_lossy()
-                    );
-                    fs::copy(&source, directory.join(&name)).map_err(|error| error.to_string())?;
-                    *path = format!(".score-resources/{name}");
-                    resources.insert(source, path.clone());
+                    let relative = match source.strip_prefix(source_root) {
+                        Ok(relative) => relative.to_string_lossy().replace('\\', "/"),
+                        Err(_) => format!(
+                            ".score-resources/{}-{}",
+                            new_instance_id(),
+                            source
+                                .file_name()
+                                .ok_or("resource has no filename")?
+                                .to_string_lossy()
+                        ),
+                    };
+                    let target = destination.join(&relative);
+                    fs::create_dir_all(target.parent().ok_or("resource has no parent")?)
+                        .map_err(|error| error.to_string())?;
+                    fs::copy(&source, target).map_err(|error| error.to_string())?;
+                    resources.insert(source, relative.clone());
+                    *path = relative;
                 }
             }
             for value in fields.values_mut() {
@@ -652,23 +653,41 @@ mod tests {
             fs::read(destination.join("samples/attack.wav")).unwrap(),
             b"sample"
         );
+        let score_destination = root.join("score-destination");
+        fs::create_dir(&score_destination).unwrap();
+        fs::write(source.join("unused.wav"), b"unrelated sample").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(source.join("unused.wav"), source.join("unused-link.wav"))
+            .unwrap();
         fs::write(root.join("shared.wav"), b"external sample").unwrap();
         let mut document = serde_json::json!({"layers":[{"path":"../shared.wav"},{"path":"../shared.wav"},{"path":"samples/attack.wav"}]});
         collect_score_resources(
             &mut document,
             &fs::canonicalize(&source).unwrap(),
-            &destination,
+            &score_destination,
             &mut Default::default(),
         )
         .unwrap();
         fs::remove_file(root.join("shared.wav")).unwrap();
         let copied = document["layers"][0]["path"].as_str().unwrap();
         assert_eq!(
-            fs::read(destination.join(copied)).unwrap(),
+            fs::read(score_destination.join(copied)).unwrap(),
             b"external sample"
         );
         assert_eq!(document["layers"][0]["path"], document["layers"][1]["path"]);
         assert_eq!(document["layers"][2]["path"], "samples/attack.wav");
+        assert_eq!(
+            fs::read(score_destination.join("samples/attack.wav")).unwrap(),
+            b"sample"
+        );
+        assert!(!score_destination.join("unused.wav").exists());
+        assert!(!score_destination.join("unused-link.wav").exists());
+        assert_eq!(
+            fs::read_dir(score_destination.join(".score-resources"))
+                .unwrap()
+                .count(),
+            1
+        );
         let _ = fs::remove_dir_all(root);
     }
 }
