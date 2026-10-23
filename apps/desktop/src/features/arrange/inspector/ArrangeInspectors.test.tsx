@@ -21,6 +21,7 @@ function recordingSession(): CreativeSession {
   const rawId = toAssetId('asset:018f85b9-5fe1-7ef2-91d8-e6b4e665d41a');
   const processedId = toAssetId('asset:018f85b9-5fe1-7ef2-91d8-e6b4e665d41b');
   session.arrangement.tracks.push({
+    externalAudioSourceTrackIds: [],
     panLaw: 'equalPower' as const,
     id: 'track:audio',
     name: 'Audio',
@@ -98,6 +99,7 @@ describe('Arrange Inspectors', () => {
   it('surfaces Track operation failures in the Inspector status', async () => {
     const session = defaultSession();
     const track = {
+      externalAudioSourceTrackIds: [],
       panLaw: 'equalPower' as const,
       id: 'track:instrument',
       name: 'Keys',
@@ -409,6 +411,7 @@ describe('Arrange Inspectors', () => {
     const midiSessionId = 'recording:midi';
     const midiAssetId = toAssetId('asset:018f85b9-5fe1-7ef2-91d8-e6b4e665d41c');
     session.arrangement.tracks.push({
+      externalAudioSourceTrackIds: [],
       panLaw: 'equalPower' as const,
       id: 'track:midi-take',
       name: 'MIDI Take',

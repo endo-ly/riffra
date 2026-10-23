@@ -75,6 +75,18 @@ pub enum InstrumentControlEventKind {
         #[ts(rename = "nativeValue")]
         native_value: f32,
     },
+    ParameterRamp {
+        parameter: String,
+        #[serde(rename = "fromValue")]
+        #[ts(rename = "fromValue")]
+        from_value: f32,
+        #[serde(rename = "toValue")]
+        #[ts(rename = "toValue")]
+        to_value: f32,
+        #[serde(rename = "durationTicks")]
+        #[ts(rename = "durationTicks")]
+        duration_ticks: u64,
+    },
 }
 
 /// A non-destructive MIDI clip on the arrangement.
@@ -182,6 +194,22 @@ impl MidiClip {
                     parameter,
                     native_value,
                 } => !parameter.trim().is_empty() && native_value.is_finite(),
+                InstrumentControlEventKind::ParameterRamp {
+                    parameter,
+                    from_value,
+                    to_value,
+                    duration_ticks,
+                } => {
+                    !parameter.trim().is_empty()
+                        && from_value.is_finite()
+                        && to_value.is_finite()
+                        && *duration_ticks > 0
+                        && event
+                            .tick
+                            .0
+                            .checked_add(*duration_ticks)
+                            .is_some_and(|end| end <= self.duration_ticks)
+                }
             };
             if event.id.trim().is_empty()
                 || !ids.insert(&event.id)

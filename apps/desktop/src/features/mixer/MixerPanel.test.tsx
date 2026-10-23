@@ -18,6 +18,7 @@ it('edits Group and Send routes, commits their controls, and opens Bus and Maste
     kind: 'instrument',
     gainDb: 0,
     pan: 0,
+    externalAudioSourceTrackIds: [],
     panLaw: 'equalPower',
     muted: false,
     solo: false,

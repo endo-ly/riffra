@@ -92,8 +92,79 @@ impl Arrangement {
                 "Arrangement timebase is invalid.".into(),
             ));
         }
+        if self.timebase.ppq != timebase.ppq {
+            let mut candidate = self.clone();
+            candidate.rescale_ticks(timebase.ppq)?;
+            candidate.timebase = timebase;
+            candidate.revision = candidate.revision.saturating_add(1);
+            *self = candidate;
+            return Ok(());
+        }
         self.timebase = timebase;
         self.revision = self.revision.saturating_add(1);
+        Ok(())
+    }
+
+    fn rescale_ticks(&mut self, ppq: u32) -> Result<(), DomainError> {
+        let scale = |tick: &mut u64| -> Result<(), DomainError> {
+            *tick = super::timeline::rescale_tick(*tick, self.timebase.ppq, ppq)?;
+            Ok(())
+        };
+        scale(&mut self.loop_range.start_tick.0)?;
+        scale(&mut self.loop_range.end_tick.0)?;
+        if let Some(range) = &mut self.punch_range {
+            scale(&mut range.start_tick.0)?;
+            scale(&mut range.end_tick.0)?;
+        }
+        for clip in &mut self.audio_clips {
+            scale(&mut clip.start_tick.0)?;
+        }
+        for clip in &mut self.midi_clips {
+            scale(&mut clip.start_tick.0)?;
+            scale(&mut clip.duration_ticks)?;
+            for note in &mut clip.notes {
+                scale(&mut note.start_tick.0)?;
+                scale(&mut note.duration_ticks)?;
+            }
+            for event in &mut clip.events {
+                scale(&mut event.tick.0)?;
+            }
+            for event in &mut clip.instrument_control_events {
+                scale(&mut event.tick.0)?;
+                if let InstrumentControlEventKind::ParameterRamp { duration_ticks, .. } =
+                    &mut event.kind
+                {
+                    scale(duration_ticks)?;
+                }
+            }
+        }
+        for lane in &mut self.automation_lanes {
+            for point in &mut lane.points {
+                scale(&mut point.tick.0)?;
+            }
+        }
+        for marker in &mut self.markers {
+            scale(&mut marker.tick)?;
+        }
+        for region in &mut self.regions {
+            scale(&mut region.start_tick.0)?;
+            scale(&mut region.end_tick.0)?;
+        }
+        for event in &mut self.harmony_events {
+            scale(&mut event.start_tick.0)?;
+            scale(&mut event.end_tick.0)?;
+        }
+        for session in &mut self.recording_sessions {
+            scale(&mut session.start_tick.0)?;
+        }
+        for pass in &mut self.recording_passes {
+            scale(&mut pass.start_tick.0)?;
+            scale(&mut pass.duration_ticks)?;
+        }
+        for take in &mut self.takes {
+            scale(&mut take.start_tick.0)?;
+            scale(&mut take.duration_ticks)?;
+        }
         Ok(())
     }
 
@@ -322,9 +393,9 @@ impl Arrangement {
         self.tracks.remove(index);
         self.mixer.sends.retain(|send| send.track_id != track_id);
         for consumer in &mut self.tracks {
-            if consumer.external_audio_source_track_id.as_deref() == Some(track_id) {
-                consumer.external_audio_source_track_id = None;
-            }
+            consumer
+                .external_audio_source_track_ids
+                .retain(|source| source != track_id);
         }
         self.audio_clips.retain(|clip| clip.track_id != track_id);
         self.midi_clips.retain(|clip| clip.track_id != track_id);
@@ -2319,5 +2390,71 @@ mod tests {
             }])
             .unwrap_err();
         assert!(matches!(error, DomainError::InvalidClip(_)));
+    }
+    #[test]
+    fn ppq_changes_rescale_musical_events_atomically() {
+        let mut arrangement = Arrangement::default();
+        arrangement
+            .tracks
+            .push(Track::instrument("lead".into(), "Lead".into()));
+        arrangement.midi_clips.push(MidiClip {
+            id: "clip".into(),
+            name: "Notes".into(),
+            track_id: "lead".into(),
+            asset_id: None,
+            start_tick: TimelineTick(960),
+            duration_ticks: 3840,
+            notes: vec![MidiNote {
+                id: "note".into(),
+                note: 60,
+                velocity: 100,
+                channel: 1,
+                start_tick: TimelineTick(480),
+                duration_ticks: 960,
+            }],
+            events: Vec::new(),
+            instrument_control_events: vec![InstrumentControlEvent {
+                id: "ramp".into(),
+                tick: TimelineTick(240),
+                source_order: 0,
+                kind: InstrumentControlEventKind::ParameterRamp {
+                    parameter: "gain".into(),
+                    from_value: 0.0,
+                    to_value: 1.0,
+                    duration_ticks: 960,
+                },
+            }],
+            muted: false,
+            loop_enabled: false,
+            recording_take_id: None,
+        });
+        arrangement.markers.push(Marker {
+            id: "marker".into(),
+            name: "Beat".into(),
+            tick: 960,
+        });
+        let mut timebase = arrangement.timebase.clone();
+        timebase.ppq = 3360;
+
+        arrangement.update_timebase(timebase).unwrap();
+
+        let clip = &arrangement.midi_clips[0];
+        assert_eq!(clip.start_tick, TimelineTick(3360));
+        assert_eq!(clip.notes[0].start_tick, TimelineTick(1680));
+        assert_eq!(clip.notes[0].duration_ticks, 3360);
+        assert_eq!(clip.instrument_control_events[0].tick, TimelineTick(840));
+        assert!(matches!(
+            clip.instrument_control_events[0].kind,
+            InstrumentControlEventKind::ParameterRamp {
+                duration_ticks: 3360,
+                ..
+            }
+        ));
+        assert_eq!(arrangement.markers[0].tick, 3360);
+        let previous = arrangement.clone();
+        let mut inexact = arrangement.timebase.clone();
+        inexact.ppq = 1;
+        assert!(arrangement.update_timebase(inexact).is_err());
+        assert_eq!(arrangement, previous);
     }
 }

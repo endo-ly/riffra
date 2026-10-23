@@ -1059,7 +1059,12 @@ fn processing_track_ids(session: &CreativeSession) -> BTreeSet<&str> {
             .tracks
             .iter()
             .filter(|track| required.contains(track.id.as_str()))
-            .filter_map(|track| track.external_audio_source_track_id.as_deref())
+            .flat_map(|track| {
+                track
+                    .external_audio_source_track_ids
+                    .iter()
+                    .map(String::as_str)
+            })
             .collect::<Vec<_>>();
         let mut changed = false;
         for source in sources {
@@ -1415,7 +1420,7 @@ mod tests {
                 48_000,
             ));
         }
-        session.arrangement.tracks[1].external_audio_source_track_id = Some("external".into());
+        session.arrangement.tracks[1].external_audio_source_track_ids = vec!["external".into()];
         session.arrangement.tracks[3].muted = true;
         session.arrangement.tracks[0].effects.push(
             EffectDevice::new("fx:target".into(), "Target".into(), "missing.vst3".into()).unwrap(),

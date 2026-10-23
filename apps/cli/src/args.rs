@@ -464,14 +464,14 @@ pub struct ReorderTrackArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum ExternalAudioInputCommand {
-    /// Set one source Track for an instrument requiring External Audio.
+    /// Set source Tracks for an instrument requiring External Audio.
     Set {
         /// Consumer Instrument Track ID.
         #[arg(long)]
         track_id: String,
         /// Source Track ID whose processed audio supplies the input.
-        #[arg(long)]
-        source_track_id: String,
+        #[arg(long, required = true, value_delimiter = ',')]
+        source_track_ids: Vec<String>,
     },
     /// Disconnect the instrument input; missing required input is diagnosed.
     Clear(IdArg),
@@ -2770,10 +2770,10 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
             TrackCommand::ExternalAudioInput { command } => match command {
                 ExternalAudioInputCommand::Set {
                     track_id,
-                    source_track_id,
+                    source_track_ids,
                 } => Canonical::TrackExternalAudioInputSet(TrackExternalAudioInputSetParams {
                     track_id,
-                    source_track_id,
+                    source_track_ids,
                 })
                 .into(),
                 ExternalAudioInputCommand::Clear(args) => {

@@ -17,6 +17,7 @@ function renderPanel(
 ) {
   const session = initialSession;
   session.arrangement.tracks.push({
+    externalAudioSourceTrackIds: [],
     panLaw: 'equalPower' as const,
     id: 'track:audio',
     name: 'Audio',

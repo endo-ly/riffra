@@ -3,8 +3,24 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-/// Pulses per quarter note used by every session timeline.
+/// Default pulses per quarter note for new session timelines.
 pub const TIMELINE_PPQ: u32 = 960;
+
+pub(crate) fn rescale_tick(
+    tick: u64,
+    from_ppq: u32,
+    to_ppq: u32,
+) -> Result<u64, crate::DomainError> {
+    let numerator = u128::from(tick) * u128::from(to_ppq);
+    let denominator = u128::from(from_ppq);
+    if denominator == 0 || !numerator.is_multiple_of(denominator) {
+        return Err(crate::DomainError::InvalidClip(
+            "timebase cannot represent existing musical positions exactly".into(),
+        ));
+    }
+    u64::try_from(numerator / denominator)
+        .map_err(|_| crate::DomainError::InvalidClip("rescaled timeline tick overflows".into()))
+}
 
 /// An exact position in musical time.
 #[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
@@ -77,13 +93,14 @@ impl Default for ProjectTimebase {
 }
 
 impl ProjectTimebase {
-    /// Validates the fixed PPQ and complete, ordered musical clock.
+    /// Validates PPQ representable as whole-note fractions and an ordered musical clock.
     ///
     /// # Errors
     /// Returns an error for missing tick-zero changes, duplicate positions,
     /// unsupported signatures, or non-positive/non-finite tempo values.
     pub fn validate(&self) -> Result<(), String> {
-        if self.ppq != TIMELINE_PPQ
+        if self.ppq == 0
+            || self.ppq > u32::MAX / 4
             || self.tempo_changes.first().is_none_or(|p| p.tick != 0)
             || self
                 .time_signature_changes
@@ -203,6 +220,14 @@ mod tests {
         };
 
         map.validate().unwrap();
+        assert!(
+            ProjectTimebase {
+                ppq: u32::MAX,
+                ..map.clone()
+            }
+            .validate()
+            .is_err()
+        );
 
         assert_eq!(map.ticks_to_frames(1920, 48000), 48000);
         assert_eq!(map.ticks_to_frames(3360, 48000), 96000);

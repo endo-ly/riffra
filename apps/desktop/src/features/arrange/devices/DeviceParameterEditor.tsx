@@ -253,7 +253,13 @@ export function DeviceParameterEditor(props: DeviceParameterEditorProps) {
               );
               const staticValue = props.parameterValues[parameter.index] ?? parameter.value;
               const currentValue = lane
-                ? automationValueAt(lane.points, lane.interpolation, props.currentTick, staticValue)
+                ? automationValueAt(
+                    lane.points,
+                    lane.interpolation,
+                    props.currentTick,
+                    staticValue,
+                    props.arrangement.timebase,
+                  )
                 : undefined;
               return (
                 <ParameterControl

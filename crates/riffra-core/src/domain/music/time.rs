@@ -395,19 +395,20 @@ impl ProjectTimebase {
         let target_bar = u64::from(position.bar - 1);
         let (start_tick, start_bar, signature, next_tick) =
             self.signature_segment(None, Some(target_bar))?;
-        let ticks_per_beat = u64::from(self.ppq) * 4 / u64::from(signature.denominator);
+        let whole_note_ticks = u128::from(self.ppq) * 4;
         if position.beat > u32::from(signature.numerator) {
             return Err(invalid_value("position beat is outside the time signature"));
         }
         let beats = u128::from(target_bar - start_bar) * u128::from(signature.numerator)
             + u128::from(position.beat - 1);
-        let offset = round_fraction(
-            u128::from(ticks_per_beat) * u128::from(position.offset.numerator),
-            u128::from(position.offset.denominator),
+        let fraction_denominator = u128::from(position.offset.denominator);
+        let local = round_fraction(
+            whole_note_ticks
+                * (beats * fraction_denominator + u128::from(position.offset.numerator)),
+            u128::from(signature.denominator) * fraction_denominator,
         );
-        let tick =
-            u64::try_from(u128::from(start_tick) + beats * u128::from(ticks_per_beat) + offset)
-                .map_err(|_| invalid_value("position is too large"))?;
+        let tick = u64::try_from(u128::from(start_tick) + local)
+            .map_err(|_| invalid_value("position is too large"))?;
         if next_tick.is_some_and(|end| tick >= end) {
             return Err(invalid_value(
                 "position lies in a bar truncated by a time signature change",
@@ -421,15 +422,20 @@ impl ProjectTimebase {
         let (start_tick, start_bar, signature, _) = self
             .signature_segment(Some(tick.0), None)
             .expect("validated project timebase");
-        let ticks_per_beat = u64::from(self.ppq) * 4 / u64::from(signature.denominator);
-        let delta = tick.0 - start_tick;
-        let beats = delta / ticks_per_beat;
-        let bar = start_bar + beats / u64::from(signature.numerator);
+        let whole_note_ticks = u128::from(self.ppq) * 4;
+        let delta = u128::from(tick.0 - start_tick) * u128::from(signature.denominator);
+        let beats = delta / whole_note_ticks;
+        let bar = u128::from(start_bar) + beats / u128::from(signature.numerator);
+        let remainder = delta % whole_note_ticks;
+        let divisor = gcd_u128(remainder, whole_note_ticks);
         MusicalPosition::new(
             u32::try_from(bar.saturating_add(1)).unwrap_or(u32::MAX),
-            (beats % u64::from(signature.numerator)) as u32 + 1,
-            MusicalFraction::new((delta % ticks_per_beat) as u32, ticks_per_beat as u32)
-                .expect("valid meter fraction"),
+            (beats % u128::from(signature.numerator)) as u32 + 1,
+            MusicalFraction::new(
+                (remainder / divisor) as u32,
+                (whole_note_ticks / divisor) as u32,
+            )
+            .expect("valid meter fraction"),
         )
         .expect("valid meter position")
     }
@@ -439,17 +445,22 @@ impl ProjectTimebase {
         tick: Option<u64>,
         bar: Option<u64>,
     ) -> Result<(u64, u64, crate::TimeSignatureChange, Option<u64>), DomainError> {
-        self.ticks_per_notated_beat()?;
+        self.validate_musical_clock()?;
         let mut signature = self.time_signature_changes[0];
         let mut start_tick = 0;
-        let mut start_bar = 0;
+        let mut start_bar: u64 = 0;
         for next in self.time_signature_changes.iter().skip(1) {
             if next.numerator == signature.numerator && next.denominator == signature.denominator {
                 continue;
             }
-            let bar_ticks = u64::from(self.ppq) * 4 * u64::from(signature.numerator)
-                / u64::from(signature.denominator);
-            let next_bar = start_bar + (next.tick - start_tick).div_ceil(bar_ticks);
+            let bar_units = u128::from(self.ppq) * 4 * u128::from(signature.numerator);
+            let elapsed_units =
+                u128::from(next.tick - start_tick) * u128::from(signature.denominator);
+            let elapsed_bars = u64::try_from(elapsed_units.div_ceil(bar_units))
+                .map_err(|_| invalid_value("position is too large"))?;
+            let next_bar = start_bar
+                .checked_add(elapsed_bars)
+                .ok_or_else(|| invalid_value("position is too large"))?;
             if tick.is_some_and(|t| t < next.tick) || bar.is_some_and(|b| b < next_bar) {
                 return Ok((start_tick, start_bar, signature, Some(next.tick)));
             }
@@ -492,7 +503,7 @@ impl ProjectTimebase {
         &self,
         duration_ticks: u64,
     ) -> Result<MusicalDuration, DomainError> {
-        self.ticks_per_notated_beat()?;
+        self.validate_musical_clock()?;
         if duration_ticks == 0 {
             return Err(invalid_value("duration must be positive"));
         }
@@ -533,7 +544,7 @@ impl ProjectTimebase {
     /// Returns an error when the timebase or delta is invalid, or when the
     /// result cannot be represented by an `i64`.
     pub fn musical_time_delta_to_ticks(&self, delta: MusicalTimeDelta) -> Result<i64, DomainError> {
-        self.ticks_per_notated_beat()?;
+        self.validate_musical_clock()?;
         let delta = MusicalTimeDelta::new(delta.numerator, delta.denominator)?;
         let whole_note_ticks = u128::from(self.ppq)
             .checked_mul(4)
@@ -550,27 +561,9 @@ impl ProjectTimebase {
         })
     }
 
-    fn ticks_per_notated_beat(&self) -> Result<u64, DomainError> {
-        if self.ppq == 0
-            || self.time_signature_changes.is_empty()
-            || self.time_signature_changes[0].numerator == 0
-            || !matches!(
-                self.time_signature_changes[0].denominator,
-                1 | 2 | 4 | 8 | 16 | 32
-            )
-        {
-            return Err(invalid_value("project timebase is invalid"));
-        }
-        let quarter_ticks = u64::from(self.ppq)
-            .checked_mul(4)
-            .ok_or_else(|| invalid_value("project timebase is too large"))?;
-        let denominator = u64::from(self.time_signature_changes[0].denominator);
-        if !quarter_ticks.is_multiple_of(denominator) {
-            return Err(invalid_value(
-                "time signature denominator cannot be represented by the project PPQ",
-            ));
-        }
-        Ok(quarter_ticks / denominator)
+    fn validate_musical_clock(&self) -> Result<(), DomainError> {
+        self.validate()
+            .map_err(|_| invalid_value("project timebase is invalid"))
     }
 }
 
@@ -730,6 +723,37 @@ mod tests {
                 .musical_position_to_tick("2:1".parse().unwrap())
                 .unwrap(),
             TimelineTick(3_360)
+        );
+    }
+
+    #[test]
+    fn fractional_notated_beats_use_the_project_ppq_without_truncation() {
+        let timebase = ProjectTimebase {
+            ppq: 3,
+            time_signature_changes: vec![crate::TimeSignatureChange {
+                tick: 0,
+                numerator: 7,
+                denominator: 8,
+            }],
+            ..ProjectTimebase::default()
+        };
+        assert_eq!(
+            timebase
+                .tick_to_musical_position(TimelineTick(1))
+                .to_string(),
+            "1:1+2/3"
+        );
+        assert_eq!(
+            timebase
+                .musical_position_to_tick("1:1+2/3".parse().unwrap())
+                .unwrap(),
+            TimelineTick(1)
+        );
+        assert_eq!(
+            timebase
+                .musical_position_to_tick("2:1".parse().unwrap())
+                .unwrap(),
+            TimelineTick(11)
         );
     }
 

@@ -37,7 +37,7 @@ pub enum ArrangementProjectionOutcome {
 #[serde(rename_all = "camelCase")]
 pub struct TrackSummary {
     pub pan_law: riffra_core::PanLaw,
-    pub external_audio_source_track_id: Option<String>,
+    pub external_audio_source_track_ids: Vec<String>,
     pub id: String,
     pub name: String,
     pub kind: TrackKind,
@@ -111,7 +111,7 @@ impl TrackSummary {
         Self {
             id: track.id.clone(),
             pan_law: track.pan_law,
-            external_audio_source_track_id: track.external_audio_source_track_id.clone(),
+            external_audio_source_track_ids: track.external_audio_source_track_ids.clone(),
             name: track.name.clone(),
             kind: track.kind,
             gain_db: track.gain_db,

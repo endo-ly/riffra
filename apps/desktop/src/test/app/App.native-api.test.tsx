@@ -166,6 +166,7 @@ describe('App native boundary', () => {
     await renderApp(api);
     const newer = { ...defaultSession(), projectName: 'Newest' };
     newer.arrangement.tracks.push({
+      externalAudioSourceTrackIds: [],
       panLaw: 'equalPower' as const,
       id: 'track:newest',
       name: 'Newest Track',
@@ -181,6 +182,7 @@ describe('App native boundary', () => {
     });
     const older = { ...defaultSession(), projectName: 'Older' };
     older.arrangement.tracks.push({
+      externalAudioSourceTrackIds: [],
       panLaw: 'equalPower' as const,
       id: 'track:older',
       name: 'Older Track',
