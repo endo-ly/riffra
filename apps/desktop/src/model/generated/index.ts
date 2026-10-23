@@ -254,7 +254,6 @@ export type { ProjectCreateParams } from './ProjectCreateParams';
 export type { ProjectExport } from './ProjectExport';
 export type { ProjectExportParams } from './ProjectExportParams';
 export type { ProjectImportParams } from './ProjectImportParams';
-export type { ProjectImportSonalloyParams } from './ProjectImportSonalloyParams';
 export type { ProjectInspection } from './ProjectInspection';
 export type { ProjectOpenParams } from './ProjectOpenParams';
 export type { ProjectRecoveryState } from './ProjectRecoveryState';

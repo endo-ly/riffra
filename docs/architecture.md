@@ -237,8 +237,6 @@ flowchart TD
 ### 6.5 取り込みと書き出し
 
 - `.riffra` のImportは、既存のProjectを上書きせず、新しいProjectとして追加する
-- Sonalloy Bundleの取り込みは、検証(Manifest・ファイル一覧・ハッシュ・参照先)→ 新規Projectの作成とリソースの保存 → Runtimeの準備 → 切替、の順で進める。途中で失敗したときは新しく作ったものを取り除き、既存のProjectと履歴は元のままである
-- 取り込んだProjectは元のBundleを参照せず、音源定義とアセットをProject自身が所有する
 
 ### 6.6 セッション文書の版
 

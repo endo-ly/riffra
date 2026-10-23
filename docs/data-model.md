@@ -50,8 +50,6 @@ ProjectはDataRoot内の制作単位であり、`projects/<project-id>/` で識�
 - `.riffra` はProjectの持ち出し用パッケージである。Importはpackageを検証して新しいProjectIdの `projects/<project-id>/` へ取り込み、Exportは利用者が指定した保存先へ書き出す。packageはDataRoot内の正準Projectではなく、通常のProject切替にも使われない
 - レンダリング結果は `renders/` へ保存する書き出し成果物であり、正準状態やpackageには含まれない
 
-Sonalloy Bundle Format v1は `bundle.json` を入口とする。登録されたDemo、Pattern、Instrument、アセットを検証し、Demo名をProject名、各Partを定義順のInstrument Track、各PatternをTick 0から全長を保持するMIDI Clipへ変換する。Part IDはTrack名と変換時の対応キーに使い、Project・Track・Clip・Note・Deviceの内部IDはRiffraが生成する。音源定義本文とアセットはProject専用Snapshotが所有し、保存後のProjectが元のBundleを参照することはない。ファイル契約の定義は `crates/riffra-host/src/sonalloy_bundle.rs` に置く。
-
 ### 2.2 セッションと設定
 
 | エンティティ      | 役割                                                                                                    |

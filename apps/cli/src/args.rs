@@ -1808,8 +1808,6 @@ pub enum ProjectCommand {
     Export(ProjectExportArgs),
     /// Import a project file from disk and make it active.
     Import(ProjectImportArgs),
-    /// Import a Sonalloy Bundle v1 directory as a new editable project.
-    ImportSonalloy(ProjectImportArgs),
 }
 
 #[derive(Debug, Args)]
@@ -3378,10 +3376,6 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
             .into(),
             ProjectCommand::Import(args) => {
                 Project::ProjectImport(ProjectImportParams { path: args.path }).into()
-            }
-            ProjectCommand::ImportSonalloy(args) => {
-                Project::ProjectImportSonalloy(ProjectImportSonalloyParams { path: args.path })
-                    .into()
             }
         },
         CliCommand::Instrument { command } => match command {

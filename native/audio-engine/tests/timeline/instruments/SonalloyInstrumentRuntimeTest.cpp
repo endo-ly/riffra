@@ -520,8 +520,8 @@ TEST(SonalloyInstrumentRuntimeTest, ResolvesNativeParameterValuesAndRejectsStale
 TEST(SonalloyInstrumentRuntimeTest, AveragesStereoExternalInputForMonoWithoutOutputAliasing) {
     // Arrange
     const auto directory = juce::File(RIFFRA_CONTRACT_FIXTURE_DIR)
-                               .getSiblingFile("sonalloy-bundle")
-                               .getChildFile("basic/instruments/duck");
+                               .getSiblingFile("sonalloy-instruments")
+                               .getChildFile("duck");
     auto definition =
         juce::JSON::parse(directory.getChildFile("definition.json").loadFileAsString());
     auto* external = definition.getProperty("external_audio", {}).getDynamicObject();
