@@ -1808,6 +1808,8 @@ pub enum ProjectCommand {
     Export(ProjectExportArgs),
     /// Import a project file from disk and make it active.
     Import(ProjectImportArgs),
+    /// Create and activate an editable project from Score YAML.
+    ImportScore(ProjectImportScoreArgs),
 }
 
 #[derive(Debug, Args)]
@@ -1833,6 +1835,23 @@ pub struct ProjectRenameArgs {
 pub struct ProjectImportArgs {
     /// Path to the project file to import.
     pub path: PathBuf,
+}
+
+#[derive(Debug, Args)]
+pub struct ProjectImportScoreArgs {
+    /// Score YAML file to import as a new project.
+    pub path: PathBuf,
+    /// External instrument binding, repeated as ID=DEFINITION.
+    #[arg(long = "bind", value_parser = parse_score_binding)]
+    pub bindings: Vec<(String, PathBuf)>,
+}
+
+fn parse_score_binding(value: &str) -> Result<(String, PathBuf), String> {
+    let (id, path) = value.split_once('=').ok_or("expected ID=DEFINITION")?;
+    if id.is_empty() || path.is_empty() {
+        return Err("expected non-empty ID=DEFINITION".into());
+    }
+    Ok((id.into(), path.into()))
 }
 
 #[derive(Debug, Args)]
@@ -3374,6 +3393,26 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
                 output: args.output,
             })
             .into(),
+            ProjectCommand::ImportScore(args) => {
+                let mut bindings = std::collections::BTreeMap::new();
+                for (id, path) in args.bindings {
+                    let absolute = std::path::absolute(path).map_err(|error| {
+                        RequestError::Usage(format!(
+                            "instrument binding path could not be resolved: {error}"
+                        ))
+                    })?;
+                    if bindings.insert(id, absolute).is_some() {
+                        return Err(RequestError::Usage("duplicate score binding".into()));
+                    }
+                }
+                Project::ProjectImportScore(ProjectImportScoreParams {
+                    path: std::path::absolute(args.path).map_err(|error| {
+                        RequestError::Usage(format!("score path could not be resolved: {error}"))
+                    })?,
+                    bindings,
+                })
+                .into()
+            }
             ProjectCommand::Import(args) => {
                 Project::ProjectImport(ProjectImportParams { path: args.path }).into()
             }

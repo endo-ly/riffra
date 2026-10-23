@@ -11,7 +11,12 @@ import {
 } from '@/native/invoke';
 import { FakeNativeApi } from '@/native/native-api-fake';
 import type { BootstrapState, ProjectActivationResult } from '@/model/domain';
-import { openProjectPackage, saveProjectPackage } from '@/native/dialog';
+import {
+  openProjectPackage,
+  saveProjectPackage,
+  openScoreYaml,
+  openScoreInstrumentDefinition,
+} from '@/native/dialog';
 import { useProject } from './useProject';
 
 const openProjectPackageMock = vi.mocked(openProjectPackage);
@@ -19,6 +24,8 @@ const saveProjectPackageMock = vi.mocked(saveProjectPackage);
 
 vi.mock('@/native/dialog', () => ({
   openProjectPackage: vi.fn(),
+  openScoreYaml: vi.fn(),
+  openScoreInstrumentDefinition: vi.fn(),
   saveProjectPackage: vi.fn(),
 }));
 
@@ -161,6 +168,41 @@ describe('useProject', () => {
       existingProjectId,
       imported.projectState.activeProjectId,
     ]);
+  });
+
+  it('resolves external Score definitions and activates the imported project', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', { value: {}, configurable: true });
+    const api = new FakeNativeApi();
+    const imported = activation('01900000-0000-7000-8000-000000000004');
+    vi.mocked(openScoreYaml).mockResolvedValue('C:/song.score.yaml');
+    vi.mocked(openScoreInstrumentDefinition).mockResolvedValue('C:/lead/definition.json');
+    let requests = 0;
+    api.setResponse('importScore', () => {
+      if (requests++ === 0)
+        throw new NativeCommandError({
+          message: 'definition required',
+          details: { kind: 'scoreBindingsRequired', instrumentIds: ['lead'] },
+        });
+      return imported;
+    });
+    let restoreBoot!: (boot: BootstrapState) => void;
+    const { result } = renderHook(() => {
+      const [boot, setBoot] = useState<BootstrapState | null>(api.bootstrapState);
+      restoreBoot = setBoot;
+      return useProject(api, { boot, setBoot, hostGeneration: 0 });
+    });
+
+    act(() => restoreBoot(api.bootstrapState));
+    await act(async () => {
+      await result.current.importScore();
+    });
+
+    expect(openScoreInstrumentDefinition).toHaveBeenCalledWith('lead');
+    expect(requests).toBe(2);
+    expect(result.current.projectState?.activeProjectId).toBe(
+      imported.projectState.activeProjectId,
+    );
+    expect(result.current.projectError).toBeNull();
   });
 
   it('reports the absolute path after a successful Project export', async () => {

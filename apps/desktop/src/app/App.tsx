@@ -142,6 +142,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     recoverAudio,
     exportProject,
     importProject,
+    importScore,
     restoreRecovery,
     dismissRecovery,
     selectAudioDriver,
@@ -240,6 +241,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
       onOpenProject={openProject}
       onRenameProject={renameProject}
       onImportProject={() => void importProject()}
+      onImportScore={() => void importScore()}
       onExportProject={() => void exportProject()}
     />
   );
@@ -323,6 +325,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
         onRedo={() => void redo()}
         onExportProject={() => void exportProject()}
         onImportProject={() => void importProject()}
+        onImportScore={() => void importScore()}
         projectState={projectState}
         projectSwitching={projectSwitching}
         projectError={projectError}

@@ -59,3 +59,21 @@ function sanitizeProjectFileName(value: string): string {
   }
   return sanitized;
 }
+
+export async function openScoreYaml(): Promise<string | null> {
+  const result = await open({
+    multiple: false,
+    title: 'Import Score YAML',
+    filters: [{ name: 'Score YAML', extensions: ['yaml'] }],
+  });
+  return typeof result === 'string' ? result : null;
+}
+
+export async function openScoreInstrumentDefinition(instrumentId: string): Promise<string | null> {
+  const result = await open({
+    multiple: false,
+    title: `Definition for ${instrumentId}`,
+    filters: [{ name: 'Instrument Definition', extensions: ['json'] }],
+  });
+  return typeof result === 'string' ? result : null;
+}

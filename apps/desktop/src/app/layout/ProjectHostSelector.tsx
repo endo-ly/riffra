@@ -21,6 +21,7 @@ interface ProjectHostSelectorProps {
   onSwitch: (target: HostTarget) => Promise<HostConnectionBootstrap | null>;
   onReconnect: () => Promise<unknown>;
   onExportProject?: () => void;
+  onImportScore?: () => void;
   onImportProject?: () => void;
   projectState?: ProjectState | null;
   projectSwitching?: boolean;
@@ -355,6 +356,18 @@ export function ProjectHostSelector(props: ProjectHostSelectorProps) {
           {(props.error || props.projectError) && (
             <p className={styles.error}>{props.projectError ?? props.error}</p>
           )}
+          <button
+            type="button"
+            role="menuitem"
+            className={styles.footerButton}
+            disabled={projectActionsDisabled}
+            onClick={() => {
+              props.onImportScore?.();
+              setOpen(false);
+            }}
+          >
+            Import Score YAML…
+          </button>
         </div>
       )}
     </div>

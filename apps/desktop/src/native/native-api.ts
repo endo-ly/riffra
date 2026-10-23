@@ -117,6 +117,10 @@ export interface ProjectApi {
   renameProject(name: string): Promise<ProjectState>;
   restoreRecoveryGeneration(fileName: string): Promise<ArrangementMutationResult | null>;
   exportProject(path: string): Promise<ProjectExport | null>;
+  importScore(
+    path: string,
+    bindings: Record<string, string>,
+  ): Promise<ProjectActivationResult | null>;
   importProject(path: string): Promise<ProjectActivationResult | null>;
   /**
    * Imports an external Standard MIDI File as a canonical MIDI Asset. Rust owns
