@@ -2,7 +2,7 @@ pub(crate) mod events;
 mod lower;
 mod parse;
 mod resolve;
-mod syntax;
+pub(super) mod syntax;
 mod time;
 
 use std::collections::BTreeMap;
@@ -290,53 +290,6 @@ pub(crate) struct PartWindow {
 impl ScorePlan {
     pub(crate) fn source_yaml(&self) -> &str {
         &self.source.text
-    }
-
-    pub(crate) fn harmony_events(
-        &self,
-    ) -> std::result::Result<Vec<riffra_core::HarmonyEvent>, String> {
-        use riffra_core::{HarmonyChord, HarmonyEvent, MusicalNoteName, TimelineTick};
-        let note = |pitch: i32| {
-            MusicalNoteName::new(
-                [
-                    "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
-                ][pitch.rem_euclid(12) as usize],
-            )
-            .map_err(|error| error.to_string())
-        };
-        let mut events = Vec::new();
-        for (section_index, section) in self.sections.iter().enumerate() {
-            let tonic = syntax::tonic(&section.tonic).map_err(|error| error.to_string())?;
-            for (index, change) in section.chords.iter().enumerate() {
-                let Some(chord) =
-                    syntax::chord(&change.chord).map_err(|error| error.to_string())?
-                else {
-                    continue;
-                };
-                let tones = syntax::voicing(&chord, tonic, 48)
-                    .into_iter()
-                    .map(note)
-                    .collect::<std::result::Result<Vec<_>, _>>()?;
-                events.push(HarmonyEvent {
-                    id: format!("score:harmony:{section_index}:{index}"),
-                    start_tick: TimelineTick(change.tick),
-                    end_tick: TimelineTick(
-                        section
-                            .chords
-                            .get(index + 1)
-                            .map_or(section.end_tick, |next| next.tick),
-                    ),
-                    chord: HarmonyChord::from_explicit(
-                        tones,
-                        Some(note(tonic + chord.root)?),
-                        Some(note(tonic + chord.bass)?),
-                        Some(change.chord.clone()),
-                    )
-                    .map_err(|error| error.to_string())?,
-                });
-            }
-        }
-        Ok(events)
     }
 
     /// Resolve source metadata for a diagnostic at a score field path.

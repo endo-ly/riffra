@@ -2,7 +2,7 @@
 
 use crate::api::params::ProjectImportScoreParams;
 use crate::instrument::{BuiltInInstrumentCatalog, UserInstrumentStore};
-use crate::score::{self, ScoreLane, ScorePlan, events::MusicalEvent};
+use crate::score::{self, ScoreLane, ScorePlan, events::MusicalEvent, syntax};
 use riffra_core::*;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -375,8 +375,51 @@ fn build_session(
             end_tick: TimelineTick(section.end_tick),
         });
     }
-    session.arrangement.harmony_events = plan.harmony_events()?;
+    session.arrangement.harmony_events = harmony_events(plan)?;
     session.validate_and_normalize()
+}
+
+fn harmony_events(plan: &ScorePlan) -> Result<Vec<HarmonyEvent>, String> {
+    let note = |pitch: i32| {
+        MusicalNoteName::new(
+            [
+                "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
+            ][pitch.rem_euclid(12) as usize],
+        )
+        .map_err(|error| error.to_string())
+    };
+    let mut events = Vec::new();
+    for (section_index, section) in plan.sections.iter().enumerate() {
+        let tonic = syntax::tonic(&section.tonic).map_err(|error| error.to_string())?;
+        for (index, change) in section.chords.iter().enumerate() {
+            let Some(chord) = syntax::chord(&change.chord).map_err(|error| error.to_string())?
+            else {
+                continue;
+            };
+            let tones = syntax::voicing(&chord, tonic, 48)
+                .into_iter()
+                .map(note)
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            events.push(HarmonyEvent {
+                id: format!("score:harmony:{section_index}:{index}"),
+                start_tick: TimelineTick(change.tick),
+                end_tick: TimelineTick(
+                    section
+                        .chords
+                        .get(index + 1)
+                        .map_or(section.end_tick, |next| next.tick),
+                ),
+                chord: HarmonyChord::from_explicit(
+                    tones,
+                    Some(note(tonic + chord.root)?),
+                    Some(note(tonic + chord.bass)?),
+                    Some(change.chord.clone()),
+                )
+                .map_err(|error| error.to_string())?,
+            });
+        }
+    }
+    Ok(events)
 }
 
 fn resolve_definition(
