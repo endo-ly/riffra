@@ -279,7 +279,11 @@ fn sidecar_command_fixtures_are_current() {
     );
     for (name, expected) in fixtures {
         let actual = fs::read_to_string(root.join(&name)).unwrap();
-        assert_eq!(actual, expected, "command fixture {name} is stale");
+        assert_eq!(
+            serde_json::from_str::<Value>(&actual).unwrap(),
+            serde_json::from_str::<Value>(&expected).unwrap(),
+            "command fixture {name} is stale"
+        );
     }
 }
 

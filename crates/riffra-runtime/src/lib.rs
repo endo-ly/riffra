@@ -25,6 +25,8 @@ pub mod projects;
 pub mod recording;
 pub mod render;
 mod runtime;
+mod score;
+mod score_yaml_import;
 pub mod session;
 mod startup;
 #[cfg(test)]

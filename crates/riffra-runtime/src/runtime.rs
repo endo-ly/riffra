@@ -43,7 +43,7 @@ pub enum RuntimeError {
         kind: String,
         message: String,
         operation: String,
-        details: Option<Value>,
+        details: Option<Box<Value>>,
     },
     #[error("runtime is shutting down")]
     ShuttingDown,

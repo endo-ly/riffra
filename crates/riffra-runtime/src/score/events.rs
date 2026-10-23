@@ -65,10 +65,3 @@ pub(crate) enum MusicalEvent {
         to_value: f32,
     },
 }
-
-impl MusicalEvent {
-    /// Whether this event starts a note.
-    pub(crate) const fn is_note(&self) -> bool {
-        matches!(self, Self::Note { .. })
-    }
-}

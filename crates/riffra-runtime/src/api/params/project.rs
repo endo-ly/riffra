@@ -30,6 +30,15 @@ pub struct ProjectImportParams {
     pub path: PathBuf,
 }
 
+/// Imports a Score document with explicit external instrument definitions.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ProjectImportScoreParams {
+    pub path: PathBuf,
+    #[serde(default)]
+    pub bindings: std::collections::BTreeMap<String, PathBuf>,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ProjectExportParams {
