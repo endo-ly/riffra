@@ -260,5 +260,41 @@ TEST(MidiSchedulerTest, ParameterRampUsesVariablePpqTempoMapAndRestoresSeekState
     EXPECT_FLOAT_EQ(events[0].value, 0.75f);
 }
 
+TEST(MidiSchedulerTest, RestoresLatestParameterAcrossClipsByTimePriorityAndSourceOrder) {
+    const auto clip = [](const std::int64_t start, const int priority,
+                         const std::uint32_t sourceOrder, const float value) {
+        CompiledMidiClip result;
+        result.startSample = start;
+        result.startTick = static_cast<std::uint64_t>(start);
+        result.durationTicks = 100;
+        result.lengthSamples = 100;
+        SonalloyEvent control{};
+        control.event_type = SONALLOY_EVENT_PARAMETER_CHANGE;
+        control.parameter_handle = 7;
+        control.value = value;
+        result.events.push_back({0, priority, {}, 0, sourceOrder, control, {}});
+        return result;
+    };
+    const auto old = clip(100, 2, 9, 0.2f);
+    const auto recent = clip(200, 2, 0, 0.8f);
+    const auto highPriority = clip(200, 3, 0, 0.7f);
+    const auto lastSource = clip(200, 3, 1, 0.9f);
+    std::array<SonalloyEvent, 4> events{};
+    std::array<InstrumentEventOrder, 4> ordering{};
+
+    for (auto clips : {std::vector{recent, old}, std::vector{old, recent}}) {
+        auto count = MidiScheduler::scheduleInstrumentEvents(clips, 300, 16, events.data(),
+                                                             ordering.data(), events.size(), true);
+        ASSERT_EQ(count, 1u);
+        EXPECT_FLOAT_EQ(events[0].value, 0.8f);
+        clips.insert(clips.begin(), lastSource);
+        clips.push_back(highPriority);
+        count = MidiScheduler::scheduleInstrumentEvents(clips, 300, 16, events.data(),
+                                                        ordering.data(), events.size(), true);
+        ASSERT_EQ(count, 1u);
+        EXPECT_FLOAT_EQ(events[0].value, 0.9f);
+    }
+}
+
 }  // namespace
 }  // namespace riffra

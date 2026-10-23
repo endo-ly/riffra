@@ -413,6 +413,9 @@ std::size_t MidiScheduler::scheduleInstrumentEvents(
     const std::vector<CompiledMidiClip>& clips, const std::int64_t rangeStart,
     const int sampleCount, SonalloyEvent* destination, InstrumentEventOrder* ordering,
     const std::size_t capacity, const bool restoreControls) noexcept {
+    const auto eventKey = [](const InstrumentEventOrder& order) noexcept {
+        return std::tuple(order.absoluteSample, order.tick, order.priority, order.sourceOrder);
+    };
     std::size_t count = 0;
     if (restoreControls) {
         for (const auto& clip : clips) {
@@ -442,6 +445,11 @@ std::size_t MidiScheduler::scheduleInstrumentEvents(
                         break;
                     }
                 }
+                const InstrumentEventOrder order{
+                    clip.startTick + static_cast<std::uint64_t>(iteration) * clip.durationTicks +
+                        source.originalTick,
+                    source.ordering, source.sourceOrder, start + source.sampleOffset};
+                if (position < count && eventKey(order) <= eventKey(ordering[position])) continue;
                 if (position == capacity) return capacity + 1;
                 if (position == count) ++count;
                 if (event.event_type == SONALLOY_EVENT_PARAMETER_RAMP) {
@@ -459,9 +467,21 @@ std::size_t MidiScheduler::scheduleInstrumentEvents(
                 }
                 event.sample_offset = 0;
                 destination[position] = event;
-                ordering[position] = {};
+                ordering[position] = order;
             }
         }
+    }
+    for (std::size_t index = 1; index < count; ++index) {
+        const auto event = destination[index];
+        const auto order = ordering[index];
+        auto position = index;
+        while (position > 0 && eventKey(ordering[position - 1]) > eventKey(order)) {
+            destination[position] = destination[position - 1];
+            ordering[position] = ordering[position - 1];
+            --position;
+        }
+        destination[position] = event;
+        ordering[position] = order;
     }
     const auto rangeEnd = rangeStart + sampleCount;
     for (const auto& clip : clips) {
@@ -499,14 +519,10 @@ std::size_t MidiScheduler::scheduleInstrumentEvents(
                 const InstrumentEventOrder order{
                     clip.startTick + static_cast<std::uint64_t>(iteration) * clip.durationTicks +
                         event->originalTick,
-                    event->ordering, event->sourceOrder};
-                const auto key = std::tuple(prepared.sample_offset, order.tick, order.priority,
-                                            order.sourceOrder);
+                    event->ordering, event->sourceOrder, sample};
+                const auto key = eventKey(order);
                 auto position = count++;
-                while (position > 0 &&
-                       std::tuple(destination[position - 1].sample_offset,
-                                  ordering[position - 1].tick, ordering[position - 1].priority,
-                                  ordering[position - 1].sourceOrder) > key) {
+                while (position > 0 && eventKey(ordering[position - 1]) > key) {
                     destination[position] = destination[position - 1];
                     ordering[position] = ordering[position - 1];
                     --position;
