@@ -313,6 +313,20 @@ bool MidiScheduler::compile(const MidiClip& source, const TimelineTimebase& time
         if (control.type == "sustainPedal") {
             event.event_type = SONALLOY_EVENT_SUSTAIN;
             event.bool_value = control.down ? 1 : 0;
+        } else if (control.type == "parameterRamp") {
+            event.event_type = SONALLOY_EVENT_PARAMETER_RAMP;
+            event.target_value = control.endValue;
+            const auto frames =
+                timebase.tickToSample(source.startTick + control.tick + control.durationTicks,
+                                      sampleRate) -
+                timebase.tickToSample(source.startTick + control.tick, sampleRate);
+            if (frames <= 0 ||
+                static_cast<std::uint64_t>(frames) > std::numeric_limits<std::uint32_t>::max()) {
+                error = "Parameter ramp duration exceeds the instrument frame range.";
+                return false;
+            }
+            event.duration_frames = static_cast<std::uint32_t>(frames);
+            priority = 2;
         } else if (control.type == "parameterChange") {
             event.event_type = SONALLOY_EVENT_PARAMETER_CHANGE;
             priority = 2;
@@ -395,13 +409,86 @@ void MidiScheduler::schedule(const std::vector<CompiledMidiClip>& clips,
     }
 }
 
-std::size_t MidiScheduler::scheduleInstrumentEvents(const std::vector<CompiledMidiClip>& clips,
-                                                    const std::int64_t rangeStart,
-                                                    const int sampleCount,
-                                                    SonalloyEvent* destination,
-                                                    InstrumentEventOrder* ordering,
-                                                    const std::size_t capacity) noexcept {
+std::size_t MidiScheduler::scheduleInstrumentEvents(
+    const std::vector<CompiledMidiClip>& clips, const std::int64_t rangeStart,
+    const int sampleCount, SonalloyEvent* destination, InstrumentEventOrder* ordering,
+    const std::size_t capacity, const bool restoreControls) noexcept {
+    const auto eventKey = [](const InstrumentEventOrder& order) noexcept {
+        return std::tuple(order.absoluteSample, order.tick, order.priority, order.sourceOrder);
+    };
     std::size_t count = 0;
+    if (restoreControls) {
+        for (const auto& clip : clips) {
+            if (clip.muted || rangeStart <= clip.startSample || clip.lengthSamples <= 0) continue;
+            const auto lastIteration =
+                clip.loop ? (rangeStart - clip.startSample) / clip.lengthSamples : 0;
+            const auto firstIteration = std::max<std::int64_t>(0, lastIteration - 1);
+            for (auto iteration = firstIteration; iteration <= lastIteration; ++iteration) {
+                const auto start = clip.startSample + iteration * clip.lengthSamples;
+                for (const auto& source : clip.events) {
+                    if (start + source.sampleOffset >= rangeStart) break;
+                    if (!source.instrumentEvent) continue;
+                    auto event = *source.instrumentEvent;
+                    if (event.event_type == SONALLOY_EVENT_NOTE_ON ||
+                        event.event_type == SONALLOY_EVENT_NOTE_OFF)
+                        continue;
+                    const auto parameter = event.event_type == SONALLOY_EVENT_PARAMETER_CHANGE ||
+                                           event.event_type == SONALLOY_EVENT_PARAMETER_RAMP;
+                    auto position = count;
+                    for (std::size_t index = 0; index < count; ++index) {
+                        const auto& previous = destination[index];
+                        const auto previousParameter =
+                            previous.event_type == SONALLOY_EVENT_PARAMETER_CHANGE ||
+                            previous.event_type == SONALLOY_EVENT_PARAMETER_RAMP;
+                        if ((parameter && previousParameter &&
+                             previous.parameter_handle == event.parameter_handle) ||
+                            (!parameter && previous.event_type == event.event_type)) {
+                            position = index;
+                            break;
+                        }
+                    }
+                    const InstrumentEventOrder order{
+                        clip.startTick +
+                            static_cast<std::uint64_t>(iteration) * clip.durationTicks +
+                            source.originalTick,
+                        source.ordering, source.sourceOrder, start + source.sampleOffset};
+                    if (position < count && eventKey(order) < eventKey(ordering[position]))
+                        continue;
+                    if (position == capacity) return capacity + 1;
+                    if (position == count) ++count;
+                    if (event.event_type == SONALLOY_EVENT_PARAMETER_RAMP) {
+                        const auto elapsed =
+                            static_cast<std::uint64_t>(rangeStart - start - source.sampleOffset);
+                        const auto duration = event.duration_frames;
+                        if (elapsed >= duration) {
+                            event.event_type = SONALLOY_EVENT_PARAMETER_CHANGE;
+                            event.value = event.target_value;
+                        } else {
+                            event.value += (event.target_value - event.value) *
+                                           static_cast<float>(elapsed) /
+                                           static_cast<float>(duration);
+                            event.duration_frames -= static_cast<std::uint32_t>(elapsed);
+                        }
+                    }
+                    event.sample_offset = 0;
+                    destination[position] = event;
+                    ordering[position] = order;
+                }
+            }
+        }
+    }
+    for (std::size_t index = 1; index < count; ++index) {
+        const auto event = destination[index];
+        const auto order = ordering[index];
+        auto position = index;
+        while (position > 0 && eventKey(ordering[position - 1]) > eventKey(order)) {
+            destination[position] = destination[position - 1];
+            ordering[position] = ordering[position - 1];
+            --position;
+        }
+        destination[position] = event;
+        ordering[position] = order;
+    }
     const auto rangeEnd = rangeStart + sampleCount;
     for (const auto& clip : clips) {
         if (clip.muted || clip.lengthSamples <= 0) continue;
@@ -438,14 +525,10 @@ std::size_t MidiScheduler::scheduleInstrumentEvents(const std::vector<CompiledMi
                 const InstrumentEventOrder order{
                     clip.startTick + static_cast<std::uint64_t>(iteration) * clip.durationTicks +
                         event->originalTick,
-                    event->ordering, event->sourceOrder};
-                const auto key = std::tuple(prepared.sample_offset, order.tick, order.priority,
-                                            order.sourceOrder);
+                    event->ordering, event->sourceOrder, sample};
+                const auto key = eventKey(order);
                 auto position = count++;
-                while (position > 0 &&
-                       std::tuple(destination[position - 1].sample_offset,
-                                  ordering[position - 1].tick, ordering[position - 1].priority,
-                                  ordering[position - 1].sourceOrder) > key) {
+                while (position > 0 && eventKey(ordering[position - 1]) > key) {
                     destination[position] = destination[position - 1];
                     ordering[position] = ordering[position - 1];
                     --position;

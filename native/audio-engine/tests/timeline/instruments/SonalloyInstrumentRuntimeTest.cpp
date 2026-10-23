@@ -511,6 +511,17 @@ TEST(SonalloyInstrumentRuntimeTest, ResolvesNativeParameterValuesAndRejectsStale
     context.timelineEventCount = 1;
     processBlock(*runtime, output, nullptr, context);
     EXPECT_EQ(runtime->faultCode(), 0u);
+    event.event_type = SONALLOY_EVENT_PARAMETER_RAMP;
+    event.value = -12.0f;
+    event.target_value = -24.0f;
+    event.duration_frames = 1024;
+    ASSERT_TRUE(runtime->prepareParameterEvent(event, "layer.sub.gain", error)) << error;
+    EXPECT_LT(event.target_value, event.value);
+    processBlock(*runtime, output, nullptr, context);
+    context.timelineEventCount = 0;
+    for (int block = 0; block < 5; ++block) processBlock(*runtime, output, nullptr, context);
+    EXPECT_EQ(runtime->faultCode(), 0u);
+    context.timelineEventCount = 1;
     ++event.parameter_catalog_revision;
     processBlock(*runtime, output, nullptr, context);
     EXPECT_NE(runtime->faultCode(), 0u);

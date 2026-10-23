@@ -1,5 +1,6 @@
 #include "ExecutionGraphDecoder.h"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <set>
@@ -44,7 +45,7 @@ bool decodeTimebase(const juce::var& value, const juce::String& path, TimebaseSp
     if (!reader.unsigned32("ppq", output.ppq) || !reader.array("tempoChanges", tempos) ||
         !reader.array("timeSignatureChanges", signatures) || !reader.finish())
         return false;
-    if (output.ppq != 960) return fail(error, child(path, "ppq"), "must equal 960");
+    if (output.ppq == 0) return fail(error, child(path, "ppq"), "must be positive");
     output.tempoChanges.clear();
     output.timeSignatureChanges.clear();
     for (int i = 0; i < tempos.size(); ++i) {
@@ -108,9 +109,9 @@ bool decodeAutomationLane(const juce::var& value, const juce::String& path,
                           AutomationLaneSpec& output, juce::String& error) {
     ContractReader reader(value, path, {"target", "interpolation", "points"}, error);
     juce::var target;
-    juce::String interpolation;
+    juce::var interpolation;
     juce::Array<juce::var> points;
-    if (!reader.object("target", target) || !reader.string("interpolation", interpolation) ||
+    if (!reader.object("target", target) || !reader.value("interpolation", interpolation) ||
         !reader.array("points", points) || !reader.finish())
         return false;
     const auto targetPath = child(path, "target");
@@ -161,20 +162,39 @@ bool decodeAutomationLane(const juce::var& value, const juce::String& path,
         return fail(error, targetPath, "unknown automation target");
     if (output.kind != AutomationTargetKind::masterGain && output.id.isEmpty())
         return fail(error, targetPath, "target ID must be non-empty");
-    int mode = 0;
-    if (!readEnum(interpolation, child(path, "interpolation"), {{"linear", 0}, {"step", 1}}, mode,
-                  error))
-        return false;
-    output.interpolation = static_cast<AutomationInterpolationSpec>(mode);
+    if (interpolation.isObject()) {
+        ContractReader mode(interpolation, child(path, "interpolation"), {"linearAmplitude"},
+                            error);
+        juce::var transition;
+        if (!mode.object("linearAmplitude", transition) || !mode.finish()) return false;
+        ContractReader duration(transition, child(path, "interpolation.linearAmplitude"),
+                                {"durationSeconds"}, error);
+        if (!duration.number("durationSeconds", output.transitionSeconds) || !duration.finish())
+            return false;
+        if (output.transitionSeconds <= 0.0 || output.kind != AutomationTargetKind::trackVolume)
+            return fail(error, path, "invalid amplitude transition");
+        output.interpolation = AutomationInterpolationSpec::linearAmplitude;
+    } else {
+        int mode = 0;
+        if (!readEnum(interpolation.toString(), child(path, "interpolation"),
+                      {{"linear", 0}, {"step", 1}}, mode, error))
+            return false;
+        output.interpolation = static_cast<AutomationInterpolationSpec>(mode);
+    }
     if (points.isEmpty() || points.size() > 16384)
         return fail(error, child(path, "points"), "requires 1..16384 points");
     const auto pan = output.kind == AutomationTargetKind::trackPan ||
                      output.kind == AutomationTargetKind::busPan;
     const auto device = output.kind == AutomationTargetKind::deviceParameter;
-    const auto minimum = pan ? -1.0 : device ? 0.0 : -90.0;
+    const auto volume = output.kind == AutomationTargetKind::trackVolume;
+    const auto minimum = pan      ? -1.0
+                         : device ? 0.0
+                         : volume ? -std::numeric_limits<double>::max()
+                                  : -90.0;
     const auto maximum = pan || device                                     ? 1.0
                          : output.kind == AutomationTargetKind::masterGain ? 0.0
-                                                                           : 24.0;
+                         : volume ? 20.0 * std::log10(std::numeric_limits<float>::max())
+                                  : 24.0;
     for (int index = 0; index < points.size(); ++index) {
         const auto pointPath = element(child(path, "points"), index);
         ContractReader p(points.getReference(index), pointPath, {"tick", "value"}, error);
@@ -404,8 +424,8 @@ bool decodeAudioClip(const juce::var& value, const juce::String& path, AudioClip
         return fail(error, child(path, "sourceEndFrame"), "must be greater than sourceStartFrame");
     if (output.durationFrames == 0)
         return fail(error, child(path, "durationFrames"), "must be greater than 0");
-    if (output.gainDb < -90.0 || output.gainDb > 24.0)
-        return fail(error, child(path, "gainDb"), "must be between -90 and 24");
+    if (!std::isfinite(static_cast<float>(std::pow(10.0, output.gainDb / 20.0))))
+        return fail(error, child(path, "gainDb"), "exceeds the audio engine range");
     if (output.pan < -1.0 || output.pan > 1.0)
         return fail(error, child(path, "pan"), "must be between -1 and 1");
     return true;
@@ -467,6 +487,21 @@ bool decodeInstrumentControlEvent(const juce::var& value, const juce::String& pa
         return control.string("type", type) && control.boolean("down", output.down) &&
                control.finish();
     }
+    if (output.type == "parameterRamp") {
+        ContractReader control(
+            kind, kindPath, {"type", "parameter", "fromValue", "toValue", "durationTicks"}, error);
+        double endValue = 0.0;
+        if (!control.string("type", type) || !control.string("parameter", output.parameter) ||
+            !control.number("fromValue", number) || !control.number("toValue", endValue) ||
+            !control.unsignedInteger("durationTicks", output.durationTicks) || !control.finish())
+            return false;
+        output.value = static_cast<float>(number);
+        output.endValue = static_cast<float>(endValue);
+        if (output.parameter.isEmpty() || output.durationTicks == 0 ||
+            !std::isfinite(output.value) || !std::isfinite(output.endValue))
+            return fail(error, kindPath, "invalid parameter ramp");
+        return true;
+    }
     if (output.type == "parameterChange") {
         ContractReader control(kind, kindPath, {"type", "parameter", "nativeValue"}, error);
         if (!control.string("type", type) || !control.string("parameter", output.parameter) ||
@@ -522,6 +557,10 @@ bool decodeMidiClip(const juce::var& value, const juce::String& path, MidiClipSp
             return false;
         if (control.tick > output.durationTicks)
             return fail(error, child(eventPath, "tick"), "exceeds clip durationTicks");
+        if (control.type == "parameterRamp" &&
+            control.durationTicks > output.durationTicks - control.tick)
+            return fail(error, child(eventPath, "durationTicks"),
+                        "ramp exceeds clip durationTicks");
         output.instrumentControlEvents.push_back(std::move(control));
     }
     for (int index = 0; index < events.size(); ++index) {
@@ -540,7 +579,7 @@ bool decodeTrack(const juce::var& value, const juce::String& path, TrackSpec& ou
     ContractReader reader(value, path,
                           {"id", "kind", "gainDb", "pan", "muted", "solo", "armed", "monitorInput",
                            "audioInput", "midiInput", "effects", "instrument", "audioClips",
-                           "midiClips", "panLaw", "externalAudioSourceTrackId", "outputBusId"},
+                           "midiClips", "panLaw", "externalAudioSourceTrackIds", "outputBusId"},
                           error);
     juce::String kind;
     juce::var audioInput;
@@ -551,7 +590,7 @@ bool decodeTrack(const juce::var& value, const juce::String& path, TrackSpec& ou
     juce::Array<juce::var> midiClips;
     if (!reader.string("id", output.id) || !reader.string("kind", kind) ||
         !reader.string("panLaw", output.panLaw) ||
-        !reader.optionalString("externalAudioSourceTrackId", output.externalAudioSourceTrackId) ||
+
         !reader.optionalString("outputBusId", output.outputBusId) ||
         !reader.number("gainDb", output.gainDb) || !reader.number("pan", output.pan) ||
         !reader.boolean("muted", output.muted) || !reader.boolean("solo", output.solo) ||
@@ -566,10 +605,22 @@ bool decodeTrack(const juce::var& value, const juce::String& path, TrackSpec& ou
     if (!readEnum(kind, child(path, "kind"), {{"audio", 0}, {"instrument", 1}}, trackKind, error))
         return false;
     output.kind = static_cast<TrackKindSpec>(trackKind);
-    if (output.panLaw != "equalPower" && output.panLaw != "unityCenterStereo")
+    juce::Array<juce::var> sources;
+    if (!reader.array("externalAudioSourceTrackIds", sources)) return false;
+    for (const auto& source : sources) {
+        if (!source.isString() || source.toString().isEmpty() ||
+            std::find(output.externalAudioSourceTrackIds.begin(),
+                      output.externalAudioSourceTrackIds.end(),
+                      source.toString()) != output.externalAudioSourceTrackIds.end())
+            return fail(error, child(path, "externalAudioSourceTrackIds"),
+                        "requires unique track ids");
+        output.externalAudioSourceTrackIds.push_back(source.toString());
+    }
+    if (output.panLaw != "equalPower" && output.panLaw != "unityCenterStereo" &&
+        output.panLaw != "linearBalance")
         return fail(error, child(path, "panLaw"), "unknown pan law");
-    if (output.gainDb < -90.0 || output.gainDb > 24.0)
-        return fail(error, child(path, "gainDb"), "must be between -90 and 24");
+    if (!std::isfinite(static_cast<float>(std::pow(10.0, output.gainDb / 20.0))))
+        return fail(error, child(path, "gainDb"), "exceeds the audio engine range");
     if (output.pan < -1.0 || output.pan > 1.0)
         return fail(error, child(path, "pan"), "must be between -1 and 1");
 
@@ -659,9 +710,11 @@ bool decodeMixer(const juce::var& value, const juce::String& path, MixerSpec& ou
             !decodeEffects(chain, child(location, "effects"), spec.effects, error))
             return false;
         spec.kind = static_cast<MixBusKindSpec>(decodedKind);
-        if (spec.gainDb < -90.0 || spec.gainDb > 24.0 || spec.pan < -1.0 || spec.pan > 1.0)
+        if (!std::isfinite(static_cast<float>(std::pow(10.0, spec.gainDb / 20.0))) ||
+            spec.pan < -1.0 || spec.pan > 1.0)
             return fail(error, location, "mix controls are outside their ranges");
-        if (spec.panLaw != "equalPower" && spec.panLaw != "unityCenterStereo")
+        if (spec.panLaw != "equalPower" && spec.panLaw != "unityCenterStereo" &&
+            spec.panLaw != "linearBalance")
             return fail(error, child(location, "panLaw"), "unknown pan law");
         output.buses.push_back(std::move(spec));
     }

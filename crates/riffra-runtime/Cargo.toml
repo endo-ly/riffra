@@ -11,7 +11,11 @@ riffra-control = { path = "../riffra-control" }
 riffra-core = { path = "../riffra-core" }
 riffra-host = { path = "../riffra-host" }
 serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1", features = ["float_roundtrip"] }
+serde_json = { version = "1", features = ["float_roundtrip", "preserve_order"] }
+yaml-rust2 = "0.10"
+num-bigint = "0.4"
+num-rational = "0.4"
+num-traits = "0.2"
 serde_path_to_error = "0.1.20"
 thiserror = "2"
 tracing = "0.1"

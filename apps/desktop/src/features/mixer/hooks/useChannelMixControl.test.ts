@@ -18,6 +18,7 @@ function mutationResult(canonical: CanonicalState): ArrangementMutationResult {
 function sessionWithTrack() {
   const session = defaultSession();
   session.arrangement.tracks.push({
+    externalAudioSourceTrackIds: [],
     panLaw: 'equalPower' as const,
     id: 'track:mixer-test',
     name: 'Mixer Test',

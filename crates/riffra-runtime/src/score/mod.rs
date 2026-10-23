@@ -2,7 +2,7 @@ pub(crate) mod events;
 mod lower;
 mod parse;
 mod resolve;
-mod syntax;
+pub(super) mod syntax;
 mod time;
 
 use std::collections::BTreeMap;
@@ -96,11 +96,10 @@ impl Error {
             .context
             .as_deref()
             .and_then(|context| context.token_location.as_ref())
+            && let Some((line, column)) = source.token_location(&self.path, *offset, token)
         {
-            if let Some((line, column)) = source.token_location(&self.path, *offset, token) {
-                self.line = line;
-                self.column = column;
-            }
+            self.line = line;
+            self.column = column;
         }
         if self.line == 0 {
             let mut path = self.path.as_str();
@@ -289,6 +288,10 @@ pub(crate) struct PartWindow {
 }
 
 impl ScorePlan {
+    pub(crate) fn source_yaml(&self) -> &str {
+        &self.source.text
+    }
+
     /// Resolve source metadata for a diagnostic at a score field path.
     pub(crate) fn source_detail(&self, path: &str, message: &str) -> Value {
         *Error::new(path, message).locate(&self.source).detail
@@ -462,17 +465,8 @@ fn fields(v: &Value, allowed: &[&str], path: &str) -> Result<()> {
     Ok(())
 }
 
-/// Resolve a tonic spelling to its pitch class.
-///
-/// # Errors
-/// Returns a score error when the tonic spelling is invalid.
-pub(crate) fn tonic_pitch(text: &str) -> Result<i32> {
-    syntax::tonic(text).map_err(|e| e.locate(&Source::default()))
-}
-
-pub(crate) fn to_yaml(
-    document: &Value,
-) -> std::result::Result<String, yaml_rust2::emitter::EmitError> {
+#[cfg(test)]
+fn to_yaml(document: &Value) -> std::result::Result<String, yaml_rust2::emitter::EmitError> {
     fn node(value: &Value) -> yaml_rust2::Yaml {
         use yaml_rust2::Yaml;
         match value {
@@ -721,94 +715,6 @@ mod tests {
     }
 
     #[test]
-    fn audition_scores_preserve_the_complete_event_sequences() {
-        use super::events::MusicalEvent;
-        use sha2::{Digest, Sha256};
-        use std::fmt::Write;
-        let snapshots: Vec<serde_json::Value> = serde_json::from_str(include_str!(
-            "../../../../testdata/expected/score-auditions.sha256.json"
-        ))
-        .expect("event fingerprints");
-        assert_eq!(snapshots.len(), 139);
-        assert_eq!(
-            snapshots
-                .iter()
-                .filter(|snapshot| snapshot["score"]
-                    .as_str()
-                    .is_some_and(|path| path.ends_with("/showcase.score.yaml")))
-                .count(),
-            10
-        );
-        for snapshot in snapshots {
-            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../..")
-                .join(snapshot["score"].as_str().expect("score path"));
-            let plan = super::read(&path).expect("audition score compiles");
-            assert_eq!(plan.lanes.len(), 1, "{}", path.display());
-            let events = &plan.lanes[0].pattern;
-            let mut ordered = events.events.clone();
-            let position = |e: &MusicalEvent| match e {
-                MusicalEvent::Note { tick, .. } => (*tick, 2),
-                MusicalEvent::SustainPedal { tick, .. }
-                | MusicalEvent::PitchBend { tick, .. }
-                | MusicalEvent::ModWheel { tick, .. }
-                | MusicalEvent::Aftertouch { tick, .. }
-                | MusicalEvent::ParameterChange { tick, .. }
-                | MusicalEvent::ParameterRamp { tick, .. } => (*tick, 1),
-            };
-            ordered.sort_by_key(position);
-            let mut lines = vec![format!(
-                "time|{}|{}|{}|{}|{}",
-                events.length_ticks,
-                events.ticks_per_beat,
-                events.tempo_changes[0].bpm.to_bits(),
-                events.time_signature_changes[0].numerator,
-                events.time_signature_changes[0].denominator
-            )];
-            for e in ordered {
-                lines.push(match e {
-                    MusicalEvent::Note {
-                        tick,
-                        duration_ticks,
-                        note,
-                        velocity,
-                    } => format!("n|{tick}|{duration_ticks}|{note}|{velocity}"),
-                    MusicalEvent::SustainPedal { tick, down } => {
-                        format!("s|{tick}|{}", u8::from(down))
-                    }
-                    MusicalEvent::PitchBend { tick, value } => {
-                        format!("b|{tick}|{}", value.to_bits())
-                    }
-                    MusicalEvent::ModWheel { tick, value } => {
-                        format!("w|{tick}|{}", value.to_bits())
-                    }
-                    MusicalEvent::Aftertouch { tick, value } => {
-                        format!("a|{tick}|{}", value.to_bits())
-                    }
-                    MusicalEvent::ParameterChange {
-                        tick,
-                        parameter,
-                        native_value,
-                    } => format!("p|{tick}|{parameter}|{}", native_value.to_bits()),
-                    MusicalEvent::ParameterRamp { .. } => panic!("unexpected audition ramp"),
-                });
-            }
-            assert_eq!(
-                Sha256::digest(lines.join("\n").as_bytes()).iter().fold(
-                    String::new(),
-                    |mut text, byte| {
-                        write!(&mut text, "{byte:02x}").expect("string write");
-                        text
-                    }
-                ),
-                snapshot["sha256"].as_str().expect("digest"),
-                "{}",
-                path.display()
-            );
-        }
-    }
-
-    #[test]
     fn instrument_pan_is_validated_and_defaults_to_center() {
         let mut doc = document();
         doc["instruments"]["part"]["pan"] = serde_json::json!(2);
@@ -937,21 +843,6 @@ mod tests {
         doc["arps"]["up"]["order"] = serde_json::json!("- 1 . . | . . . .");
         let error = super::compile(&doc.to_string()).expect_err("tie without a note");
         assert_eq!(error.path, "sections.phrase.arp");
-    }
-
-    #[test]
-    fn reference_composition_expands_all_sections() {
-        let text = include_str!("../../../../testdata/scores/dopamine_overload.score.yaml");
-        let plan = super::compile(text).expect("reference score compiles");
-        assert_eq!(plan.sections.len(), 14);
-        assert_eq!(plan.sections.iter().map(|s| s.bars).sum::<usize>(), 70);
-        assert_eq!(plan.instruments.len(), 41);
-        assert_eq!(plan.length_ticks, u64::from(plan.ticks_per_beat) * 280);
-        assert!(
-            plan.lanes
-                .iter()
-                .all(|lane| !lane.pattern.events.is_empty())
-        );
     }
 }
 

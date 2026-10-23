@@ -8,7 +8,12 @@ import type {
   ProjectActivationResult,
 } from '@/model/domain';
 import type { ProjectApi, ProjectSettingsApi } from '@/native/native-api';
-import { openProjectPackage, saveProjectPackage } from '@/native/dialog';
+import {
+  openProjectPackage,
+  saveProjectPackage,
+  openScoreYaml,
+  openScoreInstrumentDefinition,
+} from '@/native/dialog';
 import { isNativeRuntime, logNativeError, NativeCommandError } from '@/native/invoke';
 import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
 interface UseProjectOptions {
@@ -27,6 +32,7 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UsePro
     renameProject: renameProjectApi,
     exportProject: exportProjectApi,
     importProject: importProjectApi,
+    importScore: importScoreApi,
     restoreRecoveryGeneration,
   } = api;
   const { boot, setBoot, hostGeneration } = options;
@@ -314,6 +320,42 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UsePro
       );
     }
   }, [importProjectApi, performProjectOperation]);
+  const importScore = useCallback(async () => {
+    if (!isNativeRuntime()) return;
+    const path = await openScoreYaml().catch((error: unknown) => {
+      logNativeError('openScoreYaml')(error);
+      return null;
+    });
+    if (!path) return;
+    await performProjectOperation(async () => {
+      const bindings: Record<string, string> = {};
+      try {
+        const result = await importScoreApi(path, bindings);
+        if (!result) throw new Error('Score import returned no state');
+        return result;
+      } catch (error) {
+        const details = error instanceof NativeCommandError ? error.details : undefined;
+        if (
+          typeof details !== 'object' ||
+          details === null ||
+          !('kind' in details) ||
+          details.kind !== 'scoreBindingsRequired' ||
+          !('instrumentIds' in details) ||
+          !Array.isArray(details.instrumentIds)
+        )
+          throw error;
+        for (const id of details.instrumentIds) {
+          if (typeof id !== 'string') throw error;
+          const definition = await openScoreInstrumentDefinition(id);
+          if (!definition) throw new Error('Score import cancelled', { cause: error });
+          bindings[id] = definition;
+        }
+        const result = await importScoreApi(path, bindings);
+        if (!result) throw new Error('Score import returned no state', { cause: error });
+        return result;
+      }
+    }, 'Score import');
+  }, [importScoreApi, performProjectOperation]);
   const restoreRecovery = useCallback(
     async (fileName: string) => {
       try {
@@ -378,6 +420,7 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UsePro
     openProject,
     exportProject,
     importProject,
+    importScore,
     restoreRecovery,
     dismissRecovery,
   };

@@ -10,6 +10,7 @@ import { MixerRouting } from './MixerRouting';
 afterEach(cleanup);
 
 const track: Track = {
+  externalAudioSourceTrackIds: [],
   panLaw: 'equalPower' as const,
   id: 'track:1',
   name: 'Keys',

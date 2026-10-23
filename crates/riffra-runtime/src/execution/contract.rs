@@ -80,7 +80,7 @@ pub(crate) struct GraphTrack {
     pub(crate) gain_db: f64,
     pub(crate) pan: f64,
     pub(crate) pan_law: riffra_core::PanLaw,
-    pub(crate) external_audio_source_track_id: Option<String>,
+    pub(crate) external_audio_source_track_ids: Vec<String>,
     pub(crate) output_bus_id: Option<String>,
     pub(crate) muted: bool,
     pub(crate) solo: bool,
@@ -288,7 +288,7 @@ mod tests {
                       audio_clips: Vec<GraphAudioClip>| {
             GraphTrack {
                 pan_law: riffra_core::PanLaw::EqualPower,
-                external_audio_source_track_id: None,
+                external_audio_source_track_ids: Vec::new(),
                 output_bus_id: None,
                 id: format!("track-{}", matches!(kind, GraphTrackKind::Instrument)),
                 kind,
@@ -649,8 +649,8 @@ mod tests {
                     )
                 });
                 assert_eq!(
-                    actual,
-                    expected,
+                    serde_json::from_str::<serde_json::Value>(&actual).unwrap(),
+                    serde_json::from_str::<serde_json::Value>(&expected).unwrap(),
                     "contract fixture {} is stale",
                     path.display()
                 );

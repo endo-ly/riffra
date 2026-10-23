@@ -3,4 +3,4 @@
 /**
  * Stereo panning gain convention for a Track's output.
  */
-export type PanLaw = "equalPower" | "unityCenterStereo";
+export type PanLaw = 'equalPower' | 'unityCenterStereo' | 'linearBalance';

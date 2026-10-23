@@ -235,8 +235,8 @@ where
             if let Some(pan_law) = patch.pan_law {
                 track.pan_law = pan_law;
             }
-            if let Some(source) = patch.external_audio_source_track_id {
-                track.external_audio_source_track_id = source;
+            if let Some(source) = patch.external_audio_source_track_ids {
+                track.external_audio_source_track_ids = source;
             }
             if let Some(muted) = patch.muted {
                 track.muted = muted;
@@ -468,8 +468,16 @@ where
         &mut self,
         timebase: ProjectTimebase,
     ) -> Result<CreativeSession, ApplicationError> {
-        self.commit_arrangement(|arrangement| {
-            arrangement.update_timebase(timebase).map_err(Into::into)
+        self.core.commit(self.storage, |session| {
+            session.settings.mixdown.musical_end_tick = crate::domain::timeline::rescale_tick(
+                session.settings.mixdown.musical_end_tick,
+                session.arrangement.timebase.ppq,
+                timebase.ppq,
+            )?;
+            session
+                .arrangement
+                .update_timebase(timebase)
+                .map_err(Into::into)
         })
     }
 

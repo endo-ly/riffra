@@ -112,3 +112,13 @@ export async function updateSessionSettings(patch: {
 }): Promise<ArrangementMutationResult> {
   return dispatchControl({ command: 'session.settings.update', params: patch });
 }
+
+export async function importScore(
+  path: string,
+  bindings: Record<string, string>,
+): Promise<ProjectActivationResult | null> {
+  return dispatchControlOrFallback(
+    { command: 'project.import-score', params: { path, bindings } },
+    null,
+  );
+}

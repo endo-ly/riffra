@@ -82,7 +82,7 @@ enum class AutomationTargetKind {
     sidechainSendLevel,
     deviceParameter
 };
-enum class AutomationInterpolationSpec { linear, step };
+enum class AutomationInterpolationSpec { linear, step, linearAmplitude };
 
 struct AutomationLaneSpec final {
     AutomationTargetKind kind = AutomationTargetKind::trackVolume;
@@ -90,6 +90,7 @@ struct AutomationLaneSpec final {
     juce::String parameterId;
     AutomationInterpolationSpec interpolation = AutomationInterpolationSpec::linear;
     std::vector<AutomationPointSpec> points;
+    double transitionSeconds = 0.0;
     bool operator==(const AutomationLaneSpec&) const = default;
 };
 
@@ -238,6 +239,8 @@ struct InstrumentControlEventSpec final {
     bool down = false;
     float value = 0.0f;
     juce::String parameter;
+    float endValue = 0.0f;
+    std::uint64_t durationTicks = 0;
     bool operator==(const InstrumentControlEventSpec&) const = default;
 };
 
@@ -261,7 +264,7 @@ struct TrackSpec final {
     bool muted = false;
     bool solo = false;
     juce::String panLaw = "equalPower";
-    std::optional<juce::String> externalAudioSourceTrackId;
+    std::vector<juce::String> externalAudioSourceTrackIds;
     std::optional<juce::String> outputBusId;
     bool armed = false;
     bool monitorInput = false;

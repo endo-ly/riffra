@@ -37,7 +37,7 @@ set(request_template [=[
           "gainDb": 0.0,
           "pan": 0.0,
           "panLaw": "equalPower",
-          "externalAudioSourceTrackId": null,
+          "externalAudioSourceTrackIds": [],
           "outputBusId": null,
           "muted": false,
           "solo": false,

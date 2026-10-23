@@ -127,6 +127,7 @@ export type ControlCommandResults = {
   'project.open': OutputValue<'projectActivation'>;
   'project.rename': OutputValue<'projectState'>;
   'project.import': OutputValue<'projectActivation'>;
+  'project.import-score': OutputValue<'projectActivation'>;
   'project.export': OutputValue<'projectExport'>;
   'host.status': OutputValue<'hostStatus'>;
   'host.info': OutputValue<'hostInfo'>;

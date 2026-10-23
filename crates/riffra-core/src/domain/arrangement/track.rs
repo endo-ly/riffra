@@ -61,9 +61,8 @@ pub struct Track {
     pub output_bus_id: Option<String>,
     #[serde(default)]
     pub pan_law: PanLaw,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub external_audio_source_track_id: Option<String>,
+    #[serde(default)]
+    pub external_audio_source_track_ids: Vec<String>,
 }
 
 /// A partial update for a timeline Track.
@@ -71,7 +70,7 @@ pub struct Track {
 #[serde(rename_all = "camelCase")]
 pub struct TrackPatch {
     pub pan_law: Option<PanLaw>,
-    pub external_audio_source_track_id: Option<Option<String>>,
+    pub external_audio_source_track_ids: Option<Vec<String>>,
     pub name: Option<String>,
     pub gain_db: Option<f64>,
     pub pan: Option<f64>,
@@ -99,7 +98,7 @@ impl Track {
     pub fn audio(id: String, name: String) -> Self {
         Self {
             pan_law: PanLaw::default(),
-            external_audio_source_track_id: None,
+            external_audio_source_track_ids: Vec::new(),
             id,
             name,
             kind: TrackKind::Audio,
@@ -172,6 +171,7 @@ pub enum PanLaw {
     #[default]
     EqualPower,
     UnityCenterStereo,
+    LinearBalance,
 }
 #[cfg(test)]
 mod tests {

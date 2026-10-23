@@ -1147,7 +1147,7 @@ impl Builder<'_> {
             for (id, part) in &mut parts {
                 if let Some(list) = part.as_array() {
                     let p = format!("drums.{name}.parts.{id}");
-                    if list.is_empty() || s.bars.len() % list.len() != 0 {
+                    if list.is_empty() || !s.bars.len().is_multiple_of(list.len()) {
                         return Err(Error::new(
                             p,
                             "section bars must be a multiple of drum phrase length",
@@ -2058,16 +2058,16 @@ fn condition(v: &Value, bar: usize, length: usize, path: &str) -> Result<bool> {
         if even != &Value::Bool(true) {
             return Err(Error::new(path, "even must be true"));
         }
-        return Ok(bar % 2 == 0);
+        return Ok(bar.is_multiple_of(2));
     }
     if let Some(every) = v.get("every") {
         let n = integer(every, path)?;
         if n <= 0 {
             return Err(Error::new(path, "every must be positive"));
         }
-        return Ok(bar
-            % usize::try_from(n).map_err(|_| Error::new(path, "bar condition is too large"))?
-            == 0);
+        return Ok(bar.is_multiple_of(
+            usize::try_from(n).map_err(|_| Error::new(path, "bar condition is too large"))?,
+        ));
     }
     let bars = array(required(v, "bars", path)?, path)?;
     if bars.is_empty() {

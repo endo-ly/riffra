@@ -112,6 +112,7 @@ export function AutomationLaneEditor(props: Props) {
   );
   return (
     <AutomationLaneView
+      timebase={props.session.arrangement.timebase}
       key={key}
       option={selected}
       options={options}

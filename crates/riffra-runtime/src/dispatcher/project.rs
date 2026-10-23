@@ -46,6 +46,34 @@ impl HostDispatcher<'_> {
                     sequence,
                 });
             }
+            ProjectCommand::ProjectImportScore(params) => {
+                let writer = writer.expect("project mutation holds the writer");
+                let imported = crate::score_yaml_import::import(
+                    &params,
+                    &self.data_root,
+                    &self.built_in_instruments,
+                    &self.sonalloy,
+                )
+                .map_err(|error| {
+                    DispatchError::invalid_request_with_details(error.message, error.details)
+                })?;
+                let summary = self
+                    .project_store
+                    .as_ref()
+                    .create_from_session(&imported.session)
+                    .map_err(|error| error.to_string())?;
+                let result = self.activate_project(writer, &summary.project_id);
+                if result.is_ok() {
+                    imported.retain();
+                } else if let Err(error) = self
+                    .project_store
+                    .as_ref()
+                    .discard_unactivated_project(&summary.project_id)
+                {
+                    tracing::warn!(%error, "score project cleanup failed");
+                }
+                return result;
+            }
             ProjectCommand::ProjectImport(params) => {
                 let writer = writer.expect("project mutation holds the writer");
                 let session = crate::projects::import(&self.data_root, &params.path)?;

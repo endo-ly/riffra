@@ -67,6 +67,7 @@ struct InstrumentEventOrder final {
     std::uint64_t tick = 0;
     int priority = 0;
     std::uint32_t sourceOrder = 0;
+    std::int64_t absoluteSample = 0;
 };
 
 /// Compiles timeline MIDI once during graph preparation and schedules only the
@@ -99,7 +100,8 @@ public:
                                                 std::int64_t rangeStart, int sampleCount,
                                                 SonalloyEvent* destination,
                                                 InstrumentEventOrder* ordering,
-                                                std::size_t capacity) noexcept;
+                                                std::size_t capacity,
+                                                bool restoreControls = false) noexcept;
 };
 
 }  // namespace riffra

@@ -51,6 +51,11 @@ TEST(TimelineEngineTest, KeepsProcessedTakesOutOfTheCurrentTrackEffectChain) {
         std::fill(left.begin(), left.end(), 0.0f);
         std::fill(right.begin(), right.end(), 0.0f);
         engine.mix(outputChannels.data(), 2, kBlockSamples);
+        // Offline output preserves the attack from the first latency-aligned sample.
+        if (block == 0) {
+            EXPECT_NEAR(left[20], (0.05f * 2.0f + 0.10f) * 0.5f, 0.002f);
+            EXPECT_NEAR(right[20], left[20], 0.002f);
+        }
     }
     const auto expected = (0.05f * 2.0f + 0.10f) * 0.5f;
 
@@ -511,7 +516,7 @@ TEST(TimelineEngineTest, RoutesOneMutedSourceToParallelConsumersAndRejectsCycles
                                          .getChildFile("duck");
     auto consumer = makeInstrumentTrack("consumer-a");
     consumer.panLaw = "unityCenterStereo";
-    consumer.externalAudioSourceTrackId = "source";
+    consumer.externalAudioSourceTrackIds = {"source"};
     consumer.instrument = InternalInstrumentSpec{
         "instrument:a", false,
         instrumentDirectory.getChildFile("definition.json").loadFileAsString(),
@@ -556,8 +561,23 @@ TEST(TimelineEngineTest, RoutesOneMutedSourceToParallelConsumersAndRejectsCycles
                                                    silentSource.getSample(channel, sample)));
         }
     EXPECT_GT(inputDifference, 0.001f);
-    snapshot.graph.tracks[0].externalAudioSourceTrackId = "consumer-b";
-    snapshot.graph.tracks[1].externalAudioSourceTrackId = "consumer-a";
+    auto summedGraph = singleGraph;
+    auto extraSource = summedGraph.tracks[2];
+    extraSource.id = "source-extra";
+    std::get<InternalInstrumentSpec>(*extraSource.instrument).id = "instrument:source-extra";
+    for (auto& clip : extraSource.midiClips) clip.id += ":extra";
+    // Two half-amplitude sources must produce the same aligned input signal.
+    extraSource.gainDb -= 6.020599913279624;
+    summedGraph.tracks[2].gainDb -= 6.020599913279624;
+    summedGraph.tracks.push_back(extraSource);
+    summedGraph.tracks[0].externalAudioSourceTrackIds = {"source", "source-extra"};
+    const auto summed = render(summedGraph, "summed-sources");
+    for (int channel = 0; channel < 2; ++channel)
+        for (int sample = 0; sample < single.getNumSamples(); ++sample)
+            EXPECT_NEAR(summed.getSample(channel, sample), single.getSample(channel, sample),
+                        1.0e-5f);
+    snapshot.graph.tracks[0].externalAudioSourceTrackIds = {"consumer-b"};
+    snapshot.graph.tracks[1].externalAudioSourceTrackIds = {"consumer-a"};
     TimelineEngine engine(true);
     juce::String error;
     EXPECT_FALSE(loadTestSnapshot(engine, snapshot, formats, 48'000, 256, error));
@@ -1507,7 +1527,7 @@ TEST(MixerRoutingTest, DisablesLowLatencyPdcBypassForDependentOrAutomatedTracks)
         snapshot.graph.tracks = {monitoredTrack};
         if (restriction == Restriction::externalAudioSource) {
             auto consumer = makeInstrumentTrack("track:consumer");
-            consumer.externalAudioSourceTrackId = monitoredTrack.id;
+            consumer.externalAudioSourceTrackIds = {monitoredTrack.id};
             const auto instrumentDirectory = juce::File(RIFFRA_CONTRACT_FIXTURE_DIR)
                                                  .getSiblingFile("sonalloy-instruments")
                                                  .getChildFile("duck");

@@ -100,7 +100,7 @@ pub(super) fn degree(token: &str) -> Result<i32> {
     Ok(semitone + accidental + 12 * octaves)
 }
 
-pub(super) fn tonic(token: &str) -> Result<i32> {
+pub(crate) fn tonic(token: &str) -> Result<i32> {
     let mut chars = token.chars();
     let base: i32 = match chars.next() {
         Some('C') => 0,
@@ -125,10 +125,10 @@ pub(super) fn tonic(token: &str) -> Result<i32> {
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct Chord {
+pub(crate) struct Chord {
     pub(super) spelling: String,
-    pub(super) root: i32,
-    pub(super) bass: i32,
+    pub(crate) root: i32,
+    pub(crate) bass: i32,
     slash_bass: bool,
     tones: Vec<ChordTone>,
 }
@@ -277,7 +277,7 @@ fn normalize_tones(mut tones: Vec<ChordTone>) -> Result<Vec<ChordTone>> {
     Ok(tones)
 }
 
-pub(super) fn chord(text: &str) -> Result<Option<Chord>> {
+pub(crate) fn chord(text: &str) -> Result<Option<Chord>> {
     if text == "NC" {
         return Ok(None);
     }
@@ -300,7 +300,7 @@ pub(super) fn chord(text: &str) -> Result<Option<Chord>> {
     }))
 }
 
-pub(super) fn voicing(chord: &Chord, tonic: i32, floor: i32) -> Vec<i32> {
+pub(crate) fn voicing(chord: &Chord, tonic: i32, floor: i32) -> Vec<i32> {
     let bass = floor + (tonic + chord.bass - floor).rem_euclid(12);
     let root = bass + (tonic + chord.root - bass).rem_euclid(12);
     let mut notes = vec![bass];

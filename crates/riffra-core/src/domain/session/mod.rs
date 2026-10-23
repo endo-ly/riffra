@@ -30,12 +30,23 @@ pub struct SessionSettings {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct CreativeSession {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub score_source: Option<ScoreSource>,
     pub session_id: String,
     pub updated_at_ms: u64,
     #[serde(default)]
     pub project_name: Option<String>,
     pub arrangement: Arrangement,
     pub settings: SessionSettings,
+}
+
+/// Original Score document retained as reference alongside editable production state.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ScoreSource {
+    pub file_name: String,
+    pub yaml: String,
 }
 
 impl Default for SessionSettings {
@@ -56,6 +67,7 @@ impl CreativeSession {
     /// settings.
     pub fn new(now_ms: u64) -> Self {
         Self {
+            score_source: None,
             session_id: format!("session-{now_ms}"),
             updated_at_ms: now_ms,
             project_name: None,
@@ -67,6 +79,7 @@ impl CreativeSession {
     /// Returns an empty session preserving project identity and advancing its revision.
     pub fn emptied(&self) -> Self {
         Self {
+            score_source: None,
             session_id: self.session_id.clone(),
             project_name: self.project_name.clone(),
             updated_at_ms: self.updated_at_ms,
@@ -115,13 +128,13 @@ pub struct MixdownSettings {
     pub block_size: Option<u32>,
 }
 
-/// FFmpeg two-pass loudness normalization targets.
+/// Integrated loudness, peak ceiling, and optional loudness-range targets.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct LoudnessMastering {
     pub integrated_lufs: f64,
     pub true_peak_db: f64,
-    pub loudness_range_lu: f64,
+    pub loudness_range_lu: Option<f64>,
 }
 
 impl MixdownSettings {
@@ -140,8 +153,9 @@ impl MixdownSettings {
                 || !(-70.0..=-5.0).contains(&master.integrated_lufs)
                 || !master.true_peak_db.is_finite()
                 || !(-9.0..=0.0).contains(&master.true_peak_db)
-                || !master.loudness_range_lu.is_finite()
-                || !(1.0..=50.0).contains(&master.loudness_range_lu))
+                || master
+                    .loudness_range_lu
+                    .is_some_and(|value| !value.is_finite() || value < 0.0))
         {
             return Err("invalid loudness mastering targets".into());
         }

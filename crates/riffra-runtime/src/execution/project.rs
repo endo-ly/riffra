@@ -171,7 +171,7 @@ pub(crate) fn project_graph(
 
             GraphTrack {
                 pan_law: track.pan_law,
-                external_audio_source_track_id: track.external_audio_source_track_id.clone(),
+                external_audio_source_track_ids: track.external_audio_source_track_ids.clone(),
                 output_bus_id: track.output_bus_id.clone(),
                 id: track.id.clone(),
                 kind: match track.kind {

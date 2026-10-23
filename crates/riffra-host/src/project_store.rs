@@ -334,7 +334,38 @@ mod tests {
         first_storage.save(&first_session).unwrap();
         let mut second_session = second_storage.load_or_create().unwrap().session;
         second_session.settings.note = "second".into();
+        second_session
+            .arrangement
+            .tracks
+            .push(riffra_core::Track::audio("source".into(), "Source".into()));
+        let mut consumer = riffra_core::Track::instrument("consumer".into(), "Consumer".into());
+        consumer.external_audio_source_track_ids = vec!["source".into()];
+        second_session.arrangement.tracks.push(consumer);
         second_storage.save(&second_session).unwrap();
+        let session_path = root
+            .join(PROJECTS_DIRECTORY)
+            .join(&second.project_id)
+            .join("session.json");
+        let mut document: serde_json::Value =
+            serde_json::from_slice(&fs::read(&session_path).unwrap()).unwrap();
+        document["schemaVersion"] = 1.into();
+        for track in document["session"]["arrangement"]["tracks"]
+            .as_array_mut()
+            .unwrap()
+        {
+            let fields = track.as_object_mut().unwrap();
+            let sources = fields.remove("externalAudioSourceTrackIds").unwrap();
+            fields.insert(
+                "externalAudioSourceTrackId".into(),
+                sources
+                    .as_array()
+                    .unwrap()
+                    .first()
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null),
+            );
+        }
+        fs::write(&session_path, serde_json::to_vec(&document).unwrap()).unwrap();
 
         assert_eq!(
             store
@@ -351,6 +382,19 @@ mod tests {
 
         let reopened = ProjectStore::new(&root);
         assert_eq!(reopened.initialize().unwrap().project_id, second.project_id);
+        let restored = reopened.load(&second.project_id).unwrap().session;
+        assert_eq!(
+            restored.arrangement.tracks[1].external_audio_source_track_ids,
+            ["source"]
+        );
+        reopened
+            .session_store(&second.project_id)
+            .unwrap()
+            .save(&restored)
+            .unwrap();
+        let saved: serde_json::Value =
+            serde_json::from_slice(&fs::read(&session_path).unwrap()).unwrap();
+        assert_eq!(saved["schemaVersion"], riffra_core::SESSION_SCHEMA_VERSION);
         // Projects never share storage.
         assert_eq!(
             reopened

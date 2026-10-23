@@ -205,9 +205,18 @@ pub struct RenderStem {
 pub struct MasteringReport {
     pub target: riffra_core::LoudnessMastering,
     pub input: LoudnessMeasurement,
-    pub deviation: LoudnessMeasurement,
+    pub deviation: MasteringDeviation,
     pub normalization_type: String,
     pub true_peak_correction_db: f64,
+}
+
+/// Differences from configured targets; LRA is absent when no target was requested.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct MasteringDeviation {
+    pub integrated_lufs: f64,
+    pub true_peak_db: f64,
+    pub loudness_range_lu: Option<f64>,
 }
 
 /// Integrated loudness, intersample peak, and loudness range measured by FFmpeg.

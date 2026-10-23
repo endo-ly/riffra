@@ -130,7 +130,9 @@ fn normalize_gain(gain_db: &mut f64) -> Result<(), String> {
     if !gain_db.is_finite() {
         return Err("mix gain must be finite".into());
     }
-    *gain_db = gain_db.clamp(-90.0, 24.0);
+    if !((10.0_f64.powf(*gain_db / 20.0)) as f32).is_finite() {
+        return Err("mix gain exceeds the audio engine range".into());
+    }
     Ok(())
 }
 
@@ -408,24 +410,31 @@ impl Arrangement {
             normalize_gain(&mut send.level_db)?;
         }
         for track in &self.tracks {
-            let Some(source) = &track.external_audio_source_track_id else {
+            if track.external_audio_source_track_ids.is_empty() {
                 continue;
-            };
+            }
             if track.kind != TrackKind::Instrument {
                 return Err(format!(
                     "invalid external audio route for track '{}'",
                     track.name
                 ));
             }
-            if !self.tracks.iter().any(|candidate| candidate.id == *source) {
-                return Err(format!("external audio source '{source}' does not exist"));
+            let mut sources = HashSet::new();
+            for source in &track.external_audio_source_track_ids {
+                if !sources.insert(source)
+                    || !self.tracks.iter().any(|candidate| candidate.id == *source)
+                {
+                    return Err(format!(
+                        "invalid or duplicate external audio source '{source}'"
+                    ));
+                }
             }
         }
         let mut dependencies: BTreeMap<String, Vec<String>> = BTreeMap::new();
         let mut sidechain_edges: BTreeMap<(String, String), String> = BTreeMap::new();
         for track in &self.tracks {
             dependencies.entry(track.id.clone()).or_default();
-            if let Some(source) = &track.external_audio_source_track_id {
+            for source in &track.external_audio_source_track_ids {
                 dependencies
                     .entry(source.clone())
                     .or_default()
@@ -622,7 +631,7 @@ mod tests {
         // Arrange
         let mut session = CreativeSession::new(1);
         let mut consumer = Track::instrument("track:consumer".into(), "Consumer".into());
-        consumer.external_audio_source_track_id = Some("track:supply".into());
+        consumer.external_audio_source_track_ids = vec!["track:supply".into()];
         session.arrangement.tracks.push(consumer);
         let mut supply = Track::audio("track:supply".into(), "Supply".into());
         supply.effects.push(
@@ -658,7 +667,9 @@ mod tests {
         disabled.arrangement.mixer.sidechain_sends[0].enabled = false;
         disabled.validate_and_normalize().unwrap();
         let mut cleared = session.clone();
-        cleared.arrangement.tracks[0].external_audio_source_track_id = None;
+        cleared.arrangement.tracks[0]
+            .external_audio_source_track_ids
+            .clear();
         cleared.validate_and_normalize().unwrap();
     }
 }

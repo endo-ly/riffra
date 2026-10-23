@@ -60,6 +60,7 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     openProject,
     exportProject,
     importProject,
+    importScore,
     restoreRecovery,
     dismissRecovery,
   } = runtime;
@@ -324,6 +325,7 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     openProject,
     exportProject,
     importProject,
+    importScore,
     restoreRecovery,
     dismissRecovery,
     updateLibraryAsset,

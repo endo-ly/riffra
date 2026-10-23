@@ -37,7 +37,7 @@ pub enum NativeAudioError {
         kind: String,
         message: String,
         operation: String,
-        details: Option<Value>,
+        details: Option<Box<Value>>,
     },
     LockPoisoned {
         resource: &'static str,
@@ -81,7 +81,7 @@ impl NativeAudioError {
             kind: kind.into(),
             message: message.into(),
             operation: operation.into(),
-            details,
+            details: details.map(Box::new),
         }
     }
 
@@ -109,7 +109,7 @@ impl NativeAudioError {
                 kind: kind.clone(),
                 message: message.clone(),
                 operation: (!operation.is_empty()).then(|| operation.clone()),
-                details: details.clone(),
+                details: details.as_deref().cloned(),
             },
             Self::LockPoisoned { resource } => {
                 descriptor("internal", &format!("{resource} lock was poisoned."))

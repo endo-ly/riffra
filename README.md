@@ -119,4 +119,5 @@ cargo run -p riffra-cli -- --data-root ./riffra-data serve
 | [docs/data-model.md](docs/data-model.md)       | 正準モデルのカタログと規則                                                 |
 | [docs/ipc.md](docs/ipc.md)                     | IPC 境界の契約（Tauri 命令 / イベント / サイドカープロトコル）             |
 | [docs/ui-design.md](docs/ui-design.md)         | UI設計（画面の骨格、各領域の操作、ショートカット）                         |
+| [docs/score-yaml.md](docs/score-yaml.md)       | Score YAMLの読み込み、演奏内容の対応、音源の保存                           |
 | [docs/test-strategy.md](docs/test-strategy.md) | テスト戦略                                                                 |

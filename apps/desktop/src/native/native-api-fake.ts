@@ -277,6 +277,9 @@ export class FakeNativeApi implements NativeApi {
   renameProject(...args: Parameters<NativeApi['renameProject']>) {
     return this.command('renameProject', args);
   }
+  importScore(...args: Parameters<NativeApi['importScore']>) {
+    return this.command('importScore', args);
+  }
   importProject(...args: Parameters<NativeApi['importProject']>) {
     return this.command('importProject', args);
   }
@@ -1065,6 +1068,7 @@ export class FakeNativeApi implements NativeApi {
         return Promise.resolve(this.bootstrapState.projectState);
       case 'createProject':
       case 'openProject':
+      case 'importScore':
       case 'importProject':
         return Promise.resolve({
           projectState: this.bootstrapState.projectState,

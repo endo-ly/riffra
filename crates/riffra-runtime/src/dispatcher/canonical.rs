@@ -163,7 +163,7 @@ impl HostDispatcher<'_> {
                 application.update_track(
                     &params.track_id,
                     TrackPatch {
-                        external_audio_source_track_id: Some(Some(params.source_track_id)),
+                        external_audio_source_track_ids: Some(params.source_track_ids),
                         ..Default::default()
                     },
                 )?,
@@ -173,7 +173,7 @@ impl HostDispatcher<'_> {
                 application.update_track(
                     &params.track_id,
                     TrackPatch {
-                        external_audio_source_track_id: Some(None),
+                        external_audio_source_track_ids: Some(Vec::new()),
                         ..Default::default()
                     },
                 )?,
@@ -337,7 +337,7 @@ impl HostDispatcher<'_> {
                     &params.track_id,
                     TrackPatch {
                         pan_law: params.pan_law,
-                        external_audio_source_track_id: None,
+                        external_audio_source_track_ids: None,
                         name: params.name,
                         gain_db: params.gain_db,
                         pan: params.pan,

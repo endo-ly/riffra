@@ -54,26 +54,18 @@ public:
         Cursor(const AutomationRuntime& lane, const std::int64_t sample) noexcept
             : points(lane.points),
               step(lane.step),
+              amplitude(lane.amplitude),
               index(lane.indexFor(sample)),
               lastSample(sample - 1) {}
 
         [[nodiscard]] float valueAt(const std::int64_t sample, const float fallback) noexcept {
-            if (sample < lastSample) {
-                index = lowerBound(sample);
-            }
-            while (index < points.size() && points[index].sample <= sample) ++index;
-            lastSample = sample;
-            if (points.empty()) return fallback;
-            if (index == 0) return points.front().value;
-            if (index >= points.size()) return points.back().value;
-            const auto& left = points[index - 1];
-            const auto& right = points[index];
-            if (step) return left.value;
-            const auto distance = right.sample - left.sample;
-            if (distance <= 0) return right.value;
-            const auto amount =
-                static_cast<float>(sample - left.sample) / static_cast<float>(distance);
-            return left.value + (right.value - left.value) * amount;
+            return decoded(rawValueAt(sample, fallback));
+        }
+
+        [[nodiscard]] float linearGainAt(const std::int64_t sample,
+                                         const float fallbackDb) noexcept {
+            const auto value = rawValueAt(sample, amplitude ? 0.0f : fallbackDb);
+            return amplitude ? value : std::pow(10.0f, value / 20.0f);
         }
 
         [[nodiscard]] Segment segmentAt(const std::int64_t sample, const std::int64_t blockEnd,
@@ -103,6 +95,29 @@ public:
         }
 
     private:
+        [[nodiscard]] float rawValueAt(const std::int64_t sample, const float fallback) noexcept {
+            if (sample < lastSample) {
+                index = lowerBound(sample);
+            }
+            while (index < points.size() && points[index].sample <= sample) ++index;
+            lastSample = sample;
+            if (points.empty()) return fallback;
+            if (index == 0) return points.front().value;
+            if (index >= points.size()) return points.back().value;
+            const auto& left = points[index - 1];
+            const auto& right = points[index];
+            if (step) return left.value;
+            const auto distance = right.sample - left.sample;
+            if (distance <= 0) return right.value;
+            const auto amount =
+                static_cast<float>(sample - left.sample) / static_cast<float>(distance);
+            const auto value = left.value + (right.value - left.value) * amount;
+            return value;
+        }
+
+        float decoded(const float value) const noexcept {
+            return amplitude ? (value > 0.0f ? 20.0f * std::log10(value) : -1000.0f) : value;
+        }
         [[nodiscard]] std::size_t lowerBound(const std::int64_t sample) const noexcept {
             const auto found = std::lower_bound(
                 points.begin(), points.end(), sample,
@@ -112,14 +127,19 @@ public:
 
         const std::vector<Point>& points;
         bool step = false;
+        bool amplitude = false;
         std::size_t index = 0;
         std::int64_t lastSample = -1;
     };
 
-    void setPoints(std::vector<Point> next, const bool stepped = false) noexcept {
+    void setPoints(std::vector<Point> next, const bool stepped = false,
+                   const bool linearAmplitude = false) noexcept {
+        amplitude = linearAmplitude;
         step = stepped;
         points = std::move(next);
     }
+
+    [[nodiscard]] bool isAmplitude() const noexcept { return amplitude; }
 
     [[nodiscard]] bool empty() const noexcept { return points.empty(); }
 
@@ -136,6 +156,7 @@ private:
     }
 
     bool step = false;
+    bool amplitude = false;
     std::vector<Point> points;
 };
 

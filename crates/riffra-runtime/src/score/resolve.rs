@@ -77,18 +77,16 @@ pub(super) fn inherit(dict: &Value, name: &str, drums: bool, path: &str) -> Resu
                 result[key] = value.clone();
             }
         }
-        if !drums {
-            if let Some(additions) = value.get("add_placements") {
-                let target = result
-                    .as_object_mut()
-                    .expect("mapping")
-                    .entry("placements".to_owned())
-                    .or_insert_with(|| serde_json::json!([]));
-                target
-                    .as_array_mut()
-                    .ok_or_else(|| Error::new(path, "expected placements list"))?
-                    .extend(annotated(additions, "add_placements", name, path)?);
-            }
+        if !drums && let Some(additions) = value.get("add_placements") {
+            let target = result
+                .as_object_mut()
+                .expect("mapping")
+                .entry("placements".to_owned())
+                .or_insert_with(|| serde_json::json!([]));
+            target
+                .as_array_mut()
+                .ok_or_else(|| Error::new(path, "expected placements list"))?
+                .extend(annotated(additions, "add_placements", name, path)?);
         }
         stack.pop();
         Ok(result)
@@ -281,13 +279,13 @@ pub(super) fn validate_structure(doc: &Value) -> Result<()> {
     if let Some(value) = meta.get("swing") {
         super::time::Swing::parse(value, "meta.swing")?;
     }
-    if let Some(fade) = meta.get("fade_out_seconds") {
-        if number(fade, "meta.fade_out_seconds")? < 0.0 {
-            return Err(Error::new(
-                "meta.fade_out_seconds",
-                "fade must be nonnegative",
-            ));
-        }
+    if let Some(fade) = meta.get("fade_out_seconds")
+        && number(fade, "meta.fade_out_seconds")? < 0.0
+    {
+        return Err(Error::new(
+            "meta.fade_out_seconds",
+            "fade must be nonnegative",
+        ));
     }
     for key in ["title", "meter", "tuning"] {
         text_field(meta, key, "meta")?;
@@ -311,13 +309,13 @@ pub(super) fn validate_structure(doc: &Value) -> Result<()> {
                 return Err(Error::new(path, format!("expected {min}..{max}")));
             }
         }
-        if let Some(lra) = master.get("target_lra_lu") {
-            if number(lra, "meta.master.target_lra_lu")? < 0.0 {
-                return Err(Error::new(
-                    "meta.master.target_lra_lu",
-                    "expected nonnegative LRA target",
-                ));
-            }
+        if let Some(lra) = master.get("target_lra_lu")
+            && number(lra, "meta.master.target_lra_lu")? < 0.0
+        {
+            return Err(Error::new(
+                "meta.master.target_lra_lu",
+                "expected nonnegative LRA target",
+            ));
         }
     }
     for (i, entry) in array(required(doc, "form", "")?, "form")?
@@ -488,10 +486,10 @@ pub(super) fn event_kind(v: &Value, path: &str) -> Result<()> {
             "automation requires exactly one of parameter or control",
         ));
     }
-    if let Some(control) = v.get("control") {
-        if !["mod_wheel", "aftertouch", "pitch_bend"].contains(&string(control, path)?) {
-            return Err(Error::new(path, "unknown automation control"));
-        }
+    if let Some(control) = v.get("control")
+        && !["mod_wheel", "aftertouch", "pitch_bend"].contains(&string(control, path)?)
+    {
+        return Err(Error::new(path, "unknown automation control"));
     }
     if kind == "dynamics" {
         for key in ["from", "to"] {
@@ -537,10 +535,10 @@ pub(super) fn event_kind(v: &Value, path: &str) -> Result<()> {
 }
 
 fn validate_event_values(v: &Value, kind: &str, path: &str) -> Result<()> {
-    if let Some(down) = v.get("down") {
-        if !down.is_boolean() {
-            return Err(Error::new(format!("{path}.down"), "expected a boolean"));
-        }
+    if let Some(down) = v.get("down")
+        && !down.is_boolean()
+    {
+        return Err(Error::new(format!("{path}.down"), "expected a boolean"));
     }
     for key in ["native_value", "from_value", "to_value"] {
         if let Some(value) = v.get(key) {
@@ -583,13 +581,13 @@ fn validate_part_gains(sections: &Value, instruments: &Value) -> Result<()> {
 fn validate_sections(sections: &Value) -> Result<()> {
     for (name, section) in object(sections, "sections")? {
         let path = format!("sections.{name}");
-        if let Some(velocity) = section.get("velocity") {
-            if !(1..=127).contains(&integer(velocity, &format!("{path}.velocity"))?) {
-                return Err(Error::new(
-                    format!("{path}.velocity"),
-                    "expected velocity 1..127",
-                ));
-            }
+        if let Some(velocity) = section.get("velocity")
+            && !(1..=127).contains(&integer(velocity, &format!("{path}.velocity"))?)
+        {
+            return Err(Error::new(
+                format!("{path}.velocity"),
+                "expected velocity 1..127",
+            ));
         }
         fields(
             section,
@@ -700,23 +698,23 @@ fn validate_lines(section: &Value, path: &str) -> Result<()> {
                 &path,
             )?;
             validate_pitch_settings(line, &path)?;
-            if let Some(value) = line.get("loop") {
-                if !value.is_boolean() {
-                    return Err(Error::new(&path, "loop must be boolean"));
-                }
+            if let Some(value) = line.get("loop")
+                && !value.is_boolean()
+            {
+                return Err(Error::new(&path, "loop must be boolean"));
             }
         }
     }
     Ok(())
 }
 fn validate_pitch_settings(value: &Value, path: &str) -> Result<()> {
-    if let Some(register) = value.get("register") {
-        if !["melody", "bass"].contains(&string(register, path)?) {
-            return Err(Error::new(
-                format!("{path}.register"),
-                "register must be melody or bass",
-            ));
-        }
+    if let Some(register) = value.get("register")
+        && !["melody", "bass"].contains(&string(register, path)?)
+    {
+        return Err(Error::new(
+            format!("{path}.register"),
+            "register must be melody or bass",
+        ));
     }
     if let Some(tonic) = value.get("tonic") {
         super::syntax::tonic(string(tonic, path)?).map_err(|e| e.at(&format!("{path}.tonic")))?;
@@ -742,10 +740,10 @@ fn validate_articulations(v: &Value, path: &str) -> Result<()> {
                 },
                 &p,
             )?;
-            if let Some(value) = settings.get("velocity") {
-                if !(-126..=126).contains(&integer(value, &p)?) {
-                    return Err(Error::new(&p, "articulation velocity must be -126..126"));
-                }
+            if let Some(value) = settings.get("velocity")
+                && !(-126..=126).contains(&integer(value, &p)?)
+            {
+                return Err(Error::new(&p, "articulation velocity must be -126..126"));
             }
             if let Some(value) = settings.get("gate") {
                 let gate = super::time::rational(value, &p)?;
@@ -841,13 +839,13 @@ fn validate_instruments(instruments: &Value) -> Result<()> {
             "bass_floor_midi",
             "bass_ceiling_midi",
         ] {
-            if let Some(value) = v.get(key) {
-                if !(0..=127).contains(&integer(value, &format!("{path}.{key}"))?) {
-                    return Err(Error::new(
-                        format!("{path}.{key}"),
-                        "expected MIDI note 0..127",
-                    ));
-                }
+            if let Some(value) = v.get(key)
+                && !(0..=127).contains(&integer(value, &format!("{path}.{key}"))?)
+            {
+                return Err(Error::new(
+                    format!("{path}.{key}"),
+                    "expected MIDI note 0..127",
+                ));
             }
         }
         validate_voicing_range(v, &path)?;
@@ -860,13 +858,13 @@ fn validate_instruments(instruments: &Value) -> Result<()> {
     Ok(())
 }
 fn validate_voicing_range(v: &Value, path: &str) -> Result<()> {
-    if let Some(ceiling) = v.get("voicing_ceiling_midi") {
-        if integer(ceiling, path)? <= super::optional_int(v, "voicing_floor_midi", 48, path)? {
-            return Err(Error::new(
-                format!("{path}.voicing_ceiling_midi"),
-                "voicing ceiling must be above floor",
-            ));
-        }
+    if let Some(ceiling) = v.get("voicing_ceiling_midi")
+        && integer(ceiling, path)? <= super::optional_int(v, "voicing_floor_midi", 48, path)?
+    {
+        return Err(Error::new(
+            format!("{path}.voicing_ceiling_midi"),
+            "voicing ceiling must be above floor",
+        ));
     }
     Ok(())
 }
@@ -972,15 +970,15 @@ fn validate_material(category: &str, value: &Value, path: &str) -> Result<()> {
     match category {
         "arps" => {
             text_field(value, "order", path)?;
-            if let Some(retrigger) = value.get("retrigger_each_step") {
-                if !retrigger.is_boolean() {
-                    return Err(Error::new(path, "retrigger_each_step must be boolean"));
-                }
+            if let Some(retrigger) = value.get("retrigger_each_step")
+                && !retrigger.is_boolean()
+            {
+                return Err(Error::new(path, "retrigger_each_step must be boolean"));
             }
-            if let Some(floor) = value.get("voicing_floor_midi") {
-                if !(0..=127).contains(&integer(floor, path)?) {
-                    return Err(Error::new(path, "voicing floor must be MIDI 0..127"));
-                }
+            if let Some(floor) = value.get("voicing_floor_midi")
+                && !(0..=127).contains(&integer(floor, path)?)
+            {
+                return Err(Error::new(path, "voicing floor must be MIDI 0..127"));
             }
         }
         "counters" => {

@@ -70,6 +70,37 @@ pub(super) fn dispatch(
                 mutation.canonical.sequence,
             ))
         }
+        ProjectCommand::ProjectImportScore(params) => {
+            let writer = writer.as_mut().expect("project mutation holds the writer");
+            ensure_switch_allowed(state)?;
+            state.take_pending_plugin_changes(writer)?;
+            let imported = crate::score_yaml_import::import(
+                &params,
+                &state.data_root,
+                &state.built_in_instruments,
+                &state.binaries.sonalloy,
+            )
+            .map_err(|error| command_error(error.message).with_details(error.details))?;
+            let summary = state
+                .project_store
+                .create_from_session(&imported.session)
+                .map_err(|error| command_error(error.to_string()))?;
+            let result = activate_project(
+                state,
+                writer,
+                &summary.project_id,
+                ProjectOperation::ImportScore,
+            );
+            if result.is_ok() {
+                imported.retain();
+            } else if let Err(error) = state
+                .project_store
+                .discard_unactivated_project(&summary.project_id)
+            {
+                tracing::warn!(%error, "score project cleanup failed");
+            }
+            result
+        }
         ProjectCommand::ProjectImport(params) => {
             let writer = writer.as_mut().expect("project mutation holds the writer");
             ensure_switch_allowed(state)?;
@@ -90,6 +121,7 @@ enum ProjectOperation {
     Create,
     Open,
     Import,
+    ImportScore,
 }
 
 impl ProjectOperation {
@@ -98,6 +130,7 @@ impl ProjectOperation {
             Self::Create => "Project creation",
             Self::Open => "Project opening",
             Self::Import => "Project import",
+            Self::ImportScore => "Score import",
         }
     }
 
@@ -106,6 +139,7 @@ impl ProjectOperation {
             Self::Create => "project.create",
             Self::Open => "project.open",
             Self::Import => "project.import",
+            Self::ImportScore => "project.import-score",
         }
     }
 }

@@ -267,13 +267,19 @@ export function MixdownDialog(props: Props) {
                   Loudness Range ceiling, monitor only (LU){' '}
                   <input
                     type="number"
-                    min={1}
-                    max={50}
+                    min={0}
                     step={0.1}
-                    required
-                    value={Number.isFinite(target.loudnessRangeLu) ? target.loudnessRangeLu : ''}
+                    value={
+                      target.loudnessRangeLu !== null && Number.isFinite(target.loudnessRangeLu)
+                        ? target.loudnessRangeLu
+                        : ''
+                    }
                     onChange={(e) =>
-                      setTarget({ ...target, loudnessRangeLu: e.currentTarget.valueAsNumber })
+                      setTarget({
+                        ...target,
+                        loudnessRangeLu:
+                          e.currentTarget.value === '' ? null : e.currentTarget.valueAsNumber,
+                      })
                     }
                   />
                 </label>
@@ -396,7 +402,7 @@ export function MixdownDialog(props: Props) {
                   {result.mastering.truePeakCorrectionDb > 0 && (
                     <>
                       {' '}
-                      · True Peak ceiling limited the gain by{' '}
+                      · True Peak output gain correction{' '}
                       {result.mastering.truePeakCorrectionDb.toFixed(2)} dB
                     </>
                   )}

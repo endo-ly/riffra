@@ -196,6 +196,46 @@ impl UserInstrumentStore {
         self.snapshot_package(&resolved.package_root, new_instance_id())
     }
 
+    pub(crate) fn snapshot_definition(
+        &self,
+        definition: &Path,
+    ) -> Result<ProjectInstrumentSnapshot, String> {
+        require_regular_file(definition, "score instrument definition")?;
+        let source = definition
+            .parent()
+            .ok_or("instrument definition has no parent")?;
+        let snapshot_id = new_instance_id();
+        let destination = self.project_instruments_root().join(&snapshot_id);
+        fs::create_dir_all(self.project_instruments_root()).map_err(|error| error.to_string())?;
+        fs::create_dir(&destination).map_err(|error| error.to_string())?;
+        let result = (|| {
+            let source = fs::canonicalize(source).map_err(|error| error.to_string())?;
+            let mut document: serde_json::Value = serde_json::from_str(
+                &fs::read_to_string(definition).map_err(|error| error.to_string())?,
+            )
+            .map_err(|error| error.to_string())?;
+            let mut resources = std::collections::BTreeMap::new();
+            collect_score_resources(&mut document, &source, &destination, &mut resources)?;
+            fs::write(
+                destination.join(DEFINITION_FILE_NAME),
+                serde_json::to_vec(&document).map_err(|error| error.to_string())?,
+            )
+            .map_err(|error| error.to_string())?;
+            self.inspect(&destination.join(DEFINITION_FILE_NAME))?;
+            let definition_json = fs::read_to_string(destination.join(DEFINITION_FILE_NAME))
+                .map_err(|error| error.to_string())?;
+            Ok(ProjectInstrumentSnapshot {
+                snapshot_id,
+                package_root: destination.clone(),
+                definition_json,
+            })
+        })();
+        if result.is_err() {
+            let _ = fs::remove_dir_all(destination);
+        }
+        result
+    }
+
     fn snapshot_package(
         &self,
         source: &Path,
@@ -393,6 +433,63 @@ fn safe_relative_path(root: &Path, value: &str) -> Result<PathBuf, String> {
     Ok(root.join(relative))
 }
 
+fn collect_score_resources(
+    value: &mut serde_json::Value,
+    source_root: &Path,
+    destination: &Path,
+    resources: &mut std::collections::BTreeMap<PathBuf, String>,
+) -> Result<(), String> {
+    match value {
+        serde_json::Value::Object(fields) => {
+            if let Some(serde_json::Value::String(path)) = fields.get_mut("path") {
+                let source = std::path::absolute(source_root.join(&*path))
+                    .map_err(|error| error.to_string())?;
+                for ancestor in source.ancestors() {
+                    let metadata = fs::symlink_metadata(ancestor).map_err(|error| {
+                        format!("instrument resource could not be resolved: {error}")
+                    })?;
+                    if package_path_is_link(&metadata) {
+                        return Err("instrument resource contains a symbolic link".into());
+                    }
+                }
+                require_regular_file(&source, "instrument resource")?;
+                let source = fs::canonicalize(source).map_err(|error| error.to_string())?;
+                if let Some(relative) = resources.get(&source) {
+                    path.clone_from(relative);
+                } else {
+                    let relative = match source.strip_prefix(source_root) {
+                        Ok(relative) => relative.to_string_lossy().replace('\\', "/"),
+                        Err(_) => format!(
+                            ".score-resources/{}-{}",
+                            new_instance_id(),
+                            source
+                                .file_name()
+                                .ok_or("resource has no filename")?
+                                .to_string_lossy()
+                        ),
+                    };
+                    let target = destination.join(&relative);
+                    fs::create_dir_all(target.parent().ok_or("resource has no parent")?)
+                        .map_err(|error| error.to_string())?;
+                    fs::copy(&source, target).map_err(|error| error.to_string())?;
+                    resources.insert(source, relative.clone());
+                    *path = relative;
+                }
+            }
+            for value in fields.values_mut() {
+                collect_score_resources(value, source_root, destination, resources)?;
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                collect_score_resources(value, source_root, destination, resources)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 fn copy_package(
     source_root: &Path,
     definition_path: &Path,
@@ -555,6 +652,41 @@ mod tests {
         assert_eq!(
             fs::read(destination.join("samples/attack.wav")).unwrap(),
             b"sample"
+        );
+        let score_destination = root.join("score-destination");
+        fs::create_dir(&score_destination).unwrap();
+        fs::write(source.join("unused.wav"), b"unrelated sample").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(source.join("unused.wav"), source.join("unused-link.wav"))
+            .unwrap();
+        fs::write(root.join("shared.wav"), b"external sample").unwrap();
+        let mut document = serde_json::json!({"layers":[{"path":"../shared.wav"},{"path":"../shared.wav"},{"path":"samples/attack.wav"}]});
+        collect_score_resources(
+            &mut document,
+            &fs::canonicalize(&source).unwrap(),
+            &score_destination,
+            &mut Default::default(),
+        )
+        .unwrap();
+        fs::remove_file(root.join("shared.wav")).unwrap();
+        let copied = document["layers"][0]["path"].as_str().unwrap();
+        assert_eq!(
+            fs::read(score_destination.join(copied)).unwrap(),
+            b"external sample"
+        );
+        assert_eq!(document["layers"][0]["path"], document["layers"][1]["path"]);
+        assert_eq!(document["layers"][2]["path"], "samples/attack.wav");
+        assert_eq!(
+            fs::read(score_destination.join("samples/attack.wav")).unwrap(),
+            b"sample"
+        );
+        assert!(!score_destination.join("unused.wav").exists());
+        assert!(!score_destination.join("unused-link.wav").exists());
+        assert_eq!(
+            fs::read_dir(score_destination.join(".score-resources"))
+                .unwrap()
+                .count(),
+            1
         );
         let _ = fs::remove_dir_all(root);
     }

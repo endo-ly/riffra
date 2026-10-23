@@ -113,6 +113,7 @@ function offGridAudioMoveSession(): CreativeSession {
     ['track:target', 'Target'],
   ]) {
     session.arrangement.tracks.push({
+      externalAudioSourceTrackIds: [],
       panLaw: 'equalPower',
       id,
       name,
@@ -178,6 +179,7 @@ describe('WorkspaceArrange', () => {
       ['track:other', false, false],
     ] as const) {
       session.arrangement.tracks.push({
+        externalAudioSourceTrackIds: [],
         panLaw: 'equalPower' as const,
         id,
         name: id,
@@ -301,6 +303,7 @@ describe('WorkspaceArrange', () => {
   it('keeps the MIDI editor view following the playhead during playback', async () => {
     const session = defaultSession();
     session.arrangement.tracks.push({
+      externalAudioSourceTrackIds: [],
       panLaw: 'equalPower' as const,
       id: 'track:instrument',
       name: 'Instrument',
@@ -355,6 +358,7 @@ describe('WorkspaceArrange', () => {
   it('deletes a selected note from the MIDI editor context menu', async () => {
     const session = defaultSession();
     session.arrangement.tracks.push({
+      externalAudioSourceTrackIds: [],
       panLaw: 'equalPower' as const,
       id: 'track:instrument',
       name: 'Instrument',
@@ -418,6 +422,7 @@ describe('WorkspaceArrange', () => {
     // Arrange: one Clip holds a note on the grid, another an off-grid note.
     const session = defaultSession();
     session.arrangement.tracks.push({
+      externalAudioSourceTrackIds: [],
       panLaw: 'equalPower' as const,
       id: 'track:instrument',
       name: 'Instrument',
@@ -518,6 +523,7 @@ describe('WorkspaceArrange', () => {
   it('keeps MIDI note editing shortcuts inside the focused editor', async () => {
     const session = defaultSession();
     session.arrangement.tracks.push({
+      externalAudioSourceTrackIds: [],
       panLaw: 'equalPower' as const,
       id: 'track:instrument-shortcuts',
       name: 'Instrument Shortcuts',
@@ -595,6 +601,7 @@ describe('WorkspaceArrange', () => {
   it('creates an empty MIDI clip from an instrument lane and opens its editor', async () => {
     const session = defaultSession();
     const track = {
+      externalAudioSourceTrackIds: [],
       panLaw: 'equalPower' as const,
       id: 'track:instrument-empty',
       name: 'Instrument Empty',
@@ -657,6 +664,7 @@ describe('WorkspaceArrange', () => {
   it('uses the active Time Selection for an empty MIDI clip', async () => {
     const session = defaultSession();
     const track = {
+      externalAudioSourceTrackIds: [],
       panLaw: 'equalPower' as const,
       id: 'track:instrument-selection',
       name: 'Instrument Selection',
@@ -724,6 +732,7 @@ describe('WorkspaceArrange', () => {
     const session = defaultSession();
     session.arrangement.tracks.push(
       {
+        externalAudioSourceTrackIds: [],
         panLaw: 'equalPower' as const,
         id: 'track:audio-selection',
         name: 'Audio Selection',
@@ -738,6 +747,7 @@ describe('WorkspaceArrange', () => {
         effects: [],
       },
       {
+        externalAudioSourceTrackIds: [],
         panLaw: 'equalPower' as const,
         id: 'track:midi-selection',
         name: 'MIDI Selection',
@@ -826,6 +836,7 @@ describe('WorkspaceArrange', () => {
   it('uses Pointer blank clicks for selection and Draw drags for note creation', async () => {
     const session = defaultSession();
     session.arrangement.tracks.push({
+      externalAudioSourceTrackIds: [],
       panLaw: 'equalPower' as const,
       id: 'track:instrument-draw',
       name: 'Instrument Draw',
@@ -886,6 +897,7 @@ describe('WorkspaceArrange', () => {
   it('auditions a newly placed note on the active instrument', async () => {
     const session = defaultSession();
     session.arrangement.tracks.push({
+      externalAudioSourceTrackIds: [],
       panLaw: 'equalPower' as const,
       id: 'track:audition',
       name: 'Audition Track',
@@ -953,6 +965,7 @@ describe('WorkspaceArrange', () => {
       ['track:chords', 'Chords'],
     ] as const) {
       session.arrangement.tracks.push({
+        externalAudioSourceTrackIds: [],
         panLaw: 'equalPower' as const,
         id: trackId,
         name,
@@ -1019,6 +1032,7 @@ describe('WorkspaceArrange', () => {
   it('previews a dragged note group until the canonical update lands', async () => {
     const session = defaultSession();
     session.arrangement.tracks.push({
+      externalAudioSourceTrackIds: [],
       panLaw: 'equalPower' as const,
       id: 'track:instrument',
       name: 'Instrument',
@@ -1128,6 +1142,7 @@ describe('WorkspaceArrange', () => {
     // Arrange
     const session = defaultSession();
     session.arrangement.tracks.push({
+      externalAudioSourceTrackIds: [],
       panLaw: 'equalPower' as const,
       id: 'track:instrument-delete',
       name: 'Instrument Delete',
@@ -1185,6 +1200,7 @@ describe('WorkspaceArrange', () => {
     // Arrange
     const session = defaultSession();
     session.arrangement.tracks.push({
+      externalAudioSourceTrackIds: [],
       panLaw: 'equalPower' as const,
       id: 'track:guitar',
       name: 'Guitar',
@@ -1239,6 +1255,7 @@ describe('WorkspaceArrange', () => {
     const session = defaultSession();
     const assetId = toAssetId('asset:018f85b9-5fe1-7ef2-91d8-e6b4e665d41a');
     session.arrangement.tracks.push({
+      externalAudioSourceTrackIds: [],
       panLaw: 'equalPower' as const,
       id: 'track:audio',
       name: 'Audio',
@@ -1367,6 +1384,7 @@ describe('WorkspaceArrange', () => {
     const session = defaultSession();
     session.arrangement.tracks.push(
       {
+        externalAudioSourceTrackIds: [],
         panLaw: 'equalPower' as const,
         id: 'track:audio',
         name: 'Audio',
@@ -1381,6 +1399,7 @@ describe('WorkspaceArrange', () => {
         effects: [],
       },
       {
+        externalAudioSourceTrackIds: [],
         panLaw: 'equalPower' as const,
         id: 'track:instrument',
         name: 'Instrument',
@@ -1494,6 +1513,7 @@ describe('WorkspaceArrange', () => {
     // Arrange
     const session = defaultSession();
     session.arrangement.tracks.push({
+      externalAudioSourceTrackIds: [],
       panLaw: 'equalPower' as const,
       id: 'track:instrument',
       name: 'Instrument',
@@ -1686,6 +1706,7 @@ describe('WorkspaceArrange', () => {
   it('commits a velocity lane drag once and previews the active instrument', async () => {
     const session = defaultSession();
     session.arrangement.tracks.push({
+      externalAudioSourceTrackIds: [],
       panLaw: 'equalPower' as const,
       id: 'track:velocity',
       name: 'Velocity Track',
@@ -1820,6 +1841,7 @@ describe('WorkspaceArrange', () => {
   it('resizes, collapses, maximizes, and closes the Arrange lower area', async () => {
     const session = defaultSession();
     session.arrangement.tracks.push({
+      externalAudioSourceTrackIds: [],
       panLaw: 'equalPower' as const,
       id: 'track:navigation',
       name: 'Navigation Track',
@@ -1886,6 +1908,7 @@ describe('WorkspaceArrange', () => {
   it('shows the Mixer and the MIDI editor in the shared lower area', async () => {
     const session = defaultSession();
     session.arrangement.tracks.push({
+      externalAudioSourceTrackIds: [],
       panLaw: 'equalPower' as const,
       id: 'track:focused',
       name: 'Focused Instrument',
@@ -1900,6 +1923,7 @@ describe('WorkspaceArrange', () => {
       effects: [],
     });
     session.arrangement.tracks.push({
+      externalAudioSourceTrackIds: [],
       panLaw: 'equalPower' as const,
       id: 'track:mixer',
       name: 'Mix Track',
@@ -1936,6 +1960,7 @@ describe('WorkspaceArrange', () => {
     // Arrange
     const session = defaultSession();
     session.arrangement.tracks.push({
+      externalAudioSourceTrackIds: [],
       panLaw: 'equalPower' as const,
       id: 'track:live',
       name: 'Live Keys',
@@ -2008,6 +2033,7 @@ describe('WorkspaceArrange', () => {
     // Arrange
     const session = defaultSession();
     session.arrangement.tracks.push({
+      externalAudioSourceTrackIds: [],
       panLaw: 'equalPower' as const,
       id: 'track:live',
       name: 'Live Keys',
@@ -2073,6 +2099,7 @@ describe('WorkspaceArrange', () => {
     const session = defaultSession();
     session.arrangement.tracks.push(
       {
+        externalAudioSourceTrackIds: [],
         panLaw: 'equalPower' as const,
         id: 'track:audio',
         name: 'Audio Track',
@@ -2087,6 +2114,7 @@ describe('WorkspaceArrange', () => {
         effects: [],
       },
       {
+        externalAudioSourceTrackIds: [],
         panLaw: 'equalPower' as const,
         id: 'track:live',
         name: 'Live Keys',
@@ -2161,6 +2189,7 @@ describe('WorkspaceArrange', () => {
     // Arrange
     const session = defaultSession();
     const playable = (id: string, name: string) => ({
+      externalAudioSourceTrackIds: [],
       panLaw: 'equalPower' as const,
       id,
       name,
@@ -2208,6 +2237,7 @@ describe('WorkspaceArrange', () => {
     // Arrange
     const session = defaultSession();
     session.arrangement.tracks.push({
+      externalAudioSourceTrackIds: [],
       panLaw: 'equalPower' as const,
       id: 'track:live',
       name: 'Live Keys',

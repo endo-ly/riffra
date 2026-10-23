@@ -27,6 +27,7 @@ interface GlobalControlBarProps {
   onUndo: () => void;
   onRedo: () => void;
   onExportProject: () => void;
+  onImportScore: () => void;
   onImportProject: () => void;
   onToggleMute: () => void;
   onResetFeedback: () => void;
@@ -89,6 +90,7 @@ export function GlobalControlBar(props: GlobalControlBarProps) {
           onSwitch={props.onSwitchHost}
           onReconnect={props.onReconnectHost}
           onExportProject={props.onExportProject}
+          onImportScore={props.onImportScore}
           onImportProject={props.onImportProject}
           projectState={props.projectState}
           projectSwitching={props.projectSwitching}

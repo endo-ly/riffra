@@ -86,14 +86,106 @@ impl Arrangement {
     /// Replaces the project-wide musical clock used by the ruler and runtime.
     /// Audio clip frame durations remain unchanged; only their musical display
     /// positions are recalculated by consumers of the timebase.
+    /// A PPQ change must retain the existing tempo and meter maps in their old
+    /// tick units; all musical coordinates, including map positions, are then
+    /// rescaled together. Edit the maps in a separate call at the desired PPQ.
+    ///
+    /// # Errors
+    /// Returns an error for an invalid clock, simultaneous PPQ and map edits,
+    /// or musical coordinates that cannot be rescaled exactly.
     pub fn update_timebase(&mut self, timebase: ProjectTimebase) -> Result<(), DomainError> {
         if timebase.validate().is_err() {
             return Err(DomainError::InvalidClip(
                 "Arrangement timebase is invalid.".into(),
             ));
         }
+        if self.timebase.ppq != timebase.ppq {
+            if timebase.tempo_changes != self.timebase.tempo_changes
+                || timebase.time_signature_changes != self.timebase.time_signature_changes
+            {
+                return Err(DomainError::InvalidClip(
+                    "change ppq and tempo or meter maps in separate operations".into(),
+                ));
+            }
+            let mut candidate = self.clone();
+            candidate.rescale_ticks(timebase.ppq)?;
+            candidate.timebase.ppq = timebase.ppq;
+            candidate.revision = candidate.revision.saturating_add(1);
+            *self = candidate;
+            return Ok(());
+        }
         self.timebase = timebase;
         self.revision = self.revision.saturating_add(1);
+        Ok(())
+    }
+
+    fn rescale_ticks(&mut self, ppq: u32) -> Result<(), DomainError> {
+        let previous_ppq = self.timebase.ppq;
+        let scale = |tick: &mut u64| -> Result<(), DomainError> {
+            *tick = super::timeline::rescale_tick(*tick, previous_ppq, ppq)?;
+            Ok(())
+        };
+        for change in &mut self.timebase.tempo_changes {
+            scale(&mut change.tick)?;
+        }
+        for change in &mut self.timebase.time_signature_changes {
+            scale(&mut change.tick)?;
+        }
+        scale(&mut self.loop_range.start_tick.0)?;
+        scale(&mut self.loop_range.end_tick.0)?;
+        if let Some(range) = &mut self.punch_range {
+            scale(&mut range.start_tick.0)?;
+            scale(&mut range.end_tick.0)?;
+        }
+        for clip in &mut self.audio_clips {
+            scale(&mut clip.start_tick.0)?;
+        }
+        for clip in &mut self.midi_clips {
+            scale(&mut clip.start_tick.0)?;
+            scale(&mut clip.duration_ticks)?;
+            for note in &mut clip.notes {
+                scale(&mut note.start_tick.0)?;
+                scale(&mut note.duration_ticks)?;
+            }
+            for event in &mut clip.events {
+                scale(&mut event.tick.0)?;
+            }
+            for event in &mut clip.instrument_control_events {
+                scale(&mut event.tick.0)?;
+                if let InstrumentControlEventKind::ParameterRamp { duration_ticks, .. } =
+                    &mut event.kind
+                {
+                    scale(duration_ticks)?;
+                }
+            }
+        }
+        for lane in &mut self.automation_lanes {
+            for point in &mut lane.points {
+                scale(&mut point.tick.0)?;
+            }
+        }
+        for marker in &mut self.markers {
+            scale(&mut marker.tick)?;
+        }
+        for region in &mut self.regions {
+            scale(&mut region.start_tick.0)?;
+            scale(&mut region.end_tick.0)?;
+        }
+        for event in &mut self.harmony_events {
+            scale(&mut event.start_tick.0)?;
+            scale(&mut event.end_tick.0)?;
+        }
+        for session in &mut self.recording_sessions {
+            scale(&mut session.start_tick.0)?;
+        }
+        for pass in &mut self.recording_passes {
+            scale(&mut pass.start_tick.0)?;
+            scale(&mut pass.duration_ticks)?;
+        }
+        for take in &mut self.takes {
+            scale(&mut take.start_tick.0)?;
+            scale(&mut take.duration_ticks)?;
+        }
         Ok(())
     }
 
@@ -322,9 +414,9 @@ impl Arrangement {
         self.tracks.remove(index);
         self.mixer.sends.retain(|send| send.track_id != track_id);
         for consumer in &mut self.tracks {
-            if consumer.external_audio_source_track_id.as_deref() == Some(track_id) {
-                consumer.external_audio_source_track_id = None;
-            }
+            consumer
+                .external_audio_source_track_ids
+                .retain(|source| source != track_id);
         }
         self.audio_clips.retain(|clip| clip.track_id != track_id);
         self.midi_clips.retain(|clip| clip.track_id != track_id);
@@ -2319,5 +2411,110 @@ mod tests {
             }])
             .unwrap_err();
         assert!(matches!(error, DomainError::InvalidClip(_)));
+    }
+    #[test]
+    fn ppq_changes_rescale_musical_events_atomically() {
+        let mut arrangement = Arrangement::default();
+        arrangement
+            .tracks
+            .push(Track::instrument("lead".into(), "Lead".into()));
+        arrangement.midi_clips.push(MidiClip {
+            id: "clip".into(),
+            name: "Notes".into(),
+            track_id: "lead".into(),
+            asset_id: None,
+            start_tick: TimelineTick(960),
+            duration_ticks: 3840,
+            notes: vec![MidiNote {
+                id: "note".into(),
+                note: 60,
+                velocity: 100,
+                channel: 1,
+                start_tick: TimelineTick(480),
+                duration_ticks: 960,
+            }],
+            events: Vec::new(),
+            instrument_control_events: vec![InstrumentControlEvent {
+                id: "ramp".into(),
+                tick: TimelineTick(240),
+                source_order: 0,
+                kind: InstrumentControlEventKind::ParameterRamp {
+                    parameter: "gain".into(),
+                    from_value: 0.0,
+                    to_value: 1.0,
+                    duration_ticks: 960,
+                },
+            }],
+            muted: false,
+            loop_enabled: false,
+            recording_take_id: None,
+        });
+        arrangement.markers.push(Marker {
+            id: "marker".into(),
+            name: "Beat".into(),
+            tick: 960,
+        });
+        arrangement.timebase.tempo_changes.push(crate::TempoChange {
+            tick: 960,
+            bpm: 90.0,
+        });
+        arrangement
+            .timebase
+            .time_signature_changes
+            .push(crate::TimeSignatureChange {
+                tick: 960,
+                numerator: 3,
+                denominator: 4,
+            });
+        let original = arrangement.clone();
+        let mut timebase = arrangement.timebase.clone();
+        timebase.ppq = 3360;
+
+        let mut tempo_edit = timebase.clone();
+        tempo_edit.tempo_changes[1].bpm = 100.0;
+        let mut meter_edit = timebase.clone();
+        meter_edit.time_signature_changes[1].numerator = 5;
+        for simultaneous in [tempo_edit, meter_edit] {
+            assert!(arrangement.update_timebase(simultaneous).is_err());
+            assert_eq!(arrangement, original);
+        }
+
+        arrangement.update_timebase(timebase).unwrap();
+
+        let clip = &arrangement.midi_clips[0];
+        assert_eq!(clip.start_tick, TimelineTick(3360));
+        assert_eq!(clip.notes[0].start_tick, TimelineTick(1680));
+        assert_eq!(clip.notes[0].duration_ticks, 3360);
+        assert_eq!(clip.instrument_control_events[0].tick, TimelineTick(840));
+        assert!(matches!(
+            clip.instrument_control_events[0].kind,
+            InstrumentControlEventKind::ParameterRamp {
+                duration_ticks: 3360,
+                ..
+            }
+        ));
+        assert_eq!(arrangement.markers[0].tick, 3360);
+        assert_eq!(arrangement.timebase.tempo_changes[1].tick, 3360);
+        assert_eq!(arrangement.timebase.time_signature_changes[1].tick, 3360);
+        assert_eq!(arrangement.timebase.tempo_changes[1].bpm, 90.0);
+        assert_eq!(arrangement.timebase.time_signature_changes[1].numerator, 3);
+        assert!(
+            (original.timebase.ticks_to_seconds(1440)
+                - arrangement.timebase.ticks_to_seconds(5040))
+            .abs()
+                < 1e-12
+        );
+
+        let previous = arrangement.clone();
+        let mut inexact = arrangement.timebase.clone();
+        inexact.ppq = 1;
+        assert!(arrangement.update_timebase(inexact).is_err());
+        assert_eq!(arrangement, previous);
+        let mut edited = arrangement.timebase.clone();
+        edited.tempo_changes[1].tick = 6720;
+        edited.time_signature_changes[1].tick = 6720;
+        arrangement.update_timebase(edited.clone()).unwrap();
+        assert_eq!(arrangement.timebase, edited);
+        assert_eq!(arrangement.midi_clips, previous.midi_clips);
     }
 }

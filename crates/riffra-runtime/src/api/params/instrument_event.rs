@@ -44,10 +44,10 @@ pub struct InstrumentEventRemoveParams {
     pub event_id: String,
 }
 
-/// Connects one instrument Track to another Track's processed audio.
+/// Connects one instrument Track to the aligned sum of source Tracks.
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct TrackExternalAudioInputSetParams {
     pub track_id: String,
-    pub source_track_id: String,
+    pub source_track_ids: Vec<String>,
 }

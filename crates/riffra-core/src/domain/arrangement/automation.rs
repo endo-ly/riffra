@@ -53,11 +53,17 @@ pub enum AutomationTarget {
 }
 
 /// Evaluation between adjacent points in musical time.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "lowercase")]
 pub enum AutomationInterpolation {
     Linear,
     Step,
+    #[serde(rename = "linearAmplitude")]
+    LinearAmplitude {
+        #[serde(rename = "durationSeconds")]
+        #[ts(rename = "durationSeconds")]
+        duration_seconds: f64,
+    },
 }
 
 impl AutomationTarget {
@@ -74,6 +80,10 @@ impl AutomationTarget {
             } => (-1.0, 1.0),
             Self::MasterGain => (-90.0, 0.0),
             Self::DeviceParameter { .. } => (0.0, 1.0),
+            Self::TrackMix {
+                parameter: TrackMixParameter::Volume,
+                ..
+            } => (-f64::MAX, 20.0 * f64::from(f32::MAX).log10()),
             _ => (-90.0, 24.0),
         }
     }
@@ -168,6 +178,21 @@ pub struct AutomationLane {
 impl AutomationLane {
     /// Validates and normalizes the points owned by one automation lane.
     pub(crate) fn validate_and_normalize(&mut self) -> Result<(), String> {
+        if let AutomationInterpolation::LinearAmplitude { duration_seconds } = self.interpolation
+            && (!duration_seconds.is_finite()
+                || duration_seconds <= 0.0
+                || !matches!(
+                    self.target,
+                    AutomationTarget::TrackMix {
+                        parameter: TrackMixParameter::Volume,
+                        ..
+                    }
+                ))
+        {
+            return Err(
+                "linear amplitude transitions require positive seconds and track volume".into(),
+            );
+        }
         if self.points.len() > 16_384 {
             return Err(format!(
                 "automation lane '{}' contains too many points",
@@ -240,7 +265,7 @@ mod tests {
         assert_eq!(arrangement.automation_lanes[0].points[0].id, "early");
         assert_eq!(arrangement.automation_lanes[0].points[0].value, -90.0);
         assert_eq!(arrangement.automation_lanes[0].points[1].value, 24.0);
-        for invalid in [f64::NAN, -90.01, 24.01] {
+        for invalid in [f64::NAN, f64::INFINITY, 1000.0] {
             let mut candidate = arrangement.clone();
             candidate.automation_lanes[0].points[0].value = invalid;
             assert!(Arrangement::validate_and_normalize(&mut candidate).is_err());

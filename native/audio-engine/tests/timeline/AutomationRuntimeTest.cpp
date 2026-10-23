@@ -39,5 +39,24 @@ TEST(AutomationRuntimeTest, CursorPreservesPointsInsideAnAudioBlock) {
     EXPECT_NEAR(actual.right, actual.left, 0.00001f);
 }
 
+TEST(AutomationRuntimeTest, LinearAmplitudeTransitionAndBalanceRemainContinuousAcrossBlocks) {
+    AutomationRuntime gain, pan;
+    // 5 ms at 48 kHz: interpolate amplitude, retaining unity on the nearer side.
+    gain.setPoints({{0, 1.0f}, {240, 0.5f}}, false, true);
+    MixAutomationCursor first(gain, pan, 0, 120, 0.0f, 0.5f, false, true, {}, {}, true);
+    auto initial = first.next();
+    EXPECT_FLOAT_EQ(initial.left, 0.5f);
+    EXPECT_FLOAT_EQ(initial.right, 1.0f);
+    for (int sample = 1; sample < 120; ++sample) first.next();
+    MixAutomationCursor second(gain, pan, 120, 121, 0.0f, 0.5f, false, true, {}, {}, true);
+    auto middle = second.next();
+    EXPECT_NEAR(middle.left, 0.375f, 1.0e-6f);
+    EXPECT_NEAR(middle.right, 0.75f, 1.0e-6f);
+    for (int sample = 121; sample < 240; ++sample) second.next();
+    auto end = second.next();
+    EXPECT_NEAR(end.left, 0.25f, 1.0e-6f);
+    EXPECT_NEAR(end.right, 0.5f, 1.0e-6f);
+}
+
 }  // namespace
 }  // namespace riffra
