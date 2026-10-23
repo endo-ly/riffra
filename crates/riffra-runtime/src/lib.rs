@@ -26,7 +26,6 @@ pub mod recording;
 pub mod render;
 mod runtime;
 pub mod session;
-mod sonalloy_import;
 mod startup;
 #[cfg(test)]
 pub(crate) mod test_support;

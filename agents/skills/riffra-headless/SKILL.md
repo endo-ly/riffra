@@ -47,8 +47,6 @@ description: >-
 7. `render start` で音声を書き出し、完了を `job wait`(ワンショット)または `job get`(interactive)で確認する
 8. 書き出し結果の`measurements.sections`で区間ごとのラウドネス・ピーク位置・帯域バランスを確認する。素材の解析には`analysis start`、実行状態の確認には`audio diagnostics`を使い、必要なら編集へ戻る
 
-Sonalloy Bundleから制作を始める場合は`project import-sonalloy <BUNDLE_DIRECTORY>`を使う。新しいProjectへ切り替わったら通常のTrack、MIDI Clip、音源制御イベントを編集する。インポートはProject単位の操作であり、`session apply`へ含めない。
-
 ### まとめて構築する場合
 
 生成したJSONLでSessionを作り直すときは `--replace` を指定する。楽曲の初期構築や、事前に決めた複数の正準編集は `session apply` を第一候補にする。全operationが成功したときだけ1回のcommitとして適用されるため、途中で失敗してもそれまでのoperationは残らない。途中結果を確認して次の編集を決める場合や、1操作ずつUndoしたい場合は `session apply` ではなく `--interactive` を使う。

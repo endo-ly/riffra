@@ -344,7 +344,6 @@ control_commands! {
         ProjectOpen = "project.open" (ProjectOpenParams) -> ProjectActivation, project;
         ProjectRename = "project.rename" (ProjectRenameParams) -> ProjectState, project;
         ProjectImport = "project.import" (ProjectImportParams) -> ProjectActivation, project;
-        ProjectImportSonalloy = "project.import-sonalloy" (ProjectImportSonalloyParams) -> ProjectActivation, project;
         ProjectExport = "project.export" (ProjectExportParams) -> ProjectExport, project;
     }
     runtime {

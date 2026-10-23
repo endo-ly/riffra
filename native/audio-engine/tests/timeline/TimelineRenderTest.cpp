@@ -507,8 +507,8 @@ TEST(TimelineEngineTest, RoutesOneMutedSourceToParallelConsumersAndRejectsCycles
     source.muted = true;
     source.panLaw = "unityCenterStereo";
     const auto instrumentDirectory = juce::File(RIFFRA_CONTRACT_FIXTURE_DIR)
-                                         .getSiblingFile("sonalloy-bundle")
-                                         .getChildFile("basic/instruments/duck");
+                                         .getSiblingFile("sonalloy-instruments")
+                                         .getChildFile("duck");
     auto consumer = makeInstrumentTrack("consumer-a");
     consumer.panLaw = "unityCenterStereo";
     consumer.externalAudioSourceTrackId = "source";
@@ -1509,8 +1509,8 @@ TEST(MixerRoutingTest, DisablesLowLatencyPdcBypassForDependentOrAutomatedTracks)
             auto consumer = makeInstrumentTrack("track:consumer");
             consumer.externalAudioSourceTrackId = monitoredTrack.id;
             const auto instrumentDirectory = juce::File(RIFFRA_CONTRACT_FIXTURE_DIR)
-                                                 .getSiblingFile("sonalloy-bundle")
-                                                 .getChildFile("basic/instruments/duck");
+                                                 .getSiblingFile("sonalloy-instruments")
+                                                 .getChildFile("duck");
             consumer.instrument = InternalInstrumentSpec{
                 "instrument:consumer", false,
                 instrumentDirectory.getChildFile("definition.json").loadFileAsString(),

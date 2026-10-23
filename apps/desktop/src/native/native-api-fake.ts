@@ -280,9 +280,6 @@ export class FakeNativeApi implements NativeApi {
   importProject(...args: Parameters<NativeApi['importProject']>) {
     return this.command('importProject', args);
   }
-  importSonalloyBundle(...args: Parameters<NativeApi['importSonalloyBundle']>) {
-    return this.command('importSonalloyBundle', args);
-  }
   importMidiFile(...args: Parameters<NativeApi['importMidiFile']>) {
     return this.command('importMidiFile', args);
   }
@@ -1069,7 +1066,6 @@ export class FakeNativeApi implements NativeApi {
       case 'createProject':
       case 'openProject':
       case 'importProject':
-      case 'importSonalloyBundle':
         return Promise.resolve({
           projectState: this.bootstrapState.projectState,
           canonical: this.bootstrapState.canonical,

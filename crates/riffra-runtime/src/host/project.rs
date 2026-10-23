@@ -82,28 +82,6 @@ pub(super) fn dispatch(
                 .map_err(|error| command_error(error.to_string()))?;
             activate_project(state, writer, &summary.project_id, ProjectOperation::Import)
         }
-        ProjectCommand::ProjectImportSonalloy(params) => {
-            let writer = writer.as_mut().expect("project mutation holds the writer");
-            ensure_switch_allowed(state)?;
-            let import = crate::sonalloy_import::ImportedProject::prepare(
-                &state.project_store,
-                &state.data_root,
-                &state.binaries.sonalloy,
-                &params.path,
-            )
-            .map_err(command_error)?;
-            let result = activate_project(
-                state,
-                writer,
-                import
-                    .project_id
-                    .as_deref()
-                    .expect("import saved a project"),
-                ProjectOperation::ImportSonalloy,
-            )?;
-            import.commit();
-            Ok(result)
-        }
     }
 }
 
@@ -112,7 +90,6 @@ enum ProjectOperation {
     Create,
     Open,
     Import,
-    ImportSonalloy,
 }
 
 impl ProjectOperation {
@@ -121,7 +98,6 @@ impl ProjectOperation {
             Self::Create => "Project creation",
             Self::Open => "Project opening",
             Self::Import => "Project import",
-            Self::ImportSonalloy => "Sonalloy Bundle import",
         }
     }
 
@@ -130,7 +106,6 @@ impl ProjectOperation {
             Self::Create => "project.create",
             Self::Open => "project.open",
             Self::Import => "project.import",
-            Self::ImportSonalloy => "project.import-sonalloy",
         }
     }
 }

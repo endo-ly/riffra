@@ -196,30 +196,6 @@ impl UserInstrumentStore {
         self.snapshot_package(&resolved.package_root, new_instance_id())
     }
 
-    /// Copies an Instrument directory directly into a Project-owned snapshot.
-    ///
-    /// # Errors
-    /// Returns an error for unsafe package paths, copy failures, or a definition
-    /// that cannot be compiled using only the copied snapshot resources.
-    pub(crate) fn create_project_snapshot_from_directory(
-        &self,
-        source: &Path,
-        snapshot_id: &str,
-    ) -> Result<ProjectInstrumentSnapshot, String> {
-        let metadata = fs::symlink_metadata(source)
-            .map_err(|error| format!("instrument package could not be read: {error}"))?;
-        if package_path_is_link(&metadata) || !metadata.is_dir() {
-            return Err("instrument package must be a regular directory".into());
-        }
-        let snapshot = self.snapshot_package(source, snapshot_id.to_owned())?;
-        if let Err(error) = self.inspect(&snapshot.package_root.join(DEFINITION_FILE_NAME)) {
-            fs::remove_dir_all(&snapshot.package_root)
-                .map_err(|cleanup| format!("{error}; snapshot cleanup failed: {cleanup}"))?;
-            return Err(error);
-        }
-        Ok(snapshot)
-    }
-
     fn snapshot_package(
         &self,
         source: &Path,

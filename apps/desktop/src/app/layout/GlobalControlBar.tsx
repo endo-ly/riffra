@@ -28,7 +28,6 @@ interface GlobalControlBarProps {
   onRedo: () => void;
   onExportProject: () => void;
   onImportProject: () => void;
-  onImportSonalloyBundle: () => Promise<ProjectActivationResult | null>;
   onToggleMute: () => void;
   onResetFeedback: () => void;
   onOpenCommand: () => void;
@@ -91,7 +90,6 @@ export function GlobalControlBar(props: GlobalControlBarProps) {
           onReconnect={props.onReconnectHost}
           onExportProject={props.onExportProject}
           onImportProject={props.onImportProject}
-          onImportSonalloyBundle={props.onImportSonalloyBundle}
           projectState={props.projectState}
           projectSwitching={props.projectSwitching}
           projectError={props.projectError}

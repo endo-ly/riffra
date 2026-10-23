@@ -118,7 +118,6 @@ export interface ProjectApi {
   restoreRecoveryGeneration(fileName: string): Promise<ArrangementMutationResult | null>;
   exportProject(path: string): Promise<ProjectExport | null>;
   importProject(path: string): Promise<ProjectActivationResult | null>;
-  importSonalloyBundle(path: string): Promise<ProjectActivationResult | null>;
   /**
    * Imports an external Standard MIDI File as a canonical MIDI Asset. Rust owns
    * SMF validation, copies the file under the application data root, and

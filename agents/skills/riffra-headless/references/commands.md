@@ -158,8 +158,6 @@ Group・Return・Send・Sidechainの正準設定は `mixer get` でまとめて�
 
 取り込んだMIDI Asset(`asset import-midi`)の配置は `audio-clip add-asset` / `midi-clip add-asset` で行う。
 
-Sonalloy Bundleは `project import-sonalloy <BUNDLE_DIRECTORY>` で新しいProjectへ取り込む。InstrumentとアセットはProject専用Snapshotとして保存され、元Bundleを移動しても再生・Export/Importできる。不正なManifest、Hash、参照、未知イベント、960 PPQで正確に表現できないTickはインポート失敗として返す。
-
 ### Channel Device (Instrument / Effect)
 
 EffectとDeviceのOwnerは `--track-id`、`--bus-id`、`--master` のいずれか1つで指定する。Master・BusにはEffectsだけを追加できる。
