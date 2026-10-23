@@ -246,11 +246,9 @@ fn build_session(
         let required_channels = instrument.report["external_audio"]["required_input_channels"]
             .as_u64()
             .unwrap_or(0);
-        if (required_channels > 0) != !track.external_audio_source_track_ids.is_empty()
-            || (required_channels > 0 && required_channels != 2)
-        {
+        if (required_channels > 0) != !track.external_audio_source_track_ids.is_empty() {
             return Err(format!(
-                "instrument '{}' audio input does not match its stereo route",
+                "instrument '{}' audio input does not match its source routes",
                 lane.id
             ));
         }
@@ -686,7 +684,7 @@ mod tests {
             ("lead".into(), PathBuf::from("lead")),
             ("effect".into(), PathBuf::from("effect")),
         ]);
-        let resolved = BTreeMap::from([
+        let mut resolved = BTreeMap::from([
             (
                 PathBuf::from("lead"),
                 Instrument {
@@ -773,6 +771,19 @@ mod tests {
             serde_json::from_str::<CreativeSession>(&serde_json::to_string(&session).unwrap())
                 .unwrap(),
             session
+        );
+        resolved.get_mut(&PathBuf::from("effect")).unwrap().report =
+            json!({"external_audio":{"required_input_channels":1}});
+        let mono_session = build_session(
+            &mut plan,
+            session.score_source.clone().unwrap(),
+            &instruments,
+            &resolved,
+        )
+        .unwrap();
+        assert_eq!(
+            mono_session.arrangement.tracks[2].external_audio_source_track_ids,
+            ["score:track:0", "score:track:1"]
         );
         assert!(validate_parameter(&report, "cutoff", &[20001.0]).is_err());
     }
