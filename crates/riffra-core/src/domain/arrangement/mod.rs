@@ -86,6 +86,13 @@ impl Arrangement {
     /// Replaces the project-wide musical clock used by the ruler and runtime.
     /// Audio clip frame durations remain unchanged; only their musical display
     /// positions are recalculated by consumers of the timebase.
+    /// A PPQ change must retain the existing tempo and meter maps in their old
+    /// tick units; all musical coordinates, including map positions, are then
+    /// rescaled together. Edit the maps in a separate call at the desired PPQ.
+    ///
+    /// # Errors
+    /// Returns an error for an invalid clock, simultaneous PPQ and map edits,
+    /// or musical coordinates that cannot be rescaled exactly.
     pub fn update_timebase(&mut self, timebase: ProjectTimebase) -> Result<(), DomainError> {
         if timebase.validate().is_err() {
             return Err(DomainError::InvalidClip(
@@ -93,9 +100,16 @@ impl Arrangement {
             ));
         }
         if self.timebase.ppq != timebase.ppq {
+            if timebase.tempo_changes != self.timebase.tempo_changes
+                || timebase.time_signature_changes != self.timebase.time_signature_changes
+            {
+                return Err(DomainError::InvalidClip(
+                    "change ppq and tempo or meter maps in separate operations".into(),
+                ));
+            }
             let mut candidate = self.clone();
             candidate.rescale_ticks(timebase.ppq)?;
-            candidate.timebase = timebase;
+            candidate.timebase.ppq = timebase.ppq;
             candidate.revision = candidate.revision.saturating_add(1);
             *self = candidate;
             return Ok(());
@@ -106,10 +120,17 @@ impl Arrangement {
     }
 
     fn rescale_ticks(&mut self, ppq: u32) -> Result<(), DomainError> {
+        let previous_ppq = self.timebase.ppq;
         let scale = |tick: &mut u64| -> Result<(), DomainError> {
-            *tick = super::timeline::rescale_tick(*tick, self.timebase.ppq, ppq)?;
+            *tick = super::timeline::rescale_tick(*tick, previous_ppq, ppq)?;
             Ok(())
         };
+        for change in &mut self.timebase.tempo_changes {
+            scale(&mut change.tick)?;
+        }
+        for change in &mut self.timebase.time_signature_changes {
+            scale(&mut change.tick)?;
+        }
         scale(&mut self.loop_range.start_tick.0)?;
         scale(&mut self.loop_range.end_tick.0)?;
         if let Some(range) = &mut self.punch_range {
@@ -2433,8 +2454,30 @@ mod tests {
             name: "Beat".into(),
             tick: 960,
         });
+        arrangement.timebase.tempo_changes.push(crate::TempoChange {
+            tick: 960,
+            bpm: 90.0,
+        });
+        arrangement
+            .timebase
+            .time_signature_changes
+            .push(crate::TimeSignatureChange {
+                tick: 960,
+                numerator: 3,
+                denominator: 4,
+            });
+        let original = arrangement.clone();
         let mut timebase = arrangement.timebase.clone();
         timebase.ppq = 3360;
+
+        let mut tempo_edit = timebase.clone();
+        tempo_edit.tempo_changes[1].bpm = 100.0;
+        let mut meter_edit = timebase.clone();
+        meter_edit.time_signature_changes[1].numerator = 5;
+        for simultaneous in [tempo_edit, meter_edit] {
+            assert!(arrangement.update_timebase(simultaneous).is_err());
+            assert_eq!(arrangement, original);
+        }
 
         arrangement.update_timebase(timebase).unwrap();
 
@@ -2451,10 +2494,27 @@ mod tests {
             }
         ));
         assert_eq!(arrangement.markers[0].tick, 3360);
+        assert_eq!(arrangement.timebase.tempo_changes[1].tick, 3360);
+        assert_eq!(arrangement.timebase.time_signature_changes[1].tick, 3360);
+        assert_eq!(arrangement.timebase.tempo_changes[1].bpm, 90.0);
+        assert_eq!(arrangement.timebase.time_signature_changes[1].numerator, 3);
+        assert!(
+            (original.timebase.ticks_to_seconds(1440)
+                - arrangement.timebase.ticks_to_seconds(5040))
+            .abs()
+                < 1e-12
+        );
+
         let previous = arrangement.clone();
         let mut inexact = arrangement.timebase.clone();
         inexact.ppq = 1;
         assert!(arrangement.update_timebase(inexact).is_err());
         assert_eq!(arrangement, previous);
+        let mut edited = arrangement.timebase.clone();
+        edited.tempo_changes[1].tick = 6720;
+        edited.time_signature_changes[1].tick = 6720;
+        arrangement.update_timebase(edited.clone()).unwrap();
+        assert_eq!(arrangement.timebase, edited);
+        assert_eq!(arrangement.midi_clips, previous.midi_clips);
     }
 }
