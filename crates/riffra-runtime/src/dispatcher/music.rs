@@ -21,7 +21,7 @@ impl HostDispatcher<'_> {
             params.placements,
             params.channel,
         )
-        .map_err(|error| DispatchError::invalid_request(error.to_string()))?;
+        .map_err(riffra_core::ApplicationError::from)?;
         let invalid =
             |error: riffra_core::DomainError| DispatchError::invalid_request(error.to_string());
         let notes = if params.include_notes {
@@ -344,6 +344,19 @@ mod tests {
             json!(["G", "B", "D", "F", "Ab", "C#"])
         );
 
+        let invalid_harmony = dispatcher
+            .dispatch(request("music.harmony.resolve", json!({"chord":""})), None)
+            .unwrap_err()
+            .protocol_error();
+        assert_eq!(
+            invalid_harmony.code,
+            riffra_control::ErrorCode::CommandFailed
+        );
+        assert_eq!(
+            invalid_harmony.message,
+            "invalid command: invalid harmony: chord symbol must not be empty"
+        );
+
         let inserted = dispatcher
             .dispatch(request(
                 "music.harmony.insert",
@@ -417,6 +430,34 @@ mod tests {
         assert_eq!(output_value(&phrase)["placementCount"], 1);
         assert_eq!(output_value(&phrase)["notes"].as_array().unwrap().len(), 2);
         assert_eq!(output_value(&phrase)["notes"][0]["pitch"], "C4");
+
+        let invalid_phrase = dispatcher
+            .dispatch(
+                request(
+                    "music.phrase.preview",
+                    json!({
+                        "clipId":"missing",
+                        "pattern": {
+                            "length":"1/4",
+                            "notes":[
+                                {"offset":"0/1","duration":"1/8","semitones":0}
+                            ]
+                        },
+                        "placements":[{"position":"1:1","anchor":"C4","repeats":1}]
+                    }),
+                ),
+                None,
+            )
+            .unwrap_err()
+            .protocol_error();
+        assert_eq!(
+            invalid_phrase.code,
+            riffra_control::ErrorCode::CommandFailed
+        );
+        assert_eq!(
+            invalid_phrase.message,
+            "invalid command: invalid clip: midi clip 'missing' is not registered"
+        );
 
         let phrase = dispatcher
             .dispatch(

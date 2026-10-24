@@ -92,15 +92,51 @@ impl HostState {
         };
         let policy = command.policy();
         let scope = policy.scope;
+        let command = match command {
+            ControlCommand::Canonical(command)
+                if command.access() == CanonicalAccess::Read
+                    && !crate::dispatcher::canonical_read_requires_project_writer(&command) =>
+            {
+                let snapshot = self.project.read();
+                let canonical = &snapshot.canonical;
+                if let Some(expected_sequence) = expected_sequence
+                    && expected_sequence != canonical.sequence
+                {
+                    return Self::failure(
+                        request_id,
+                        ProtocolError::conflict(expected_sequence, canonical.sequence),
+                    );
+                }
+                if let Err(error) = crate::dispatcher::validate_project_precondition(
+                    scope,
+                    expected_project_id.as_deref(),
+                    &canonical.project_id,
+                ) {
+                    return Self::failure(request_id, error);
+                }
+                return match self.dispatch_read_canonical(command, canonical) {
+                    Ok((output, sequence)) => {
+                        ControlResponse::success(request_id, sequence, output.into())
+                    }
+                    Err(error) => Self::failure(request_id, error),
+                };
+            }
+            command => command,
+        };
         let access = match &command {
             ControlCommand::Canonical(command) => Some(command.access()),
             _ => None,
         };
+        let read_requires_project_writer = matches!(
+            &command,
+            ControlCommand::Canonical(command)
+                if crate::dispatcher::canonical_read_requires_project_writer(command)
+        );
         let writer = if scope
             == (CommandScope::Project {
                 long_running: false,
             })
-            && access != Some(CanonicalAccess::Read)
+            && (access != Some(CanonicalAccess::Read) || read_requires_project_writer)
         {
             Some(self.project.write())
         } else {

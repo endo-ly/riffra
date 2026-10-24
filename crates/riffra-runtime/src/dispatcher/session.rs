@@ -12,6 +12,17 @@ use crate::dispatcher::instrument::{
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
+struct BatchCandidateStorage;
+
+impl riffra_core::ports::SessionStorage for BatchCandidateStorage {
+    fn save(
+        &self,
+        _session: &riffra_core::CreativeSession,
+    ) -> Result<(), riffra_core::ports::PortError> {
+        Ok(())
+    }
+}
+
 impl HostDispatcher<'_> {
     pub(super) fn apply_batch<S: riffra_core::SessionStorage + ?Sized>(
         &self,
@@ -35,7 +46,7 @@ impl HostDispatcher<'_> {
             },
             canonical.sequence,
         );
-        let memory = super::MemorySessionStorage;
+        let memory = BatchCandidateStorage;
         let mut created_entity_counts = BTreeMap::<String, usize>::new();
         let mut created_entity_ids = BTreeMap::<String, Vec<String>>::new();
         let mut owned_snapshots = Vec::<OwnedProjectInstrumentSnapshot>::new();
@@ -103,7 +114,7 @@ impl HostDispatcher<'_> {
 /// returning the entities it created.
 fn batch_operation(
     dispatcher: &HostDispatcher<'_>,
-    candidate: &mut riffra_core::application::Application<'_, super::MemorySessionStorage>,
+    candidate: &mut riffra_core::application::Application<'_, BatchCandidateStorage>,
     name: &str,
     params: Value,
     owned_snapshots: &mut Vec<OwnedProjectInstrumentSnapshot>,

@@ -128,7 +128,7 @@ impl HostDispatcher<'_> {
             )),
             CanonicalCommand::MusicHarmonyResolve(params) => Ok(ControlOutput::HarmonyChord(
                 riffra_core::application::resolve_harmony_chord(&params.chord)
-                    .map_err(|error| DispatchError::invalid_request(error.to_string()))?,
+                    .map_err(riffra_core::ApplicationError::from)?,
             )),
             CanonicalCommand::MusicHarmonyList(_) => Ok(ControlOutput::HarmonyEvents(
                 riffra_core::application::list_harmony_events(session),

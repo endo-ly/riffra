@@ -1118,6 +1118,10 @@ mod tests {
         );
         let destination = PathBuf::from(asset.content_location);
         assert!(destination.starts_with(root.join("assets/imports")));
+        assert_eq!(
+            destination.extension().and_then(|value| value.to_str()),
+            Some("mid")
+        );
         assert_eq!(std::fs::read(destination).unwrap(), bytes);
         assert!(
             import_midi_bytes(&root, "   ", &bytes)

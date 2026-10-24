@@ -7,7 +7,7 @@ use crate::api::{
 use crate::instrument::BuiltInInstrumentCatalog;
 use riffra_control::{ControlRequest, ErrorCode, ProtocolError};
 use riffra_core::application::ApplicationMutation;
-use riffra_core::ports::{PortError, SessionStorage};
+use riffra_core::ports::SessionStorage;
 use riffra_core::{AppCore, ApplicationError, AssetId, CreativeSession};
 use riffra_host::{DataRootLease, ProjectStore};
 use serde_json::Value;
@@ -24,6 +24,11 @@ mod music;
 mod project;
 mod session;
 mod track;
+
+/// Returns whether a read command has an external effect that requires project serialization.
+pub(crate) fn canonical_read_requires_project_writer(command: &CanonicalCommand) -> bool {
+    matches!(command, CanonicalCommand::AssetImportMidi(_))
+}
 
 #[derive(Debug)]
 pub enum DispatchError {
@@ -220,14 +225,6 @@ impl ProjectStoreRef<'_> {
     }
 }
 
-#[derive(Default)]
-struct MemorySessionStorage;
-impl SessionStorage for MemorySessionStorage {
-    fn save(&self, _session: &CreativeSession) -> Result<(), PortError> {
-        Ok(())
-    }
-}
-
 /// Shared canonical command application used by Standalone and live Hosts.
 pub struct HostDispatcher<'a> {
     _lease: Option<DataRootLease>,
@@ -361,7 +358,10 @@ impl<'a> HostDispatcher<'a> {
         }
 
         let command = match command {
-            ControlCommand::Canonical(command) if command.access() == CanonicalAccess::Read => {
+            ControlCommand::Canonical(command)
+                if command.access() == CanonicalAccess::Read
+                    && !canonical_read_requires_project_writer(&command) =>
+            {
                 let snapshot = self.core.cell().read();
                 validate_dispatch_preconditions(
                     policy.scope,
@@ -386,6 +386,9 @@ impl<'a> HostDispatcher<'a> {
             &canonical,
         )?;
         match command {
+            ControlCommand::Canonical(command) if command.access() == CanonicalAccess::Read => {
+                self.execute_read_canonical(command, &canonical)
+            }
             ControlCommand::Canonical(command) => {
                 let access = command.access();
                 let (result, committed) = self.execute_canonical(
@@ -550,7 +553,7 @@ fn parse_asset_id(value: &str) -> Result<AssetId, DispatchError> {
 #[cfg(test)]
 mod tests {
     use super::{Dispatcher, HostDispatcher};
-    use crate::api::{CommandExecutor, ControlCommand};
+    use crate::api::{CanonicalAccess, CommandExecutor, ControlCommand};
     use crate::test_support::{command, mutated_session, output_value};
     use riffra_control::{ControlRequest, ErrorCode};
     use riffra_host::now_ms;
@@ -568,6 +571,25 @@ mod tests {
         )
         .unwrap();
         (dispatcher, root)
+    }
+
+    #[test]
+    fn midi_import_is_a_read_command_that_still_requires_project_serialization() {
+        let ControlCommand::Canonical(import) =
+            ControlCommand::decode("asset.import-midi", json!({"path":"song.mid"})).unwrap()
+        else {
+            panic!("MIDI import is a canonical command");
+        };
+        assert_eq!(import.access(), CanonicalAccess::Read);
+        assert!(super::canonical_read_requires_project_writer(&import));
+
+        let ControlCommand::Canonical(track_list) =
+            ControlCommand::decode("track.list", json!({})).unwrap()
+        else {
+            panic!("Track list is a canonical command");
+        };
+        assert_eq!(track_list.access(), CanonicalAccess::Read);
+        assert!(!super::canonical_read_requires_project_writer(&track_list));
     }
 
     #[test]
