@@ -75,10 +75,20 @@ impl Vst3Plugin {
     ///
     /// # Errors
     ///
-    /// Returns a description when the plugin path is empty.
+    /// Returns a description when the plugin path is empty or the state data
+    /// exceeds the supported size.
     pub(crate) fn validate_and_normalize(&mut self) -> Result<(), String> {
         if self.path.trim().is_empty() {
             return Err("VST3 plugin path must not be empty".into());
+        }
+        if self
+            .state_data
+            .as_ref()
+            .is_some_and(|state| state.chars().count() > MAX_STATE_DATA_CHARS)
+        {
+            return Err(format!(
+                "vst3 plugin state data exceeds the maximum of {MAX_STATE_DATA_CHARS} characters"
+            ));
         }
         self.path = self.path.trim().to_owned();
         for value in &mut self.parameter_values {
@@ -87,11 +97,6 @@ impl Vst3Plugin {
             } else {
                 0.0
             };
-        }
-        if let Some(state) = self.state_data.as_mut()
-            && state.chars().count() > MAX_STATE_DATA_CHARS
-        {
-            *state = state.chars().take(MAX_STATE_DATA_CHARS).collect();
         }
         Ok(())
     }
