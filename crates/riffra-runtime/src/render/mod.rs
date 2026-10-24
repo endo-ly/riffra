@@ -175,73 +175,19 @@ impl Drop for PendingOutput<'_> {
     }
 }
 
-/// Renders one timeline while allowing the owning background job to cancel
-/// the worker process before the output becomes a canonical Asset.
-///
-/// # Errors
-/// Returns a host-provided description when validation, rendering, or Asset
-/// registration fails.
-#[cfg(test)]
-pub(crate) fn render_timeline_with_cancellation(
-    renderer: &RenderWorker,
-    data_root: &Path,
-    built_in_instruments: &BuiltInInstrumentCatalog,
-    session: &CreativeSession,
-    created_at_ms: u64,
-    options: RenderOptions,
-    cancelled: &AtomicBool,
-) -> Result<RenderResult, String> {
-    render_timeline_with_project_cancellation(
-        renderer,
-        TimelineRenderContext {
-            data_root,
-            built_in_instruments,
-            session,
-            project_id: None,
-            created_at_ms,
-            options,
-        },
-        cancelled,
-    )
-}
-
 pub(crate) fn render_timeline_with_project_cancellation(
     renderer: &RenderWorker,
     context: TimelineRenderContext<'_>,
     cancelled: &AtomicBool,
 ) -> Result<RenderResult, String> {
-    render_timeline_with_renderer_for_project(
+    render_timeline_with_renderer(
         context,
         |request| renderer.render_timeline_offline_cancellable(request, cancelled),
         Some(cancelled),
     )
 }
 
-#[cfg(test)]
 fn render_timeline_with_renderer(
-    data_root: &Path,
-    built_in_instruments: &BuiltInInstrumentCatalog,
-    session: &CreativeSession,
-    created_at_ms: u64,
-    options: RenderOptions,
-    render: impl FnOnce(OfflineRenderRequest) -> Result<Vec<String>, String>,
-    cancelled: Option<&AtomicBool>,
-) -> Result<RenderResult, String> {
-    render_timeline_with_renderer_for_project(
-        TimelineRenderContext {
-            data_root,
-            built_in_instruments,
-            session,
-            project_id: None,
-            created_at_ms,
-            options,
-        },
-        render,
-        cancelled,
-    )
-}
-
-fn render_timeline_with_renderer_for_project(
     context: TimelineRenderContext<'_>,
     render: impl FnOnce(OfflineRenderRequest) -> Result<Vec<String>, String>,
     cancelled: Option<&AtomicBool>,
@@ -1160,6 +1106,23 @@ pub(super) mod tests {
         crate::test_support::empty_built_in_catalog()
     }
 
+    fn timeline_render_context<'a>(
+        data_root: &'a Path,
+        built_in_instruments: &'a BuiltInInstrumentCatalog,
+        session: &'a CreativeSession,
+        created_at_ms: u64,
+        options: RenderOptions,
+    ) -> TimelineRenderContext<'a> {
+        TimelineRenderContext {
+            data_root,
+            built_in_instruments,
+            session,
+            project_id: None,
+            created_at_ms,
+            options,
+        }
+    }
+
     pub(super) fn wav(sample_rate: u32, frames: u32) -> Vec<u8> {
         let data_len = frames * 4;
         let mut bytes = Vec::new();
@@ -1280,11 +1243,13 @@ pub(super) mod tests {
 
         // Act
         let mixdown = render_timeline_with_renderer(
-            &root,
-            empty_catalog(),
-            &session,
-            20,
-            RenderOptions::default(),
+            timeline_render_context(
+                &root,
+                empty_catalog(),
+                &session,
+                20,
+                RenderOptions::default(),
+            ),
             |request| {
                 fs::write(&request.destination, wav(request.sample_rate, 128)).unwrap();
                 Ok(Vec::new())
@@ -1885,13 +1850,9 @@ pub(super) mod tests {
             frame_counts.insert(metadata.frame_count);
         }
         assert_eq!(frame_counts, BTreeSet::from([pending.result.frames]));
-        let mix = render_timeline_with_cancellation(
+        let mix = render_timeline_with_project_cancellation(
             &worker,
-            &root,
-            &catalog,
-            &session,
-            2,
-            RenderOptions::default(),
+            timeline_render_context(&root, &catalog, &session, 2, RenderOptions::default()),
             &AtomicBool::new(false),
         )
         .unwrap();
@@ -1924,16 +1885,18 @@ pub(super) mod tests {
             maximum_error < 0.0001,
             "linear mixer stems differ from the complete mix by {maximum_error}"
         );
-        let baseline = render_timeline_with_cancellation(
+        let baseline = render_timeline_with_project_cancellation(
             &worker,
-            &root,
-            &catalog,
-            &static_session,
-            3,
-            RenderOptions {
-                track_id: Some("audio".into()),
-                ..Default::default()
-            },
+            timeline_render_context(
+                &root,
+                &catalog,
+                &static_session,
+                3,
+                RenderOptions {
+                    track_id: Some("audio".into()),
+                    ..Default::default()
+                },
+            ),
             &AtomicBool::new(false),
         )
         .unwrap();
@@ -2333,11 +2296,13 @@ pub(super) mod tests {
         for failure in 0..3 {
             let cancelled = AtomicBool::new(false);
             let result = render_timeline_with_renderer(
-                &root,
-                catalog,
-                &session_with_clips(),
-                1,
-                RenderOptions::default(),
+                timeline_render_context(
+                    &root,
+                    catalog,
+                    &session_with_clips(),
+                    1,
+                    RenderOptions::default(),
+                ),
                 |request| {
                     fs::write(request.destination, b"incomplete wav").unwrap();
                     if failure == 0 {
@@ -2363,11 +2328,13 @@ pub(super) mod tests {
         created_at_ms: u64,
     ) -> RenderResult {
         render_timeline_with_renderer(
-            data_root,
-            empty_catalog(),
-            session,
-            created_at_ms,
-            RenderOptions::default(),
+            timeline_render_context(
+                data_root,
+                empty_catalog(),
+                session,
+                created_at_ms,
+                RenderOptions::default(),
+            ),
             |request| {
                 fs::write(&request.destination, wav(request.sample_rate, 128)).unwrap();
                 Ok(Vec::new())
@@ -2390,14 +2357,16 @@ pub(super) mod tests {
         let requested_output = exports.join("mix.wav");
 
         let rendered = render_timeline_with_renderer(
-            &root,
-            catalog,
-            &session,
-            1,
-            RenderOptions {
-                output_path: Some(requested_output.to_string_lossy().into_owned()),
-                ..RenderOptions::default()
-            },
+            timeline_render_context(
+                &root,
+                catalog,
+                &session,
+                1,
+                RenderOptions {
+                    output_path: Some(requested_output.to_string_lossy().into_owned()),
+                    ..RenderOptions::default()
+                },
+            ),
             |request| {
                 fs::write(&request.destination, wav(request.sample_rate, 128)).unwrap();
                 Ok(Vec::new())
@@ -2419,14 +2388,16 @@ pub(super) mod tests {
         let existing_output = exports.join("already-there.wav");
         fs::write(&existing_output, b"preserve existing file").unwrap();
         let failed_copy = render_timeline_with_renderer(
-            &root,
-            catalog,
-            &session,
-            2,
-            RenderOptions {
-                output_path: Some(existing_output.to_string_lossy().into_owned()),
-                ..RenderOptions::default()
-            },
+            timeline_render_context(
+                &root,
+                catalog,
+                &session,
+                2,
+                RenderOptions {
+                    output_path: Some(existing_output.to_string_lossy().into_owned()),
+                    ..RenderOptions::default()
+                },
+            ),
             |request| {
                 fs::write(&request.destination, wav(request.sample_rate, 128)).unwrap();
                 Ok(Vec::new())
