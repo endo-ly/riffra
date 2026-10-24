@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import type {
   Arrangement,
   ArrangementMutationResult,
@@ -7,6 +7,8 @@ import type {
   DeviceParameterInfo,
   EffectOwner,
 } from '@/model/domain';
+import { Icon } from '@/shared/ui/primitives';
+import controls from '@/shared/ui/controls.module.css';
 import type { ArrangeWorkspaceApi } from '../arrange-api';
 import { useDeviceDetails } from './useDeviceDetails';
 import { DeviceSidechainEditor } from './DeviceSidechainEditor';
@@ -84,17 +86,13 @@ function ParameterControl({
     0,
   );
   return (
-    <div className={styles.parameter}>
-      <label htmlFor={`parameter-${parameter.index}`}>
+    <div className={styles.parameter} data-automated={automated}>
+      <label htmlFor={`parameter-${parameter.index}`} title={name}>
         {name} {automated ? '· AUTO' : ''}
       </label>
-      {parameter.automatable && parameter.parameterId && (
-        <button type="button" onClick={onOpenAutomation} aria-label={`Open ${name} automation`}>
-          Automation
-        </button>
-      )}
       {parameter.choices.length >= 2 ? (
         <select
+          className={controls.control}
           id={`parameter-${parameter.index}`}
           disabled={disabled}
           value={choiceIndex}
@@ -112,6 +110,8 @@ function ParameterControl({
         </select>
       ) : (
         <input
+          className={controls.fillSlider}
+          style={{ '--fill-start': '0%', '--fill-end': `${draft * 100}%` } as CSSProperties}
           id={`parameter-${parameter.index}`}
           type="range"
           min={0}
@@ -146,31 +146,44 @@ function ParameterControl({
           }}
         />
       )}
-      <output>
-        Static:{' '}
-        <span>
+      <span className={styles.parameterValue}>
+        <output title={`${canonicalValue.toFixed(3)} normalized`}>
           {parameter.displayValue
             ? `${parameter.displayValue}${parameter.label ? ` ${parameter.label}` : ''}`
-            : `${canonicalValue.toFixed(3)} normalized`}
-        </span>{' '}
-        ({canonicalValue.toFixed(3)} normalized)
-      </output>
-      {automationValue !== undefined && (
-        <output aria-label={`${name} current automation value`}>
-          Automation: {automationDisplay ?? automationValue.toFixed(3)}
-          {parameter.label && ` ${parameter.label}`}
+            : canonicalValue.toFixed(3)}
         </output>
-      )}
-      <button
-        type="button"
-        disabled={disabled}
-        aria-label={`Reset ${name}`}
-        onClick={() => {
-          void commit(parameter.defaultValue);
-        }}
-      >
-        Default
-      </button>
+        {automationValue !== undefined && (
+          <output aria-label={`${name} current automation value`}>
+            Automation: {automationDisplay ?? automationValue.toFixed(3)}
+            {parameter.label && ` ${parameter.label}`}
+          </output>
+        )}
+      </span>
+      <span className={styles.parameterTools}>
+        {parameter.automatable && parameter.parameterId && (
+          <button
+            type="button"
+            className={controls.iconButton}
+            onClick={onOpenAutomation}
+            aria-label={`Open ${name} automation`}
+            title="Open automation"
+          >
+            <Icon name="curve" />
+          </button>
+        )}
+        <button
+          type="button"
+          className={controls.iconButton}
+          disabled={disabled}
+          aria-label={`Reset ${name}`}
+          title="Reset to default"
+          onClick={() => {
+            void commit(parameter.defaultValue);
+          }}
+        >
+          <Icon name="undo" />
+        </button>
+      </span>
     </div>
   );
 }
@@ -190,17 +203,28 @@ export function DeviceParameterEditor(props: DeviceParameterEditorProps) {
       aria-label="Device parameters"
       aria-busy={loading || saving}
     >
-      {loading && <p role="status">Loading device…</p>}
-      {props.automationReadActive && <p>Automation Read · stop playback to edit device state.</p>}
-      {error && <p role="alert">{error}</p>}
+      {loading && (
+        <p className={styles.notice} role="status">
+          Loading device…
+        </p>
+      )}
+      {props.automationReadActive && (
+        <p className={styles.notice}>Automation Read · stop playback to edit device state.</p>
+      )}
+      {error && (
+        <p className={styles.error} role="alert">
+          {error}
+        </p>
+      )}
       {details && (
         <>
-          <div className={styles.actions}>
+          <header className={styles.detailsHeader}>
             <strong>{details.inspection.name}</strong>
             {details.inspection.capabilities.presets && (
-              <label>
-                Preset{' '}
+              <label className={styles.preset}>
+                <span>Preset</span>
                 <select
+                  className={controls.control}
                   aria-label="Preset"
                   value={details.currentPreset?.index ?? ''}
                   disabled={loading || saving || props.automationReadActive}
@@ -225,6 +249,7 @@ export function DeviceParameterEditor(props: DeviceParameterEditorProps) {
             {details.inspection.capabilities.editor && (
               <button
                 type="button"
+                className={`${controls.smallButton} ${controls.accent}`}
                 onClick={() => {
                   void openEditor();
                 }}
@@ -232,7 +257,7 @@ export function DeviceParameterEditor(props: DeviceParameterEditorProps) {
                 Open Plugin Editor
               </button>
             )}
-          </div>
+          </header>
           <DeviceSidechainEditor
             arrangement={props.arrangement}
             owner={props.owner}
@@ -243,49 +268,53 @@ export function DeviceParameterEditor(props: DeviceParameterEditorProps) {
             commit={props.commit}
             onOpenAutomation={props.onOpenSidechainAutomation}
           />
-          {details.parameters.map((parameter) =>
-            (() => {
-              const lane = props.automationLanes.find(
-                (candidate) =>
-                  candidate.target.kind === 'deviceParameter' &&
-                  candidate.target.deviceId === props.deviceId &&
-                  candidate.target.parameterId === parameter.parameterId,
-              );
-              const staticValue = props.parameterValues[parameter.index] ?? parameter.value;
-              const currentValue = lane
-                ? automationValueAt(
-                    lane.points,
-                    lane.interpolation,
-                    props.currentTick,
-                    staticValue,
-                    props.arrangement.timebase,
-                  )
-                : undefined;
-              return (
-                <ParameterControl
-                  key={parameter.index}
-                  api={props.api}
-                  owner={props.owner}
-                  deviceId={props.deviceId}
-                  automated={Boolean(lane)}
-                  onOpenAutomation={() => props.onOpenAutomation(parameter)}
-                  parameter={parameter}
-                  canonicalValue={staticValue}
-                  automationValue={currentValue}
-                  disabled={loading || saving || props.automationReadActive}
-                  onCommit={(value) =>
-                    mutate(() =>
-                      props.api.setDeviceParameter(
-                        props.owner,
-                        props.deviceId,
-                        parameter.index,
-                        value,
-                      ),
-                    )
-                  }
-                />
-              );
-            })(),
+          {details.parameters.length > 0 && (
+            <div className={styles.parameters} role="group" aria-label="Parameters">
+              {details.parameters.map((parameter) =>
+                (() => {
+                  const lane = props.automationLanes.find(
+                    (candidate) =>
+                      candidate.target.kind === 'deviceParameter' &&
+                      candidate.target.deviceId === props.deviceId &&
+                      candidate.target.parameterId === parameter.parameterId,
+                  );
+                  const staticValue = props.parameterValues[parameter.index] ?? parameter.value;
+                  const currentValue = lane
+                    ? automationValueAt(
+                        lane.points,
+                        lane.interpolation,
+                        props.currentTick,
+                        staticValue,
+                        props.arrangement.timebase,
+                      )
+                    : undefined;
+                  return (
+                    <ParameterControl
+                      key={parameter.index}
+                      api={props.api}
+                      owner={props.owner}
+                      deviceId={props.deviceId}
+                      automated={Boolean(lane)}
+                      onOpenAutomation={() => props.onOpenAutomation(parameter)}
+                      parameter={parameter}
+                      canonicalValue={staticValue}
+                      automationValue={currentValue}
+                      disabled={loading || saving || props.automationReadActive}
+                      onCommit={(value) =>
+                        mutate(() =>
+                          props.api.setDeviceParameter(
+                            props.owner,
+                            props.deviceId,
+                            parameter.index,
+                            value,
+                          ),
+                        )
+                      }
+                    />
+                  );
+                })(),
+              )}
+            </div>
           )}
         </>
       )}

@@ -1,0 +1,383 @@
+.fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.destination {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1-5);
+}
+
+.path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.path code {
+  color: var(--color-text-primary);
+  font: var(--font-size-micro) var(--font-family-mono);
+}
+
+.path em {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-micro);
+  font-style: normal;
+}
+
+.numbers {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.numbers:disabled {
+  opacity: 0.45;
+}
+
+.numberField {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-1);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-micro);
+}
+
+/* A number and its unit inside one well. */
+.numberWell {
+  composes: well from '../../shared/ui/controls.module.css';
+  height: 28px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  padding: 0 var(--space-2);
+  cursor: text;
+}
+
+.numberWell:focus-within {
+  border-color: color-mix(in srgb, var(--color-accent) 70%, transparent);
+}
+
+.numberWell input {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  color: var(--color-text-strong);
+  font: var(--font-size-emphasis) var(--font-family-mono);
+  background: transparent;
+  border: 0;
+  outline: none;
+  appearance: textfield;
+}
+
+.numberWell small {
+  color: var(--color-text-muted);
+  font: var(--font-size-micro) var(--font-family-mono);
+}
+
+/* Footer: what the render is doing, beside the actions that start or stop it. */
+.status {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: var(--space-1);
+}
+
+.statusLine {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-micro);
+  white-space: nowrap;
+}
+
+.statusLine > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.statusLine output {
+  color: var(--color-text-primary);
+  font-family: var(--font-family-mono);
+}
+
+.progress {
+  height: 3px;
+  overflow: hidden;
+  background: var(--color-bg-surface-raised);
+  border-radius: var(--radius-pill);
+}
+
+.progress i {
+  height: 100%;
+  display: block;
+  background: var(--color-accent);
+  border-radius: inherit;
+  transition: width var(--duration-slow) ease-out;
+}
+
+.error,
+.warning {
+  margin: 0;
+  font-size: var(--font-size-micro);
+  line-height: 1.5;
+}
+
+.error {
+  color: var(--color-status-danger);
+}
+
+.warning {
+  padding: var(--space-1-5) var(--space-2);
+  color: var(--color-status-warning);
+  background: color-mix(in srgb, var(--color-status-warning) 8%, transparent);
+  border-radius: var(--radius-sm);
+}
+
+.result {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: var(--color-bg-surface);
+  border-radius: var(--radius-md);
+}
+
+.result header {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.result header strong {
+  color: var(--color-text-strong);
+  font-size: var(--font-size-small);
+  font-weight: 600;
+}
+
+.result header small {
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font: var(--font-size-micro) var(--font-family-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Readouts as tiles: the name small and muted, the value large in mono. */
+.measurements {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: var(--space-1-5);
+  margin: 0;
+}
+
+.measurements > div {
+  display: grid;
+  gap: var(--space-0-5);
+  padding: var(--space-2) var(--space-2-5);
+  background: var(--color-bg-panel);
+  border-radius: var(--radius-sm);
+}
+
+.measurements dt {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-micro);
+}
+
+.measurements dd {
+  margin: 0;
+  color: var(--color-text-strong);
+  font: 600 var(--font-size-title) var(--font-family-mono);
+  white-space: nowrap;
+}
+
+.measurements .unavailable {
+  grid-column: 1 / -1;
+}
+
+.measurements .unavailable dd {
+  color: var(--color-status-warning);
+  font-family: inherit;
+  font-size: var(--font-size-micro);
+  font-weight: 400;
+  white-space: normal;
+}
+
+.history {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.historyItem {
+  background: var(--color-bg-surface);
+  border-radius: var(--radius-md);
+}
+
+.historyRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-0-5);
+  padding-right: var(--space-1);
+}
+
+.historySummary {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2-5);
+  padding: var(--space-2) var(--space-2-5);
+  text-align: left;
+  background: transparent;
+  border-radius: var(--radius-md);
+}
+
+.historySummary > svg {
+  width: var(--size-icon-sm);
+  height: var(--size-icon-sm);
+  color: var(--color-text-muted);
+  transition: transform var(--duration-fast);
+}
+
+.historySummary[aria-expanded='true'] > svg {
+  transform: rotate(90deg);
+}
+
+.kind {
+  width: 44px;
+  flex: 0 0 44px;
+  padding: 1px 0;
+  color: var(--color-accent);
+  font-size: var(--font-size-micro);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-align: center;
+  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+  border-radius: var(--radius-sm);
+}
+
+.kind[data-kind='stems'] {
+  color: var(--color-status-success);
+  background: color-mix(in srgb, var(--color-status-success) 10%, transparent);
+}
+
+.kind[data-kind='unknown'] {
+  color: var(--color-text-muted);
+  background: color-mix(in srgb, var(--color-text-primary) 7%, transparent);
+}
+
+.historyText {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.historyText strong {
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-small);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.historyText small {
+  color: var(--color-text-muted);
+  font: var(--font-size-micro) var(--font-family-mono);
+}
+
+.diagnosticBadge {
+  width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  color: var(--color-text-on-accent);
+  font-size: var(--font-size-micro);
+  font-weight: 700;
+  background: var(--color-status-warning);
+  border-radius: 50%;
+}
+
+.historyDetails {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3) var(--space-3) calc(var(--space-6) + var(--space-1));
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: var(--space-1) var(--space-2);
+  margin: 0;
+  font-size: var(--font-size-micro);
+}
+
+.facts dt {
+  color: var(--color-text-muted);
+}
+
+.facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-text-secondary);
+  font-family: var(--font-family-mono);
+}
+
+.files {
+  display: grid;
+  gap: var(--space-0-5);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.files li {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  background: var(--color-bg-panel);
+  border-radius: var(--radius-sm);
+}
+
+.files svg {
+  width: var(--size-icon-sm);
+  height: var(--size-icon-sm);
+  color: var(--color-text-muted);
+}
+
+.files span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-micro);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.files small {
+  color: var(--color-text-muted);
+  font: var(--font-size-micro) var(--font-family-mono);
+  white-space: nowrap;
+}
+
+.files small[data-missing='true'] {
+  color: var(--color-status-warning);
+}

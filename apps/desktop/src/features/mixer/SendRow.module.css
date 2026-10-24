@@ -1,0 +1,37 @@
+.row {
+  min-height: 36px;
+  display: grid;
+  grid-template-columns: auto minmax(96px, 150px) minmax(80px, 1fr) 56px auto auto auto;
+  align-items: center;
+  gap: var(--space-2-5);
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-2-5);
+  background: var(--color-bg-surface);
+  border-radius: var(--radius-md);
+}
+
+.row > output {
+  color: var(--color-text-primary);
+  font: var(--font-size-small) var(--font-family-mono);
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* A disabled send keeps its settings editable but reads as silent. */
+.row[data-enabled='false'] > :is(.endpoint, input[type='range'], output) {
+  opacity: 0.45;
+}
+
+.endpoint {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-small);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The endpoint picker sinks into the row it belongs to. */
+.endpoint select {
+  background-color: var(--color-bg-panel);
+}

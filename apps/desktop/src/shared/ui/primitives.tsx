@@ -48,6 +48,11 @@ export function Icon({ name, className }: { name: string; className?: string }) 
     grip: 'M9 5h2v2H9V5Zm4 0h2v2h-2V5ZM9 11h2v2H9v-2Zm4 0h2v2h-2v-2ZM9 17h2v2H9v-2Zm4 0h2v2h-2v-2Z',
     more: 'M6 10a2 2 0 1 1 0 4 2 2 0 0 1 0-4Zm6 0a2 2 0 1 1 0 4 2 2 0 0 1 0-4Zm6 0a2 2 0 1 1 0 4 2 2 0 0 1 0-4Z',
     import: 'M12 3 6.6 8.4 8 9.8l3-3V15h2V6.8l3 3 1.4-1.4L12 3ZM5 18h14v2H5v-2Z',
+    export: 'M12 15 6.6 9.6 8 8.2l3 3V3h2v8.2l3-3 1.4 1.4L12 15ZM5 18h14v2H5v-2Z',
+    trash: 'M9 3h6l1 2h4v2H4V5h4l1-2ZM6 9h12l-1 12H7L6 9Zm4 2v8h1.5v-8H10Zm2.5 0v8H14v-8h-1.5Z',
+    folder: 'M3 5h7l2 2h9v12H3V5Zm2 4v8h14V9H5Z',
+    route:
+      'M5 4a3 3 0 0 1 1 5.83V11h7a3 3 0 0 0 3-3V6h-2l3-3 3 3h-2v2a5 5 0 0 1-5 5H6v1.17A3 3 0 1 1 4 14.17V9.83A3 3 0 0 1 5 4Z',
   };
   return (
     <svg aria-hidden="true" viewBox="0 0 24 24" className={className}>

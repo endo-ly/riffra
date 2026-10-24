@@ -6,6 +6,8 @@ import type {
   PlayableNotes,
 } from '@/model/domain';
 import { midiNoteName } from '@/features/arrange/play-surface/musical-typing';
+import { Icon } from '@/shared/ui/primitives';
+import controls from '@/shared/ui/controls.module.css';
 import styles from './Devices.module.css';
 
 interface Props {
@@ -98,29 +100,36 @@ export function InstrumentMidiSettingsEditor({
 
   return (
     <section className={styles.midiSettings} aria-label="Instrument MIDI settings">
-      <h4>Instrument MIDI</h4>
-      {recommendedRange && (
-        <p>
-          Library recommendation: {midiNoteName(recommendedRange.minMidi)}–
-          {midiNoteName(recommendedRange.maxMidi)}
-        </p>
-      )}
+      <header className={styles.subHeader}>
+        <h4>Instrument MIDI</h4>
+        {recommendedRange && (
+          <small>
+            Library recommendation: {midiNoteName(recommendedRange.minMidi)}–
+            {midiNoteName(recommendedRange.maxMidi)}
+          </small>
+        )}
+      </header>
       <form onSubmit={submit}>
-        <label>
-          Transpose (semitones)
-          <input
-            type="number"
-            min={-127}
-            max={127}
-            step={1}
-            value={transpose}
-            onChange={(event) => setTranspose(event.currentTarget.valueAsNumber)}
-            required
-          />
+        <label className={styles.midiRow}>
+          <span>Transpose</span>
+          <span className={styles.unitWell}>
+            <input
+              type="number"
+              aria-label="Transpose (semitones)"
+              min={-127}
+              max={127}
+              step={1}
+              value={transpose}
+              onChange={(event) => setTranspose(event.currentTarget.valueAsNumber)}
+              required
+            />
+            <small>st</small>
+          </span>
         </label>
-        <label>
-          Playable notes
+        <label className={styles.midiRow}>
+          <span>Playable notes</span>
           <select
+            className={controls.control}
             value={mode}
             onChange={(event) => setMode(event.currentTarget.value as typeof mode)}
           >
@@ -130,36 +139,40 @@ export function InstrumentMidiSettingsEditor({
           </select>
         </label>
         {mode === 'range' && (
-          <div className={styles.midiRange}>
-            <label>
-              From
+          <div className={styles.midiRow}>
+            <span>Range</span>
+            <span className={styles.midiRange}>
               <input
+                className={controls.control}
                 type="number"
+                aria-label="From"
                 min={0}
                 max={127}
                 value={rangeStart}
                 onChange={(event) => setRangeStart(event.currentTarget.valueAsNumber)}
                 required
               />
-            </label>
-            <label>
-              To
+              <span aria-hidden="true">–</span>
               <input
+                className={controls.control}
                 type="number"
+                aria-label="To"
                 min={0}
                 max={127}
                 value={rangeEnd}
                 onChange={(event) => setRangeEnd(event.currentTarget.valueAsNumber)}
                 required
               />
-            </label>
+            </span>
           </div>
         )}
         {mode === 'set' && (
-          <label>
-            MIDI note numbers
+          <label className={styles.midiRow}>
+            <span>Notes</span>
             <input
+              className={controls.control}
               type="text"
+              aria-label="MIDI note numbers"
               value={noteSet}
               placeholder="36, 48, 60, 72"
               onChange={(event) => setNoteSet(event.currentTarget.value)}
@@ -167,52 +180,64 @@ export function InstrumentMidiSettingsEditor({
             />
           </label>
         )}
-        <fieldset>
-          <legend>Keyswitches</legend>
+        <div className={styles.keyswitches} role="group" aria-label="Keyswitches">
+          <div className={styles.keyswitchHeader}>
+            <span>Keyswitches</span>
+            <button
+              type="button"
+              className={controls.smallButton}
+              onClick={() => setKeyswitches((current) => [...current, { note: 24, name: '' }])}
+            >
+              <Icon name="plus" />
+              Add keyswitch
+            </button>
+          </div>
           {keyswitches.map((keyswitch, index) => (
             <div className={styles.keyswitchRow} key={`${index}:${keyswitch.note}`}>
-              <label>
-                Note
-                <input
-                  aria-label={`Keyswitch ${index + 1} note`}
-                  type="number"
-                  min={0}
-                  max={127}
-                  value={keyswitch.note}
-                  onChange={(event) =>
-                    updateKeyswitch(index, { note: event.currentTarget.valueAsNumber })
-                  }
-                />
-              </label>
-              <label>
-                Name
-                <input
-                  aria-label={`Keyswitch ${index + 1} name`}
-                  value={keyswitch.name}
-                  onChange={(event) => updateKeyswitch(index, { name: event.currentTarget.value })}
-                />
-              </label>
+              <input
+                className={controls.control}
+                aria-label={`Keyswitch ${index + 1} note`}
+                type="number"
+                min={0}
+                max={127}
+                value={keyswitch.note}
+                onChange={(event) =>
+                  updateKeyswitch(index, { note: event.currentTarget.valueAsNumber })
+                }
+              />
+              <span className={styles.noteName}>
+                {Number.isInteger(keyswitch.note) ? midiNoteName(keyswitch.note) : '—'}
+              </span>
+              <input
+                className={controls.control}
+                aria-label={`Keyswitch ${index + 1} name`}
+                placeholder="Articulation name"
+                value={keyswitch.name}
+                onChange={(event) => updateKeyswitch(index, { name: event.currentTarget.value })}
+              />
               <button
                 type="button"
+                className={`${controls.iconButton} ${controls.danger}`}
                 aria-label={`Remove keyswitch ${index + 1}`}
+                title="Remove"
                 onClick={() =>
                   setKeyswitches((current) => current.filter((_, item) => item !== index))
                 }
               >
-                Remove
+                <Icon name="trash" />
               </button>
             </div>
           ))}
-          <button
-            type="button"
-            onClick={() => setKeyswitches((current) => [...current, { note: 24, name: '' }])}
-          >
-            Add keyswitch
-          </button>
-        </fieldset>
-        <button type="submit">Apply MIDI settings</button>
+        </div>
+        <button type="submit" className={`${controls.smallButton} ${controls.accent}`}>
+          Apply MIDI settings
+        </button>
       </form>
-      {error && <p role="alert">{error}</p>}
+      {error && (
+        <p className={styles.error} role="alert">
+          {error}
+        </p>
+      )}
       {warnings.length > 0 && (
         <div className={styles.midiWarnings} role="status" aria-label="MIDI playability warnings">
           <strong>

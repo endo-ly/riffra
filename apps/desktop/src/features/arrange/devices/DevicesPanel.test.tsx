@@ -430,7 +430,7 @@ describe('DevicesPanel', () => {
     expect(screen.getByText('All Tracks already feed this device.')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Automation' }));
     expect(opened).toEqual([{ kind: 'sidechainSendLevel', sidechainSendId: 'sidechain:1' }]);
-    const slider = screen.getByLabelText('Sidechain sidechain:1 level');
+    const slider = screen.getByLabelText('Drums sidechain level');
     fireEvent.change(slider, { target: { value: '-12' } });
     fireEvent.pointerUp(slider);
     await waitFor(() =>

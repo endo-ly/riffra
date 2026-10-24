@@ -3,18 +3,38 @@ import type { RenderHistoryEntry } from '@/model/domain';
 import type { ArrangeWorkspaceApi } from '@/features/arrange/arrange-api';
 import { chooseRenderStemDirectory, saveRenderWav } from '@/native/dialog';
 import { ConfirmDialog } from '@/shared/ui/ConfirmDialog';
-import styles from './Mixer.module.css';
+import { Icon } from '@/shared/ui/primitives';
+import controls from '@/shared/ui/controls.module.css';
+import { DialogSection } from './MixerDialog';
+import { RenderMeasurements } from './RenderMeasurements';
+import styles from './Mixdown.module.css';
 
 interface Props {
   api: Pick<ArrangeWorkspaceApi, 'listRenders' | 'exportRender' | 'cleanRender'>;
   refreshToken: string;
 }
 
+const KIND_LABELS: Record<RenderHistoryEntry['kind'], string> = {
+  timeline: 'MIX',
+  stems: 'STEMS',
+  unknown: 'UNKNOWN',
+};
+
+const createdFormat = new Intl.DateTimeFormat(undefined, {
+  dateStyle: 'medium',
+  timeStyle: 'short',
+});
+
 function formatBytes(value: number | null) {
   if (value === null) return 'unknown size';
   if (value < 1024) return `${value} B`;
   if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
   return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatDuration(durationMs: number) {
+  const seconds = Math.round(durationMs / 1000);
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 }
 
 function shortPath(path: string) {
@@ -35,6 +55,7 @@ function deleteRenderMessage(render: RenderHistoryEntry) {
 export function RenderHistoryPanel({ api, refreshToken }: Props) {
   const [renders, setRenders] = useState<RenderHistoryEntry[]>([]);
   const [loading, setLoading] = useState(false);
+  const [expandedRenderId, setExpandedRenderId] = useState<string | null>(null);
   const [busyRenderId, setBusyRenderId] = useState<string | null>(null);
   const [pendingDeleteRender, setPendingDeleteRender] = useState<RenderHistoryEntry | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -96,112 +117,135 @@ export function RenderHistoryPanel({ api, refreshToken }: Props) {
   };
 
   return (
-    <section className={styles.renderHistory} aria-label="Render history">
-      <header>
-        <strong>RENDER HISTORY</strong>
-        <button type="button" disabled={loading} onClick={() => void refresh()}>
+    <DialogSection
+      title="Render history"
+      action={
+        <button
+          type="button"
+          className={controls.smallButton}
+          disabled={loading}
+          onClick={() => void refresh()}
+        >
           {loading ? 'Loading…' : 'Refresh'}
         </button>
-      </header>
-      {renders.length === 0 && !loading ? <p>No managed renders.</p> : null}
-      <div className={styles.renderHistoryList}>
+      }
+    >
+      {renders.length === 0 && !loading ? (
+        <p className={controls.placeholder}>No managed renders.</p>
+      ) : null}
+      <ul className={styles.history}>
         {renders.map((render) => {
           const busy = busyRenderId === render.renderId;
+          const expanded = expandedRenderId === render.renderId;
+          const facts = [
+            `${render.fileCount} file${render.fileCount === 1 ? '' : 's'}`,
+            formatBytes(render.fileSizeBytes),
+            ...(render.durationMs === null ? [] : [formatDuration(render.durationMs)]),
+          ];
           return (
-            <details key={render.renderId} className={styles.renderHistoryItem}>
-              <summary>
-                <span>
-                  <strong>{render.renderId}</strong>
-                  <small>
-                    {render.kind} · {render.fileCount} file{render.fileCount === 1 ? '' : 's'} ·{' '}
-                    {formatBytes(render.fileSizeBytes)}
-                  </small>
-                </span>
-              </summary>
-              <dl className={styles.renderHistoryFacts}>
-                <dt>Project</dt>
-                <dd>{render.projectId ?? 'unknown'}</dd>
-                <dt>Created</dt>
-                <dd>
-                  {render.createdAtMs === null
-                    ? 'unknown'
-                    : new Date(render.createdAtMs).toLocaleString()}
-                </dd>
-                <dt>Format</dt>
-                <dd>
-                  {render.sampleRate === null ? 'unknown sample rate' : `${render.sampleRate} Hz`}
-                  {render.durationMs === null
-                    ? ''
-                    : ` · ${(render.durationMs / 1000).toFixed(2)} s`}
-                </dd>
-              </dl>
-              <ul className={styles.renderHistoryFiles}>
-                {render.files.map((file) => (
-                  <li key={`${file.path}:${file.assetId ?? ''}`}>
-                    <span>{shortPath(file.path)}</span>
-                    <small>
-                      {file.fileExists ? formatBytes(file.fileSizeBytes) : 'file missing'} ·{' '}
-                      {file.assetRegistered ? `Asset ${file.assetId}` : 'Asset missing'}
-                    </small>
-                  </li>
-                ))}
-              </ul>
-              {render.measurements.map((measurement, index) => (
-                <dl className={styles.renderHistoryFacts} key={index}>
-                  <dt>Sample peak</dt>
-                  <dd>
-                    {measurement.samplePeakDbfs === null
-                      ? 'silence'
-                      : `${measurement.samplePeakDbfs.toFixed(2)} dBFS`}
-                  </dd>
-                  {measurement.loudness.state === 'measured' ? (
-                    <>
-                      <dt>Integrated loudness</dt>
-                      <dd>{measurement.loudness.measurement.integratedLufs.toFixed(2)} LUFS</dd>
-                      <dt>True peak</dt>
-                      <dd>{measurement.loudness.measurement.truePeakDb.toFixed(2)} dBTP</dd>
-                    </>
-                  ) : (
-                    <>
-                      <dt>Loudness measurement</dt>
-                      <dd>{measurement.loudness.reason}</dd>
-                    </>
-                  )}
-                  {measurement.sectionLoudnessState.state === 'unavailable' && (
-                    <>
-                      <dt>Section loudness measurement</dt>
-                      <dd>{measurement.sectionLoudnessState.reason}</dd>
-                    </>
-                  )}
-                </dl>
-              ))}
-              {render.diagnostics.map((diagnostic) => (
-                <p role="alert" key={diagnostic}>
-                  {diagnostic}
-                </p>
-              ))}
-              <div className={styles.renderHistoryActions}>
+            <li key={render.renderId} className={styles.historyItem}>
+              <div className={styles.historyRow}>
                 <button
                   type="button"
+                  className={styles.historySummary}
+                  aria-expanded={expanded}
+                  onClick={() => setExpandedRenderId(expanded ? null : render.renderId)}
+                >
+                  <Icon name="chevron" />
+                  <span className={styles.kind} data-kind={render.kind}>
+                    {KIND_LABELS[render.kind]}
+                  </span>
+                  <span className={styles.historyText}>
+                    <strong>
+                      {render.createdAtMs === null
+                        ? render.renderId
+                        : createdFormat.format(render.createdAtMs)}
+                    </strong>
+                    <small>{facts.join(' · ')}</small>
+                  </span>
+                  {render.diagnostics.length > 0 && (
+                    <span
+                      className={styles.diagnosticBadge}
+                      title={`${render.diagnostics.length} issue${render.diagnostics.length === 1 ? '' : 's'}`}
+                    >
+                      !
+                    </span>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  className={controls.iconButton}
+                  aria-label="Export"
+                  title="Export"
                   disabled={busy || render.kind === 'unknown'}
                   onClick={() => void exportRender(render)}
                 >
-                  Export
+                  <Icon name="export" />
                 </button>
                 <button
                   type="button"
+                  className={`${controls.iconButton} ${controls.danger}`}
+                  aria-label="Delete"
+                  title="Delete"
                   disabled={busy}
                   onClick={() => setPendingDeleteRender(render)}
                 >
-                  Delete
+                  <Icon name="trash" />
                 </button>
               </div>
-            </details>
+              {expanded && (
+                <div className={styles.historyDetails}>
+                  <dl className={styles.facts}>
+                    <dt>Render ID</dt>
+                    <dd>{render.renderId}</dd>
+                    <dt>Project</dt>
+                    <dd>{render.projectId ?? 'unknown'}</dd>
+                    <dt>Format</dt>
+                    <dd>
+                      {render.sampleRate === null
+                        ? 'unknown sample rate'
+                        : `${render.sampleRate} Hz`}
+                      {render.durationMs === null
+                        ? ''
+                        : ` · ${(render.durationMs / 1000).toFixed(2)} s`}
+                    </dd>
+                  </dl>
+                  <ul className={styles.files}>
+                    {render.files.map((file) => (
+                      <li key={`${file.path}:${file.assetId ?? ''}`} title={file.path}>
+                        <Icon name="wave" />
+                        <span>{shortPath(file.path)}</span>
+                        <small data-missing={!file.fileExists || !file.assetRegistered}>
+                          {file.fileExists ? formatBytes(file.fileSizeBytes) : 'file missing'} ·{' '}
+                          {file.assetRegistered ? `Asset ${file.assetId}` : 'Asset missing'}
+                        </small>
+                      </li>
+                    ))}
+                  </ul>
+                  {render.measurements.map((measurement, index) => (
+                    <RenderMeasurements key={index} value={measurement} />
+                  ))}
+                  {render.diagnostics.map((diagnostic) => (
+                    <p className={styles.warning} role="alert" key={diagnostic}>
+                      {diagnostic}
+                    </p>
+                  ))}
+                </div>
+              )}
+            </li>
           );
         })}
-      </div>
-      {message && <p role="status">{message}</p>}
-      {error && <p role="alert">{error}</p>}
+      </ul>
+      {message && (
+        <p className={controls.hint} role="status">
+          {message}
+        </p>
+      )}
+      {error && (
+        <p className={styles.error} role="alert">
+          {error}
+        </p>
+      )}
       {pendingDeleteRender && (
         <ConfirmDialog
           title="Delete render permanently?"
@@ -216,6 +260,6 @@ export function RenderHistoryPanel({ api, refreshToken }: Props) {
           onCancel={() => setPendingDeleteRender(null)}
         />
       )}
-    </section>
+    </DialogSection>
   );
 }

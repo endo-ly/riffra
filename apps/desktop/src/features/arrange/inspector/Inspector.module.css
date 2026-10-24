@@ -234,39 +234,19 @@ button.identityTile[aria-expanded='true'] {
   gap: var(--space-1-5);
 }
 
-.control,
+.control {
+  composes: control from '../../../shared/ui/controls.module.css';
+}
+
 .inlineField,
 .splitControl {
-  height: 24px;
-  color: var(--color-text-primary);
-  font-size: var(--font-size-small);
-  background-color: var(--color-bg-surface);
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  transition: background-color var(--duration-fast);
+  composes: well from '../../../shared/ui/controls.module.css';
 }
 
-.control:hover,
-.inlineField:hover,
-.splitControl:hover {
-  background-color: var(--color-bg-surface-raised);
-}
-
-.control:focus-visible,
 .inlineField:focus-within,
 .splitControl:focus-within {
   border-color: color-mix(in srgb, var(--color-accent) 70%, transparent);
   outline: none;
-}
-
-.control {
-  width: 100%;
-  min-width: 0;
-  padding: 0 var(--space-2);
-}
-
-select.control {
-  padding-right: var(--space-6);
 }
 
 /* A value with its name inside the well: `Start 1.1.000`. */
@@ -384,19 +364,9 @@ select.control {
   outline: none;
 }
 
-.range {
-  composes: slider from '../../../shared/ui/controls.module.css';
-}
-
 /* Fills the track between the field's origin and its value. */
-.mixField .range::-webkit-slider-runnable-track {
-  background: linear-gradient(
-    to right,
-    var(--color-border-subtle) var(--fill-start),
-    color-mix(in srgb, var(--color-accent) 75%, transparent) var(--fill-start) var(--fill-end),
-    var(--color-border-subtle) var(--fill-end)
-  );
-  box-shadow: none;
+.range {
+  composes: fillSlider from '../../../shared/ui/controls.module.css';
 }
 
 /* The instrument and effect chain at a glance; opens Devices to edit them. */
@@ -463,48 +433,11 @@ select.control {
 
 /* Options in one well; the chosen one rises out of it. Also groups step actions. */
 .segmented {
-  display: flex;
-  gap: var(--space-0-5);
-  padding: var(--space-0-5);
-  background: var(--color-bg-surface);
-  border-radius: var(--radius-sm);
+  composes: segmented from '../../../shared/ui/controls.module.css';
 }
 
 .segmentedGap {
   margin-top: var(--space-1-5);
-}
-
-.segmented button {
-  flex: 1;
-  min-height: 20px;
-  padding: 0 var(--space-2);
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-micro);
-  font-weight: 500;
-  background: transparent;
-  border: 0;
-  border-radius: 3px;
-  transition:
-    background-color var(--duration-fast),
-    color var(--duration-fast);
-}
-
-.segmented button:hover:not(:disabled) {
-  color: var(--color-text-strong);
-  background: color-mix(in srgb, var(--color-text-primary) 5%, transparent);
-}
-
-.segmented button:disabled {
-  color: var(--color-text-disabled);
-}
-
-.segmented button[aria-pressed='true'] {
-  color: var(--color-text-strong);
-  background: var(--color-control-active);
-}
-
-.segmented button[aria-pressed='true']:hover:not(:disabled) {
-  background: var(--color-control-active-hover);
 }
 
 .buttonRow {
@@ -518,75 +451,19 @@ select.control {
 }
 
 .smallButton {
-  min-height: 24px;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1-5);
-  padding: 0 var(--space-2-5);
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-micro);
-  font-weight: 500;
-  background: var(--color-bg-surface);
-  border: 0;
-  border-radius: var(--radius-sm);
-  transition:
-    background-color var(--duration-fast),
-    color var(--duration-fast);
+  composes: smallButton from '../../../shared/ui/controls.module.css';
 }
 
-.smallButton:hover {
-  color: var(--color-text-strong);
-  background: var(--color-bg-surface-raised);
+.accent {
+  composes: accent from '../../../shared/ui/controls.module.css';
 }
 
-.smallButton.accent {
-  color: var(--color-accent);
-  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
-}
-
-.smallButton.accent:hover {
-  background: color-mix(in srgb, var(--color-accent) 20%, transparent);
-}
-
-.smallButton.danger:hover {
-  color: var(--color-status-danger);
-  background: color-mix(in srgb, var(--color-status-danger) 12%, transparent);
+.danger {
+  composes: danger from '../../../shared/ui/controls.module.css';
 }
 
 .iconButton {
-  width: 24px;
-  height: 24px;
-  display: grid;
-  place-items: center;
-  padding: 0;
-  color: var(--color-text-muted);
-  background: transparent;
-  border: 0;
-  border-radius: var(--radius-sm);
-  transition:
-    background-color var(--duration-fast),
-    color var(--duration-fast);
-}
-
-.iconButton svg {
-  width: var(--size-icon-md);
-  height: var(--size-icon-md);
-}
-
-.iconButton:hover,
-.iconButton:focus-visible,
-.iconButton[aria-expanded='true'] {
-  color: var(--color-text-strong);
-  background: var(--color-bg-surface);
-}
-
-.iconButton[aria-pressed='true'] {
-  color: var(--color-accent);
-  background: var(--color-control-active);
-}
-
-.iconButton[aria-pressed='true']:hover {
-  background: var(--color-control-active-hover);
+  composes: iconButton from '../../../shared/ui/controls.module.css';
 }
 
 .take {

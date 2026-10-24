@@ -121,10 +121,11 @@ it('edits Group and Send routes, commits their controls, and opens Bus and Maste
   fireEvent.change(screen.getByLabelText('Main output'), { target: { value: 'bus:group' } });
   await waitFor(() => expect(screen.getByLabelText('Main output')).toHaveValue('bus:group'));
   fireEvent.change(screen.getByLabelText('Add Send'), { target: { value: 'bus:return' } });
-  const slider = await screen.findByLabelText('Send send:1 level');
-  fireEvent.click(within(slider.closest('fieldset')!).getByRole('button', { name: 'Automation' }));
+  const send = await screen.findByRole('group', { name: 'Reverb send' });
+  const slider = within(send).getByLabelText('Reverb send level');
+  fireEvent.click(within(send).getByRole('button', { name: 'Automation' }));
   expect(openAutomation).toHaveBeenLastCalledWith({ kind: 'sendLevel', sendId: 'send:1' });
-  const enabled = screen.getByRole('checkbox', { name: 'Enabled' });
+  const enabled = within(send).getByRole('switch', { name: 'Enabled' });
   fireEvent.click(enabled);
   await waitFor(() => expect(session.arrangement.mixer.sends[0].enabled).toBe(false));
   expect(api.updateSend).toHaveBeenCalledWith('send:1', { enabled: false });
@@ -139,11 +140,12 @@ it('edits Group and Send routes, commits their controls, and opens Bus and Maste
   await waitFor(() => expect(session.arrangement.mixer.sends[0].enabled).toBe(true));
   expect(api.updateSend).toHaveBeenCalledWith('send:1', { enabled: true });
   expect(session.arrangement.mixer.sends[0].levelDb).toBe(-12);
-  fireEvent.change(screen.getByLabelText('Send send:1 position'), {
-    target: { value: 'preFader' },
-  });
+  fireEvent.click(within(send).getByRole('button', { name: 'Pre' }));
   await waitFor(() =>
-    expect(screen.getByLabelText('Send send:1 position')).toHaveValue('preFader'),
+    expect(within(send).getByRole('button', { name: 'Pre' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    ),
   );
   fireEvent.click(screen.getByRole('button', { name: 'Close' }));
   expect(await screen.findByRole('button', { name: 'Group · 1 Sends' })).toBeInTheDocument();

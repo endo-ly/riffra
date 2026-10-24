@@ -82,7 +82,7 @@ export function MixerMasterChannelStrip(props: MixerMasterChannelStripProps) {
         <button type="button" className={styles.routeButton} onClick={props.onOpenAutomation}>
           Automation
         </button>
-        <button type="button" onClick={props.onOpenMixdown}>
+        <button type="button" className={styles.mixdownButton} onClick={props.onOpenMixdown}>
           Mixdown…
         </button>
       </div>

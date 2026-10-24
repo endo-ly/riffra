@@ -13,6 +13,7 @@ import { MixerRouting } from './MixerRouting';
 import { MixerBusChannelStrip } from './MixerBusChannelStrip';
 import { MixerMasterChannelStrip } from './MixerMasterChannelStrip';
 import { MixerTrackChannelStrip } from './MixerTrackChannelStrip';
+import controls from '@/shared/ui/controls.module.css';
 import styles from './Mixer.module.css';
 
 interface MixerPanelProps {
@@ -87,6 +88,7 @@ export function MixerPanel(props: MixerPanelProps) {
           }}
         >
           <input
+            className={controls.control}
             aria-label="New channel name"
             placeholder="Channel name"
             value={newName}
@@ -94,6 +96,7 @@ export function MixerPanel(props: MixerPanelProps) {
             disabled={props.disabled || busy}
           />
           <select
+            className={controls.control}
             aria-label="New channel kind"
             value={newKind}
             onChange={(e) => setNewKind(e.currentTarget.value as MixBusKind)}
@@ -101,12 +104,17 @@ export function MixerPanel(props: MixerPanelProps) {
             <option value="group">Group</option>
             <option value="return">Return</option>
           </select>
-          <button type="submit" disabled={props.disabled || busy || !newName.trim()}>
+          <button
+            type="submit"
+            className={`${controls.smallButton} ${controls.accent}`}
+            disabled={props.disabled || busy || !newName.trim()}
+          >
             Add channel
           </button>
           {selectedBus && (
             <>
               <input
+                className={controls.control}
                 key={selectedBus.id}
                 aria-label="Channel name"
                 defaultValue={selectedBus.name}
@@ -117,6 +125,7 @@ export function MixerPanel(props: MixerPanelProps) {
               />
               <button
                 type="button"
+                className={`${controls.smallButton} ${controls.danger}`}
                 disabled={props.disabled}
                 onClick={() => commit(props.api.removeMixBus(selectedBus.id))}
               >

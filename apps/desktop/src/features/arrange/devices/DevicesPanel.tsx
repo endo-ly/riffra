@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 import type {
   Arrangement,
   ArrangementMutationResult,
@@ -11,10 +11,13 @@ import type {
 } from '@/model/domain';
 import type { ArrangeWorkspaceApi } from '../arrange-api';
 import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
+import { Toolbar } from '@/shared/ui/Toolbar';
+import { resolveTrackColor } from '../model/track-colors';
 import { DeviceParameterEditor } from './DeviceParameterEditor';
 import { DeviceChain } from './DeviceChain';
 import { InstrumentMidiSettingsEditor } from './InstrumentMidiSettingsEditor';
 import type { DeviceTarget } from './device-target';
+import controls from '@/shared/ui/controls.module.css';
 import styles from './Devices.module.css';
 
 interface DevicesPanelProps {
@@ -98,70 +101,98 @@ export function DevicesPanel(props: DevicesPanelProps) {
         applyArrangementMutation(result, props.applyCanonicalState, setError);
       }),
     );
+  const color = track ? resolveTrackColor(track, props.arrangement.tracks.indexOf(track)) : null;
+  const effectCount = target?.effects.length ?? 0;
+  const deviceSummary = target
+    ? [track?.instrument?.name, `${effectCount} effect${effectCount === 1 ? '' : 's'}`]
+        .filter(Boolean)
+        .join(' · ')
+    : null;
   return (
-    <div className={styles.panel} aria-label="Devices">
-      <header className={styles.header}>
-        <strong>DEVICES</strong>
-        <span>{target?.name ?? 'Select a channel'}</span>
-      </header>
-      {target ? (
-        <DeviceChain
-          {...props}
-          target={target}
-          selectedDeviceId={selectedDeviceId}
-          onSelectDevice={setSelectedDeviceId}
-          commit={commit}
-          runOperation={runOperation}
-        />
-      ) : (
-        <p>Select a channel to edit its devices.</p>
-      )}
-      {track?.instrument && (
-        <InstrumentMidiSettingsEditor
-          settings={track.instrument.midi}
-          recommendedRange={instrumentLibraryItem?.recommendedRange ?? null}
-          warnings={midiInspection?.trackId === track.id ? midiInspection.warnings : []}
-          onSave={(settings) => commit(props.api.setInstrumentMidiSettings(track.id, settings))}
-        />
-      )}
-      {target && device && plugin && !unavailable && (
-        <DeviceParameterEditor
-          key={`${props.projectId}:${JSON.stringify(target.owner)}:${device.id}:${plugin.path}`}
-          api={props.api}
-          automationLanes={props.automationLanes}
-          automationReadActive={
-            props.playing &&
-            props.automationLanes.some(
-              (lane) =>
-                lane.target.kind === 'deviceParameter' && lane.target.deviceId === device.id,
-            )
-          }
-          currentTick={props.currentTick}
-          onOpenAutomation={(parameter) => {
-            if (parameter.parameterId)
-              props.onOpenAutomation({
-                kind: 'deviceParameter',
-                deviceId: device.id,
-                parameterId: parameter.parameterId,
-              });
-          }}
-          owner={target.owner}
-          deviceId={device.id}
-          stateData={plugin.stateData}
-          parameterValues={plugin.parameterValues}
-          applyCanonicalState={props.applyCanonicalState}
-          arrangement={props.arrangement}
-          isInstrument={track?.instrument?.id === device.id}
-          commit={commit}
-          onOpenSidechainAutomation={(sidechainSendId) =>
-            props.onOpenAutomation({ kind: 'sidechainSendLevel', sidechainSendId })
-          }
-        />
-      )}
-      {device && !plugin && (
-        <p>Built-in Instrument · use Change, Clear or Bypass to edit this device.</p>
-      )}
-      {error && <p role="alert">{error}</p>}
+    <div
+      className={styles.panel}
+      aria-label="Devices"
+      style={color ? ({ '--track-color': color } as CSSProperties) : undefined}
+    >
+      <Toolbar label="Devices toolbar">
+        <span className={styles.identity} title={target?.name}>
+          {target?.name ?? 'Devices'}
+          {deviceSummary && <small>{deviceSummary}</small>}
+        </span>
+      </Toolbar>
+      <div className={styles.content}>
+        {target ? (
+          <DeviceChain
+            {...props}
+            target={target}
+            selectedDeviceId={selectedDeviceId}
+            onSelectDevice={setSelectedDeviceId}
+            commit={commit}
+            runOperation={runOperation}
+          />
+        ) : (
+          <p className={controls.placeholder}>Select a channel to edit its devices.</p>
+        )}
+        {target && (
+          <div className={styles.workbench} data-midi={Boolean(track?.instrument)}>
+            {device && plugin && !unavailable ? (
+              <DeviceParameterEditor
+                key={`${props.projectId}:${JSON.stringify(target.owner)}:${device.id}:${plugin.path}`}
+                api={props.api}
+                automationLanes={props.automationLanes}
+                automationReadActive={
+                  props.playing &&
+                  props.automationLanes.some(
+                    (lane) =>
+                      lane.target.kind === 'deviceParameter' && lane.target.deviceId === device.id,
+                  )
+                }
+                currentTick={props.currentTick}
+                onOpenAutomation={(parameter) => {
+                  if (parameter.parameterId)
+                    props.onOpenAutomation({
+                      kind: 'deviceParameter',
+                      deviceId: device.id,
+                      parameterId: parameter.parameterId,
+                    });
+                }}
+                owner={target.owner}
+                deviceId={device.id}
+                stateData={plugin.stateData}
+                parameterValues={plugin.parameterValues}
+                applyCanonicalState={props.applyCanonicalState}
+                arrangement={props.arrangement}
+                isInstrument={track?.instrument?.id === device.id}
+                commit={commit}
+                onOpenSidechainAutomation={(sidechainSendId) =>
+                  props.onOpenAutomation({ kind: 'sidechainSendLevel', sidechainSendId })
+                }
+              />
+            ) : (
+              <p className={controls.placeholder}>
+                {device && !plugin
+                  ? 'Built-in Instrument · use Change, Clear or Bypass to edit this device.'
+                  : 'Select a device to edit its parameters.'}
+              </p>
+            )}
+            {track?.instrument && (
+              <InstrumentMidiSettingsEditor
+                settings={track.instrument.midi}
+                recommendedRange={instrumentLibraryItem?.recommendedRange ?? null}
+                warnings={midiInspection?.trackId === track.id ? midiInspection.warnings : []}
+                onSave={(settings) =>
+                  commit(props.api.setInstrumentMidiSettings(track.id, settings))
+                }
+              />
+            )}
+          </div>
+        )}
+        {error && (
+          <p className={styles.error} role="alert">
+            {error}
+          </p>
+        )}
+      </div>
     </div>
   );
 }

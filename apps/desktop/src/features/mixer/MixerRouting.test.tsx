@@ -63,7 +63,7 @@ it('lists the sidechain sends of the track and opens their automation', () => {
     />,
   );
   expect(screen.getByText('Compressor')).toBeInTheDocument();
-  expect(screen.getByLabelText('Sidechain sidechain:1 level')).toHaveValue('-6');
+  expect(screen.getByLabelText('Compressor sidechain level')).toHaveValue('-6');
   fireEvent.click(screen.getByRole('button', { name: 'Automation' }));
   expect(opened).toEqual([{ kind: 'sidechainSendLevel', sidechainSendId: 'sidechain:1' }]);
 });

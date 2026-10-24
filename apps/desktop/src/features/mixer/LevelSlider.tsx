@@ -1,5 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import type { ArrangementMutationResult } from '@/model/domain';
+import { formatGainDb } from '@/shared/audio/mix-format';
+import controls from '@/shared/ui/controls.module.css';
+
+const MIN_DB = -90;
+const MAX_DB = 24;
 
 interface LevelSliderProps {
   ariaLabel: string;
@@ -75,14 +80,19 @@ export function LevelSlider({
         );
       });
   };
+  const fill = {
+    '--fill-start': '0%',
+    '--fill-end': `${((draft - MIN_DB) / (MAX_DB - MIN_DB)) * 100}%`,
+  } as CSSProperties;
   return (
-    <label>
-      Level{' '}
+    <>
       <input
         type="range"
+        className={controls.fillSlider}
+        style={fill}
         aria-label={ariaLabel}
-        min={-90}
-        max={24}
+        min={MIN_DB}
+        max={MAX_DB}
         step={0.1}
         value={draft}
         onChange={(e) => {
@@ -109,7 +119,7 @@ export function LevelSlider({
         }}
         onBlur={(e) => finish(Number(e.currentTarget.value))}
       />
-      <output>{draft.toFixed(1)} dB</output>
-    </label>
+      <output>{formatGainDb(draft)}</output>
+    </>
   );
 }

@@ -2,14 +2,15 @@ import type {
   Arrangement,
   ArrangementMutationResult,
   AutomationTarget,
-  Send,
   Track,
 } from '@/model/domain';
 import type { ArrangeWorkspaceApi } from '@/features/arrange/arrange-api';
 import { sidechainTargetName } from '@/features/arrange/model/automation-targets';
-import { LevelSlider } from './LevelSlider';
+import { resolveTrackColor } from '@/features/arrange/model/track-colors';
+import controls from '@/shared/ui/controls.module.css';
+import { DialogRow, DialogSection, MixerDialog } from './MixerDialog';
+import { SendRow } from './SendRow';
 import { SidechainSendControls } from './SidechainSendControls';
-import styles from './Mixer.module.css';
 
 interface Props {
   arrangement: Arrangement;
@@ -18,27 +19,6 @@ interface Props {
   commit: (operation: Promise<ArrangementMutationResult>) => void;
   onClose: () => void;
   onOpenAutomation: (target: AutomationTarget) => void;
-}
-
-function SendLevel({
-  send,
-  api,
-  commit,
-}: {
-  send: Send;
-  api: ArrangeWorkspaceApi;
-  commit: Props['commit'];
-}) {
-  return (
-    <LevelSlider
-      ariaLabel={`Send ${send.id} level`}
-      initial={send.levelDb}
-      enabled={send.enabled}
-      preview={(value) => api.previewSendLevel(send.id, value)}
-      submit={(value) => api.updateSend(send.id, { levelDb: value })}
-      commit={commit}
-    />
-  );
 }
 
 export function MixerRouting({
@@ -54,27 +34,21 @@ export function MixerRouting({
   const sidechainSends = arrangement.mixer.sidechainSends.filter(
     (send) => send.sourceTrackId === track.id,
   );
+  const unusedReturns = returns.filter((bus) => !sends.some((send) => send.returnBusId === bus.id));
   return (
-    <div className={styles.routingOverlay} role="presentation" onMouseDown={onClose}>
-      <section
-        className={styles.routingDialog}
-        role="dialog"
-        aria-modal="true"
-        aria-label={`${track.name} routing`}
-        onMouseDown={(e) => e.stopPropagation()}
-        onKeyDown={(e) => {
-          if (e.key === 'Escape') onClose();
-        }}
-      >
-        <header>
-          <strong>{track.name} · Routing</strong>
-          <button autoFocus type="button" onClick={onClose}>
-            Close
-          </button>
-        </header>
-        <label>
-          Main output{' '}
+    <MixerDialog
+      label={`${track.name} routing`}
+      title={track.name}
+      subtitle="Routing"
+      icon="route"
+      color={resolveTrackColor(track, arrangement.tracks.indexOf(track))}
+      closeOnBackdrop
+      onClose={onClose}
+    >
+      <DialogSection title="Output">
+        <DialogRow label="Main output">
           <select
+            className={controls.control}
             aria-label="Main output"
             value={track.outputBusId ?? ''}
             onChange={(e) => commit(api.setTrackOutput(track.id, e.currentTarget.value || null))}
@@ -88,98 +62,87 @@ export function MixerRouting({
                 </option>
               ))}
           </select>
-        </label>
-        <h3>Sends</h3>
-        {sends.map((send) => (
-          <fieldset key={send.id}>
-            <label>
-              Return{' '}
-              <select
-                aria-label={`Send ${send.id} return`}
-                value={send.returnBusId}
-                onChange={(e) =>
-                  commit(api.updateSend(send.id, { returnBusId: e.currentTarget.value }))
-                }
-              >
-                {returns
-                  .filter(
-                    (bus) =>
-                      bus.id === send.returnBusId ||
-                      !sends.some((other) => other.returnBusId === bus.id),
-                  )
-                  .map((bus) => (
-                    <option key={bus.id} value={bus.id}>
-                      {bus.name}
-                    </option>
-                  ))}
-              </select>
-            </label>
-            <button
-              type="button"
-              onClick={() => onOpenAutomation({ kind: 'sendLevel', sendId: send.id })}
-            >
-              Automation
-            </button>
-            <SendLevel send={send} api={api} commit={commit} />
-            <label>
-              Position{' '}
-              <select
-                aria-label={`Send ${send.id} position`}
-                value={send.position}
-                onChange={(e) =>
-                  commit(
-                    api.updateSend(send.id, {
-                      position: e.currentTarget.value as Send['position'],
-                    }),
-                  )
-                }
-              >
-                <option value="postFader">Post-Fader</option>
-                <option value="preFader">Pre-Fader</option>
-              </select>
-            </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={send.enabled}
-                onChange={(e) =>
-                  commit(api.updateSend(send.id, { enabled: e.currentTarget.checked }))
-                }
-              />
-              Enabled
-            </label>
-            <button type="button" onClick={() => commit(api.removeSend(send.id))}>
-              Remove Send
-            </button>
-          </fieldset>
-        ))}
-        <label>
-          Add Send{' '}
+        </DialogRow>
+      </DialogSection>
+      <DialogSection
+        title="Sends"
+        action={
           <select
+            className={controls.actionSelect}
             aria-label="Add Send"
             value=""
+            disabled={!unusedReturns.length}
             onChange={(e) => {
               if (e.currentTarget.value)
                 commit(api.addSend(track.id, e.currentTarget.value, -6, 'postFader'));
             }}
           >
-            <option value="">Choose Return</option>
-            {returns
-              .filter((bus) => !sends.some((send) => send.returnBusId === bus.id))
-              .map((bus) => (
-                <option key={bus.id} value={bus.id}>
-                  {bus.name}
-                </option>
-              ))}
+            <option value="">+ Add Send</option>
+            {unusedReturns.map((bus) => (
+              <option key={bus.id} value={bus.id}>
+                {bus.name}
+              </option>
+            ))}
           </select>
-        </label>
-        {!returns.length && <p>Add a Return channel to create Sends.</p>}
-        <h3>Sidechain</h3>
+        }
+      >
+        {sends.map((send) => {
+          const returnName =
+            returns.find((bus) => bus.id === send.returnBusId)?.name ?? 'Missing Return';
+          return (
+            <SendRow
+              key={send.id}
+              label={`${returnName} send`}
+              endpoint={
+                <select
+                  className={controls.control}
+                  aria-label="Return"
+                  value={send.returnBusId}
+                  onChange={(e) =>
+                    commit(api.updateSend(send.id, { returnBusId: e.currentTarget.value }))
+                  }
+                >
+                  {returns
+                    .filter(
+                      (bus) =>
+                        bus.id === send.returnBusId ||
+                        !sends.some((other) => other.returnBusId === bus.id),
+                    )
+                    .map((bus) => (
+                      <option key={bus.id} value={bus.id}>
+                        {bus.name}
+                      </option>
+                    ))}
+                </select>
+              }
+              levelDb={send.levelDb}
+              position={send.position}
+              enabled={send.enabled}
+              removeLabel="Remove Send"
+              previewLevel={(value) => api.previewSendLevel(send.id, value)}
+              submitLevel={(value) => api.updateSend(send.id, { levelDb: value })}
+              commit={commit}
+              onPositionChange={(position) => commit(api.updateSend(send.id, { position }))}
+              onEnabledChange={(enabled) => commit(api.updateSend(send.id, { enabled }))}
+              onOpenAutomation={() => onOpenAutomation({ kind: 'sendLevel', sendId: send.id })}
+              onRemove={() => commit(api.removeSend(send.id))}
+            />
+          );
+        })}
+        {!sends.length && (
+          <p className={controls.placeholder}>
+            {returns.length
+              ? 'No Sends. Add one to feed a Return channel in parallel.'
+              : 'Add a Return channel to create Sends.'}
+          </p>
+        )}
+      </DialogSection>
+      <DialogSection title="Sidechain">
         {sidechainSends.map((send) => (
           <SidechainSendControls
             key={send.id}
             send={send}
-            title={sidechainTargetName(arrangement, send.targetDeviceId) ?? 'Unknown device'}
+            endpointName={sidechainTargetName(arrangement, send.targetDeviceId) ?? 'Unknown device'}
             api={api}
             commit={commit}
             onOpenAutomation={() =>
@@ -187,8 +150,12 @@ export function MixerRouting({
             }
           />
         ))}
-        {!sidechainSends.length && <p>Add sidechain sends from the target device in Devices.</p>}
-      </section>
-    </div>
+        {!sidechainSends.length && (
+          <p className={controls.placeholder}>
+            Add sidechain sends from the target device in Devices.
+          </p>
+        )}
+      </DialogSection>
+    </MixerDialog>
   );
 }

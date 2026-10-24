@@ -6,6 +6,7 @@ import type {
 } from '@/model/domain';
 import type { ArrangeWorkspaceApi } from '../arrange-api';
 import { SidechainSendControls } from '@/features/mixer/SidechainSendControls';
+import controls from '@/shared/ui/controls.module.css';
 import styles from './Devices.module.css';
 
 interface DeviceSidechainEditorProps {
@@ -40,31 +41,13 @@ export function DeviceSidechainEditor({
   const input = capabilities.stereo ? 'Stereo' : capabilities.mono ? 'Mono' : 'Unavailable';
   return (
     <section className={styles.sidechain} aria-label="Sidechain input">
-      <h4>
-        Sidechain input · {input} · {capabilities.channels} channel
-        {capabilities.channels === 1 ? '' : 's'}
-      </h4>
-      {!canAddSource && (
-        <p>
-          {capabilities.reason ?? 'This VST3 does not support a mono or stereo auxiliary input.'}
-        </p>
-      )}
-      {sends.map((send) => (
-        <SidechainSendControls
-          key={send.id}
-          send={send}
-          title={
-            arrangement.tracks.find((track) => track.id === send.sourceTrackId)?.name ??
-            send.sourceTrackId
-          }
-          api={api}
-          commit={commit}
-          onOpenAutomation={() => onOpenAutomation(send.id)}
-        />
-      ))}
-      <label>
-        Add Source{' '}
+      <header className={styles.subHeader}>
+        <h4>
+          Sidechain input · {input} · {capabilities.channels} channel
+          {capabilities.channels === 1 ? '' : 's'}
+        </h4>
         <select
+          className={controls.actionSelect}
           aria-label="Add Sidechain source"
           value=""
           disabled={!canAddSource || !candidates.length}
@@ -73,15 +56,33 @@ export function DeviceSidechainEditor({
               commit(api.addSidechainSend(event.currentTarget.value, deviceId, -6, 'postFader'));
           }}
         >
-          <option value="">Choose Track</option>
+          <option value="">+ Add Source</option>
           {candidates.map((track) => (
             <option key={track.id} value={track.id}>
               {track.name}
             </option>
           ))}
         </select>
-      </label>
-      {!candidates.length && <p>All Tracks already feed this device.</p>}
+      </header>
+      {!canAddSource && (
+        <p className={controls.hint}>
+          {capabilities.reason ?? 'This VST3 does not support a mono or stereo auxiliary input.'}
+        </p>
+      )}
+      {sends.map((send) => (
+        <SidechainSendControls
+          key={send.id}
+          send={send}
+          endpointName={
+            arrangement.tracks.find((track) => track.id === send.sourceTrackId)?.name ??
+            send.sourceTrackId
+          }
+          api={api}
+          commit={commit}
+          onOpenAutomation={() => onOpenAutomation(send.id)}
+        />
+      ))}
+      {!candidates.length && <p className={controls.hint}>All Tracks already feed this device.</p>}
     </section>
   );
 }

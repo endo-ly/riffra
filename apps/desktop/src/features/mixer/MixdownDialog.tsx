@@ -1,6 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import type {
-  AudioMeasurements,
   BackgroundJobStatus,
   CanonicalState,
   CreativeSession,
@@ -9,9 +8,13 @@ import type {
   RenderRange,
 } from '@/model/domain';
 import type { ArrangeWorkspaceApi } from '@/features/arrange/arrange-api';
-import { RenderHistoryPanel } from './RenderHistoryPanel';
 import { chooseRenderStemDirectory, saveRenderWav } from '@/native/dialog';
-import styles from './Mixer.module.css';
+import { Icon } from '@/shared/ui/primitives';
+import controls from '@/shared/ui/controls.module.css';
+import { DialogRow, DialogSection, MixerDialog } from './MixerDialog';
+import { RenderHistoryPanel } from './RenderHistoryPanel';
+import { RenderMeasurements } from './RenderMeasurements';
+import styles from './Mixdown.module.css';
 
 interface Props {
   session: CreativeSession;
@@ -37,47 +40,54 @@ function sameMixdownSettings(left: MixdownSettings, right: MixdownSettings) {
   );
 }
 
-function Measurements({
-  value,
-  warnings,
-}: {
-  value: AudioMeasurements;
-  warnings: readonly string[];
-}) {
+interface NumberFieldProps {
+  label: string;
+  /** Full accessible name; the visible label relies on its section for context. */
+  name: string;
+  unit: string;
+  value: number | null;
+  min?: number;
+  max?: number;
+  required?: boolean;
+  onChange: (value: number | null) => void;
+}
+
+/** A labelled number in a well, its unit trailing the value. */
+function NumberField({ required = true, ...props }: NumberFieldProps) {
   return (
-    <>
-      <dl className={styles.measurements}>
-        <dt>Sample Peak</dt>
-        <dd>{value.samplePeakDbfs === null ? '−∞' : value.samplePeakDbfs.toFixed(2)} dBFS</dd>
-        {value.loudness.state === 'measured' ? (
-          <>
-            <dt>True Peak</dt>
-            <dd>{value.loudness.measurement.truePeakDb.toFixed(2)} dBTP</dd>
-            <dt>Integrated Loudness</dt>
-            <dd>{value.loudness.measurement.integratedLufs.toFixed(2)} LUFS</dd>
-            <dt>Loudness Range</dt>
-            <dd>{value.loudness.measurement.loudnessRangeLu.toFixed(2)} LU</dd>
-          </>
-        ) : (
-          <>
-            <dt>Loudness measurement</dt>
-            <dd>{value.loudness.reason}</dd>
-          </>
-        )}
-        {value.sectionLoudnessState.state === 'unavailable' && (
-          <>
-            <dt>Section loudness measurement</dt>
-            <dd>{value.sectionLoudnessState.reason}</dd>
-          </>
-        )}
-      </dl>
-      {warnings.map((warning) => (
-        <p key={warning} role="alert">
-          {warning}
-        </p>
-      ))}
-    </>
+    <label className={styles.numberField}>
+      <span>{props.label}</span>
+      <span className={styles.numberWell}>
+        <input
+          type="number"
+          aria-label={props.name}
+          min={props.min}
+          max={props.max}
+          step={0.1}
+          required={required}
+          value={props.value !== null && Number.isFinite(props.value) ? props.value : ''}
+          onChange={(e) =>
+            props.onChange(e.currentTarget.value === '' ? null : e.currentTarget.valueAsNumber)
+          }
+        />
+        <small>{props.unit}</small>
+      </span>
+    </label>
   );
+}
+
+const RANGES: readonly [RenderRange['kind'], string][] = [
+  ['entireArrangement', 'Entire arrangement'],
+  ['loopRange', 'Loop range'],
+];
+
+const OUTPUTS: readonly [boolean, string][] = [
+  [false, 'Stereo mix'],
+  [true, 'Aligned Track stems'],
+];
+
+function fileName(path: string) {
+  return path.split(/[\\/]/).at(-1) || path;
 }
 
 export function MixdownDialog(props: Props) {
@@ -95,6 +105,7 @@ export function MixdownDialog(props: Props) {
   const [saving, setSaving] = useState(false);
   const [job, setJob] = useState<BackgroundJobStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const formId = useId();
   const alive = useRef(true);
   useEffect(() => {
     alive.current = true;
@@ -197,134 +208,104 @@ export function MixdownDialog(props: Props) {
     job?.state === 'completed' && (job.kind === 'render' || job.kind === 'renderStems')
       ? job.result
       : null;
+  const progress = job?.progress ?? null;
   return (
-    <div className={styles.routingOverlay} role="presentation">
-      <section
-        className={styles.routingDialog}
-        role="dialog"
-        aria-modal="true"
-        aria-label="Mixdown"
-        onKeyDown={(e) => {
-          if (e.key === 'Escape' && !busy) props.onClose();
-        }}
-      >
-        <header>
-          <strong>MIXDOWN</strong>
-          <button autoFocus type="button" disabled={busy} onClick={props.onClose}>
-            Close
-          </button>
-        </header>
-        <p>
-          Master FX and Gain process the production mix. Loudness Mastering processes the rendered
-          WAV.
-        </p>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            void save((e.nativeEvent as SubmitEvent).submitter?.getAttribute('value') === 'render');
-          }}
-        >
-          <fieldset disabled={busy} className={styles.mixdownFields}>
-            <label>
-              <input
-                type="checkbox"
-                checked={enabled}
-                onChange={(e) => setEnabled(e.currentTarget.checked)}
-              />
-              Loudness Mastering
-            </label>
-            {enabled && (
+    <MixerDialog
+      label="Mixdown"
+      title="Mixdown"
+      subtitle="Render to WAV"
+      icon="wave"
+      closeDisabled={busy}
+      onClose={props.onClose}
+      footer={
+        <>
+          <div className={styles.status}>
+            {job && job.state !== 'failed' && (
               <>
-                <label>
-                  Target Integrated LUFS{' '}
-                  <input
-                    type="number"
-                    min={-70}
-                    max={-5}
-                    step={0.1}
-                    required
-                    value={Number.isFinite(target.integratedLufs) ? target.integratedLufs : ''}
-                    onChange={(e) =>
-                      setTarget({ ...target, integratedLufs: e.currentTarget.valueAsNumber })
-                    }
-                  />
-                </label>
-                <label>
-                  True Peak ceiling (dBTP){' '}
-                  <input
-                    type="number"
-                    min={-9}
-                    max={0}
-                    step={0.1}
-                    required
-                    value={Number.isFinite(target.truePeakDb) ? target.truePeakDb : ''}
-                    onChange={(e) =>
-                      setTarget({ ...target, truePeakDb: e.currentTarget.valueAsNumber })
-                    }
-                  />
-                </label>
-                <label>
-                  Loudness Range ceiling, monitor only (LU){' '}
-                  <input
-                    type="number"
-                    min={0}
-                    step={0.1}
-                    value={
-                      target.loudnessRangeLu !== null && Number.isFinite(target.loudnessRangeLu)
-                        ? target.loudnessRangeLu
-                        : ''
-                    }
-                    onChange={(e) =>
-                      setTarget({
-                        ...target,
-                        loudnessRangeLu:
-                          e.currentTarget.value === '' ? null : e.currentTarget.valueAsNumber,
-                      })
-                    }
-                  />
-                </label>
+                <span className={styles.statusLine} role="status">
+                  <span>{job.message}</span>
+                  {progress !== null && <output>{Math.round(progress * 100)}%</output>}
+                </span>
+                {active && (
+                  <span className={styles.progress}>
+                    <i style={{ width: `${(progress ?? 0) * 100}%` }} />
+                  </span>
+                )}
               </>
             )}
-            <label>
-              Tail (seconds)
-              <input
-                type="number"
-                min={0}
-                step={0.1}
-                required
-                value={Number.isFinite(tail) ? tail : ''}
-                onChange={(e) => setTail(e.currentTarget.valueAsNumber)}
-              />
-            </label>
-            <label>
-              Fade out (seconds)
-              <input
-                type="number"
-                min={0}
-                step={0.1}
-                required
-                value={Number.isFinite(fade) ? fade : ''}
-                onChange={(e) => setFade(e.currentTarget.valueAsNumber)}
-              />
-            </label>
-            <button type="submit" value="save">
+            {job?.state === 'failed' && (
+              <p className={styles.error} role="alert">
+                {job.message}
+              </p>
+            )}
+            {error && (
+              <p className={styles.error} role="alert">
+                {error}
+              </p>
+            )}
+          </div>
+          {active ? (
+            <button
+              type="button"
+              className={controls.smallButton}
+              disabled={job?.state === 'cancelling'}
+              onClick={() => void cancel()}
+            >
+              Cancel render
+            </button>
+          ) : (
+            <button
+              type="submit"
+              form={formId}
+              value="save"
+              className={controls.smallButton}
+              disabled={busy}
+            >
               Save settings
             </button>
-          </fieldset>
-          <fieldset disabled={busy} className={styles.mixdownFields}>
-            <label>
-              Range
+          )}
+          <button
+            type="submit"
+            form={formId}
+            value="render"
+            className={controls.primaryButton}
+            disabled={busy}
+          >
+            Save and render
+          </button>
+        </>
+      }
+    >
+      <form
+        id={formId}
+        onSubmit={(e) => {
+          e.preventDefault();
+          void save((e.nativeEvent as SubmitEvent).submitter?.getAttribute('value') === 'render');
+        }}
+      >
+        <fieldset disabled={busy} className={styles.fieldset}>
+          <DialogSection title="Render">
+            <DialogRow label="Range">
+              <div className={controls.segmented} role="group" aria-label="Range">
+                {RANGES.map(([kind, label]) => (
+                  <button
+                    key={kind}
+                    type="button"
+                    aria-pressed={range === kind}
+                    onClick={() => setRange(kind)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </DialogRow>
+            <DialogRow label="Source">
               <select
-                value={range}
-                onChange={(e) => setRange(e.currentTarget.value as RenderRange['kind'])}
+                className={controls.control}
+                aria-label="Source"
+                value={trackId}
+                onChange={(e) => setTrackId(e.currentTarget.value)}
               >
-                <option value="entireArrangement">Entire arrangement</option>
-                <option value="loopRange">Loop range</option>
-              </select>
-            </label>
-            <label>
-              Source
-              <select value={trackId} onChange={(e) => setTrackId(e.currentTarget.value)}>
                 <option value="">All Tracks</option>
                 {props.session.arrangement.tracks.map((track) => (
                   <option key={track.id} value={track.id}>
@@ -332,67 +313,152 @@ export function MixdownDialog(props: Props) {
                   </option>
                 ))}
               </select>
-            </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={stems}
-                onChange={(e) => {
-                  setStems(e.currentTarget.checked);
-                  setOutputPath('');
-                }}
-              />
-              Aligned Track stems
-            </label>
-            <div className={styles.renderOutputPicker}>
-              <span>{stems ? 'Stem output directory' : 'WAV output file'}</span>
-              <button type="button" onClick={() => void chooseOutput()}>
-                Choose output
-              </button>
-              <small>{outputPath || 'Keep output in the Riffra render store only'}</small>
-            </div>
+            </DialogRow>
+            <DialogRow label="Output">
+              <div className={controls.segmented} role="group" aria-label="Output">
+                {OUTPUTS.map(([value, label]) => (
+                  <button
+                    key={label}
+                    type="button"
+                    aria-pressed={stems === value}
+                    onClick={() => {
+                      if (stems === value) return;
+                      setStems(value);
+                      setOutputPath('');
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </DialogRow>
+            <DialogRow label={stems ? 'Stem folder' : 'WAV file'}>
+              <div className={styles.destination}>
+                <span className={styles.path} title={outputPath || undefined}>
+                  {outputPath ? (
+                    <code>{outputPath}</code>
+                  ) : (
+                    <em>Keep output in the Riffra render store only</em>
+                  )}
+                </span>
+                {outputPath && (
+                  <button
+                    type="button"
+                    className={controls.iconButton}
+                    aria-label="Clear output"
+                    title="Keep output in the Riffra render store only"
+                    onClick={() => setOutputPath('')}
+                  >
+                    <Icon name="close" />
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className={controls.smallButton}
+                  onClick={() => void chooseOutput()}
+                >
+                  <Icon name="folder" />
+                  Choose output
+                </button>
+              </div>
+            </DialogRow>
             {stems && (
-              <p>
+              <p className={controls.hint}>
                 Stems retain Group, Return and Master FX without individual loudness mastering.
                 Nonlinear shared FX can make their sum differ from the complete mix.
               </p>
             )}
-            <button type="submit" value="render">
-              Save and render
-            </button>
-          </fieldset>
-        </form>
-        {active && (
-          <button
-            type="button"
-            onClick={() => void cancel()}
-            disabled={job?.state === 'cancelling'}
+          </DialogSection>
+          <DialogSection
+            title="Loudness Mastering"
+            action={
+              <input
+                type="checkbox"
+                role="switch"
+                className={controls.switch}
+                aria-label="Loudness Mastering"
+                checked={enabled}
+                onChange={(e) => setEnabled(e.currentTarget.checked)}
+              />
+            }
           >
-            Cancel render
-          </button>
-        )}
-        {job && (
-          <p role="status">
-            {job.message}
-            {job.progress !== null ? ` · ${Math.round(job.progress * 100)}%` : ''}
-          </p>
-        )}
-        {job?.state === 'failed' && <p role="alert">{job.message}</p>}
-        {result &&
-          ('stems' in result ? (
+            <p className={controls.hint}>
+              Master FX and Gain process the production mix. Loudness Mastering processes the
+              rendered WAV.
+            </p>
+            <fieldset disabled={!enabled} className={styles.numbers}>
+              <NumberField
+                label="Integrated target"
+                name="Target Integrated LUFS"
+                unit="LUFS"
+                min={-70}
+                max={-5}
+                value={target.integratedLufs}
+                onChange={(value) => setTarget({ ...target, integratedLufs: value ?? NaN })}
+              />
+              <NumberField
+                label="True Peak ceiling"
+                name="True Peak ceiling (dBTP)"
+                unit="dBTP"
+                min={-9}
+                max={0}
+                value={target.truePeakDb}
+                onChange={(value) => setTarget({ ...target, truePeakDb: value ?? NaN })}
+              />
+              <NumberField
+                label="Range ceiling · monitor only"
+                name="Loudness Range ceiling, monitor only (LU)"
+                unit="LU"
+                min={0}
+                required={false}
+                value={target.loudnessRangeLu}
+                onChange={(value) => setTarget({ ...target, loudnessRangeLu: value })}
+              />
+            </fieldset>
+          </DialogSection>
+          <DialogSection title="Ending">
+            <div className={styles.numbers}>
+              <NumberField
+                label="Tail"
+                name="Tail (seconds)"
+                unit="s"
+                min={0}
+                value={tail}
+                onChange={(value) => setTail(value ?? NaN)}
+              />
+              <NumberField
+                label="Fade out"
+                name="Fade out (seconds)"
+                unit="s"
+                min={0}
+                value={fade}
+                onChange={(value) => setFade(value ?? NaN)}
+              />
+            </div>
+          </DialogSection>
+        </fieldset>
+      </form>
+      {result && (
+        <DialogSection title="Last render">
+          {'stems' in result ? (
             result.stems.map((stem) => (
-              <section key={stem.trackId}>
-                <h3>{stem.trackName}</h3>
-                <p>{stem.path}</p>
-                <Measurements value={stem.measurements} warnings={stem.warnings} />
-              </section>
+              <article key={stem.trackId} className={styles.result}>
+                <header>
+                  <strong>{stem.trackName}</strong>
+                  <small title={stem.path}>{stem.path}</small>
+                </header>
+                <RenderMeasurements value={stem.measurements} warnings={stem.warnings} />
+              </article>
             ))
           ) : (
-            <section>
-              <p>{result.path}</p>
-              <Measurements value={result.measurements} warnings={result.warnings} />
+            <article className={styles.result}>
+              <header>
+                <strong>{fileName(result.path)}</strong>
+                <small title={result.path}>{result.path}</small>
+              </header>
+              <RenderMeasurements value={result.measurements} warnings={result.warnings} />
               {result.mastering && (
-                <p>
+                <p className={controls.hint}>
                   Target {result.mastering.target.integratedLufs} LUFS · Completed{' '}
                   {(
                     result.mastering.target.integratedLufs +
@@ -408,14 +474,11 @@ export function MixdownDialog(props: Props) {
                   )}
                 </p>
               )}
-            </section>
-          ))}
-        <RenderHistoryPanel
-          api={props.api}
-          refreshToken={job?.state === 'completed' ? job.id : ''}
-        />
-        {error && <p role="alert">{error}</p>}
-      </section>
-    </div>
+            </article>
+          )}
+        </DialogSection>
+      )}
+      <RenderHistoryPanel api={props.api} refreshToken={job?.state === 'completed' ? job.id : ''} />
+    </MixerDialog>
   );
 }

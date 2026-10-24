@@ -1,11 +1,11 @@
-import type { ReactNode } from 'react';
 import type { ArrangementMutationResult, SidechainSend } from '@/model/domain';
 import type { ArrangeWorkspaceApi } from '@/features/arrange/arrange-api';
-import { LevelSlider } from './LevelSlider';
+import { SendRow } from './SendRow';
 
 interface SidechainSendControlsProps {
   send: SidechainSend;
-  title: ReactNode;
+  /** The other end of the sidechain: the target device from a Track, the source Track from a device. */
+  endpointName: string;
   api: ArrangeWorkspaceApi;
   commit: (operation: Promise<ArrangementMutationResult>) => void;
   onOpenAutomation: () => void;
@@ -13,55 +13,26 @@ interface SidechainSendControlsProps {
 
 export function SidechainSendControls({
   send,
-  title,
+  endpointName,
   api,
   commit,
   onOpenAutomation,
 }: SidechainSendControlsProps) {
   return (
-    <fieldset>
-      <strong>{title}</strong>
-      <button type="button" onClick={onOpenAutomation}>
-        Automation
-      </button>
-      <LevelSlider
-        ariaLabel={`Sidechain ${send.id} level`}
-        initial={send.levelDb}
-        enabled={send.enabled}
-        preview={(value) => api.previewSidechainSendLevel(send.id, value)}
-        submit={(value) => api.updateSidechainSend(send.id, { levelDb: value })}
-        commit={commit}
-      />
-      <label>
-        Position{' '}
-        <select
-          aria-label={`Sidechain ${send.id} position`}
-          value={send.position}
-          onChange={(e) =>
-            commit(
-              api.updateSidechainSend(send.id, {
-                position: e.currentTarget.value as SidechainSend['position'],
-              }),
-            )
-          }
-        >
-          <option value="postFader">Post-Fader</option>
-          <option value="preFader">Pre-Fader</option>
-        </select>
-      </label>
-      <label>
-        <input
-          type="checkbox"
-          checked={send.enabled}
-          onChange={(e) =>
-            commit(api.updateSidechainSend(send.id, { enabled: e.currentTarget.checked }))
-          }
-        />
-        Enabled
-      </label>
-      <button type="button" onClick={() => commit(api.removeSidechainSend(send.id))}>
-        Remove Sidechain
-      </button>
-    </fieldset>
+    <SendRow
+      label={`${endpointName} sidechain`}
+      endpoint={<span title={endpointName}>{endpointName}</span>}
+      levelDb={send.levelDb}
+      position={send.position}
+      enabled={send.enabled}
+      removeLabel="Remove Sidechain"
+      previewLevel={(value) => api.previewSidechainSendLevel(send.id, value)}
+      submitLevel={(value) => api.updateSidechainSend(send.id, { levelDb: value })}
+      commit={commit}
+      onPositionChange={(position) => commit(api.updateSidechainSend(send.id, { position }))}
+      onEnabledChange={(enabled) => commit(api.updateSidechainSend(send.id, { enabled }))}
+      onOpenAutomation={onOpenAutomation}
+      onRemove={() => commit(api.removeSidechainSend(send.id))}
+    />
   );
 }
