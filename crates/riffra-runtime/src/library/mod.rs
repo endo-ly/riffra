@@ -8,8 +8,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub mod index;
-pub mod instruments;
+pub(crate) mod index;
+pub(crate) mod instruments;
 
 const SEARCH_LIMIT: i64 = 200;
 

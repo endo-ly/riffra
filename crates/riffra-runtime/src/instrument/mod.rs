@@ -4,9 +4,7 @@ mod builtin;
 mod metadata;
 mod user;
 
-pub use builtin::{
-    BuiltInInstrumentCatalog, BuiltInInstrumentDefinition, BuiltInInstrumentSummary,
-};
-pub use user::{
-    ProjectInstrumentSnapshot, ResolvedUserInstrument, UserInstrumentManifest, UserInstrumentStore,
-};
+pub(crate) use builtin::BuiltInInstrumentCatalog;
+#[cfg(test)]
+pub(crate) use user::UserInstrumentManifest;
+pub(crate) use user::{ResolvedUserInstrument, UserInstrumentStore};

@@ -1,4 +1,4 @@
-use crate::BuiltInInstrumentCatalog;
+use crate::instrument::BuiltInInstrumentCatalog;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;

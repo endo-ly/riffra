@@ -139,13 +139,13 @@ impl HostDispatcher<'_> {
             CanonicalCommand::MusicRegionList(_) => Ok(ControlOutput::Regions(
                 riffra_core::application::list_regions(session),
             )),
-            CanonicalCommand::AssetImportMidi(params) => {
-                Ok(ControlOutput::AssetId(riffra_host::import_midi_asset(
+            CanonicalCommand::AssetImportMidi(params) => Ok(ControlOutput::AssetId(
+                crate::asset::application::import_midi_asset(
                     &self.data_root,
                     &params.path.to_string_lossy(),
                     params.name.as_deref(),
-                )?))
-            }
+                )?,
+            )),
             CanonicalCommand::InstrumentList(_) => self.list_instruments(),
             CanonicalCommand::InstrumentSave(params) => self.save_instrument(params),
             CanonicalCommand::InstrumentExport(params) => self.export_instrument(params),
