@@ -147,13 +147,13 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
                     }
                 }
                 RuntimeProjectionState::Failed => {
-                    if let Some(key) = target_key {
-                        if let Err(error) = status_transport.fail_play_for_projection(key) {
-                            if let Ok(mut failure) = status_transport_failure.lock() {
-                                *failure = Some(error.to_string());
-                            }
-                            tracing::warn!(error = ?error, "transport state could not be cleared after graph projection failure");
+                    if let Some(key) = target_key
+                        && let Err(error) = status_transport.fail_play_for_projection(key)
+                    {
+                        if let Ok(mut failure) = status_transport_failure.lock() {
+                            *failure = Some(error.to_string());
                         }
+                        tracing::warn!(error = ?error, "transport state could not be cleared after graph projection failure");
                     }
                 }
                 _ => {}
