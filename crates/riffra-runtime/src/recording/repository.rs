@@ -1,8 +1,8 @@
 use crate::api::output::{
     DropoutInformation, RecordingAsset, RecordingCapture, RecordingCaptureStatus,
 };
-use crate::audio::normalize_sample_rate;
 use crate::asset;
+use crate::audio::normalize_sample_rate;
 use riffra_core::AssetId;
 use riffra_host::now_ms;
 use serde::{Deserialize, Serialize};
@@ -197,6 +197,23 @@ fn persist_manifest<T: Serialize>(path: &Path, manifest: &T) -> std::io::Result<
         }
     }
     Ok(())
+}
+
+fn update_manifest_document(
+    path: &Path,
+    update: impl FnOnce(&mut serde_json::Map<String, serde_json::Value>) -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    let payload = fs::read(path)?;
+    let mut manifest = serde_json::from_slice::<serde_json::Value>(&payload)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+    let object = manifest.as_object_mut().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Recording manifest must be an object.",
+        )
+    })?;
+    update(object)?;
+    persist_manifest(path, &manifest)
 }
 
 fn partial_wav_samples(bytes: &[u8]) -> Option<u64> {
@@ -650,65 +667,59 @@ pub fn save_asset_ids(
     midi_asset_id: Option<AssetId>,
 ) -> std::io::Result<()> {
     let manifest_path = directory.join("manifest.json");
-    let mut manifest = read_manifest(&manifest_path).map_err(std::io::Error::other)?;
-    let mut capture = manifest.capture.take().unwrap_or_else(|| {
-        RecordingCapture::start(
-            format!("capture:{}", directory.to_string_lossy()),
-            "unknown",
-            now_ms(),
-        )
-    });
-    if capture.status == RecordingCaptureStatus::Recording {
-        let _ = capture.transition(RecordingCaptureStatus::Completing, now_ms());
-    }
-    let target = if manifest.state.as_deref() == Some("recoverable") {
-        RecordingCaptureStatus::Recoverable
-    } else if manifest.state.as_deref() == Some("failed") {
-        RecordingCaptureStatus::Failed
-    } else {
-        RecordingCaptureStatus::Completed
-    };
-    if capture.status == RecordingCaptureStatus::Completing {
-        let _ = capture.transition(target, now_ms());
-    }
-    capture.sample_rate = manifest.sample_rate.and_then(normalize_sample_rate);
-    capture.raw_audio_asset_id = raw_asset_id;
-    capture.processed_audio_asset_id = processed_asset_id;
-    capture.midi_asset_id = midi_asset_id;
-    capture.dropout_information = DropoutInformation {
-        samples_written: manifest.samples_written.unwrap_or_default(),
-        dropped_midi_events: manifest.dropped_midi_events.unwrap_or_default(),
-        dropped_blocks: manifest.dropped_blocks.unwrap_or_default(),
-        missing_samples: manifest.missing_samples.unwrap_or_default(),
-        dropout_start_sample: manifest.dropout_start_sample,
-        dropout_end_sample: manifest.dropout_end_sample,
-        raw_attempted_samples: manifest.raw_attempted_samples.unwrap_or_default(),
-        processed_attempted_samples: manifest.processed_attempted_samples.unwrap_or_default(),
-        raw_dropped_blocks: manifest.raw_dropped_blocks.unwrap_or_default(),
-        processed_dropped_blocks: manifest.processed_dropped_blocks.unwrap_or_default(),
-        raw_missing_samples: manifest.raw_missing_samples.unwrap_or_default(),
-        processed_missing_samples: manifest.processed_missing_samples.unwrap_or_default(),
-        raw_dropout_start_sample: manifest.raw_dropout_start_sample,
-        raw_dropout_end_sample: manifest.raw_dropout_end_sample,
-        processed_dropout_start_sample: manifest.processed_dropout_start_sample,
-        processed_dropout_end_sample: manifest.processed_dropout_end_sample,
-    };
-    manifest.capture = Some(capture);
-    let payload = fs::read(&manifest_path)?;
-    let mut value = serde_json::from_slice::<serde_json::Value>(&payload)
-        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
-    let object = value.as_object_mut().ok_or_else(|| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "Recording manifest must be an object.",
-        )
-    })?;
-    object.insert(
-        "capture".into(),
-        serde_json::to_value(manifest.capture)
-            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?,
-    );
-    persist_manifest(&manifest_path, &value)
+    update_manifest_document(&manifest_path, |object| {
+        let manifest =
+            serde_json::from_value::<RecordingManifest>(serde_json::Value::Object(object.clone()))
+                .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+        let mut capture = manifest.capture.unwrap_or_else(|| {
+            RecordingCapture::start(
+                format!("capture:{}", directory.to_string_lossy()),
+                "unknown",
+                now_ms(),
+            )
+        });
+        if capture.status == RecordingCaptureStatus::Recording {
+            let _ = capture.transition(RecordingCaptureStatus::Completing, now_ms());
+        }
+        let target = if manifest.state.as_deref() == Some("recoverable") {
+            RecordingCaptureStatus::Recoverable
+        } else if manifest.state.as_deref() == Some("failed") {
+            RecordingCaptureStatus::Failed
+        } else {
+            RecordingCaptureStatus::Completed
+        };
+        if capture.status == RecordingCaptureStatus::Completing {
+            let _ = capture.transition(target, now_ms());
+        }
+        capture.sample_rate = manifest.sample_rate.and_then(normalize_sample_rate);
+        capture.raw_audio_asset_id = raw_asset_id;
+        capture.processed_audio_asset_id = processed_asset_id;
+        capture.midi_asset_id = midi_asset_id;
+        capture.dropout_information = DropoutInformation {
+            samples_written: manifest.samples_written.unwrap_or_default(),
+            dropped_midi_events: manifest.dropped_midi_events.unwrap_or_default(),
+            dropped_blocks: manifest.dropped_blocks.unwrap_or_default(),
+            missing_samples: manifest.missing_samples.unwrap_or_default(),
+            dropout_start_sample: manifest.dropout_start_sample,
+            dropout_end_sample: manifest.dropout_end_sample,
+            raw_attempted_samples: manifest.raw_attempted_samples.unwrap_or_default(),
+            processed_attempted_samples: manifest.processed_attempted_samples.unwrap_or_default(),
+            raw_dropped_blocks: manifest.raw_dropped_blocks.unwrap_or_default(),
+            processed_dropped_blocks: manifest.processed_dropped_blocks.unwrap_or_default(),
+            raw_missing_samples: manifest.raw_missing_samples.unwrap_or_default(),
+            processed_missing_samples: manifest.processed_missing_samples.unwrap_or_default(),
+            raw_dropout_start_sample: manifest.raw_dropout_start_sample,
+            raw_dropout_end_sample: manifest.raw_dropout_end_sample,
+            processed_dropout_start_sample: manifest.processed_dropout_start_sample,
+            processed_dropout_end_sample: manifest.processed_dropout_end_sample,
+        };
+        object.insert(
+            "capture".into(),
+            serde_json::to_value(capture)
+                .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?,
+        );
+        Ok(())
+    })
 }
 
 /// Persists the capture identity and session snapshot at recording start. The
@@ -716,53 +727,41 @@ pub fn save_asset_ids(
 /// manifest fields; this nested capture is the canonical recording-event representation.
 pub fn save_capture_start(directory: &Path, capture: RecordingCapture) -> std::io::Result<()> {
     let manifest_path = directory.join("manifest.json");
-    let payload = fs::read(&manifest_path)?;
-    let mut manifest = serde_json::from_slice::<serde_json::Value>(&payload)
-        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
-    let object = manifest.as_object_mut().ok_or_else(|| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "Recording manifest must be an object.",
-        )
-    })?;
-    object.insert(
-        "capture".into(),
-        serde_json::to_value(capture)
-            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?,
-    );
-    persist_manifest(&manifest_path, &manifest)
+    update_manifest_document(&manifest_path, |object| {
+        object.insert(
+            "capture".into(),
+            serde_json::to_value(capture)
+                .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?,
+        );
+        Ok(())
+    })
 }
 
 /// Marks a stopped capture as completing before the native offline products
 /// are promoted into canonical Assets.
 pub fn save_capture_completing(directory: &Path) -> std::io::Result<()> {
     let manifest_path = directory.join("manifest.json");
-    let mut parsed = read_manifest(&manifest_path).map_err(std::io::Error::other)?;
-    let mut capture = parsed.capture.take().unwrap_or_else(|| {
-        RecordingCapture::start(
-            format!("capture:{}", directory.to_string_lossy()),
-            "unknown",
-            now_ms(),
-        )
-    });
-    if capture.status == RecordingCaptureStatus::Recording {
-        let _ = capture.transition(RecordingCaptureStatus::Completing, now_ms());
-    }
-    let payload = fs::read(&manifest_path)?;
-    let mut manifest = serde_json::from_slice::<serde_json::Value>(&payload)
-        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
-    let object = manifest.as_object_mut().ok_or_else(|| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "Recording manifest must be an object.",
-        )
-    })?;
-    object.insert(
-        "capture".into(),
-        serde_json::to_value(capture)
-            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?,
-    );
-    persist_manifest(&manifest_path, &manifest)
+    update_manifest_document(&manifest_path, |object| {
+        let manifest =
+            serde_json::from_value::<RecordingManifest>(serde_json::Value::Object(object.clone()))
+                .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+        let mut capture = manifest.capture.unwrap_or_else(|| {
+            RecordingCapture::start(
+                format!("capture:{}", directory.to_string_lossy()),
+                "unknown",
+                now_ms(),
+            )
+        });
+        if capture.status == RecordingCaptureStatus::Recording {
+            let _ = capture.transition(RecordingCaptureStatus::Completing, now_ms());
+        }
+        object.insert(
+            "capture".into(),
+            serde_json::to_value(capture)
+                .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?,
+        );
+        Ok(())
+    })
 }
 
 /// Persists the terminal recovery state when Native finalization cannot
@@ -770,65 +769,58 @@ pub fn save_capture_completing(directory: &Path) -> std::io::Result<()> {
 /// the Native manifest contains a readable WAV with at least one sample.
 pub fn save_capture_finalization_failure(directory: &Path, message: &str) -> std::io::Result<()> {
     let manifest_path = directory.join("manifest.json");
-    let payload = fs::read(&manifest_path)?;
-    let mut manifest = serde_json::from_slice::<serde_json::Value>(&payload)
-        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
-    let raw_usable = raw_audio_is_usable(directory, &manifest);
-    let target = if raw_usable {
-        RecordingCaptureStatus::Recoverable
-    } else {
-        RecordingCaptureStatus::Failed
-    };
-    let mut capture = manifest
-        .get("capture")
-        .cloned()
-        .map(serde_json::from_value::<RecordingCapture>)
-        .transpose()
-        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?
-        .unwrap_or_else(|| {
-            RecordingCapture::start(
-                format!("capture:{}", directory.to_string_lossy()),
-                "unknown",
-                now_ms(),
-            )
-        });
-    if matches!(
-        capture.status,
-        RecordingCaptureStatus::Recording | RecordingCaptureStatus::Completing
-    ) {
-        capture
-            .transition(target, now_ms())
-            .map_err(std::io::Error::other)?;
-    }
-    let state = capture.status.as_str();
-    let recovery_status = match capture.status {
-        RecordingCaptureStatus::Completed => "clean",
-        RecordingCaptureStatus::Failed => "failed",
-        _ => "partial",
-    };
-    let object = manifest.as_object_mut().ok_or_else(|| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "Recording manifest must be an object.",
-        )
-    })?;
-    object.insert("state".into(), serde_json::Value::String(state.into()));
-    object.insert(
-        "recoveryStatus".into(),
-        serde_json::Value::String(recovery_status.into()),
-    );
-    if !message.trim().is_empty() {
+    update_manifest_document(&manifest_path, |object| {
+        let manifest = serde_json::Value::Object(object.clone());
+        let target = if raw_audio_is_usable(directory, &manifest) {
+            RecordingCaptureStatus::Recoverable
+        } else {
+            RecordingCaptureStatus::Failed
+        };
+        let mut capture = object
+            .get("capture")
+            .cloned()
+            .map(serde_json::from_value::<RecordingCapture>)
+            .transpose()
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?
+            .unwrap_or_else(|| {
+                RecordingCapture::start(
+                    format!("capture:{}", directory.to_string_lossy()),
+                    "unknown",
+                    now_ms(),
+                )
+            });
+        if matches!(
+            capture.status,
+            RecordingCaptureStatus::Recording | RecordingCaptureStatus::Completing
+        ) {
+            capture
+                .transition(target, now_ms())
+                .map_err(std::io::Error::other)?;
+        }
+        let state = capture.status.as_str();
+        let recovery_status = match capture.status {
+            RecordingCaptureStatus::Completed => "clean",
+            RecordingCaptureStatus::Failed => "failed",
+            _ => "partial",
+        };
+        object.insert("state".into(), serde_json::Value::String(state.into()));
         object.insert(
-            "finalizationError".into(),
-            serde_json::Value::String(message.to_owned()),
+            "recoveryStatus".into(),
+            serde_json::Value::String(recovery_status.into()),
         );
-    }
-    object.insert(
-        "capture".into(),
-        serde_json::to_value(capture)
-            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?,
-    );
-    persist_manifest(&manifest_path, &manifest)
+        if !message.trim().is_empty() {
+            object.insert(
+                "finalizationError".into(),
+                serde_json::Value::String(message.to_owned()),
+            );
+        }
+        object.insert(
+            "capture".into(),
+            serde_json::to_value(capture)
+                .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?,
+        );
+        Ok(())
+    })
 }
 
 fn raw_audio_is_usable(directory: &Path, manifest: &serde_json::Value) -> bool {
