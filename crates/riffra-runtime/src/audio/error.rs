@@ -12,6 +12,18 @@ pub struct NativeErrorDescriptor {
     pub details: Option<Value>,
 }
 
+pub(crate) fn native_error_protocol(
+    code: ErrorCode,
+    descriptor: NativeErrorDescriptor,
+) -> ProtocolError {
+    ProtocolError::new(code, descriptor.message).with_details(serde_json::json!({
+        "domain": "nativeAudio",
+        "kind": descriptor.kind,
+        "operation": descriptor.operation,
+        "details": descriptor.details,
+    }))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NativeAudioError {
     Timeout {
@@ -140,12 +152,7 @@ impl NativeAudioError {
             }
             _ => ErrorCode::CommandFailed,
         };
-        ProtocolError::new(code, descriptor.message).with_details(serde_json::json!({
-            "domain": "nativeAudio",
-            "kind": descriptor.kind,
-            "operation": descriptor.operation,
-            "details": descriptor.details,
-        }))
+        native_error_protocol(code, descriptor)
     }
 }
 

@@ -1521,12 +1521,15 @@ pub(super) fn runtime_error(error: RuntimeError) -> ProtocolError {
                 }
                 _ => ErrorCode::CommandFailed,
             };
-            ProtocolError::new(code, message).with_details(serde_json::json!({
-                "domain": "nativeAudio",
-                "kind": kind,
-                "operation": operation,
-                "details": details,
-            }))
+            crate::audio::native_error_protocol(
+                code,
+                crate::audio::NativeErrorDescriptor {
+                    kind,
+                    message,
+                    operation: Some(operation),
+                    details: details.map(|value| *value),
+                },
+            )
         }
         RuntimeError::Timeout { message } => {
             ProtocolError::new(ErrorCode::CommandFailed, message.clone()).with_details(

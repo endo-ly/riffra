@@ -72,9 +72,10 @@ impl DispatchError {
         match self {
             Self::InvalidRequest { message, details } => {
                 let error = ProtocolError::new(ErrorCode::InvalidRequest, message);
-                details
-                    .clone()
-                    .map_or(error.clone(), |details| error.with_details(details))
+                match details {
+                    Some(details) => error.with_details(details.clone()),
+                    None => error,
+                }
             }
             Self::CommandFailed(message) => ProtocolError::new(ErrorCode::CommandFailed, message),
             Self::RuntimeUnavailable(message) => {

@@ -1,4 +1,5 @@
 use super::HostState;
+use super::control::audio_error;
 use crate::api::output::{ProjectActivationResult, ProjectState};
 use crate::api::{ControlOutput, ProjectCommand};
 use crate::execution::project_session;
@@ -381,10 +382,6 @@ fn project_runtime_projection_error(error: crate::RuntimeError) -> ProtocolError
 
 fn command_error(message: impl Into<String>) -> ProtocolError {
     ProtocolError::new(ErrorCode::CommandFailed, message)
-}
-
-fn audio_error(error: crate::NativeAudioError) -> ProtocolError {
-    error.protocol_error()
 }
 
 #[cfg(test)]
