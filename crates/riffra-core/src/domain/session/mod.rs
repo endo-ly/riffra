@@ -30,13 +30,13 @@ pub struct SessionSettings {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct CreativeSession {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub score_source: Option<ScoreSource>,
     pub session_id: String,
     pub updated_at_ms: u64,
     #[serde(default)]
     pub project_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub score_source: Option<ScoreSource>,
     pub arrangement: Arrangement,
     pub settings: SessionSettings,
 }
