@@ -66,39 +66,16 @@ fn ensure_schema(connection: &Connection) -> Result<(), String> {
     Ok(())
 }
 
-fn upsert_library_entry(connection: &Connection, asset: &LibraryAsset) -> Result<(), String> {
-    connection
-        .execute(
-            "INSERT INTO library_entries
-                (id, name, kind, path, tag, note, created_at_ms, updated_at_ms, stability)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
-             ON CONFLICT(id) DO UPDATE SET
-                name = excluded.name,
-                kind = excluded.kind,
-                path = excluded.path,
-                tag = excluded.tag,
-                note = excluded.note,
-                updated_at_ms = excluded.updated_at_ms,
-                stability = excluded.stability",
-            params![
-                asset.id,
-                asset.name,
-                asset.kind,
-                asset.path,
-                asset.tag,
-                asset.note,
-                asset.created_at_ms.map(|value| value as i64),
-                asset.updated_at_ms.map(|value| value as i64),
-                asset.stability,
-            ],
-        )
-        .map_err(|error| format!("Library entry could not be indexed: {error}"))?;
-    Ok(())
+#[derive(Clone, Copy)]
+enum MetadataUpdate {
+    Replace,
+    PreserveExisting,
 }
 
-fn upsert_library_entry_preserving_metadata(
+fn upsert_library_entry(
     connection: &Connection,
     asset: &LibraryAsset,
+    metadata_update: MetadataUpdate,
 ) -> Result<(), String> {
     connection
         .execute(
@@ -109,8 +86,8 @@ fn upsert_library_entry_preserving_metadata(
                 name = excluded.name,
                 kind = excluded.kind,
                 path = excluded.path,
-                tag = COALESCE(library_entries.tag, excluded.tag),
-                note = COALESCE(library_entries.note, excluded.note),
+                tag = CASE WHEN ?10 THEN COALESCE(library_entries.tag, excluded.tag) ELSE excluded.tag END,
+                note = CASE WHEN ?10 THEN COALESCE(library_entries.note, excluded.note) ELSE excluded.note END,
                 updated_at_ms = excluded.updated_at_ms,
                 stability = excluded.stability",
             params![
@@ -123,6 +100,7 @@ fn upsert_library_entry_preserving_metadata(
                 asset.created_at_ms.map(|value| value as i64),
                 asset.updated_at_ms.map(|value| value as i64),
                 asset.stability,
+                matches!(metadata_update, MetadataUpdate::PreserveExisting),
             ],
         )
         .map_err(|error| format!("Library entry could not be indexed: {error}"))?;
@@ -157,7 +135,7 @@ pub fn sync_session(
         updated_at_ms: Some(session.updated_at_ms),
         stability: "saved".into(),
     };
-    upsert_library_entry(&connection, &project)?;
+    upsert_library_entry(&connection, &project, MetadataUpdate::Replace)?;
     Ok(())
 }
 
@@ -177,6 +155,7 @@ pub fn sync_plugins(data_root: &Path, plugins: &[PluginEntry]) -> Result<(), Str
                 updated_at_ms: plugin.modified_at_ms,
                 stability: plugin.scan_state.as_str().to_owned(),
             },
+            MetadataUpdate::Replace,
         )?;
     }
     Ok(())
@@ -191,7 +170,7 @@ pub fn sync_recordings(data_root: &Path, recordings: &[RecordingAsset]) -> Resul
         // canonical Raw/Processed/MIDI outputs are tracked separately as
         // Canonical Assets of kind Audio/Midi.
         let recording_id = recording_asset_id(&recording.id);
-        upsert_library_entry_preserving_metadata(
+        upsert_library_entry(
             &connection,
             &LibraryAsset {
                 id: recording_id.clone(),
@@ -210,6 +189,7 @@ pub fn sync_recordings(data_root: &Path, recordings: &[RecordingAsset]) -> Resul
                 updated_at_ms: Some(indexed_at),
                 stability: recording.state.clone(),
             },
+            MetadataUpdate::PreserveExisting,
         )?;
     }
     Ok(())
