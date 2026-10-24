@@ -54,6 +54,7 @@ struct RenderPlan {
     output_path: PathBuf,
 }
 
+#[derive(Clone, Copy)]
 struct SharedRenderConditions {
     start_tick: u64,
     end_tick: u64,
@@ -269,6 +270,8 @@ fn render_timeline_with_renderer_for_project(
         session,
         created_at_ms,
         &options,
+        None,
+        None,
     )?;
     let directory = plan
         .output_path
@@ -642,7 +645,7 @@ fn render_stems_with_renderer(
             output_path: None,
         };
         let output_path = directory.join(format!("stem-{:03}.wav", index + 1));
-        let plan = build_render_plan_with_conditions(
+        let plan = build_render_plan(
             data_root,
             built_in_instruments,
             session,
@@ -848,24 +851,6 @@ fn build_render_plan(
     session: &CreativeSession,
     created_at_ms: u64,
     options: &RenderOptions,
-) -> Result<RenderPlan, String> {
-    build_render_plan_with_conditions(
-        data_root,
-        built_in_instruments,
-        session,
-        created_at_ms,
-        options,
-        None,
-        None,
-    )
-}
-
-fn build_render_plan_with_conditions(
-    data_root: &Path,
-    built_in_instruments: &BuiltInInstrumentCatalog,
-    session: &CreativeSession,
-    created_at_ms: u64,
-    options: &RenderOptions,
     shared_conditions: Option<&SharedRenderConditions>,
     output_path: Option<PathBuf>,
 ) -> Result<RenderPlan, String> {
@@ -906,38 +891,10 @@ fn build_render_plan_with_conditions(
             .retain(|clip| required_tracks.contains(&clip.track_id));
     }
 
-    let (start_tick, end_tick) = shared_conditions.map_or_else(
-        || resolve_range(&render_session, &options.range),
-        |conditions| Ok((conditions.start_tick, conditions.end_tick)),
-    )?;
-    let tail_seconds = shared_conditions.map_or_else(
-        || {
-            if matches!(&options.range, RenderRange::EntireArrangement) {
-                session.settings.mixdown.tail_seconds
-            } else {
-                0.0
-            }
-        },
-        |conditions| conditions.tail_seconds,
-    );
-    let duration_minutes = (render_session
-        .arrangement
-        .timebase
-        .ticks_to_seconds(end_tick)
-        - render_session
-            .arrangement
-            .timebase
-            .ticks_to_seconds(start_tick)
-        + tail_seconds)
-        / 60.0;
-    if !duration_minutes.is_finite()
-        || duration_minutes <= 0.0
-        || duration_minutes > MAX_RENDER_MINUTES
-    {
-        return Err(format!(
-            "Timeline render must have a positive duration of at most {MAX_RENDER_MINUTES:.0} minutes."
-        ));
-    }
+    let conditions = match shared_conditions {
+        Some(conditions) => *conditions,
+        None => shared_render_conditions(&render_session, &options.range)?,
+    };
 
     let processing_tracks = processing_track_ids(&render_session);
     let clip_audible = |track_id: &str, muted: bool| !muted && processing_tracks.contains(track_id);
@@ -958,19 +915,6 @@ fn build_render_plan_with_conditions(
         return Err("Timeline has no audible clips to render.".into());
     }
 
-    let source_sample_rate = audio_clips
-        .first()
-        .map_or(DEFAULT_OFFLINE_SAMPLE_RATE, |clip| clip.source_sample_rate);
-    let sample_rate = shared_conditions.map_or_else(
-        || {
-            session
-                .settings
-                .mixdown
-                .sample_rate
-                .unwrap_or(source_sample_rate)
-        },
-        |conditions| conditions.sample_rate,
-    );
     let source_ids = audio_clips
         .iter()
         .map(|clip| clip.asset_id.clone())
@@ -991,22 +935,13 @@ fn build_render_plan_with_conditions(
     let dependency_warnings = validate_render_dependencies(&render_session, &diagnostics)?;
 
     Ok(RenderPlan {
-        tail_seconds,
-        block_size: shared_conditions.map_or_else(
-            || {
-                session
-                    .settings
-                    .mixdown
-                    .block_size
-                    .unwrap_or(DEFAULT_OFFLINE_BLOCK_SIZE)
-            },
-            |conditions| conditions.block_size,
-        ),
+        tail_seconds: conditions.tail_seconds,
+        block_size: conditions.block_size,
         graph,
         dependency_warnings,
-        start_tick,
-        end_tick,
-        sample_rate,
+        start_tick: conditions.start_tick,
+        end_tick: conditions.end_tick,
+        sample_rate: conditions.sample_rate,
         clip_count,
         source_ids,
         output_path: output_path.unwrap_or_else(|| {
@@ -1447,6 +1382,8 @@ mod tests {
                 track_id: Some("target".into()),
                 ..RenderOptions::default()
             },
+            None,
+            None,
         )
         .unwrap();
 
@@ -2350,6 +2287,8 @@ mod tests {
             &session_with_clips(),
             1,
             &RenderOptions::default(),
+            None,
+            None,
         )
         .unwrap();
         assert!(plan.source_ids.is_empty());
@@ -2397,6 +2336,8 @@ mod tests {
                 track_id: Some("instrument".into()),
                 ..Default::default()
             },
+            None,
+            None,
         )
         .unwrap();
 
