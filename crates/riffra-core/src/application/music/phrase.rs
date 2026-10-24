@@ -5,7 +5,7 @@ use super::{
     push_resolved_midi_note, repeated_offset_to_ticks,
 };
 use crate::application::Application;
-use crate::domain::{Arrangement, PhrasePattern, PhrasePlacement, TimelineTick};
+use crate::domain::{Arrangement, CreativeSession, PhrasePattern, PhrasePlacement, TimelineTick};
 use crate::errors::ApplicationError;
 use crate::ports::SessionStorage;
 
@@ -90,22 +90,37 @@ where
     /// Returns an error when the pattern, placement, Clip, generated note, or
     /// Clip capacity is invalid.
     pub fn resolve_phrase_pattern(
-        &mut self,
+        &self,
         clip_id: &str,
         pattern: PhrasePattern,
         placements: Vec<PhrasePlacement>,
         channel: Option<u8>,
     ) -> Result<ResolvedPhrase, ApplicationError> {
-        let session = self.get_session()?;
-        resolve_phrase_pattern_in_arrangement(
-            &session.arrangement,
-            clip_id,
-            pattern,
-            placements,
-            channel,
-        )
-        .map_err(Into::into)
+        let snapshot = self.core.snapshot();
+        resolve_phrase_pattern(&snapshot.session, clip_id, pattern, placements, channel)
+            .map_err(Into::into)
     }
+}
+
+/// Resolves a phrase against a canonical session without editing it.
+///
+/// # Errors
+/// Returns an error when the pattern, placement, Clip, generated note, or
+/// Clip capacity is invalid.
+pub fn resolve_phrase_pattern(
+    session: &CreativeSession,
+    clip_id: &str,
+    pattern: PhrasePattern,
+    placements: Vec<PhrasePlacement>,
+    channel: Option<u8>,
+) -> Result<ResolvedPhrase, crate::DomainError> {
+    resolve_phrase_pattern_in_arrangement(
+        &session.arrangement,
+        clip_id,
+        pattern,
+        placements,
+        channel,
+    )
 }
 
 fn resolve_phrase_pattern_in_arrangement(

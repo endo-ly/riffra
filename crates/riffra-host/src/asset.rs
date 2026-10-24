@@ -1095,4 +1095,39 @@ mod tests {
         assert!(!root.join("library/riffra.db").exists());
         let _ = std::fs::remove_dir_all(root);
     }
+
+    #[test]
+    fn import_midi_bytes_registers_the_payload_and_rejects_an_empty_name() {
+        let root = root("midi-bytes");
+        let mut track = Vec::new();
+        track.extend_from_slice(&[0, 0x90, 60, 100, 0x83, 0x60, 0x80, 60, 0, 0, 0xff, 0x2f, 0]);
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"MThd");
+        bytes.extend_from_slice(&[0, 0, 0, 6, 0, 0, 0, 1, 1, 0xe0]);
+        bytes.extend_from_slice(b"MTrk");
+        bytes.extend_from_slice(&(track.len() as u32).to_be_bytes());
+        bytes.extend_from_slice(&track);
+
+        let id = import_midi_bytes(&root, "dropped", &bytes).unwrap();
+        let asset = load(&root, &id).unwrap();
+        assert_eq!(asset.kind, AssetKind::Midi);
+        assert_eq!(asset.name, "dropped");
+        assert_eq!(
+            asset.provenance.unwrap().operation,
+            ProvenanceOperation::Imported
+        );
+        let destination = PathBuf::from(asset.content_location);
+        assert!(destination.starts_with(root.join("assets/imports")));
+        assert_eq!(
+            destination.extension().and_then(|value| value.to_str()),
+            Some("mid")
+        );
+        assert_eq!(std::fs::read(destination).unwrap(), bytes);
+        assert!(
+            import_midi_bytes(&root, "   ", &bytes)
+                .unwrap_err()
+                .contains("must not be empty")
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
 }

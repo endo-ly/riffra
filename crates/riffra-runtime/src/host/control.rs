@@ -90,12 +90,58 @@ impl HostState {
             Ok(command) => command,
             Err(error) => return Self::failure(request_id, error.into()),
         };
-        let scope = command.policy().scope;
-        let writer = (scope
-            == CommandScope::Project {
+        let policy = command.policy();
+        let scope = policy.scope;
+        let command = match command {
+            ControlCommand::Canonical(command)
+                if command.access() == CanonicalAccess::Read
+                    && !crate::dispatcher::canonical_read_requires_project_writer(&command) =>
+            {
+                let snapshot = self.project.read();
+                let canonical = &snapshot.canonical;
+                if let Some(expected_sequence) = expected_sequence
+                    && expected_sequence != canonical.sequence
+                {
+                    return Self::failure(
+                        request_id,
+                        ProtocolError::conflict(expected_sequence, canonical.sequence),
+                    );
+                }
+                if let Err(error) = crate::dispatcher::validate_project_precondition(
+                    scope,
+                    expected_project_id.as_deref(),
+                    &canonical.project_id,
+                ) {
+                    return Self::failure(request_id, error);
+                }
+                return match self.dispatch_read_canonical(command, canonical) {
+                    Ok((output, sequence)) => {
+                        ControlResponse::success(request_id, sequence, output.into())
+                    }
+                    Err(error) => Self::failure(request_id, error),
+                };
+            }
+            command => command,
+        };
+        let access = match &command {
+            ControlCommand::Canonical(command) => Some(command.access()),
+            _ => None,
+        };
+        let read_requires_project_writer = matches!(
+            &command,
+            ControlCommand::Canonical(command)
+                if crate::dispatcher::canonical_read_requires_project_writer(command)
+        );
+        let writer = if scope
+            == (CommandScope::Project {
                 long_running: false,
             })
-        .then(|| self.project.write());
+            && (access != Some(CanonicalAccess::Read) || read_requires_project_writer)
+        {
+            Some(self.project.write())
+        } else {
+            None
+        };
         let current = writer.as_ref().map_or_else(
             || self.project.read().canonical.clone(),
             |writer| writer.project().core.canonical_state(),
@@ -138,8 +184,12 @@ impl HostState {
         current: CanonicalState,
         writer: Option<super::open_project::ProjectWriter<'_>>,
     ) -> Result<(ControlOutput, u64), ProtocolError> {
-        let publish = |writer: &super::open_project::ProjectWriter<'_>, committed| {
-            self.publish_commit(writer, committed).0
+        if access == CanonicalAccess::Read {
+            return self.dispatch_read_canonical(command, &current);
+        }
+        let publish = |_: &super::open_project::ProjectWriter<'_>,
+                       committed: super::open_project::Committed<()>| {
+            self.publish_commit(committed).0
         };
         let mut context = self.session_context(writer, current.clone(), &publish)?;
         let sequence = Some(current.sequence);
@@ -246,27 +296,19 @@ impl HostState {
             }
             CanonicalCommand::Undo(_) => session_adapter::undo(&mut context),
             CanonicalCommand::Redo(_) => session_adapter::redo(&mut context),
-            command @ (CanonicalCommand::MixerGet(_)
-            | CanonicalCommand::MixBusList(_)
-            | CanonicalCommand::MixBusAdd(_)
+            command @ (CanonicalCommand::MixBusAdd(_)
             | CanonicalCommand::MixBusUpdate(_)
             | CanonicalCommand::MixBusRemove(_)
             | CanonicalCommand::TrackOutputSet(_)
-            | CanonicalCommand::SendList(_)
             | CanonicalCommand::SendAdd(_)
             | CanonicalCommand::SendUpdate(_)
             | CanonicalCommand::SendRemove(_)
-            | CanonicalCommand::SidechainSendList(_)
             | CanonicalCommand::SidechainSendAdd(_)
             | CanonicalCommand::SidechainSendUpdate(_)
             | CanonicalCommand::SidechainSendRemove(_)
-            | CanonicalCommand::SessionGet(_)
-            | CanonicalCommand::SessionInspect(_)
             | CanonicalCommand::SessionApply(_)
             | CanonicalCommand::SessionSettingsUpdate(_)
-            | CanonicalCommand::HistoryGet(_)
             | CanonicalCommand::MasterGainSet(_)
-            | CanonicalCommand::TrackList(_)
             | CanonicalCommand::TrackAdd(_)
             | CanonicalCommand::TrackUpdate(_)
             | CanonicalCommand::TrackRemove(_)
@@ -276,12 +318,9 @@ impl HostState {
             | CanonicalCommand::MarkerUpdate(_)
             | CanonicalCommand::MarkerRemove(_)
             | CanonicalCommand::TimebaseUpdate(_)
-            | CanonicalCommand::TimebaseGetMap(_)
-            | CanonicalCommand::MixdownGet(_)
             | CanonicalCommand::MixdownSet(_)
             | CanonicalCommand::TrackExternalAudioInputSet(_)
             | CanonicalCommand::TrackExternalAudioInputClear(_)
-            | CanonicalCommand::InstrumentEventList(_)
             | CanonicalCommand::InstrumentEventAdd(_)
             | CanonicalCommand::InstrumentEventSet(_)
             | CanonicalCommand::InstrumentEventUpdate(_)
@@ -289,11 +328,8 @@ impl HostState {
             | CanonicalCommand::TimebaseSetMap(_)
             | CanonicalCommand::LoopRangeSet(_)
             | CanonicalCommand::PunchRangeSet(_)
-            | CanonicalCommand::AutomationList(_)
-            | CanonicalCommand::AutomationGet(_)
             | CanonicalCommand::AutomationSet(_)
             | CanonicalCommand::AutomationClear(_)
-            | CanonicalCommand::AudioClipList(_)
             | CanonicalCommand::AudioClipAddAsset(_)
             | CanonicalCommand::AudioClipUpdate(_)
             | CanonicalCommand::AudioClipMove(_)
@@ -301,7 +337,6 @@ impl HostState {
             | CanonicalCommand::AudioClipSplit(_)
             | CanonicalCommand::AudioClipDuplicate(_)
             | CanonicalCommand::AudioClipCrossfade(_)
-            | CanonicalCommand::MidiClipList(_)
             | CanonicalCommand::MidiClipCreate(_)
             | CanonicalCommand::MidiClipAddAsset(_)
             | CanonicalCommand::MidiClipUpdate(_)
@@ -324,32 +359,22 @@ impl HostState {
             | CanonicalCommand::MusicMidiClipCreate(_)
             | CanonicalCommand::MusicMidiClipResize(_)
             | CanonicalCommand::MusicNoteInsert(_)
-            | CanonicalCommand::MusicNoteList(_)
-            | CanonicalCommand::MusicNoteGet(_)
             | CanonicalCommand::MusicNoteUpdate(_)
             | CanonicalCommand::MusicNoteRemove(_)
             | CanonicalCommand::MusicNoteTransform(_)
-            | CanonicalCommand::MusicHarmonyResolve(_)
-            | CanonicalCommand::MusicHarmonyList(_)
             | CanonicalCommand::MusicHarmonyInsert(_)
             | CanonicalCommand::MusicHarmonyUpdate(_)
             | CanonicalCommand::MusicHarmonyRemove(_)
             | CanonicalCommand::MusicHarmonyRealize(_)
             | CanonicalCommand::MusicPhraseInsert(_)
-            | CanonicalCommand::MusicPhrasePreview(_)
-            | CanonicalCommand::MusicRegionList(_)
             | CanonicalCommand::MusicRegionAdd(_)
             | CanonicalCommand::MusicRegionUpdate(_)
             | CanonicalCommand::MusicRegionRemove(_)
-            | CanonicalCommand::AssetImportMidi(_)
-            | CanonicalCommand::InstrumentList(_)
-            | CanonicalCommand::InstrumentSave(_)
-            | CanonicalCommand::InstrumentExport(_)
             | CanonicalCommand::InstrumentApply(_)
-            | CanonicalCommand::PluginStateImport(_)
-            | CanonicalCommand::InstrumentMidiGet(_)) => {
+            | CanonicalCommand::PluginStateImport(_)) => {
                 return self.dispatch_shared_canonical(command, access, current, &mut context);
             }
+            _ => unreachable!("canonical read commands are routed before edit dispatch"),
         }
         .map_err(|error| error.protocol_error())?;
         Ok(mutation_output(mutation))
@@ -373,12 +398,6 @@ impl HostState {
             &self.built_in_instruments,
         )
         .with_audio(&self.audio);
-        if access == CanonicalAccess::Read {
-            let result = dispatcher
-                .execute_read_canonical(command, current)
-                .map_err(|error| error.protocol_error())?;
-            return Ok((result.output, result.sequence));
-        }
         let writer = context
             .writer
             .as_mut()
@@ -390,7 +409,7 @@ impl HostState {
         if result.sequence <= current_sequence {
             return Ok((result.output, result.sequence));
         }
-        let (mut mutation, ()) = self.publish_commit(writer, committed);
+        let (mut mutation, ()) = self.publish_commit(committed);
         match result.output {
             ControlOutput::BatchMutation(mut batch) => {
                 batch.projection = Some(mutation.projection);
@@ -407,6 +426,26 @@ impl HostState {
         }
     }
 
+    fn dispatch_read_canonical(
+        &self,
+        command: CanonicalCommand,
+        current: &CanonicalState,
+    ) -> Result<(ControlOutput, u64), ProtocolError> {
+        let dispatcher = HostDispatcher::borrowed(
+            &self.project,
+            &self.project_store,
+            &self.data_root,
+            &self.binaries.plugin_scan,
+            &self.binaries.sonalloy,
+            &self.built_in_instruments,
+        )
+        .with_audio(&self.audio);
+        let result = dispatcher
+            .execute_read_canonical(command, current)
+            .map_err(|error| error.protocol_error())?;
+        Ok((result.output, result.sequence))
+    }
+
     fn dispatch_runtime(
         self: &Arc<Self>,
         command: RuntimeCommand,
@@ -414,8 +453,9 @@ impl HostState {
         mut writer: Option<super::open_project::ProjectWriter<'_>>,
     ) -> Result<(ControlOutput, u64), ProtocolError> {
         let sequence = current.sequence;
-        let publish = |writer: &super::open_project::ProjectWriter<'_>, committed| {
-            self.publish_commit(writer, committed).0
+        let publish = |_: &super::open_project::ProjectWriter<'_>,
+                       committed: super::open_project::Committed<()>| {
+            self.publish_commit(committed).0
         };
         let output = match command {
             RuntimeCommand::HostStatus(_) => ControlOutput::HostStatus(HostStatus {
@@ -1439,15 +1479,10 @@ impl HostState {
 
     pub(crate) fn publish_commit<T>(
         &self,
-        writer: &super::open_project::ProjectWriter<'_>,
         committed: super::open_project::Committed<T>,
     ) -> (ArrangementMutationResult, T) {
         let canonical = committed.snapshot.canonical.clone();
-        library::index::refresh(
-            &self.data_root,
-            &writer.project().storage,
-            &canonical.session,
-        );
+        library::index::refresh(&self.data_root, &canonical.project_id, &canonical.session);
         self.events
             .emit(HostEvent::CanonicalStateChanged(canonical.clone()));
         let mutation = commit::project_committed(
@@ -1521,12 +1556,15 @@ pub(super) fn runtime_error(error: RuntimeError) -> ProtocolError {
                 }
                 _ => ErrorCode::CommandFailed,
             };
-            ProtocolError::new(code, message).with_details(serde_json::json!({
-                "domain": "nativeAudio",
-                "kind": kind,
-                "operation": operation,
-                "details": details,
-            }))
+            crate::audio::native_error_protocol(
+                code,
+                crate::audio::NativeErrorDescriptor {
+                    kind,
+                    message,
+                    operation: Some(operation),
+                    details: details.map(|value| *value),
+                },
+            )
         }
         RuntimeError::Timeout { message } => {
             ProtocolError::new(ErrorCode::CommandFailed, message.clone()).with_details(

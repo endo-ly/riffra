@@ -18,7 +18,7 @@ pub(crate) use state::HostState;
 
 use crate::api::output::AudioStatus;
 use crate::api::output::{BackgroundJobStatus, JobKind};
-use crate::api::params::RenderOptions;
+use crate::api::params::{AudioDriverConfig, RenderOptions};
 use crate::asset::application::{AssetPreviewContext, AssetPreviewOptions};
 use crate::audio::AudioSupervisor;
 use crate::binaries::RuntimeBinaries;
@@ -31,7 +31,7 @@ use crate::runtime::RuntimeError;
 use crate::session::{adapter as session_adapter, commit, context::SessionContext};
 use crate::startup;
 use crate::{
-    AudioDeviceReopenOutcome, AudioDriverConfig, AudioPreferences, AudioPreferencesStore,
+    AudioDeviceReopenOutcome, AudioPreferences, AudioPreferencesStore,
     active_device_matches_preferences, load_or_default,
 };
 use crate::{analysis, library, missing, plugins};

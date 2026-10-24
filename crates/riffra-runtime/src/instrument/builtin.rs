@@ -5,34 +5,31 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-/// Metadata presented to clients for one built-in instrument.
-#[derive(Clone, Debug, Deserialize, PartialEq, serde::Serialize, ts_rs::TS)]
-#[serde(rename_all = "camelCase")]
-pub struct BuiltInInstrumentSummary {
-    pub id: String,
-    pub name: String,
-    pub author: Option<String>,
-    pub description: Option<String>,
-    pub category: String,
-    pub tags: Vec<String>,
-    pub recommended_range: InstrumentRecommendedRange,
-    pub preview: InstrumentPreviewDefinition,
+/// Metadata used by the built-in instrument library.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct BuiltInInstrumentSummary {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) author: Option<String>,
+    pub(crate) description: Option<String>,
+    pub(crate) category: String,
+    pub(crate) tags: Vec<String>,
+    pub(crate) recommended_range: InstrumentRecommendedRange,
+    pub(crate) preview: InstrumentPreviewDefinition,
 }
 
 /// A resolved built-in instrument definition retained by the Host.
 #[derive(Clone, Debug)]
-pub struct BuiltInInstrumentDefinition {
-    pub summary: BuiltInInstrumentSummary,
-    pub definition_json: String,
-    pub base_dir: PathBuf,
+pub(crate) struct BuiltInInstrumentDefinition {
+    pub(crate) summary: BuiltInInstrumentSummary,
+    pub(crate) definition_json: String,
+    pub(crate) base_dir: PathBuf,
 }
 
 /// Immutable catalog loaded from the composition root's resource directory.
 #[derive(Clone, Debug)]
-pub struct BuiltInInstrumentCatalog {
-    root: PathBuf,
+pub(crate) struct BuiltInInstrumentCatalog {
     definitions: BTreeMap<String, BuiltInInstrumentDefinition>,
-    errors: Vec<String>,
     invalid_preset_ids: BTreeSet<String>,
 }
 
@@ -62,11 +59,11 @@ struct ResourceManifestPreset {
 impl BuiltInInstrumentCatalog {
     /// Loads and validates the resource directory once for the Host lifetime.
     ///
-    /// A missing or unreadable individual definition is reported through
-    /// [`Self::errors`] and does not prevent the remaining catalog from loading.
-    /// A malformed resource manifest is a packaging error and prevents catalog
+    /// A missing or unreadable individual definition makes that preset
+    /// unavailable without preventing the remaining catalog from loading. A
+    /// malformed resource manifest is a packaging error and prevents catalog
     /// creation. Definition contents remain opaque to Riffra.
-    pub fn load(root: impl Into<PathBuf>) -> Result<Self, String> {
+    pub(crate) fn load(root: impl Into<PathBuf>) -> Result<Self, String> {
         let root = root.into();
         if !root.is_dir() {
             return Err(format!(
@@ -100,7 +97,6 @@ impl BuiltInInstrumentCatalog {
         }
 
         let mut definitions = BTreeMap::new();
-        let mut errors = Vec::new();
         let mut invalid_preset_ids = BTreeSet::new();
         for preset in manifest.presets {
             let id = preset.id.trim().to_owned();
@@ -143,19 +139,12 @@ impl BuiltInInstrumentCatalog {
                 resolve_bundle_path(&root, &preset.resource_base_path, "resourceBasePath")?;
             if !base_dir.is_dir() {
                 invalid_preset_ids.insert(id.clone());
-                errors.push(format!(
-                    "built-in instrument preset '{id}' resource base directory is missing: {}",
-                    base_dir.display()
-                ));
                 continue;
             }
             let definition_json = match fs::read_to_string(&definition_path) {
                 Ok(definition_json) => definition_json,
-                Err(error) => {
+                Err(_) => {
                     invalid_preset_ids.insert(id.clone());
-                    errors.push(format!(
-                        "built-in instrument preset '{id}' definition could not be read: {error}"
-                    ));
                     continue;
                 }
             };
@@ -179,33 +168,21 @@ impl BuiltInInstrumentCatalog {
         }
 
         Ok(Self {
-            root,
             definitions,
-            errors,
             invalid_preset_ids,
         })
     }
 
-    /// Returns the resource root used to resolve built-in resource paths.
-    pub fn root(&self) -> &Path {
-        &self.root
-    }
-
-    /// Returns stable, preset-id-sorted client metadata.
-    pub fn summaries(&self) -> Vec<BuiltInInstrumentSummary> {
+    /// Returns stable, preset-id-sorted metadata for the instrument library.
+    pub(crate) fn summaries(&self) -> Vec<BuiltInInstrumentSummary> {
         self.definitions
             .values()
             .map(|definition| definition.summary.clone())
             .collect()
     }
 
-    /// Returns catalog diagnostics for individual invalid preset entries.
-    pub fn errors(&self) -> &[String] {
-        &self.errors
-    }
-
     /// Resolves one preset for canonical assignment or native projection.
-    pub fn resolve(&self, preset_id: &str) -> Result<&BuiltInInstrumentDefinition, String> {
+    pub(crate) fn resolve(&self, preset_id: &str) -> Result<&BuiltInInstrumentDefinition, String> {
         self.definitions.get(preset_id).ok_or_else(|| {
             if self.invalid_preset_ids.contains(preset_id) {
                 format!("built-in instrument preset is invalid: {preset_id}")
@@ -376,7 +353,6 @@ mod tests {
             r#"{"completelyOpaque":"value"}"#
         );
         assert_eq!(definition.base_dir, root.0.join("resources/first"));
-        assert!(catalog.errors().is_empty());
     }
 
     #[test]
@@ -401,7 +377,6 @@ mod tests {
             catalog.resolve("01-opaque").unwrap().definition_json,
             "not-json"
         );
-        assert!(catalog.errors().is_empty());
     }
 
     #[test]

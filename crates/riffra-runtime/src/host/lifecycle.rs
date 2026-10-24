@@ -58,7 +58,6 @@ impl DawHost {
         let initialized = project_store
             .initialize()
             .map_err(|error| HostError::Session(error.to_string()))?;
-        let storage = initialized.storage.clone();
         let preferences = load_or_default(&config.data_root).map_err(HostError::State)?;
         let event_hub = HostEventHub::new(events);
         let events: SharedHostEventSink = event_hub.clone();
@@ -138,7 +137,7 @@ impl DawHost {
             return Err(HostError::State(error.to_string()));
         }
         if let Ok(canonical) = state.canonical() {
-            library::index::refresh(&state.data_root, &storage, &canonical.session);
+            library::index::refresh(&state.data_root, &canonical.project_id, &canonical.session);
         }
         let plugin_persistence = persistence::PluginStatePersistenceCoordinator::start(
             Arc::downgrade(&state),

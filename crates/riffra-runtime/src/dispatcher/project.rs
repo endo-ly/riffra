@@ -40,7 +40,7 @@ impl HostDispatcher<'_> {
                     })
                 })?;
                 let sequence = committed.snapshot.canonical.sequence;
-                self.publish_standalone(writer, committed);
+                self.publish_standalone(committed);
                 return Ok(DispatchResult {
                     output: ControlOutput::ProjectState(self.project_state(&canonical.project_id)?),
                     sequence,
@@ -119,13 +119,10 @@ impl HostDispatcher<'_> {
         writer.replace(next);
         let snapshot = self.core.cell().read();
         let canonical = snapshot.canonical.clone();
-        self.publish_standalone(
-            writer,
-            Committed {
-                snapshot,
-                value: (),
-            },
-        );
+        self.publish_standalone(Committed {
+            snapshot,
+            value: (),
+        });
         let sequence = canonical.sequence;
         Ok(DispatchResult {
             output: ControlOutput::ProjectActivation(ProjectActivationResult {

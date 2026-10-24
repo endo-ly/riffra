@@ -4,30 +4,30 @@
 //! parser dependency. A composition root supplies executable paths and an
 //! event sink, then embeds the same [`DawHost`] in either shell.
 
-pub mod analysis;
+mod analysis;
 pub mod api;
-pub mod asset;
+mod asset;
 mod audio;
 mod binaries;
 mod control;
 mod dispatcher;
 mod execution;
 mod host;
-pub mod instrument;
-pub mod jobs;
-pub mod library;
-pub mod missing;
+mod instrument;
+mod jobs;
+mod library;
+mod missing;
 mod model;
-pub mod plugins;
+mod plugins;
 mod preferences;
 mod process;
-pub mod projects;
-pub mod recording;
-pub mod render;
+mod projects;
+mod recording;
+mod render;
 mod runtime;
 mod score;
 mod score_yaml_import;
-pub mod session;
+mod session;
 mod startup;
 #[cfg(test)]
 pub(crate) mod test_support;
@@ -56,9 +56,6 @@ pub use dispatcher::{DispatchError, DispatchResult, Dispatcher};
 pub use host::{
     DawHost, HostConfig, HostError, HostEvent, HostEventHub, HostEventSink, HostEventSubscription,
     NoopHostEventSink, RecordingHostEventSink, SharedHostEventSink,
-};
-pub use instrument::{
-    BuiltInInstrumentCatalog, BuiltInInstrumentDefinition, BuiltInInstrumentSummary,
 };
 pub use model::{
     AudioMeterFrame, PluginParameterChanged, PluginStateChanged, RecordingFinalized,
