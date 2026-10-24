@@ -113,6 +113,7 @@ export type ControlCommandResults = {
   'instrument.midi.get': OutputValue<'instrumentMidi'>;
   'instrument.midi.set': OutputValue<'arrangementMutation'>;
   'instrument.vst3.set': OutputValue<'arrangementMutation'>;
+  'plugin.state.import': OutputValue<'arrangementMutation'>;
   'instrument.clear': OutputValue<'arrangementMutation'>;
   'effect.add': OutputValue<'arrangementMutation'>;
   'effect.remove': OutputValue<'arrangementMutation'>;

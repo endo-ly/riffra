@@ -248,6 +248,7 @@ export type { PluginPresetSetParams } from './PluginPresetSetParams';
 export type { PluginRole } from './PluginRole';
 export type { PluginScanParams } from './PluginScanParams';
 export type { PluginScanState } from './PluginScanState';
+export type { PluginStateImportParams } from './PluginStateImportParams';
 export type { PluginStateSetParams } from './PluginStateSetParams';
 export type { PluginStateSnapshot } from './PluginStateSnapshot';
 export type { ProjectActivationResult } from './ProjectActivationResult';

@@ -403,6 +403,26 @@ fn headless_host_process_covers_lifecycle_and_mode_contracts() {
 
     assert_measurement_jobs(&mut host, instance_id);
 
+    let client_directory = data_root.join("client");
+    fs::create_dir(&client_directory).unwrap();
+    success_json(
+        Command::new(env!("CARGO_BIN_EXE_riffra"))
+            .current_dir(&client_directory)
+            .args([
+                "--attach",
+                "--host",
+                instance_id,
+                "project",
+                "export",
+                "--output",
+                "song.riffra",
+            ])
+            .output()
+            .expect("project export should start from the client directory"),
+        "project.export with a relative client path",
+    );
+    assert!(client_directory.join("song.riffra").is_file());
+
     let shutdown = success_json(
         attached(instance_id, &["host", "shutdown"]),
         "host.shutdown",

@@ -2,6 +2,7 @@ mod args;
 mod attached;
 mod instrument;
 mod output;
+mod paths;
 mod resources;
 mod serve;
 
@@ -444,7 +445,20 @@ fn handle_request_at(
             with_input_line(error, input_line),
         );
     }
-    match dispatcher.dispatch_request(request.clone()) {
+    let command = match paths::decode_command(&request.command, request.params) {
+        Ok(command) => command,
+        Err(error) => {
+            return ControlResponse::failure(
+                request.request_id,
+                None,
+                with_input_line(error, input_line),
+            );
+        }
+    };
+    let mut normalized =
+        command.into_request(request.request_id.clone(), request.expected_sequence);
+    normalized.expected_project_id = request.expected_project_id;
+    match dispatcher.dispatch_request(normalized) {
         Ok(result) => compact_agent_response(ControlResponse::success(
             request.request_id,
             result.sequence,

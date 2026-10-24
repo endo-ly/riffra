@@ -32,11 +32,8 @@ fn finite_f64(value: &str) -> Result<f64, String> {
     version,
     about = "Edit a Riffra project from the command line and control a running Riffra Host",
     long_about = "Edit a Riffra project from the command line and control a running Riffra Host.\n\n\
-Use --data-root for standalone project access against a project directory, or --attach to \
-send commands to a running Riffra Host. Use --host when more than one Host is running to pick \
-the target instance, and --expected-sequence as an optimistic concurrency check that a one-shot \
-command runs only against a project state at the given sequence.\n\n\
-Use --interactive to read JSON Lines requests from stdin and return one JSON response per request."
+Use --data-root for standalone editing or --attach to connect to a running Host.\n\n\
+Relative filesystem paths, including paths in JSON input, use the CLI working directory."
 )]
 pub struct Cli {
     /// Root directory containing the session, library, and Asset stores; required for standalone access and incompatible with --attach.
@@ -273,14 +270,11 @@ pub enum SessionCommand {
     Inspect(SessionInspectArgs),
     /// Apply a batch of operations from a JSON Lines file as one atomic mutation.
     ///
-    /// The file is UTF-8 JSON Lines. Empty lines are ignored. Each non-empty line is one operation
-    /// holding `command` and `params`. `requestId` and `expectedSequence` must not appear inside
-    /// an operation. A file with zero operations fails.
+    /// Each operation holds `command` and `params`; requestId and expectedSequence are not operation fields.
     ///
-    /// The batch is atomic: the project changes only when every operation succeeds, and one
-    /// failing operation leaves the project unchanged. Later operations observe the changes of
-    /// earlier ones, so a Track or Clip created earlier in the batch can be referenced by name.
-    /// `--expected-sequence` acts as the sequence precondition for the batch as a whole.
+    /// Operations run in order, and the project changes only if all succeed.
+    /// Later operations can reference Tracks and Clips created earlier in the batch.
+    /// `--expected-sequence` applies to the whole batch.
     ///
     /// Batch operations may resolve `trackName` instead of `trackId`, and `clipName` instead of
     /// `clipId`. Specifying both forms fails. Zero matches or multiple matches fail. `clipName`
@@ -302,9 +296,13 @@ pub enum SessionCommand {
     /// timebase.set-map; mixdown.set; instrument-event.add, instrument-event.set,
     /// instrument-event.update, instrument-event.remove;
     /// loop-range.set, punch-range.set; automation.set, automation.clear; instrument.apply,
+    /// instrument.midi.set, instrument.vst3.set, plugin.state.import,
     /// instrument.clear; effect.add, effect.remove, effect.reorder; device.bypass,
     /// device.parameter.set. instrument.apply accepts `builtin:` and `user:` instruments;
     /// User Instrument assignments create Project-owned package snapshots atomically with the batch.
+    ///
+    /// plugin.state.import requires exactly one of inline state or stateFile (read by the CLI).
+    /// Example: {"command":"plugin.state.import","params":{"owner":{"kind":"track","name":"Drums"},"stateFile":"drums-state.json"}}.
     Apply(SessionApplyArgs),
     /// Read or update session settings such as project name, master gain, loop, and metronome.
     Settings {
@@ -2397,6 +2395,10 @@ pub enum PluginCommand {
         command: PluginCatalogCommand,
     },
     /// Load or replace a VST3 instrument plugin on an Instrument Track.
+    ///
+    /// Live Hosts require a validated Instrument in this DataRoot's catalog, even with --plugin-path.
+    /// Run `riffra --attach plugin scan` first. Standalone --plugin-path only registers the path.
+    /// Available as instrument.vst3.set in session apply batches.
     Instrument(PluginPathArgs),
     /// Scan a directory for VST3 plugins and wait for the report; requires a running Riffra Host accessed with --attach and is unavailable in Safe Mode, which blocks VST3 discovery and load validation.
     Scan(PluginScanArgs),
@@ -2464,6 +2466,11 @@ pub enum PluginStateCommand {
     Save(PluginStateSaveArgs),
     /// Load a plugin device's full state from a JSON file; requires a running Riffra Host accessed with --attach.
     Load(PluginStateLoadArgs),
+    /// Import saved VST3 state into the Project.
+    ///
+    /// The state must match the assigned VST3. Works in Standalone and Live Host modes.
+    /// Batch command: plugin.state.import.
+    Import(PluginStateImportArgs),
 }
 
 #[derive(Debug, Args)]
@@ -2510,6 +2517,18 @@ pub struct PluginStateLoadArgs {
     #[arg(long)]
     pub device_id: String,
     /// Path to the state JSON file to load.
+    #[arg(long)]
+    pub file: PathBuf,
+}
+
+#[derive(Debug, Args)]
+pub struct PluginStateImportArgs {
+    #[command(flatten)]
+    pub owner: DeviceOwnerArgs,
+    /// Device ID for an effect; omit to select the Track instrument.
+    #[arg(long)]
+    pub device_id: Option<String>,
+    /// State JSON previously saved by plugin state save.
     #[arg(long)]
     pub file: PathBuf,
 }
@@ -2705,7 +2724,9 @@ impl Cli {
         let command = self
             .command
             .ok_or_else(|| "a command is required unless --interactive is used".to_string())?;
-        command_request(command)
+        let mut command = command_request(command)?;
+        crate::paths::prepare_command(&mut command)?;
+        Ok(command)
     }
 
     pub(crate) fn plugin_state_save_output(&self) -> Option<PathBuf> {
@@ -3400,19 +3421,12 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
             ProjectCommand::ImportScore(args) => {
                 let mut bindings = std::collections::BTreeMap::new();
                 for (id, path) in args.bindings {
-                    let absolute = std::path::absolute(path).map_err(|error| {
-                        RequestError::Usage(format!(
-                            "instrument binding path could not be resolved: {error}"
-                        ))
-                    })?;
-                    if bindings.insert(id, absolute).is_some() {
+                    if bindings.insert(id, path).is_some() {
                         return Err(RequestError::Usage("duplicate score binding".into()));
                     }
                 }
                 Project::ProjectImportScore(ProjectImportScoreParams {
-                    path: std::path::absolute(args.path).map_err(|error| {
-                        RequestError::Usage(format!("score path could not be resolved: {error}"))
-                    })?,
+                    path: args.path,
                     bindings,
                 })
                 .into()
@@ -3671,6 +3685,14 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
                 })
                 .into(),
                 PluginStateCommand::Load(args) => plugin_state_load(args)?,
+                PluginStateCommand::Import(args) => {
+                    Canonical::PluginStateImport(PluginStateImportParams {
+                        owner: args.owner.into_owner()?,
+                        device_id: args.device_id,
+                        state: crate::paths::read_plugin_state(&args.file)?,
+                    })
+                    .into()
+                }
             },
         },
         CliCommand::Missing { command } => match command {
@@ -3699,7 +3721,7 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
             RenderCommand::Stems(args) => render_stems(args)?,
             RenderCommand::Export(args) => Runtime::RenderExport(RenderExportParams {
                 render_id: args.id,
-                output_path: resolve_output_path(args.out)?,
+                output_path: args.out.to_string_lossy().into_owned(),
             })
             .into(),
             RenderCommand::List => Runtime::RenderList(EmptyParams {}).into(),
@@ -3804,7 +3826,7 @@ fn render_start(args: RenderStartArgs) -> Result<ControlCommand, RequestError> {
             range,
             normalize: args.normalize.unwrap_or(false),
             track_id: args.track_id,
-            output_path: args.out.map(resolve_output_path).transpose()?,
+            output_path: args.out.map(|path| path.to_string_lossy().into_owned()),
         }),
     })
     .into())
@@ -3818,16 +3840,9 @@ fn render_stems(args: RenderStemsArgs) -> Result<ControlCommand, RequestError> {
         all_tracks: args.all_tracks,
         track_ids: args.track_ids,
         range: render_range(args.range, args.start, args.end, "/range")?,
-        output_directory: args.out.map(resolve_output_path).transpose()?,
+        output_directory: args.out.map(|path| path.to_string_lossy().into_owned()),
     })
     .into())
-}
-
-fn resolve_output_path(path: PathBuf) -> Result<String, RequestError> {
-    let absolute = std::path::absolute(&path).map_err(|error| {
-        RequestError::Usage(format!("render output path could not be resolved: {error}"))
-    })?;
-    Ok(absolute.to_string_lossy().into_owned())
 }
 
 fn render_range(
@@ -4587,7 +4602,10 @@ mod tests {
         .unwrap();
         let request = wire(cli);
         assert_eq!(request.name, "instrument.save");
-        assert_eq!(request.params["definitionPath"], "definition.json");
+        assert_eq!(
+            request.params["definitionPath"],
+            json!(std::env::current_dir().unwrap().join("definition.json"))
+        );
 
         let cli = Cli::try_parse_from([
             "riffra",
@@ -5197,6 +5215,8 @@ mod tests {
                 };
                 let expected = if flag == "--value" {
                     json!(value.parse::<f32>().unwrap())
+                } else if flag == "--plugin-path" {
+                    json!(std::env::current_dir().unwrap().join(value))
                 } else {
                     json!(value)
                 };

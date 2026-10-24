@@ -5,12 +5,63 @@ use crate::api::ControlOutput;
 use crate::api::output::PluginRole;
 use crate::api::params::{
     EffectAddParams, MissingPluginReplaceParams, MissingRelinkParams, PluginPathParams,
+    PluginStateImportParams,
 };
 use crate::plugins;
 use riffra_core::AssetKind;
 use std::path::{Path, PathBuf};
 
 impl HostDispatcher<'_> {
+    pub(super) fn import_plugin_state<S: riffra_core::SessionStorage + ?Sized>(
+        &self,
+        application: &mut riffra_core::application::Application<'_, S>,
+        params: PluginStateImportParams,
+    ) -> Result<ControlOutput, DispatchError> {
+        let canonical = application.canonical_state();
+        let arrangement = &canonical.session.arrangement;
+        let device_id = match params.device_id.as_deref() {
+            Some(id) => id,
+            None => {
+                let riffra_core::EffectOwner::Track { id } = &params.owner else {
+                    return Err(DispatchError::invalid_request(
+                        "deviceId is required for a Bus or Master effect",
+                    ));
+                };
+                &arrangement
+                    .tracks
+                    .iter()
+                    .find(|track| &track.id == id)
+                    .and_then(|track| track.instrument.as_ref())
+                    .ok_or("track has no instrument")?
+                    .id
+            }
+        };
+        let device = arrangement
+            .device(&params.owner, device_id)
+            .map_err(|error| DispatchError::CommandFailed(error.to_string()))?;
+        let plugin = device
+            .plugin()
+            .ok_or("built-in instruments do not expose VST3 plugin state")?;
+        plugins::validate_plugin_state(&params.state, &plugin.path).map_err(
+            |error| match error {
+                plugins::PluginStateError::DifferentPlugin => {
+                    DispatchError::CommandFailed(error.to_string())
+                }
+                _ => DispatchError::invalid_request(error.to_string()),
+            },
+        )?;
+        self.edited(
+            application.persist_plugin_state(
+                &params.owner,
+                device_id,
+                params.state.parameter_values,
+                params.state.state_data,
+                device.bypassed(),
+            )?,
+            application,
+        )
+    }
+
     pub(super) fn set_vst3_instrument<S: riffra_core::SessionStorage + ?Sized>(
         &self,
         application: &mut riffra_core::application::Application<'_, S>,
@@ -236,6 +287,27 @@ mod tests {
             riffra_core::TrackInstrumentSource::Vst3(plugin) if plugin.path == instrument_path
         ));
         assert_eq!(track.effects[0].plugin.path, effect_path);
+
+        let effect_id = track.effects[0].id.clone();
+        let owner = json!({"kind":"track","id":track_id});
+        dispatcher
+            .dispatch(
+                request(
+                    "device.bypass",
+                    json!({"owner":owner,"deviceId":effect_id,"bypassed":true}),
+                ),
+                None,
+            )
+            .unwrap();
+        dispatcher.dispatch(request("plugin.state.import", json!({"owner":owner,"deviceId":effect_id,"state":{
+            "schemaVersion":1,"pluginPath":effect_path,"parameterValues":[0.75],"stateData":"c3RhdGU="
+        }})), None).unwrap();
+
+        let imported = dispatcher.core.cell().read().canonical.clone().session;
+        let effect = &imported.arrangement.tracks[0].effects[0];
+        assert!(effect.bypassed);
+        assert_eq!(effect.plugin.parameter_values, [0.75]);
+        assert_eq!(effect.plugin.state_data.as_deref(), Some("c3RhdGU="));
 
         let _ = fs::remove_dir_all(root);
     }

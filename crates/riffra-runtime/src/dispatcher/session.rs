@@ -1288,6 +1288,7 @@ mod tests {
             {"command":"track.add","params":{"name":"Drums","kind":"instrument"}},
             {"command":"instrument.vst3.set","params":{"trackName":"Lead","pluginPath":"C:\\Plugins\\NewLead.vst3"}},
             {"command":"instrument.vst3.set","params":{"trackName":"Drums","pluginPath":"C:\\Plugins\\NewDrums.vst3"}},
+            {"command":"plugin.state.import","params":{"owner":{"kind":"track","name":"Drums"},"state":{"schemaVersion":1,"pluginPath":"C:\\Plugins\\NewDrums.vst3","parameterValues":[0.25,0.75],"stateData":"a2l0"}}},
             {"command":"music.midi-clip.create","params":{"trackName":"Lead","name":"Verse","start":"1:1","end":"5:1"}},
             {"command":"music.note.insert","params":{"trackName":"Lead","clipName":"Verse","notes":[{"pitch":"D4","position":"1:1","duration":"1/4"}]}},
             {"command":"mixer.bus.add","params":{"name":"Group","kind":"group"}},
@@ -1298,8 +1299,7 @@ mod tests {
             {"command":"automation.set","params":{"target":{"kind":"masterGain"},"interpolation":"linear","points":[{"id":"point:master","tick":0,"value":-6}]}}
         ]);
         let mut failed_operations = operations.as_array().unwrap().clone();
-        failed_operations
-            .push(json!({"command":"track.remove","params":{"trackId":"track:missing"}}));
+        failed_operations.push(json!({"command":"plugin.state.import","params":{"owner":{"kind":"track","name":"Drums"},"state":{"schemaVersion":1,"pluginPath":"C:\\Plugins\\Other.vst3","parameterValues":[]}}}));
         let failed = dispatcher.dispatch(
             command(
                 "session.apply",
@@ -1307,7 +1307,12 @@ mod tests {
             ),
             None,
         );
-        assert!(failed.is_err());
+        assert!(
+            failed.unwrap_err().protocol_error().details.unwrap()["cause"]
+                .as_str()
+                .unwrap()
+                .contains("different VST3")
+        );
         let after_failure = dispatcher
             .dispatch(command("session.get", json!({})), None)
             .unwrap();
@@ -1350,6 +1355,9 @@ mod tests {
             final_arrangement["tracks"][0]["instrument"]["source"]["path"],
             "C:\\Plugins\\NewLead.vst3"
         );
+        let drums_plugin = &final_arrangement["tracks"][1]["instrument"]["source"];
+        assert_eq!(drums_plugin["parameterValues"], json!([0.25, 0.75]));
+        assert_eq!(drums_plugin["stateData"], "a2l0");
         assert_eq!(
             final_arrangement["tracks"][1]["effects"][0]["plugin"]["path"],
             "C:\\Plugins\\NewCompressor.vst3"

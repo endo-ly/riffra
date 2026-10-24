@@ -162,7 +162,7 @@ Group・Return・Send・Sidechainの正準設定は `mixer get` でまとめて�
 
 EffectとDeviceのOwnerは `--track-id`、`--bus-id`、`--master` のいずれか1つで指定する。Master・BusにはEffectsだけを追加できる。
 
-`--plugin-id` は現在のDataRootのCatalogにあるValidated・Role一致のPluginへ解決され、Projectには解決後のパスが保存される。IDはインストールパスに依存するため、別PCへ持ち運べる識別子ではない。Standaloneではパスだけを登録し実体のロードはRuntimeが行うため、VST3が無い環境でも安全に実行できる。`device inspect`、`device parameter list/get/set`、`plugin state`、`plugin preset` は実体のPluginを扱うため Live Host 専用である。
+`--plugin-id` は現在のDataRootのCatalogにあるValidated・Role一致のPluginへ解決され、Projectには解決後のパスが保存される。IDはインストールパスに依存するため、別PCへ持ち運べる識別子ではない。Standaloneではパスだけを登録し実体のロードはRuntimeが行うため、VST3が無い環境でも安全に実行できる。`device inspect`、`device parameter list/get/set`、`plugin state save/load`、`plugin preset` は実体のPluginを扱うため Live Host 専用である。
 
 Built-in instrumentはparameter、state、preset、editorをサポートしない。
 
