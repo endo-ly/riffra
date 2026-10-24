@@ -1,6 +1,6 @@
-use super::manifest::{self, StoredRender};
 use crate::api::output::{
     RenderDeleteResult, RenderExportResult, RenderFileStatus, RenderHistoryEntry, RenderKind,
+    RenderResult, RenderStemsResult,
 };
 use crate::asset;
 use riffra_core::{AssetId, CreativeSession};
@@ -9,6 +9,25 @@ use std::{
     fs, io,
     path::{Path, PathBuf},
 };
+
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+enum StoredRender {
+    Stems(RenderStemsResult),
+    Timeline(RenderResult),
+}
+
+fn read_render_manifest(path: &Path) -> Result<StoredRender, String> {
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|error| format!("render manifest could not be inspected: {error}"))?;
+    if !metadata.file_type().is_file() {
+        return Err("render manifest is not a regular file".into());
+    }
+    let bytes =
+        fs::read(path).map_err(|error| format!("render manifest could not be read: {error}"))?;
+    serde_json::from_slice(&bytes).map_err(|error| format!("render manifest is invalid: {error}"))
+}
+
 /// Copies the completed WAV from a managed Render directory to a new location.
 ///
 /// # Errors
@@ -21,7 +40,7 @@ pub(crate) fn export_render(
 ) -> Result<RenderExportResult, String> {
     let source_directory = managed_render_directory(data_root, render_id)?;
     let manifest_path = source_directory.join("render.json");
-    let (sources, source_path, destination) = match manifest::read(&manifest_path)? {
+    let (sources, source_path, destination) = match read_render_manifest(&manifest_path)? {
         StoredRender::Timeline(render) => {
             let destination = validate_output_file_path(output_path)?;
             let source = managed_render_file(&source_directory, &render.path)?;
@@ -67,7 +86,7 @@ pub(crate) fn resolve_measurement_sources(
     render_id: &str,
 ) -> Result<Vec<crate::analysis::MeasurementSource>, String> {
     let directory = managed_render_directory(data_root, render_id)?;
-    let manifest = manifest::read(&directory.join("render.json"))?;
+    let manifest = read_render_manifest(&directory.join("render.json"))?;
     match manifest {
         StoredRender::Timeline(render) => Ok(vec![crate::analysis::MeasurementSource {
             path: managed_render_file(&directory, &render.path)?,
@@ -152,7 +171,7 @@ fn read_render_history_entry(
     render_id: &str,
 ) -> RenderHistoryEntry {
     let manifest_path = directory.join("render.json");
-    let parse = manifest::read(&manifest_path);
+    let parse = read_render_manifest(&manifest_path);
     let mut entry = RenderHistoryEntry {
         render_id: render_id.to_owned(),
         kind: RenderKind::Unknown,
@@ -303,7 +322,7 @@ pub(crate) fn delete_render<'a>(
         return Err(format!("render is not registered: {render_id}"));
     }
     let manifest_path = directory.join("render.json");
-    let manifest = manifest::read(&manifest_path)?;
+    let manifest = read_render_manifest(&manifest_path)?;
     let file_assets = manifest_file_assets(manifest);
     let files = verify_owned_render_directory(data_root, &directory, &manifest_path, &file_assets)?;
     let asset_ids = file_assets

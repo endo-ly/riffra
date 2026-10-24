@@ -14,7 +14,6 @@ use std::{
 };
 
 mod history;
-mod manifest;
 mod mastering;
 mod sections;
 mod worker;
@@ -1596,35 +1595,6 @@ mod tests {
         )
         .unwrap();
         assert_eq!(manifest, serde_json::to_value(&pending.result).unwrap());
-        let mut old_manifest = manifest;
-        for stem in old_manifest["stems"].as_array_mut().unwrap() {
-            stem["measurements"]
-                .as_object_mut()
-                .unwrap()
-                .remove("sectionLoudnessState");
-        }
-        let manifest_path = pending.output.directory.join("render.json");
-        fs::write(&manifest_path, serde_json::to_vec(&old_manifest).unwrap()).unwrap();
-        manifest::read(&manifest_path).unwrap();
-        let upgraded: RenderStemsResult =
-            serde_json::from_slice(&fs::read(manifest_path).unwrap()).unwrap();
-        for (actual, expected) in upgraded.stems.iter().zip(&pending.result.stems) {
-            assert!(matches!(
-                actual.measurements.section_loudness_state,
-                crate::api::output::MeasurementState::Measured
-            ));
-            let mut actual = serde_json::to_value(actual).unwrap();
-            let mut expected = serde_json::to_value(expected).unwrap();
-            actual["measurements"]
-                .as_object_mut()
-                .unwrap()
-                .remove("sectionLoudnessState");
-            expected["measurements"]
-                .as_object_mut()
-                .unwrap()
-                .remove("sectionLoudnessState");
-            assert_eq!(actual, expected);
-        }
         let render_id = Path::new(&pending.result.directory)
             .file_name()
             .unwrap()
@@ -2431,15 +2401,7 @@ mod tests {
             .parent()
             .unwrap()
             .join("render.json");
-        let mut manifest = serde_json::to_value(&render).unwrap();
-        manifest["measurements"]
-            .as_object_mut()
-            .unwrap()
-            .remove("sectionLoudnessState");
-        fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
         let original = fs::read(&manifest_path).unwrap();
-        let blocked_temporary = manifest_path.with_extension("json.tmp");
-        fs::create_dir(&blocked_temporary).unwrap();
         let dispatcher = crate::Dispatcher::open(
             root.clone(),
             crate::test_support::prepare_built_in_resource_root(&root),
@@ -2447,21 +2409,8 @@ mod tests {
         .unwrap();
         drop(dispatcher);
         assert_eq!(fs::read(&manifest_path).unwrap(), original);
-        let inaccessible = list_renders(&root).unwrap();
-        assert!(inaccessible[0].diagnostics[0].contains("could not be saved"));
-        assert_eq!(fs::read(&manifest_path).unwrap(), original);
-        fs::remove_dir(&blocked_temporary).unwrap();
-        resolve_measurement_sources(&root, &render_id).unwrap();
-        let migrated = fs::read(&manifest_path).unwrap();
-        let saved: RenderResult = serde_json::from_slice(&migrated).unwrap();
-        assert!(matches!(
-            saved.measurements.section_loudness_state,
-            crate::api::output::MeasurementState::Measured
-        ));
-        fs::create_dir(&blocked_temporary).unwrap();
         let sources = resolve_measurement_sources(&root, &render_id).unwrap();
-        assert_eq!(fs::read(&manifest_path).unwrap(), migrated);
-        fs::remove_dir(&blocked_temporary).unwrap();
+        assert_eq!(fs::read(&manifest_path).unwrap(), original);
         assert_eq!(
             sources[0].path,
             Path::new(&render.path).canonicalize().unwrap()
