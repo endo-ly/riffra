@@ -1,6 +1,7 @@
 use crate::api::output::{
     DropoutInformation, RecordingAsset, RecordingCapture, RecordingCaptureStatus,
 };
+use crate::audio::normalize_sample_rate;
 use crate::asset;
 use riffra_core::AssetId;
 use riffra_host::now_ms;
@@ -232,17 +233,6 @@ fn partial_wav_samples(bytes: &[u8]) -> Option<u64> {
         cursor = end + (size % 2);
     }
     None
-}
-
-fn normalize_sample_rate(rate: f64) -> Option<u32> {
-    if !rate.is_finite() || rate <= 0.0 || rate > f64::from(u32::MAX) {
-        return None;
-    }
-    let rounded = rate.round();
-    if !(1.0..=f64::from(u32::MAX)).contains(&rounded) {
-        return None;
-    }
-    Some(rounded as u32)
 }
 
 fn resolve_take_file(directory: &Path, file: Option<&str>, label: &str) -> Result<String, String> {

@@ -22,6 +22,8 @@ mod runtime_adapter;
 mod sidecar_process;
 pub(crate) mod wire;
 
+pub(crate) use protocol::normalize_sample_rate;
+
 use command_bus::CommandBus;
 pub use error::{NativeAudioError, NativeAudioResult};
 use probe::ProbeCoordinator;
