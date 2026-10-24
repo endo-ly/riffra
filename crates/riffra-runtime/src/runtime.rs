@@ -148,7 +148,12 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
                 }
                 RuntimeProjectionState::Failed => {
                     if let Some(key) = target_key {
-                        status_transport.fail_play_for_projection(key);
+                        if let Err(error) = status_transport.fail_play_for_projection(key) {
+                            if let Ok(mut failure) = status_transport_failure.lock() {
+                                *failure = Some(error.to_string());
+                            }
+                            tracing::warn!(error = ?error, "transport state could not be cleared after graph projection failure");
+                        }
                     }
                 }
                 _ => {}
@@ -277,7 +282,7 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
         projection: ProjectionKey,
     ) -> Result<PlayStart, RuntimeError> {
         let lease = self.transport.acquire()?;
-        let PlayDecision { operation } = lease.request_play(Some(projection));
+        let PlayDecision { operation } = lease.request_play(Some(projection))?;
         if self.projection.is_ready_for(projection) {
             return match lease.play_if_current(Some(operation), Some(projection)) {
                 Ok(true) => Ok(PlayStart::Started),
@@ -289,7 +294,7 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
             };
         }
         if let Err(error) = lease.set_transport_starting() {
-            let _ = lease.request_stop();
+            lease.request_stop()?;
             return Err(error);
         }
         if self.projection.pending_work_for(projection) {
@@ -301,7 +306,7 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
 
     pub fn stop(&self) -> Result<RuntimeProjectionStatus, RuntimeError> {
         let lease = self.transport.acquire()?;
-        let _ = lease.request_stop();
+        lease.request_stop()?;
         self.projection.notify();
         lease.stop()?;
         drop(lease);
@@ -315,7 +320,7 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
     /// Returns an error if the active runtime cannot accept the pause request.
     pub fn pause(&self) -> Result<RuntimeProjectionStatus, RuntimeError> {
         let lease = self.transport.acquire()?;
-        let _ = lease.request_stop();
+        lease.request_stop()?;
         self.projection.notify();
         lease.pause()?;
         drop(lease);
@@ -327,7 +332,7 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
         F: FnOnce() -> Result<(), RuntimeError>,
     {
         let lease = self.transport.acquire()?;
-        let _ = lease.request_stop();
+        lease.request_stop()?;
         self.projection.notify();
         lease.stop()?;
         seek()
