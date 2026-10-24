@@ -1,5 +1,3 @@
-#[cfg(test)]
-use crate::api::output::RenderKind;
 use crate::api::output::{ProjectionDiagnostics, RenderResult, RenderStem, RenderStemsResult};
 use crate::api::params::{RenderOptions, RenderRange};
 use crate::asset;
@@ -18,8 +16,6 @@ mod mastering;
 mod sections;
 mod worker;
 
-#[cfg(test)]
-use history::{RenderDeletionMarker, write_deletion_marker};
 pub(crate) use history::{delete_render, export_render, list_renders, resolve_measurement_sources};
 pub(crate) use worker::RenderWorker;
 
@@ -1131,13 +1127,13 @@ fn validate_render_dependencies(
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use riffra_core::{
         AudioClip, EffectDevice, MidiClip, TimelineLoopRange, TimelineTick, Track, TrackInstrument,
     };
 
-    fn session_with_clips() -> CreativeSession {
+    pub(super) fn session_with_clips() -> CreativeSession {
         let mut session = CreativeSession::new(1);
         session
             .arrangement
@@ -1164,7 +1160,7 @@ mod tests {
         crate::test_support::empty_built_in_catalog()
     }
 
-    fn wav(sample_rate: u32, frames: u32) -> Vec<u8> {
+    pub(super) fn wav(sample_rate: u32, frames: u32) -> Vec<u8> {
         let data_len = frames * 4;
         let mut bytes = Vec::new();
         bytes.extend_from_slice(b"RIFF");
@@ -2361,7 +2357,7 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
-    fn create_managed_render(
+    pub(super) fn create_managed_render(
         data_root: &Path,
         session: &CreativeSession,
         created_at_ms: u64,
@@ -2379,356 +2375,6 @@ mod tests {
             None,
         )
         .unwrap()
-    }
-
-    #[test]
-    fn render_history_lists_integrity_and_clean_removes_only_managed_files() {
-        let root = std::env::temp_dir().join(format!(
-            "riffra-render-clean-{}",
-            riffra_control::new_instance_id()
-        ));
-        let output = root.join("exports").join("mix.wav");
-        fs::create_dir_all(output.parent().unwrap()).unwrap();
-        let render = create_managed_render(&root, &session_with_clips(), 31);
-        let render_id = Path::new(&render.path)
-            .parent()
-            .unwrap()
-            .file_name()
-            .unwrap()
-            .to_string_lossy()
-            .into_owned();
-        let manifest_path = Path::new(&render.path)
-            .parent()
-            .unwrap()
-            .join("render.json");
-        let original = fs::read(&manifest_path).unwrap();
-        let dispatcher = crate::Dispatcher::open(
-            root.clone(),
-            crate::test_support::prepare_built_in_resource_root(&root),
-        )
-        .unwrap();
-        drop(dispatcher);
-        assert_eq!(fs::read(&manifest_path).unwrap(), original);
-        let sources = resolve_measurement_sources(&root, &render_id).unwrap();
-        assert_eq!(fs::read(&manifest_path).unwrap(), original);
-        assert_eq!(
-            sources[0].path,
-            Path::new(&render.path).canonicalize().unwrap()
-        );
-        export_render(&root, &render_id, output.to_str().unwrap()).unwrap();
-
-        let listed = list_renders(&root).unwrap();
-        assert_eq!(listed.len(), 1);
-        assert_eq!(listed[0].render_id, render_id);
-        assert_eq!(listed[0].kind, RenderKind::Timeline);
-        assert_eq!(listed[0].created_at_ms, Some(31));
-        assert_eq!(listed[0].file_count, 1);
-        assert!(listed[0].file_size_bytes.unwrap() > 0);
-        assert!(listed[0].files[0].file_exists);
-        assert!(listed[0].files[0].asset_registered);
-        assert!(listed[0].diagnostics.is_empty());
-
-        let jobs = crate::jobs::JobRegistry::default();
-        let (analysis_id, _) = jobs.start_analysis_measure(Some(render_id.clone()));
-        let _ = jobs.start_analysis_measure(None);
-        let _ = jobs.start_analysis_measure(Some("render-unrelated".into()));
-        let store = riffra_host::ProjectStore::new(&root);
-        let project = store.initialize().unwrap();
-        for phase in 0..3 {
-            if phase == 1 {
-                jobs.set_running(&analysis_id, "measuring");
-            }
-            if phase == 2 {
-                jobs.cancel(&analysis_id).unwrap();
-            }
-            let error = delete_render(
-                &root,
-                &store,
-                &project.project_id,
-                &CreativeSession::new(1),
-                std::iter::empty(),
-                &jobs,
-                &render_id,
-            )
-            .unwrap_err();
-            assert!(error.contains(&analysis_id));
-            assert!(Path::new(&render.path).is_file());
-        }
-        jobs.mark_cancelled(&analysis_id);
-        let malformed_directory = root.join("renders").join("render-32-damaged");
-        fs::create_dir(&malformed_directory).unwrap();
-        fs::write(
-            malformed_directory.join("render.json"),
-            b"not a render manifest",
-        )
-        .unwrap();
-        let listed = list_renders(&root).unwrap();
-        let damaged = listed
-            .iter()
-            .find(|item| item.render_id == "render-32-damaged")
-            .unwrap();
-        assert_eq!(damaged.kind, RenderKind::Unknown);
-        assert_eq!(damaged.created_at_ms, Some(32));
-        assert_eq!(damaged.diagnostics.len(), 1);
-        assert_eq!(
-            fs::read(malformed_directory.join("render.json")).unwrap(),
-            b"not a render manifest"
-        );
-
-        fs::remove_dir_all(malformed_directory).unwrap();
-
-        let project = riffra_host::ProjectStore::new(&root).initialize().unwrap();
-        let deleted = delete_render(
-            &root,
-            &riffra_host::ProjectStore::new(&root),
-            &project.project_id,
-            &project.loaded.session,
-            std::iter::empty(),
-            &jobs,
-            &render_id,
-        )
-        .unwrap();
-        assert_eq!(deleted.deleted_file_count, 2);
-        assert!(!Path::new(&render.path).exists());
-        assert!(output.is_file());
-        assert!(asset::load(&root, &render.asset_id).is_none());
-        assert!(list_renders(&root).unwrap().is_empty());
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn render_clean_rejects_current_and_saved_generation_references() {
-        let root = std::env::temp_dir().join(format!(
-            "riffra-render-referenced-{}",
-            riffra_control::new_instance_id()
-        ));
-        let render = create_managed_render(&root, &session_with_clips(), 41);
-        let render_id = Path::new(&render.path)
-            .parent()
-            .unwrap()
-            .file_name()
-            .unwrap()
-            .to_string_lossy()
-            .into_owned();
-        let store = riffra_host::ProjectStore::new(&root);
-        let project = store.initialize().unwrap();
-        let jobs = crate::jobs::JobRegistry::default();
-        let mut referenced = session_with_clips();
-        referenced.arrangement.midi_clips[0].asset_id = Some(render.asset_id.clone());
-        let active_jobs = crate::jobs::JobRegistry::default();
-        let _ = active_jobs.start(crate::api::output::JobKind::Render);
-        let active_job_error = delete_render(
-            &root,
-            &store,
-            &project.project_id,
-            &CreativeSession::new(41),
-            std::iter::empty(),
-            &active_jobs,
-            &render_id,
-        )
-        .unwrap_err();
-        assert!(active_job_error.contains("active jobs"));
-        let current_error = delete_render(
-            &root,
-            &store,
-            &project.project_id,
-            &referenced,
-            std::iter::empty(),
-            &jobs,
-            &render_id,
-        )
-        .unwrap_err();
-        assert!(current_error.contains("current project"));
-        assert!(current_error.contains("Clip clip"));
-
-        let session_store = store.session_store(&project.project_id).unwrap();
-        session_store.save(&referenced).unwrap();
-        session_store.save(&CreativeSession::new(42)).unwrap();
-        let generation_error = delete_render(
-            &root,
-            &store,
-            &project.project_id,
-            &CreativeSession::new(42),
-            std::iter::empty(),
-            &jobs,
-            &render_id,
-        )
-        .unwrap_err();
-        assert!(generation_error.contains("saved session"));
-        assert!(generation_error.contains("Clip clip"));
-        assert!(Path::new(&render.path).is_file());
-        assert!(asset::load(&root, &render.asset_id).is_some());
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn render_clean_rejects_recording_and_provenance_references() {
-        let root = std::env::temp_dir().join(format!(
-            "riffra-render-dependent-{}",
-            riffra_control::new_instance_id()
-        ));
-        let render = create_managed_render(&root, &session_with_clips(), 51);
-        let render_id = Path::new(&render.path)
-            .parent()
-            .unwrap()
-            .file_name()
-            .unwrap()
-            .to_string_lossy()
-            .into_owned();
-        let store = riffra_host::ProjectStore::new(&root);
-        let project = store.initialize().unwrap();
-        let jobs = crate::jobs::JobRegistry::default();
-        let child_path = root.join("derived.wav");
-        fs::write(&child_path, wav(48_000, 128)).unwrap();
-        let child_id = asset::register_derived(
-            &root,
-            std::slice::from_ref(&render.asset_id),
-            riffra_core::AssetKind::Audio,
-            "Derived Render",
-            &child_path.to_string_lossy(),
-            riffra_core::ProvenanceOperation::Processed,
-            serde_json::Map::new(),
-        )
-        .unwrap();
-        let dependency_error = delete_render(
-            &root,
-            &store,
-            &project.project_id,
-            &CreativeSession::new(52),
-            std::iter::empty(),
-            &jobs,
-            &render_id,
-        )
-        .unwrap_err();
-        assert!(dependency_error.contains(&child_id.to_string()));
-
-        let capture_directory = root.join("recordings").join("inbox").join("take-1");
-        fs::create_dir_all(&capture_directory).unwrap();
-        let mut capture = crate::api::output::RecordingCapture::start("capture:1", "session-1", 1);
-        capture.raw_audio_asset_id = Some(render.asset_id.clone());
-        fs::write(
-            capture_directory.join("manifest.json"),
-            serde_json::to_vec(&serde_json::json!({ "capture": capture })).unwrap(),
-        )
-        .unwrap();
-        let recording_error = delete_render(
-            &root,
-            &store,
-            &project.project_id,
-            &CreativeSession::new(52),
-            std::iter::empty(),
-            &jobs,
-            &render_id,
-        )
-        .unwrap_err();
-        assert!(recording_error.contains("recording"));
-        assert!(recording_error.contains("raw audio"));
-        assert!(Path::new(&render.path).is_file());
-        assert!(asset::load(&root, &render.asset_id).is_some());
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn render_clean_recovers_interrupted_file_and_asset_removal() {
-        let root = std::env::temp_dir().join(format!(
-            "riffra-render-clean-retry-{}",
-            riffra_control::new_instance_id()
-        ));
-        let store = riffra_host::ProjectStore::new(&root);
-        let project = store.initialize().unwrap();
-        let session = CreativeSession::new(61);
-        let jobs = crate::jobs::JobRegistry::default();
-        let render = create_managed_render(&root, &session_with_clips(), 61);
-        let directory = Path::new(&render.path).parent().unwrap().to_path_buf();
-        let render_id = directory
-            .file_name()
-            .unwrap()
-            .to_string_lossy()
-            .into_owned();
-        let render_root = directory.parent().unwrap();
-        let marker_name = format!(".deleting-{render_id}-interrupted");
-        let tombstone = render_root.join(&marker_name);
-        let marker_path = render_root.join(format!("{marker_name}.json"));
-        let marker = RenderDeletionMarker {
-            render_id: render_id.clone(),
-            asset_ids: vec![render.asset_id.clone()],
-            deleted_file_count: 2,
-        };
-
-        fs::rename(&directory, &tombstone).unwrap();
-        write_deletion_marker(&marker_path, &marker).unwrap();
-        let restored = delete_render(
-            &root,
-            &store,
-            &project.project_id,
-            &session,
-            std::iter::empty(),
-            &jobs,
-            &render_id,
-        )
-        .unwrap_err();
-        assert!(restored.contains("was restored"));
-        assert!(directory.is_dir());
-        assert!(asset::load(&root, &render.asset_id).is_some());
-        delete_render(
-            &root,
-            &store,
-            &project.project_id,
-            &session,
-            std::iter::empty(),
-            &jobs,
-            &render_id,
-        )
-        .unwrap();
-
-        let second_render = create_managed_render(&root, &session_with_clips(), 62);
-        let second_directory = Path::new(&second_render.path)
-            .parent()
-            .unwrap()
-            .to_path_buf();
-        let second_id = second_directory
-            .file_name()
-            .unwrap()
-            .to_string_lossy()
-            .into_owned();
-        let second_tombstone_name = format!(".deleting-{second_id}-committed");
-        let second_tombstone = second_directory
-            .parent()
-            .unwrap()
-            .join(&second_tombstone_name);
-        let second_marker_path = second_directory
-            .parent()
-            .unwrap()
-            .join(format!("{second_tombstone_name}.json"));
-        fs::rename(&second_directory, &second_tombstone).unwrap();
-        write_deletion_marker(
-            &second_marker_path,
-            &RenderDeletionMarker {
-                render_id: second_id.clone(),
-                asset_ids: vec![second_render.asset_id.clone()],
-                deleted_file_count: 2,
-            },
-        )
-        .unwrap();
-        asset::remove_render_assets(
-            &root,
-            &[(second_render.asset_id.clone(), second_render.path.clone())],
-        )
-        .unwrap();
-        let completed = delete_render(
-            &root,
-            &store,
-            &project.project_id,
-            &session,
-            std::iter::empty(),
-            &jobs,
-            &second_id,
-        )
-        .unwrap();
-        assert_eq!(completed.deleted_file_count, 2);
-        assert!(!second_tombstone.exists());
-        assert!(!second_marker_path.exists());
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
