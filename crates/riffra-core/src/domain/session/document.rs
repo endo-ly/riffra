@@ -253,4 +253,32 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn serializes_summary_metadata_before_large_session_fields() {
+        // Arrange
+        let mut session = CreativeSession::new(1_000);
+        session.project_name = Some("Project".into());
+        session.score_source = Some(super::super::ScoreSource {
+            file_name: "score.yaml".into(),
+            yaml: "score".into(),
+        });
+
+        // Act
+        let payload = serialize_session_document(&session).unwrap();
+        let serialized = std::str::from_utf8(&payload).unwrap();
+        let loaded = deserialize_session_document(&payload).unwrap();
+
+        // Assert
+        let field_positions = [
+            "\"sessionId\"",
+            "\"updatedAtMs\"",
+            "\"projectName\"",
+            "\"scoreSource\"",
+            "\"arrangement\"",
+        ]
+        .map(|field| serialized.find(field).unwrap());
+        assert!(field_positions.windows(2).all(|pair| pair[0] < pair[1]));
+        assert_eq!(loaded, session);
+    }
 }
