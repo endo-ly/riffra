@@ -346,6 +346,7 @@ impl HostState {
             | CanonicalCommand::InstrumentSave(_)
             | CanonicalCommand::InstrumentExport(_)
             | CanonicalCommand::InstrumentApply(_)
+            | CanonicalCommand::PluginStateImport(_)
             | CanonicalCommand::InstrumentMidiGet(_)) => {
                 return self.dispatch_shared_canonical(command, access, current, &mut context);
             }
@@ -915,7 +916,7 @@ impl HostState {
             RuntimeCommand::PluginStateSet(params) => {
                 let (plugin_path, bypassed) =
                     canonical_plugin_device(&current, &params.owner, &params.device_id)?;
-                validate_plugin_state(&params.state, &plugin_path)?;
+                crate::plugins::validate_plugin_state(&params.state, &plugin_path)?;
                 self.wait_for_device_projection(&current)?;
                 let previous_state = self
                     .audio
@@ -1660,32 +1661,6 @@ fn plugin_state_value(state: &PluginStateSnapshot, bypassed: bool) -> GraphPlugi
         parameter_values: state.parameter_values.clone(),
         bypassed,
     }
-}
-
-fn validate_plugin_state(
-    state: &PluginStateSnapshot,
-    plugin_path: &str,
-) -> Result<(), ProtocolError> {
-    if state.schema_version != 1 {
-        return Err(ProtocolError::new(
-            ErrorCode::InvalidRequest,
-            "plugin state schemaVersion must be 1",
-        ));
-    }
-    if state.plugin_path != plugin_path {
-        return Err(command_error("plugin state belongs to a different VST3"));
-    }
-    if state
-        .parameter_values
-        .iter()
-        .any(|value| !value.is_finite())
-    {
-        return Err(ProtocolError::new(
-            ErrorCode::InvalidRequest,
-            "plugin state parameter values must be finite",
-        ));
-    }
-    Ok(())
 }
 
 fn resolve_plugin_preset(

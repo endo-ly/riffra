@@ -104,8 +104,19 @@ pub fn validated_catalog_plugin(
     requested_path: &Path,
 ) -> Result<(String, PathBuf, PluginRole), String> {
     let catalog_path = data_root.join("plugins/catalog.json");
-    let payload = fs::read(&catalog_path)
-        .map_err(|error| format!("Validated plugin catalog could not be read: {error}"))?;
+    let payload = fs::read(&catalog_path).map_err(|error| {
+        if error.kind() == io::ErrorKind::NotFound {
+            format!(
+                "this DataRoot has no plugin catalog: {}; run `riffra --attach plugin scan` before adding VST3 plugins",
+                catalog_path.display()
+            )
+        } else {
+            format!(
+                "validated plugin catalog could not be read at {}: {error}",
+                catalog_path.display()
+            )
+        }
+    })?;
     let catalog = serde_json::from_slice::<StoredCatalog>(&payload)
         .map_err(|error| format!("Validated plugin catalog is invalid: {error}"))?;
     let requested = requested_path
@@ -238,6 +249,10 @@ mod tests {
         let root = test_root();
         let plugin_path = root.join("VST3/Amp.vst3");
         fs::create_dir_all(&plugin_path).unwrap();
+        let error = validated_plugin(&root, &plugin_path, PluginRole::Effect).unwrap_err();
+        assert!(error.contains("DataRoot has no plugin catalog"));
+        assert!(error.contains("riffra --attach plugin scan"));
+        assert!(error.contains(&root.join("plugins/catalog.json").display().to_string()));
         let report = ScanReport {
             root: root.to_string_lossy().into_owned(),
             started_at_ms: 1,

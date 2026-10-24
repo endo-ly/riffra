@@ -93,6 +93,17 @@ pub struct PluginStateSetParams {
     pub state: PluginStateSnapshot,
 }
 
+/// Imports a saved VST3 state into the Project without querying a live plugin.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[ts(optional_fields = nullable)]
+pub struct PluginStateImportParams {
+    pub owner: riffra_core::EffectOwner,
+    /// Omit to select the owner's Track instrument; required for effects.
+    pub device_id: Option<String>,
+    pub state: PluginStateSnapshot,
+}
+
 /// Replaces a missing audio Asset with a file on disk.
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]

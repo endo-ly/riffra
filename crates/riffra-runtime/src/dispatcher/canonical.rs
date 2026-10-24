@@ -837,6 +837,9 @@ impl HostDispatcher<'_> {
                 application,
             ),
             CanonicalCommand::EffectAdd(params) => self.add_effect(application, params),
+            CanonicalCommand::PluginStateImport(params) => {
+                self.import_plugin_state(application, params)
+            }
             CanonicalCommand::EffectRemove(params) => self.edited(
                 application.remove_effect(&params.owner, &params.device_id)?,
                 application,

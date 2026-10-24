@@ -8,11 +8,13 @@ use std::{
 };
 
 pub(crate) mod catalog;
+mod state;
 pub(crate) mod validation;
 pub(crate) use catalog::{
     load, reuse_cached_scan_results, save, selected_plugin_path, validated_catalog_plugin,
     validated_plugin,
 };
+pub(crate) use state::{PluginStateError, validate_plugin_state};
 pub(crate) use validation::{validate_report, validate_report_with_cancel};
 
 const MAX_ENTRIES: usize = 100_000;

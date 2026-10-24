@@ -328,6 +328,7 @@ control_commands! {
         InstrumentMidiGet = "instrument.midi.get" (TrackIdParams) -> InstrumentMidi, read, project;
         InstrumentMidiSet = "instrument.midi.set" (InstrumentMidiSetParams) -> ArrangementMutation, mutation(batch), project;
         InstrumentVst3Set = "instrument.vst3.set" (PluginPathParams) -> ArrangementMutation, mutation(batch), project(long);
+        PluginStateImport = "plugin.state.import" (PluginStateImportParams) -> ArrangementMutation, mutation(batch), project;
         InstrumentClear = "instrument.clear" (TrackIdParams) -> ArrangementMutation, mutation(batch), project;
         EffectAdd = "effect.add" (EffectAddParams) -> ArrangementMutation, mutation(batch), project(long);
         EffectRemove = "effect.remove" (DeviceParams) -> ArrangementMutation, mutation(batch), project;
