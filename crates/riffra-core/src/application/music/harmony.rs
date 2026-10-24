@@ -6,7 +6,8 @@ use super::{
 };
 use crate::application::Application;
 use crate::domain::{
-    HarmonyChord, HarmonyEvent, MusicalNoteName, MusicalPosition, RhythmPattern, TimelineTick,
+    CreativeSession, HarmonyChord, HarmonyEvent, MusicalNoteName, MusicalPosition, RhythmPattern,
+    TimelineTick,
 };
 use crate::errors::ApplicationError;
 use crate::ports::SessionStorage;
@@ -73,6 +74,30 @@ pub struct MusicalHarmonyEventView {
     pub chord: HarmonyChord,
 }
 
+/// Resolves a chord symbol without changing canonical state.
+///
+/// # Errors
+/// Returns an error when the symbol is not accepted by the harmony resolver.
+pub fn resolve_harmony_chord(symbol: &str) -> Result<HarmonyChord, crate::DomainError> {
+    HarmonyChord::resolve(symbol)
+}
+
+/// Lists harmony events in musical coordinates from a canonical session.
+pub fn list_harmony_events(session: &CreativeSession) -> Vec<MusicalHarmonyEventView> {
+    let timebase = &session.arrangement.timebase;
+    session
+        .arrangement
+        .harmony_events
+        .iter()
+        .map(|event| MusicalHarmonyEventView {
+            id: event.id.clone(),
+            start: timebase.tick_to_musical_position(event.start_tick),
+            end: timebase.tick_to_musical_position(event.end_tick),
+            chord: event.chord.clone(),
+        })
+        .collect()
+}
+
 impl<'a, S> Application<'a, S>
 where
     S: SessionStorage + ?Sized,
@@ -83,11 +108,8 @@ where
     ///
     /// Returns an error when the symbol is not accepted by the harmony
     /// resolver.
-    pub fn resolve_harmony_chord(
-        &mut self,
-        symbol: &str,
-    ) -> Result<HarmonyChord, ApplicationError> {
-        HarmonyChord::resolve(symbol).map_err(Into::into)
+    pub fn resolve_harmony_chord(&self, symbol: &str) -> Result<HarmonyChord, ApplicationError> {
+        resolve_harmony_chord(symbol).map_err(Into::into)
     }
 
     /// Inserts one or more harmony events as one canonical edit and returns
@@ -227,22 +249,9 @@ where
     /// # Errors
     ///
     /// Returns an error when the canonical session cannot be read.
-    pub fn list_harmony_events(
-        &mut self,
-    ) -> Result<Vec<MusicalHarmonyEventView>, ApplicationError> {
-        let session = self.get_session()?;
-        let timebase = session.arrangement.timebase.clone();
-        Ok(session
-            .arrangement
-            .harmony_events
-            .into_iter()
-            .map(|event| MusicalHarmonyEventView {
-                id: event.id,
-                start: timebase.tick_to_musical_position(event.start_tick),
-                end: timebase.tick_to_musical_position(event.end_tick),
-                chord: event.chord,
-            })
-            .collect())
+    pub fn list_harmony_events(&self) -> Result<Vec<MusicalHarmonyEventView>, ApplicationError> {
+        let snapshot = self.core.snapshot();
+        Ok(list_harmony_events(&snapshot.session))
     }
 
     /// Realizes selected harmony events into MIDI notes in one canonical edit

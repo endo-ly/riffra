@@ -15,6 +15,146 @@ use riffra_core::{
 };
 
 impl HostDispatcher<'_> {
+    pub(super) fn run_read_canonical(
+        &self,
+        command: CanonicalCommand,
+        canonical: &CanonicalState,
+    ) -> Result<ControlOutput, DispatchError> {
+        let session = &canonical.session;
+        let timebase = session.arrangement.timebase.clone();
+        match command {
+            CanonicalCommand::MixerGet(_) => {
+                Ok(ControlOutput::Mixer(session.arrangement.mixer.clone()))
+            }
+            CanonicalCommand::MixBusList(_) => Ok(ControlOutput::MixBuses(
+                session.arrangement.mixer.buses.clone(),
+            )),
+            CanonicalCommand::SendList(_) => Ok(ControlOutput::Sends(
+                session.arrangement.mixer.sends.clone(),
+            )),
+            CanonicalCommand::SidechainSendList(_) => Ok(ControlOutput::SidechainSends(
+                session.arrangement.mixer.sidechain_sends.clone(),
+            )),
+            CanonicalCommand::MixdownGet(_) => {
+                Ok(ControlOutput::Mixdown(session.settings.mixdown.clone()))
+            }
+            CanonicalCommand::InstrumentEventList(params) => {
+                let clip = session
+                    .arrangement
+                    .midi_clips
+                    .iter()
+                    .find(|clip| clip.id == params.clip_id)
+                    .ok_or_else(|| DispatchError::invalid_request("midi clip was not found"))?;
+                Ok(ControlOutput::InstrumentEvents(
+                    clip.instrument_control_events.clone(),
+                ))
+            }
+            CanonicalCommand::InstrumentMidiGet(params) => {
+                let track = session
+                    .arrangement
+                    .tracks
+                    .iter()
+                    .find(|track| track.id == params.track_id)
+                    .ok_or_else(|| DispatchError::invalid_request("track was not found"))?;
+                if track.kind != riffra_core::TrackKind::Instrument {
+                    return Err(DispatchError::invalid_request(
+                        "instrument MIDI settings require an instrument track",
+                    ));
+                }
+                let settings = track
+                    .instrument
+                    .as_ref()
+                    .map(|instrument| instrument.midi.clone())
+                    .unwrap_or_default();
+                let warnings = settings.warnings(&track.id, &session.arrangement.midi_clips);
+                Ok(ControlOutput::InstrumentMidi(InstrumentMidiInspection {
+                    track_id: track.id.clone(),
+                    instrument_id: track
+                        .instrument
+                        .as_ref()
+                        .map(|instrument| instrument.id.clone()),
+                    settings,
+                    warnings,
+                }))
+            }
+            CanonicalCommand::SessionGet(_) => Ok(ControlOutput::Session(session.clone())),
+            CanonicalCommand::SessionInspect(query) => Ok(ControlOutput::SessionInspection(
+                inspect_canonical_state(canonical, query)
+                    .map_err(|error| DispatchError::invalid_request(error.to_string()))?,
+            )),
+            CanonicalCommand::HistoryGet(_) => Ok(ControlOutput::History(canonical.history)),
+            CanonicalCommand::TrackList(_) => Ok(ControlOutput::Tracks(
+                session
+                    .arrangement
+                    .tracks
+                    .iter()
+                    .map(TrackSummary::from_track)
+                    .collect(),
+            )),
+            CanonicalCommand::TimebaseGetMap(_) => Ok(ControlOutput::Timebase(timebase)),
+            CanonicalCommand::AutomationGet(params) => Ok(ControlOutput::AutomationLanes(
+                automation_lane(session, params.target)?,
+            )),
+            CanonicalCommand::AutomationList(params) => Ok(ControlOutput::AutomationLanes(
+                automation_lanes(session, params.owner)?,
+            )),
+            CanonicalCommand::AudioClipList(_) => Ok(ControlOutput::AudioClips(
+                session.arrangement.audio_clips.clone(),
+            )),
+            CanonicalCommand::MidiClipList(_) => Ok(ControlOutput::MidiClips(
+                session.arrangement.midi_clips.clone(),
+            )),
+            CanonicalCommand::MusicNoteList(params) => Ok(ControlOutput::MusicNotes(
+                riffra_core::application::list_musical_notes(
+                    session,
+                    MusicalNoteListRequest {
+                        scope: MusicalNoteScope {
+                            clip_id: params.clip_id,
+                            track_id: params.track_id,
+                        },
+                        start: params.start,
+                        end: params.end,
+                        include_ids: params.include_ids,
+                        raw: params.raw,
+                    },
+                )?,
+            )),
+            CanonicalCommand::MusicNoteGet(params) => Ok(ControlOutput::MusicNote(
+                riffra_core::application::get_musical_note(
+                    session,
+                    &params.clip_id,
+                    &params.note_id,
+                )?,
+            )),
+            CanonicalCommand::MusicHarmonyResolve(params) => Ok(ControlOutput::HarmonyChord(
+                riffra_core::application::resolve_harmony_chord(&params.chord)
+                    .map_err(|error| DispatchError::invalid_request(error.to_string()))?,
+            )),
+            CanonicalCommand::MusicHarmonyList(_) => Ok(ControlOutput::HarmonyEvents(
+                riffra_core::application::list_harmony_events(session),
+            )),
+            CanonicalCommand::MusicPhrasePreview(params) => {
+                self.phrase_preview(session, timebase, params)
+            }
+            CanonicalCommand::MusicRegionList(_) => Ok(ControlOutput::Regions(
+                riffra_core::application::list_regions(session),
+            )),
+            CanonicalCommand::AssetImportMidi(params) => {
+                Ok(ControlOutput::AssetId(riffra_host::import_midi_asset(
+                    &self.data_root,
+                    &params.path.to_string_lossy(),
+                    params.name.as_deref(),
+                )?))
+            }
+            CanonicalCommand::InstrumentList(_) => self.list_instruments(),
+            CanonicalCommand::InstrumentSave(params) => self.save_instrument(params),
+            CanonicalCommand::InstrumentExport(params) => self.export_instrument(params),
+            _ => Err(DispatchError::invalid_request(
+                "command is not a canonical read",
+            )),
+        }
+    }
+
     fn sidechain_capability(
         &self,
         owner: &riffra_core::EffectOwner,
@@ -89,15 +229,6 @@ impl HostDispatcher<'_> {
                 .map_err(|error| DispatchError::invalid_request(error.to_string()))
         };
         match command {
-            CanonicalCommand::MixerGet(_) => {
-                Ok(ControlOutput::Mixer(canonical.session.arrangement.mixer))
-            }
-            CanonicalCommand::MixBusList(_) => Ok(ControlOutput::MixBuses(
-                canonical.session.arrangement.mixer.buses,
-            )),
-            CanonicalCommand::SendList(_) => Ok(ControlOutput::Sends(
-                canonical.session.arrangement.mixer.sends,
-            )),
             CanonicalCommand::MixBusAdd(params) => self.created(
                 application.add_mix_bus_with_created_ids(params.name, params.kind)?,
                 application,
@@ -129,9 +260,6 @@ impl HostDispatcher<'_> {
             CanonicalCommand::SendRemove(params) => {
                 self.edited(application.remove_send(&params.send_id)?, application)
             }
-            CanonicalCommand::SidechainSendList(_) => Ok(ControlOutput::SidechainSends(
-                canonical.session.arrangement.mixer.sidechain_sends,
-            )),
             CanonicalCommand::SidechainSendAdd(params) => self.created(
                 application.add_sidechain_send_with_created_ids(
                     params.source_track_id,
@@ -149,9 +277,6 @@ impl HostDispatcher<'_> {
                 application.remove_sidechain_send(&params.sidechain_send_id)?,
                 application,
             ),
-            CanonicalCommand::MixdownGet(_) => {
-                Ok(ControlOutput::Mixdown(canonical.session.settings.mixdown))
-            }
             CanonicalCommand::MixdownSet(mixdown) => self.edited(
                 application.update_session_settings(SessionSettingsPatch {
                     mixdown: Some(mixdown),
@@ -179,48 +304,6 @@ impl HostDispatcher<'_> {
                 )?,
                 application,
             ),
-            CanonicalCommand::InstrumentEventList(params) => {
-                let clip = canonical
-                    .session
-                    .arrangement
-                    .midi_clips
-                    .iter()
-                    .find(|clip| clip.id == params.clip_id)
-                    .ok_or_else(|| DispatchError::invalid_request("midi clip was not found"))?;
-                Ok(ControlOutput::InstrumentEvents(
-                    clip.instrument_control_events.clone(),
-                ))
-            }
-            CanonicalCommand::InstrumentMidiGet(params) => {
-                let track = canonical
-                    .session
-                    .arrangement
-                    .tracks
-                    .iter()
-                    .find(|track| track.id == params.track_id)
-                    .ok_or_else(|| DispatchError::invalid_request("track was not found"))?;
-                if track.kind != riffra_core::TrackKind::Instrument {
-                    return Err(DispatchError::invalid_request(
-                        "instrument MIDI settings require an instrument track",
-                    ));
-                }
-                let settings = track
-                    .instrument
-                    .as_ref()
-                    .map(|instrument| instrument.midi.clone())
-                    .unwrap_or_default();
-                let warnings =
-                    settings.warnings(&track.id, &canonical.session.arrangement.midi_clips);
-                Ok(ControlOutput::InstrumentMidi(InstrumentMidiInspection {
-                    track_id: track.id.clone(),
-                    instrument_id: track
-                        .instrument
-                        .as_ref()
-                        .map(|instrument| instrument.id.clone()),
-                    settings,
-                    warnings,
-                }))
-            }
             command @ (CanonicalCommand::InstrumentEventAdd(_)
             | CanonicalCommand::InstrumentEventSet(_)
             | CanonicalCommand::InstrumentEventUpdate(_)
@@ -292,18 +375,12 @@ impl HostDispatcher<'_> {
                     application,
                 )
             }
-            CanonicalCommand::SessionGet(_) => Ok(ControlOutput::Session(canonical.session)),
-            CanonicalCommand::SessionInspect(query) => Ok(ControlOutput::SessionInspection(
-                inspect_canonical_state(&canonical, query)
-                    .map_err(|error| DispatchError::invalid_request(error.to_string()))?,
-            )),
             CanonicalCommand::SessionApply(params) => {
                 self.apply_batch(application, canonical, params)
             }
             CanonicalCommand::SessionSettingsUpdate(patch) => {
                 self.edited(application.update_session_settings(patch)?, application)
             }
-            CanonicalCommand::HistoryGet(_) => Ok(ControlOutput::History(canonical.history)),
             CanonicalCommand::Undo(_) => self.edited(application.undo()?, application),
             CanonicalCommand::Redo(_) => self.edited(application.redo()?, application),
             CanonicalCommand::MasterGainSet(params) => {
@@ -319,15 +396,6 @@ impl HostDispatcher<'_> {
                 )
             }
 
-            CanonicalCommand::TrackList(_) => Ok(ControlOutput::Tracks(
-                canonical
-                    .session
-                    .arrangement
-                    .tracks
-                    .iter()
-                    .map(TrackSummary::from_track)
-                    .collect(),
-            )),
             CanonicalCommand::TrackAdd(params) => self.created(
                 application.add_track_with_created_ids(params.name, params.kind)?,
                 application,
@@ -404,7 +472,6 @@ impl HostDispatcher<'_> {
                 application.update_timebase(self.timebase_update(timebase, params)?)?,
                 application,
             ),
-            CanonicalCommand::TimebaseGetMap(_) => Ok(ControlOutput::Timebase(timebase)),
             CanonicalCommand::TimebaseSetMap(params) => self.edited(
                 application.update_timebase(riffra_core::ProjectTimebase {
                     ppq: timebase.ppq,
@@ -429,12 +496,6 @@ impl HostDispatcher<'_> {
                 )?,
                 application,
             ),
-            CanonicalCommand::AutomationGet(params) => Ok(ControlOutput::AutomationLanes(
-                automation_lane(&canonical.session, params.target)?,
-            )),
-            CanonicalCommand::AutomationList(params) => Ok(ControlOutput::AutomationLanes(
-                automation_lanes(&canonical.session, params.owner)?,
-            )),
             CanonicalCommand::AutomationSet(params) => self.created(
                 application.set_automation_with_created_ids(
                     params.target.clone(),
@@ -496,9 +557,6 @@ impl HostDispatcher<'_> {
                 application,
             ),
 
-            CanonicalCommand::AudioClipList(_) => Ok(ControlOutput::AudioClips(
-                canonical.session.arrangement.audio_clips,
-            )),
             CanonicalCommand::AudioClipAddAsset(params) => self.add_audio_clip(application, params),
             CanonicalCommand::AudioClipUpdate(params) => self.edited(
                 application.update_audio_clip(&params.clip_id, params.patch)?,
@@ -534,9 +592,6 @@ impl HostDispatcher<'_> {
                 application.crossfade_audio_clips(&params.first_clip_id, &params.second_clip_id)?,
                 application,
             ),
-            CanonicalCommand::MidiClipList(_) => Ok(ControlOutput::MidiClips(
-                canonical.session.arrangement.midi_clips,
-            )),
             CanonicalCommand::MidiClipCreate(params) => self.created(
                 application.create_midi_clip_with_created_ids(
                     &params.track_id,
@@ -679,21 +734,6 @@ impl HostDispatcher<'_> {
                 application.insert_musical_notes_with_created_ids(&params.clip_id, params.notes)?,
                 application,
             ),
-            CanonicalCommand::MusicNoteList(params) => Ok(ControlOutput::MusicNotes(
-                application.list_musical_notes(MusicalNoteListRequest {
-                    scope: MusicalNoteScope {
-                        clip_id: params.clip_id,
-                        track_id: params.track_id,
-                    },
-                    start: params.start,
-                    end: params.end,
-                    include_ids: params.include_ids,
-                    raw: params.raw,
-                })?,
-            )),
-            CanonicalCommand::MusicNoteGet(params) => Ok(ControlOutput::MusicNote(
-                application.get_musical_note(&params.clip_id, &params.note_id)?,
-            )),
             CanonicalCommand::MusicNoteUpdate(params) => {
                 let patch = MusicalMidiNotePatch {
                     pitch: params.pitch,
@@ -737,12 +777,6 @@ impl HostDispatcher<'_> {
                 })?,
                 application,
             ),
-            CanonicalCommand::MusicHarmonyResolve(params) => Ok(ControlOutput::HarmonyChord(
-                application.resolve_harmony_chord(&params.chord)?,
-            )),
-            CanonicalCommand::MusicHarmonyList(_) => Ok(ControlOutput::HarmonyEvents(
-                application.list_harmony_events()?,
-            )),
             CanonicalCommand::MusicHarmonyInsert(params) => self.created(
                 application.insert_harmony_events_with_created_ids(params.events)?,
                 application,
@@ -791,12 +825,6 @@ impl HostDispatcher<'_> {
                 )?,
                 application,
             ),
-            CanonicalCommand::MusicPhrasePreview(params) => {
-                self.phrase_preview(application, timebase, params)
-            }
-            CanonicalCommand::MusicRegionList(_) => {
-                Ok(ControlOutput::Regions(application.list_regions()?))
-            }
             CanonicalCommand::MusicRegionAdd(params) => self.created(
                 application.add_region_with_created_ids(params.name, params.start, params.end)?,
                 application,
@@ -814,16 +842,6 @@ impl HostDispatcher<'_> {
                 self.edited(application.remove_region(&params.region_id)?, application)
             }
 
-            CanonicalCommand::AssetImportMidi(params) => {
-                Ok(ControlOutput::AssetId(riffra_host::import_midi_asset(
-                    &self.data_root,
-                    &params.path.to_string_lossy(),
-                    params.name.as_deref(),
-                )?))
-            }
-            CanonicalCommand::InstrumentList(_) => self.list_instruments(),
-            CanonicalCommand::InstrumentSave(params) => self.save_instrument(params),
-            CanonicalCommand::InstrumentExport(params) => self.export_instrument(params),
             CanonicalCommand::InstrumentApply(params) => self.apply_instrument(application, params),
             CanonicalCommand::InstrumentMidiSet(params) => self.edited(
                 application.set_track_instrument_midi(&params.track_id, params.settings)?,
@@ -865,6 +883,7 @@ impl HostDispatcher<'_> {
             CanonicalCommand::MissingReplacePlugin(params) => {
                 self.replace_missing_plugin(application, params)
             }
+            _ => unreachable!("read commands use the read-only canonical executor"),
         }
     }
 }

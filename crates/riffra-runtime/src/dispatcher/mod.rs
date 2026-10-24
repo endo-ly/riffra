@@ -253,6 +253,31 @@ pub struct DispatchResult {
     pub sequence: u64,
 }
 
+fn validate_dispatch_preconditions(
+    scope: CommandScope,
+    expected_sequence: Option<u64>,
+    expected_project_id: Option<&str>,
+    canonical: &riffra_core::CanonicalState,
+) -> Result<(), DispatchError> {
+    if let (CommandScope::Project { .. }, Some(expected_project_id)) = (scope, expected_project_id)
+        && expected_project_id != canonical.project_id
+    {
+        return Err(DispatchError::ProjectConflict {
+            expected_project_id: expected_project_id.to_owned(),
+            current_project_id: canonical.project_id.clone(),
+        });
+    }
+    if let Some(expected_sequence) = expected_sequence
+        && expected_sequence != canonical.sequence
+    {
+        return Err(DispatchError::Conflict {
+            expected_sequence,
+            current_sequence: canonical.sequence,
+        });
+    }
+    Ok(())
+}
+
 impl HostDispatcher<'static> {
     /// Opens the standalone canonical editing dispatcher.
     pub fn open(data_root: PathBuf, built_in_instruments_root: PathBuf) -> Result<Self, String> {
@@ -334,34 +359,35 @@ impl<'a> HostDispatcher<'a> {
         if matches!(command, ControlCommand::Runtime(_)) {
             return Err(DispatchError::requires_live_host());
         }
+
+        let command = match command {
+            ControlCommand::Canonical(command) if command.access() == CanonicalAccess::Read => {
+                let snapshot = self.core.cell().read();
+                validate_dispatch_preconditions(
+                    policy.scope,
+                    expected_sequence,
+                    expected_project_id,
+                    &snapshot.canonical,
+                )?;
+                return self.execute_read_canonical(command, &snapshot.canonical);
+            }
+            command => command,
+        };
+
         let mut writer = (policy.scope != CommandScope::Host).then(|| self.core.cell().write());
         let canonical = writer.as_ref().map_or_else(
             || self.core.cell().read().canonical.clone(),
             |writer| writer.project().core.canonical_state(),
         );
-        if let (CommandScope::Project { .. }, Some(expected_project_id)) =
-            (policy.scope, expected_project_id)
-            && expected_project_id != canonical.project_id
-        {
-            return Err(DispatchError::ProjectConflict {
-                expected_project_id: expected_project_id.into(),
-                current_project_id: canonical.project_id,
-            });
-        }
-        if let Some(expected_sequence) = expected_sequence
-            && expected_sequence != canonical.sequence
-        {
-            return Err(DispatchError::Conflict {
-                expected_sequence,
-                current_sequence: canonical.sequence,
-            });
-        }
+        validate_dispatch_preconditions(
+            policy.scope,
+            expected_sequence,
+            expected_project_id,
+            &canonical,
+        )?;
         match command {
             ControlCommand::Canonical(command) => {
                 let access = command.access();
-                if access == CanonicalAccess::Read {
-                    return self.execute_read_canonical(command, canonical);
-                }
                 let (result, committed) = self.execute_canonical(
                     writer
                         .as_mut()
@@ -411,16 +437,10 @@ impl<'a> HostDispatcher<'a> {
     pub(crate) fn execute_read_canonical(
         &self,
         command: CanonicalCommand,
-        canonical: riffra_core::CanonicalState,
+        canonical: &riffra_core::CanonicalState,
     ) -> Result<DispatchResult, DispatchError> {
         let sequence = canonical.sequence;
-        let mut core = AppCore::new(
-            canonical.project_id.clone(),
-            canonical.session.clone(),
-            sequence,
-        );
-        let storage = MemorySessionStorage;
-        let output = self.run_canonical(&mut core.application(&storage), command, canonical)?;
+        let output = self.run_read_canonical(command, canonical)?;
         Ok(DispatchResult { output, sequence })
     }
 

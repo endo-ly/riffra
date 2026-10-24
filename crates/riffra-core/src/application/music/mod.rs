@@ -5,9 +5,9 @@ mod phrase;
 
 pub use harmony::{
     ChordVoicingInput, HarmonyEventInput, HarmonyEventPatch, HarmonyRealizeSelection,
-    MusicalHarmonyEventView,
+    MusicalHarmonyEventView, list_harmony_events, resolve_harmony_chord,
 };
-pub use phrase::{ResolvedPhrase, ResolvedPhraseNote};
+pub use phrase::{ResolvedPhrase, ResolvedPhraseNote, resolve_phrase_pattern};
 
 use super::*;
 use crate::domain::{
@@ -205,6 +205,159 @@ pub struct MusicalRegionView {
     pub end: MusicalPosition,
 }
 
+/// Lists MIDI notes from a canonical session using absolute musical positions.
+///
+/// # Errors
+/// Returns an error when the scope, range, or note positions are invalid.
+pub fn list_musical_notes(
+    session: &CreativeSession,
+    request: MusicalNoteListRequest,
+) -> Result<MusicalNoteListView, ApplicationError> {
+    let timebase = session.arrangement.timebase.clone();
+    if let Some(track_id) = request.scope.track_id.as_deref()
+        && !session
+            .arrangement
+            .tracks
+            .iter()
+            .any(|track| track.id == track_id)
+    {
+        return Err(ApplicationError::InvalidCommand(format!(
+            "track '{track_id}' is not registered"
+        )));
+    }
+    let query = resolve_note_range(&timebase, request.start, request.end)?;
+    let clips = select_note_clips(&session.arrangement.midi_clips, &request.scope)?;
+    if request.scope.track_id.is_some() && query.is_none() {
+        return Err(ApplicationError::InvalidCommand(
+            "track note list requires both start and end".into(),
+        ));
+    }
+    let mut clip_views = clips
+        .into_iter()
+        .filter_map(|clip| {
+            let mut notes = clip
+                .notes
+                .iter()
+                .filter(|note| note_overlaps_range(clip, note, query))
+                .collect::<Vec<_>>();
+            notes.sort_by_key(|note| (note.start_tick, note.note, note.id.clone()));
+            if request.scope.track_id.is_some() && notes.is_empty() {
+                return None;
+            }
+            let notes = notes
+                .into_iter()
+                .map(
+                    |note| -> Result<MusicalNoteListNoteView, ApplicationError> {
+                        if request.raw {
+                            Ok(MusicalNoteListNoteView::Raw(RawMidiNoteView {
+                                id: request.include_ids.then(|| note.id.clone()),
+                                pitch: note.note,
+                                absolute_tick: clip
+                                    .start_tick
+                                    .0
+                                    .checked_add(note.start_tick.0)
+                                    .ok_or_else(|| {
+                                        ApplicationError::InvalidCommand(
+                                            "absolute note tick overflows u64".into(),
+                                        )
+                                    })?,
+                                start_tick: note.start_tick.0,
+                                duration_ticks: note.duration_ticks,
+                                velocity: note.velocity,
+                                channel: note.channel,
+                            }))
+                        } else {
+                            Ok(MusicalNoteListNoteView::Musical(musical_note_view(
+                                &timebase,
+                                clip.start_tick,
+                                note,
+                                request.include_ids,
+                            )?))
+                        }
+                    },
+                )
+                .collect::<Result<Vec<_>, ApplicationError>>();
+            Some(notes.map(|notes| MusicalNoteClipView {
+                clip_id: clip.id.clone(),
+                start_tick: request.raw.then_some(clip.start_tick.0),
+                notes,
+            }))
+        })
+        .collect::<Result<Vec<_>, ApplicationError>>()?;
+    clip_views.sort_by(|left, right| {
+        let left_clip = session
+            .arrangement
+            .midi_clips
+            .iter()
+            .find(|clip| clip.id == left.clip_id)
+            .expect("selected clip remains in session");
+        let right_clip = session
+            .arrangement
+            .midi_clips
+            .iter()
+            .find(|clip| clip.id == right.clip_id)
+            .expect("selected clip remains in session");
+        left_clip
+            .start_tick
+            .cmp(&right_clip.start_tick)
+            .then_with(|| left.clip_id.cmp(&right.clip_id))
+    });
+    let count = clip_views.iter().map(|clip| clip.notes.len()).sum();
+    Ok(MusicalNoteListView {
+        count,
+        timebase: request.raw.then_some(MusicalNoteTimebaseView {
+            ppq: timebase.ppq,
+            time_signature_numerator: timebase.time_signature_changes[0].numerator,
+            time_signature_denominator: timebase.time_signature_changes[0].denominator,
+        }),
+        clips: clip_views,
+    })
+}
+
+/// Gets one MIDI note from a canonical session using musical coordinates.
+///
+/// # Errors
+/// Returns an error when the Clip or Note is not registered.
+pub fn get_musical_note(
+    session: &CreativeSession,
+    clip_id: &str,
+    note_id: &str,
+) -> Result<MusicalMidiNoteView, ApplicationError> {
+    let timebase = session.arrangement.timebase.clone();
+    let clip = session
+        .arrangement
+        .midi_clips
+        .iter()
+        .find(|clip| clip.id == clip_id)
+        .ok_or_else(|| {
+            ApplicationError::InvalidCommand(format!("midi clip '{clip_id}' is not registered"))
+        })?;
+    let note = clip
+        .notes
+        .iter()
+        .find(|note| note.id == note_id)
+        .ok_or_else(|| {
+            ApplicationError::InvalidCommand(format!("midi note '{note_id}' is not registered"))
+        })?;
+    musical_note_view(&timebase, clip.start_tick, note, true)
+}
+
+/// Lists named timeline ranges from a canonical session.
+pub fn list_regions(session: &CreativeSession) -> Vec<MusicalRegionView> {
+    let timebase = &session.arrangement.timebase;
+    session
+        .arrangement
+        .regions
+        .iter()
+        .map(|region| MusicalRegionView {
+            id: region.id.clone(),
+            name: region.name.clone(),
+            start: timebase.tick_to_musical_position(region.start_tick),
+            end: timebase.tick_to_musical_position(region.end_tick),
+        })
+        .collect()
+}
+
 #[derive(Clone, Copy)]
 struct ResolvedMidiNoteInput {
     pitch: u8,
@@ -313,109 +466,11 @@ where
 
     /// Lists MIDI notes using absolute musical positions.
     pub fn list_musical_notes(
-        &mut self,
+        &self,
         request: MusicalNoteListRequest,
     ) -> Result<MusicalNoteListView, ApplicationError> {
-        let session = self.get_session()?;
-        let timebase = session.arrangement.timebase.clone();
-        if let Some(track_id) = request.scope.track_id.as_deref()
-            && !session
-                .arrangement
-                .tracks
-                .iter()
-                .any(|track| track.id == track_id)
-        {
-            return Err(ApplicationError::InvalidCommand(format!(
-                "track '{track_id}' is not registered"
-            )));
-        }
-        let query = resolve_note_range(&timebase, request.start, request.end)?;
-        let clips = select_note_clips(&session.arrangement.midi_clips, &request.scope)?;
-        if request.scope.track_id.is_some() && query.is_none() {
-            return Err(ApplicationError::InvalidCommand(
-                "track note list requires both start and end".into(),
-            ));
-        }
-        let mut clip_views = clips
-            .into_iter()
-            .filter_map(|clip| {
-                let mut notes = clip
-                    .notes
-                    .iter()
-                    .filter(|note| note_overlaps_range(clip, note, query))
-                    .collect::<Vec<_>>();
-                notes.sort_by_key(|note| (note.start_tick, note.note, note.id.clone()));
-                if request.scope.track_id.is_some() && notes.is_empty() {
-                    return None;
-                }
-                let notes = notes
-                    .into_iter()
-                    .map(
-                        |note| -> Result<MusicalNoteListNoteView, ApplicationError> {
-                            if request.raw {
-                                Ok(MusicalNoteListNoteView::Raw(RawMidiNoteView {
-                                    id: request.include_ids.then(|| note.id.clone()),
-                                    pitch: note.note,
-                                    absolute_tick: clip
-                                        .start_tick
-                                        .0
-                                        .checked_add(note.start_tick.0)
-                                        .ok_or_else(|| {
-                                            ApplicationError::InvalidCommand(
-                                                "absolute note tick overflows u64".into(),
-                                            )
-                                        })?,
-                                    start_tick: note.start_tick.0,
-                                    duration_ticks: note.duration_ticks,
-                                    velocity: note.velocity,
-                                    channel: note.channel,
-                                }))
-                            } else {
-                                Ok(MusicalNoteListNoteView::Musical(musical_note_view(
-                                    &timebase,
-                                    clip.start_tick,
-                                    note,
-                                    request.include_ids,
-                                )?))
-                            }
-                        },
-                    )
-                    .collect::<Result<Vec<_>, ApplicationError>>();
-                Some(notes.map(|notes| MusicalNoteClipView {
-                    clip_id: clip.id.clone(),
-                    start_tick: request.raw.then_some(clip.start_tick.0),
-                    notes,
-                }))
-            })
-            .collect::<Result<Vec<_>, ApplicationError>>()?;
-        clip_views.sort_by(|left, right| {
-            let left_clip = session
-                .arrangement
-                .midi_clips
-                .iter()
-                .find(|clip| clip.id == left.clip_id)
-                .expect("selected clip remains in session");
-            let right_clip = session
-                .arrangement
-                .midi_clips
-                .iter()
-                .find(|clip| clip.id == right.clip_id)
-                .expect("selected clip remains in session");
-            left_clip
-                .start_tick
-                .cmp(&right_clip.start_tick)
-                .then_with(|| left.clip_id.cmp(&right.clip_id))
-        });
-        let count = clip_views.iter().map(|clip| clip.notes.len()).sum();
-        Ok(MusicalNoteListView {
-            count,
-            timebase: request.raw.then_some(MusicalNoteTimebaseView {
-                ppq: timebase.ppq,
-                time_signature_numerator: timebase.time_signature_changes[0].numerator,
-                time_signature_denominator: timebase.time_signature_changes[0].denominator,
-            }),
-            clips: clip_views,
-        })
+        let snapshot = self.core.snapshot();
+        list_musical_notes(&snapshot.session, request)
     }
 
     /// Applies one atomic music-level transform to Notes selected by scope and
@@ -554,24 +609,8 @@ where
         clip_id: &str,
         note_id: &str,
     ) -> Result<MusicalMidiNoteView, ApplicationError> {
-        let session = self.get_session()?;
-        let timebase = session.arrangement.timebase.clone();
-        let clip = session
-            .arrangement
-            .midi_clips
-            .iter()
-            .find(|clip| clip.id == clip_id)
-            .ok_or_else(|| {
-                ApplicationError::InvalidCommand(format!("midi clip '{clip_id}' is not registered"))
-            })?;
-        let note = clip
-            .notes
-            .iter()
-            .find(|note| note.id == note_id)
-            .ok_or_else(|| {
-                ApplicationError::InvalidCommand(format!("midi note '{note_id}' is not registered"))
-            })?;
-        musical_note_view(&timebase, clip.start_tick, note, true)
+        let snapshot = self.core.snapshot();
+        get_musical_note(&snapshot.session, clip_id, note_id)
     }
 
     /// Updates one MIDI note using only the supplied musical fields.
@@ -674,20 +713,9 @@ where
     /// # Errors
     ///
     /// Returns an error when the canonical session cannot be read.
-    pub fn list_regions(&mut self) -> Result<Vec<MusicalRegionView>, ApplicationError> {
-        let session = self.get_session()?;
-        let timebase = session.arrangement.timebase.clone();
-        Ok(session
-            .arrangement
-            .regions
-            .into_iter()
-            .map(|region| MusicalRegionView {
-                id: region.id,
-                name: region.name,
-                start: timebase.tick_to_musical_position(region.start_tick),
-                end: timebase.tick_to_musical_position(region.end_tick),
-            })
-            .collect())
+    pub fn list_regions(&self) -> Result<Vec<MusicalRegionView>, ApplicationError> {
+        let snapshot = self.core.snapshot();
+        Ok(list_regions(&snapshot.session))
     }
 
     /// Adds a named timeline range from absolute musical positions and returns

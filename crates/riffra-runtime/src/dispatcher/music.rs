@@ -4,21 +4,24 @@ use super::{DispatchError, HostDispatcher};
 use crate::api::ControlOutput;
 use crate::api::output::{PhrasePreview, PhrasePreviewNote};
 use crate::api::params::PhrasePreviewParams;
+use riffra_core::CreativeSession;
 use riffra_core::{MusicalPitch, ProjectTimebase};
 
 impl HostDispatcher<'_> {
-    pub(super) fn phrase_preview<S: riffra_core::SessionStorage + ?Sized>(
+    pub(super) fn phrase_preview(
         &self,
-        application: &mut riffra_core::application::Application<'_, S>,
+        session: &CreativeSession,
         timebase: ProjectTimebase,
         params: PhrasePreviewParams,
     ) -> Result<ControlOutput, DispatchError> {
-        let resolved = application.resolve_phrase_pattern(
+        let resolved = riffra_core::application::resolve_phrase_pattern(
+            session,
             &params.clip_id,
             params.pattern,
             params.placements,
             params.channel,
-        )?;
+        )
+        .map_err(|error| DispatchError::invalid_request(error.to_string()))?;
         let invalid =
             |error: riffra_core::DomainError| DispatchError::invalid_request(error.to_string());
         let notes = if params.include_notes {
