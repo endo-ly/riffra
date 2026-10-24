@@ -1,17 +1,18 @@
 use riffra_core::{
-    CreativeSession, PortError, SessionStorage, deserialize_session_document,
-    serialize_session_document,
+    CreativeSession, PortError, SESSION_SCHEMA_VERSION, SessionStorage,
+    deserialize_session_document, serialize_session_document,
 };
 use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File},
-    io::{self, Write},
+    io::{self, Read, Write},
     path::{Path, PathBuf},
     sync::{Mutex, OnceLock},
     time::{SystemTime, UNIX_EPOCH},
 };
 const GENERATIONS_TO_KEEP: usize = 20;
 const STORAGE_HEADROOM_BYTES: u64 = 64 * 1024;
+const SUMMARY_HEAD_BYTES: u64 = 8 * 1024;
 static SESSION_SAVE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 /// Result of loading the active session, including how the load resolved.
@@ -351,17 +352,104 @@ impl SessionStore {
     }
 
     pub(crate) fn summary(&self) -> io::Result<crate::ProjectSummary> {
-        let payload = fs::read(self.current_path()?)?;
+        let path = self.current_path()?;
+        if let Some(fields) = read_summary_head(&path)? {
+            return Ok(project_summary(
+                self.project_id()?,
+                fields.project_name,
+                fields.updated_at_ms,
+            ));
+        }
+
+        let payload = fs::read(path)?;
         let session = deserialize_session_document(&payload).map_err(invalid_data)?;
-        Ok(crate::ProjectSummary {
-            project_id: self.project_id()?,
-            name: session
-                .project_name
-                .filter(|name| !name.trim().is_empty())
-                .unwrap_or_else(|| "Untitled Project".into()),
-            updated_at_ms: session.updated_at_ms,
-            error: None,
-        })
+        Ok(project_summary(
+            self.project_id()?,
+            session.project_name,
+            session.updated_at_ms,
+        ))
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct SessionSummaryHead {
+    schema_version: u32,
+    session: SessionSummaryFields,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct SessionSummaryFields {
+    #[serde(rename = "sessionId")]
+    _session_id: String,
+    updated_at_ms: u64,
+    project_name: Option<String>,
+}
+
+fn read_summary_head(path: &Path) -> io::Result<Option<SessionSummaryFields>> {
+    let mut bytes = Vec::new();
+    File::open(path)?
+        .take(SUMMARY_HEAD_BYTES)
+        .read_to_end(&mut bytes)?;
+    Ok(parse_summary_head(&bytes))
+}
+
+fn parse_summary_head(bytes: &[u8]) -> Option<SessionSummaryFields> {
+    let lines = bytes
+        .split_inclusive(|byte| *byte == b'\n')
+        .take(6)
+        .collect::<Vec<_>>();
+    if lines.len() != 6 || !lines[5].ends_with(b"\n") {
+        return None;
+    }
+
+    let joined = lines.concat();
+    let text = std::str::from_utf8(&joined).ok()?;
+    let lines = text.lines().collect::<Vec<_>>();
+    if lines.len() != 6
+        || lines[0].trim() != "{"
+        || !line_has_json_key(lines[1], "schemaVersion")
+        || !line_has_json_key(lines[2], "session")
+        || !line_has_json_key(lines[3], "sessionId")
+        || !line_has_json_key(lines[4], "updatedAtMs")
+        || !line_has_json_key(lines[5], "projectName")
+    {
+        return None;
+    }
+
+    let mut document = text.to_owned();
+    let last_non_whitespace = document.trim_end().len().checked_sub(1)?;
+    if document.as_bytes()[last_non_whitespace] != b',' {
+        return None;
+    }
+    document.remove(last_non_whitespace);
+    document.push_str("  }\n}\n");
+
+    let head: SessionSummaryHead = serde_json::from_str(&document).ok()?;
+    (head.schema_version == SESSION_SCHEMA_VERSION).then_some(head.session)
+}
+
+fn line_has_json_key(line: &str, key: &str) -> bool {
+    line.trim_start()
+        .strip_prefix('"')
+        .and_then(|line| line.strip_prefix(key))
+        .and_then(|line| line.strip_prefix('"'))
+        .is_some_and(|line| line.trim_start().starts_with(':'))
+}
+
+fn project_summary(
+    project_id: String,
+    project_name: Option<String>,
+    updated_at_ms: u64,
+) -> crate::ProjectSummary {
+    crate::ProjectSummary {
+        project_id,
+        name: project_name
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or_else(|| "Untitled Project".into()),
+        updated_at_ms,
+        error: None,
     }
 }
 
@@ -616,6 +704,102 @@ mod tests {
         store.save(&session).unwrap();
         let loaded = store.load_or_create().unwrap();
         assert_eq!(loaded.session.project_name.as_deref(), Some("Clean"));
+        let summary = store.summary().unwrap();
+        assert_eq!(summary.name, "Clean");
+        assert_eq!(summary.updated_at_ms, session.updated_at_ms);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn summary_reads_only_the_head_of_large_sessions() {
+        // Arrange
+        let root = test_root("summary-large-head");
+        let store = SessionStore::new(&root, TEST_PROJECT_ID);
+        store.ensure_layout().unwrap();
+        let mut session = CreativeSession::new(1_234);
+        session.project_name = Some("日本語, \"引用\"\n二行目".into());
+        session.score_source = Some(riffra_core::ScoreSource {
+            file_name: "score.yaml".into(),
+            yaml: "日".repeat(64 * 1024),
+        });
+        let mut payload = String::from_utf8(serialize_session_document(&session).unwrap()).unwrap();
+        let yaml_start = payload.find("\"yaml\": \"").unwrap() + "\"yaml\": \"".len();
+        assert!(yaml_start < SUMMARY_HEAD_BYTES as usize);
+        if (SUMMARY_HEAD_BYTES as usize - yaml_start).is_multiple_of('日'.len_utf8()) {
+            session.score_source.as_mut().unwrap().yaml.push('日');
+            payload = String::from_utf8(serialize_session_document(&session).unwrap()).unwrap();
+        }
+        let yaml_start = payload.find("\"yaml\": \"").unwrap() + "\"yaml\": \"".len();
+        assert_ne!(
+            (SUMMARY_HEAD_BYTES as usize - yaml_start) % '日'.len_utf8(),
+            0
+        );
+        let arrangement = payload.find("\"arrangement\":").unwrap();
+        let corrupted = format!(
+            "{}\"arrangement\": false,\n    \"settings\": {{}}\n  }}\n}}\n",
+            &payload[..arrangement]
+        );
+        let current = root
+            .join("projects")
+            .join(TEST_PROJECT_ID)
+            .join("session.json");
+        fs::write(&current, corrupted.as_bytes()).unwrap();
+
+        // Act
+        let summary = store.summary().unwrap();
+        let load = store.load_existing();
+
+        // Assert
+        assert!(fs::metadata(&current).unwrap().len() > SUMMARY_HEAD_BYTES);
+        assert_eq!(summary.name, "日本語, \"引用\"\n二行目");
+        assert_eq!(summary.updated_at_ms, 1_234);
+        assert!(summary.error.is_none());
+        assert!(load.is_err());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn summary_falls_back_for_legacy_field_order_and_schema() {
+        // Arrange
+        let root = test_root("summary-legacy");
+        let store = SessionStore::new(&root, TEST_PROJECT_ID);
+        store.ensure_layout().unwrap();
+        let current = root
+            .join("projects")
+            .join(TEST_PROJECT_ID)
+            .join("session.json");
+        let mut session = CreativeSession::new(5_678);
+        session.project_name = Some("Legacy Order".into());
+        session.score_source = Some(riffra_core::ScoreSource {
+            file_name: "score.yaml".into(),
+            yaml: "score".into(),
+        });
+        let legacy_order = format!(
+            "{{\n  \"schemaVersion\": {SESSION_SCHEMA_VERSION},\n  \"session\": {{\n    \"scoreSource\": {},\n    \"sessionId\": {},\n    \"updatedAtMs\": {},\n    \"projectName\": {},\n    \"arrangement\": {},\n    \"settings\": {}\n  }}\n}}\n",
+            serde_json::to_string(&session.score_source).unwrap(),
+            serde_json::to_string(&session.session_id).unwrap(),
+            session.updated_at_ms,
+            serde_json::to_string(&session.project_name).unwrap(),
+            serde_json::to_string(&session.arrangement).unwrap(),
+            serde_json::to_string(&session.settings).unwrap(),
+        );
+        fs::write(&current, legacy_order).unwrap();
+
+        // Act
+        let old_order_summary = store.summary().unwrap();
+        let mut old_schema = serde_json::json!({
+            "schemaVersion": 1,
+            "session": serde_json::to_value(&session).unwrap(),
+        });
+        old_schema["session"]["scoreSource"] = serde_json::Value::Null;
+        fs::write(&current, serde_json::to_vec_pretty(&old_schema).unwrap()).unwrap();
+        let old_schema_summary = store.summary().unwrap();
+
+        // Assert
+        assert_eq!(old_order_summary.name, "Legacy Order");
+        assert_eq!(old_order_summary.updated_at_ms, 5_678);
+        assert_eq!(old_schema_summary.name, "Legacy Order");
+        assert_eq!(old_schema_summary.updated_at_ms, 5_678);
         let _ = fs::remove_dir_all(root);
     }
 
