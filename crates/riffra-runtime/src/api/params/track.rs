@@ -87,7 +87,7 @@ pub struct TimebaseUpdateParams {
     pub time_signature_denominator: Option<u8>,
 }
 
-/// Replaces all tempo and meter changes at the fixed project PPQ.
+/// Replaces all tempo and meter changes while preserving the current project PPQ.
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct TimebaseSetMapParams {

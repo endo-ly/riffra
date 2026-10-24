@@ -432,9 +432,67 @@ mod tests {
     use crate::dispatcher::Dispatcher;
     use crate::test_support::{command, mutated_session, output_type, output_value};
     use riffra_control::{ControlRequest, ErrorCode, new_instance_id};
-    use riffra_host::now_ms;
+    use riffra_host::{ProjectStore, now_ms};
     use serde_json::json;
     use std::fs;
+
+    #[test]
+    fn timebase_set_map_preserves_current_ppq_and_tempo_ticks() {
+        for (ppq, tempo_tick, bpm) in [(960, 3840, 140.0), (3360, 6720, 150.0)] {
+            let root = std::env::temp_dir().join(format!(
+                "riffra-dispatcher-timebase-{ppq}-{}",
+                new_instance_id()
+            ));
+            let store = ProjectStore::new(&root);
+            let mut initialized = store.initialize().unwrap();
+            if ppq != riffra_core::TIMELINE_PPQ {
+                initialized.loaded.session.arrangement.timebase.ppq = ppq;
+                initialized
+                    .storage
+                    .save(&initialized.loaded.session)
+                    .unwrap();
+            }
+
+            let dispatcher = Dispatcher::open(
+                root.clone(),
+                crate::test_support::prepare_built_in_resource_root(&root.join("built-ins")),
+            )
+            .unwrap();
+            let before = output_value(
+                &dispatcher
+                    .dispatch(command("timebase.get-map", json!({})), None)
+                    .unwrap(),
+            );
+            assert_eq!(before["ppq"], ppq);
+
+            dispatcher
+                .dispatch(
+                    command(
+                        "timebase.set-map",
+                        json!({
+                            "tempoChanges":[{"tick":0,"bpm":120},{"tick":tempo_tick,"bpm":bpm}],
+                            "timeSignatureChanges":[{"tick":0,"numerator":4,"denominator":4}]
+                        }),
+                    ),
+                    None,
+                )
+                .unwrap();
+
+            let map = output_value(
+                &dispatcher
+                    .dispatch(command("timebase.get-map", json!({})), None)
+                    .unwrap(),
+            );
+            assert_eq!(map["ppq"], ppq);
+            assert_eq!(
+                map["tempoChanges"],
+                json!([{"tick":0,"bpm":120.0},{"tick":tempo_tick,"bpm":bpm}])
+            );
+
+            drop(dispatcher);
+            let _ = fs::remove_dir_all(root);
+        }
+    }
 
     #[test]
     fn session_inspect_is_read_only_scoped_and_lightweight() {

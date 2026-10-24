@@ -407,7 +407,7 @@ impl HostDispatcher<'_> {
             CanonicalCommand::TimebaseGetMap(_) => Ok(ControlOutput::Timebase(timebase)),
             CanonicalCommand::TimebaseSetMap(params) => self.edited(
                 application.update_timebase(riffra_core::ProjectTimebase {
-                    ppq: riffra_core::TIMELINE_PPQ,
+                    ppq: timebase.ppq,
                     tempo_changes: params.tempo_changes,
                     time_signature_changes: params.time_signature_changes,
                 })?,
