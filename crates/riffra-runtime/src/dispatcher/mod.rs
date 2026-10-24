@@ -396,12 +396,7 @@ impl<'a> HostDispatcher<'a> {
                     access,
                     canonical,
                 )?;
-                self.publish_standalone(
-                    writer
-                        .as_ref()
-                        .expect("canonical mutation holds the writer"),
-                    committed,
-                );
+                self.publish_standalone(committed);
                 Ok(result)
             }
             ControlCommand::Project(command) => {
@@ -484,14 +479,10 @@ impl<'a> HostDispatcher<'a> {
             .map_err(DispatchError::CommandFailed)
     }
 
-    fn publish_standalone<T>(
-        &self,
-        writer: &crate::host::open_project::ProjectWriter<'_>,
-        committed: crate::host::open_project::Committed<T>,
-    ) {
+    fn publish_standalone<T>(&self, committed: crate::host::open_project::Committed<T>) {
         crate::library::index::refresh(
             &self.data_root,
-            &writer.project().storage,
+            &committed.snapshot.canonical.project_id,
             &committed.snapshot.canonical.session,
         );
     }

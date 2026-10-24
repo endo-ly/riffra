@@ -151,8 +151,9 @@ impl HostState {
         if access == CanonicalAccess::Read {
             return self.dispatch_read_canonical(command, &current);
         }
-        let publish = |writer: &super::open_project::ProjectWriter<'_>, committed| {
-            self.publish_commit(writer, committed).0
+        let publish = |_: &super::open_project::ProjectWriter<'_>,
+                       committed: super::open_project::Committed<()>| {
+            self.publish_commit(committed).0
         };
         let mut context = self.session_context(writer, current.clone(), &publish)?;
         let sequence = Some(current.sequence);
@@ -372,7 +373,7 @@ impl HostState {
         if result.sequence <= current_sequence {
             return Ok((result.output, result.sequence));
         }
-        let (mut mutation, ()) = self.publish_commit(writer, committed);
+        let (mut mutation, ()) = self.publish_commit(committed);
         match result.output {
             ControlOutput::BatchMutation(mut batch) => {
                 batch.projection = Some(mutation.projection);
@@ -416,8 +417,9 @@ impl HostState {
         mut writer: Option<super::open_project::ProjectWriter<'_>>,
     ) -> Result<(ControlOutput, u64), ProtocolError> {
         let sequence = current.sequence;
-        let publish = |writer: &super::open_project::ProjectWriter<'_>, committed| {
-            self.publish_commit(writer, committed).0
+        let publish = |_: &super::open_project::ProjectWriter<'_>,
+                       committed: super::open_project::Committed<()>| {
+            self.publish_commit(committed).0
         };
         let output = match command {
             RuntimeCommand::HostStatus(_) => ControlOutput::HostStatus(HostStatus {
@@ -1441,15 +1443,10 @@ impl HostState {
 
     pub(crate) fn publish_commit<T>(
         &self,
-        writer: &super::open_project::ProjectWriter<'_>,
         committed: super::open_project::Committed<T>,
     ) -> (ArrangementMutationResult, T) {
         let canonical = committed.snapshot.canonical.clone();
-        library::index::refresh(
-            &self.data_root,
-            &writer.project().storage,
-            &canonical.session,
-        );
+        library::index::refresh(&self.data_root, &canonical.project_id, &canonical.session);
         self.events
             .emit(HostEvent::CanonicalStateChanged(canonical.clone()));
         let mutation = commit::project_committed(

@@ -61,7 +61,7 @@ pub(super) fn dispatch(
                     })
                 })
                 .map_err(|error| command_error(error.to_string()))?;
-            let (mutation, _) = state.publish_commit(writer, committed);
+            let (mutation, _) = state.publish_commit(committed);
             let project_state = project_state(state)?;
             state
                 .events
@@ -247,13 +247,10 @@ fn activate_project_inner(
         canonical: snapshot.canonical.clone(),
         recovery: prepared.recovery,
     };
-    state.publish_commit(
-        writer,
-        super::open_project::Committed {
-            snapshot,
-            value: (),
-        },
-    );
+    state.publish_commit(super::open_project::Committed {
+        snapshot,
+        value: (),
+    });
     state
         .events
         .emit(crate::HostEvent::ProjectActivated(activation.clone()));
