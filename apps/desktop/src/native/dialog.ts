@@ -64,7 +64,7 @@ export async function openScoreYaml(): Promise<string | null> {
   const result = await open({
     multiple: false,
     title: 'Import Score YAML',
-    filters: [{ name: 'Score YAML', extensions: ['yaml'] }],
+    filters: [{ name: 'Score YAML', extensions: ['yaml', 'yml'] }],
   });
   return typeof result === 'string' ? result : null;
 }

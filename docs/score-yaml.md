@@ -5,12 +5,12 @@ Score YAML を読み込み、通常の Riffra プロジェクトとして編集�
 
 ## 読み込みと音源の指定
 
-Desktop のプロジェクトメニューで **Import Score YAML…** を選び、`.score.yaml` ファイルを開く。
+Desktop のプロジェクトメニューで **Import Score YAML…** を選び、Score YAML ファイルを開く。ファイル選択ダイアログは `.yaml` と `.yml` を表示し、インポート可否はファイル名や拡張子ではなく内容で決まる。CLI では別の拡張子のファイルも指定できる。
 外部楽器の Definition が必要な場合は、表示された楽器 ID ごとに JSON ファイルを選択する。
 CLI では次のコマンドを使う。実行中の Host への読み込みには `--attach` を指定する。
 
 ```bash
-riffra project import-score ./song.score.yaml
+riffra project import-score ./song.yaml
 riffra project import-score ./song.score.yaml --bind lead=./lead/definition.json
 ```
 

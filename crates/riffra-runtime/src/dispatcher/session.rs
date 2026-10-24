@@ -432,9 +432,169 @@ mod tests {
     use crate::dispatcher::Dispatcher;
     use crate::test_support::{command, mutated_session, output_type, output_value};
     use riffra_control::{ControlRequest, ErrorCode, new_instance_id};
-    use riffra_host::now_ms;
+    use riffra_host::{ProjectStore, now_ms};
     use serde_json::json;
     use std::fs;
+
+    #[test]
+    fn timebase_set_map_preserves_current_ppq_and_timeline_ticks() {
+        let root = std::env::temp_dir().join(format!("riffra-dispatcher-timebase-{}", now_ms()));
+        let dispatcher = Dispatcher::open(
+            root.clone(),
+            crate::test_support::prepare_built_in_resource_root(&root),
+        )
+        .unwrap();
+        let initial_project_id = output_value(
+            &dispatcher
+                .dispatch(command("project.list", json!({})), None)
+                .unwrap(),
+        )["activeProjectId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        dispatcher
+            .dispatch(
+                command(
+                    "timebase.set-map",
+                    json!({
+                        "tempoChanges":[{"tick":0,"bpm":120},{"tick":3840,"bpm":140}],
+                        "timeSignatureChanges":[{"tick":0,"numerator":4,"denominator":4}]
+                    }),
+                ),
+                None,
+            )
+            .unwrap();
+        let ppq_960 = output_value(
+            &dispatcher
+                .dispatch(command("timebase.get-map", json!({})), None)
+                .unwrap(),
+        );
+        assert_eq!(ppq_960["ppq"], 960);
+        assert_eq!(ppq_960["tempoChanges"][1]["tick"], 3840);
+
+        let created = dispatcher
+            .dispatch(
+                command("project.create", json!({"name":"Variable PPQ"})),
+                None,
+            )
+            .unwrap();
+        let variable_project_id = output_value(&created)["projectState"]["activeProjectId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let track = dispatcher
+            .dispatch(
+                command("track.add", json!({"name":"Lead","kind":"instrument"})),
+                None,
+            )
+            .unwrap();
+        let track_id = mutated_session(&track).arrangement.tracks[0].id.clone();
+        let clip = dispatcher
+            .dispatch(
+                command(
+                    "music.midi-clip.create",
+                    json!({"trackId":track_id,"name":"Verse","start":"1:1","end":"5:1"}),
+                ),
+                None,
+            )
+            .unwrap();
+        let clip_id = mutated_session(&clip).arrangement.midi_clips[0].id.clone();
+        dispatcher
+            .dispatch(
+                command(
+                    "music.note.insert",
+                    json!({"clipId":clip_id,"notes":[{"pitch":"C4","position":"2:1","duration":"1/4"}]}),
+                ),
+                None,
+            )
+            .unwrap();
+
+        let project_store = ProjectStore::new(&root);
+        let storage = project_store.session_store(&variable_project_id).unwrap();
+        let mut variable_session = storage.load_or_create().unwrap().session;
+        variable_session.arrangement.timebase = riffra_core::ProjectTimebase {
+            ppq: 3360,
+            tempo_changes: vec![
+                riffra_core::TempoChange {
+                    tick: 0,
+                    bpm: 120.0,
+                },
+                riffra_core::TempoChange {
+                    tick: 6720,
+                    bpm: 140.0,
+                },
+            ],
+            time_signature_changes: vec![riffra_core::TimeSignatureChange {
+                tick: 0,
+                numerator: 4,
+                denominator: 4,
+            }],
+        };
+        let clip = &mut variable_session.arrangement.midi_clips[0];
+        clip.duration_ticks = 13_440;
+        clip.notes[0].start_tick = riffra_core::TimelineTick(3360);
+        clip.notes[0].duration_ticks = 840;
+        let expected_clips = variable_session.arrangement.midi_clips.clone();
+        storage.save(&variable_session).unwrap();
+
+        dispatcher
+            .dispatch(
+                command("project.open", json!({"projectId":initial_project_id})),
+                None,
+            )
+            .unwrap();
+        dispatcher
+            .dispatch(
+                command("project.open", json!({"projectId":variable_project_id})),
+                None,
+            )
+            .unwrap();
+        let before = dispatcher
+            .dispatch(command("session.get", json!({})), None)
+            .map(|result| output_value(&result))
+            .unwrap();
+        assert_eq!(before["arrangement"]["timebase"]["ppq"], 3360);
+
+        dispatcher
+            .dispatch(
+                command(
+                    "timebase.set-map",
+                    json!({
+                        "tempoChanges":[{"tick":0,"bpm":120},{"tick":6720,"bpm":150}],
+                        "timeSignatureChanges":[{"tick":0,"numerator":4,"denominator":4}]
+                    }),
+                ),
+                None,
+            )
+            .unwrap();
+        let map = output_value(
+            &dispatcher
+                .dispatch(command("timebase.get-map", json!({})), None)
+                .unwrap(),
+        );
+        assert_eq!(map["ppq"], 3360);
+        assert_eq!(map["tempoChanges"][1], json!({"tick":6720,"bpm":150.0}));
+        let after = dispatcher
+            .dispatch(command("session.get", json!({})), None)
+            .map(|result| output_value(&result))
+            .unwrap();
+        assert_eq!(after["arrangement"]["timebase"]["ppq"], 3360);
+        assert_eq!(
+            after["arrangement"]["timebase"]["tempoChanges"][1]["tick"],
+            6720
+        );
+        assert_eq!(after["arrangement"]["midiClips"], json!(expected_clips));
+
+        let updated = dispatcher
+            .dispatch(command("timebase.update", json!({"bpm":155})), None)
+            .unwrap();
+        let updated_session = mutated_session(&updated);
+        assert_eq!(updated_session.arrangement.timebase.ppq, 3360);
+        assert_eq!(updated_session.arrangement.midi_clips, expected_clips);
+
+        let _ = fs::remove_dir_all(root);
+    }
 
     #[test]
     fn session_inspect_is_read_only_scoped_and_lightweight() {

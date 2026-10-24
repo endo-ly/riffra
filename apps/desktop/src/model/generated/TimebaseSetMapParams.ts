@@ -3,6 +3,6 @@ import type { TempoChange } from "./TempoChange";
 import type { TimeSignatureChange } from "./TimeSignatureChange";
 
 /**
- * Replaces all tempo and meter changes at the fixed project PPQ.
+ * Replaces all tempo and meter changes while preserving the current project PPQ.
  */
 export type TimebaseSetMapParams = { tempoChanges: Array<TempoChange>, timeSignatureChanges: Array<TimeSignatureChange>, };

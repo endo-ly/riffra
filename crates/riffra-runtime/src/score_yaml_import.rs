@@ -57,13 +57,6 @@ pub(crate) fn import(
     catalog: &BuiltInInstrumentCatalog,
     sonalloy: &Path,
 ) -> Result<ImportedScore, ImportError> {
-    if !params
-        .path
-        .file_name()
-        .is_some_and(|name| name.to_string_lossy().ends_with(".score.yaml"))
-    {
-        return Err("expected a .score.yaml file".to_string().into());
-    }
     let mut plan = score::read(&params.path).map_err(|error| match error {
         score::ReadError::Parse(error) => ImportError {
             message: error.to_string(),
@@ -664,6 +657,76 @@ fn reset_events(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn import_validates_score_content_independently_of_filename_extension() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-score-import-extension-{}",
+            riffra_control::new_instance_id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let resource_root = root.join("resources");
+        crate::test_support::prepare_built_in_resource_root(&resource_root);
+        let catalog = BuiltInInstrumentCatalog::load(resource_root).unwrap();
+        let yaml = json!({
+            "meta":{"title":"Extension independent","bpm":120,"meter":"4/4","tuning":"12edo","reference_octave":4,"gate":1},
+            "form":[{"section":"phrase","bars":1,"tonic":"C","scale":"ionian"}],
+            "sections":{"phrase":{"lines":{"main":{"instrument":"part","melody":"phrase"}}}},
+            "melodies":{"phrase":["1 - - - | 3 - - - | 5 - - - | 1' - - -"]},
+            "instruments":{"part":{"external":true}}
+        })
+        .to_string();
+        let mut expected_details = None;
+
+        for name in ["song.score.yaml", "song.yaml", "song.yml"] {
+            let path = root.join(name);
+            std::fs::write(&path, &yaml).unwrap();
+            let error = import(
+                &ProjectImportScoreParams {
+                    path,
+                    bindings: Default::default(),
+                },
+                &root,
+                &catalog,
+                &root.join("sonalloy"),
+            )
+            .err()
+            .expect("the valid external instrument requires a binding");
+
+            assert_eq!(
+                error.message,
+                "external instrument definitions required: part"
+            );
+            assert_eq!(
+                error.details["kind"], "scoreBindingsRequired",
+                "{name} must reach Score validation before import continues"
+            );
+            assert_eq!(error.details["instrumentIds"], json!(["part"]));
+            if let Some(expected) = &expected_details {
+                assert_eq!(&error.details, expected);
+            } else {
+                expected_details = Some(error.details);
+            }
+        }
+
+        let invalid_path = root.join("invalid.yml");
+        std::fs::write(&invalid_path, "meta: [\n").unwrap();
+        let error = import(
+            &ProjectImportScoreParams {
+                path: invalid_path,
+                bindings: Default::default(),
+            },
+            &root,
+            &catalog,
+            &root.join("sonalloy"),
+        )
+        .err()
+        .expect("invalid YAML must fail parsing");
+        assert_ne!(error.message, "expected a .score.yaml file");
+        assert_ne!(error.details, Value::Null);
+
+        let _ = std::fs::remove_dir_all(root);
+    }
 
     #[test]
     fn projects_exact_time_controls_independent_lanes_and_reference_metadata() {

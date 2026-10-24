@@ -10,7 +10,7 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({
   save,
 }));
 
-import { saveProjectPackage } from './dialog';
+import { openScoreYaml, saveProjectPackage } from './dialog';
 
 describe('project file dialog', () => {
   it('sanitizes only the suggested Windows filename', async () => {
@@ -19,5 +19,16 @@ describe('project file dialog', () => {
     expect(save).toHaveBeenCalledWith(
       expect.objectContaining({ defaultPath: 'Lead- Vocal- -take-.riffra' }),
     );
+  });
+
+  it('offers both YAML filename extensions for Score import', async () => {
+    open.mockResolvedValue('C:/song.yml');
+
+    await expect(openScoreYaml()).resolves.toBe('C:/song.yml');
+    expect(open).toHaveBeenCalledWith({
+      multiple: false,
+      title: 'Import Score YAML',
+      filters: [{ name: 'Score YAML', extensions: ['yaml', 'yml'] }],
+    });
   });
 });
