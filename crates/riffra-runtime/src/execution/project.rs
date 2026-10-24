@@ -241,6 +241,7 @@ pub(crate) fn project_graph(
             end_tick: range.end_tick.0,
         }),
         metronome_enabled: session.settings.metronome_enabled,
+        metronome_sound: session.settings.metronome_sound,
         master_gain_db: session.settings.master_db,
         automation: arrangement
             .automation_lanes
@@ -400,6 +401,7 @@ mod tests {
         });
         session.settings.master_db = -6.0;
         session.settings.metronome_enabled = true;
+        session.settings.metronome_sound = riffra_core::MetronomeSound::Wood;
 
         let mut audio = Track::audio("track:audio".into(), "Audio".into());
         audio.gain_db = -3.0;
@@ -656,6 +658,7 @@ mod tests {
             })
         );
         assert!(graph.metronome_enabled);
+        assert_eq!(graph.metronome_sound, riffra_core::MetronomeSound::Wood);
         assert_eq!(graph.master_gain_db, -6.0);
         assert_eq!(graph.tracks[0].output_bus_id.as_deref(), Some("bus:group"));
         assert_eq!(graph.mixer.buses.len(), 2);

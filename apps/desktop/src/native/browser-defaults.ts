@@ -49,6 +49,7 @@ export function defaultSession(): CreativeSession {
       loopEnabled: false,
       countInBeats: 0,
       metronomeEnabled: false,
+      metronomeSound: 'beep',
       note: '',
     },
   };

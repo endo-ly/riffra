@@ -327,7 +327,8 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
         }
     prepared->preparedBlockSize = maximumBlockSize;
     prepared->masterGainDb = static_cast<float>(graph.masterGainDb);
-    prepared->metronomeEnabled = graph.metronomeEnabled;
+    if (graph.metronomeEnabled)
+        prepared->metronome = renderMetronomeClicks(graph.metronomeSound, outputSampleRate);
     prepared->loopEnabled = graph.loopRange.enabled;
     prepared->loopStartSample =
         prepared->timebase.tickToSample(graph.loopRange.startTick, outputSampleRate);

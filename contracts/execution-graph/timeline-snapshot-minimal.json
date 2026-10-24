@@ -30,6 +30,7 @@
     },
     "punchRange": null,
     "metronomeEnabled": false,
+    "metronomeSound": "beep",
     "masterGainDb": 0.0,
     "tracks": [],
     "mixer": {

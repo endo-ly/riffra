@@ -75,6 +75,7 @@ TEST(ExecutionGraphContractTest, DecodesRustGeneratedFixtures) {
     EXPECT_FALSE(full.graph.tracks[0].midiInput.channel.has_value());
     EXPECT_TRUE(full.graph.tracks[0].audioInput.has_value());
     EXPECT_TRUE(full.graph.punchRange.has_value());
+    EXPECT_EQ(full.graph.metronomeSound, MetronomeSoundSpec::wood);
     EXPECT_TRUE(full.graph.tracks[2].instrument.has_value());
     EXPECT_FALSE(
         std::get<Vst3InstrumentSpec>(*full.graph.tracks[2].instrument).state.stateData.has_value());
@@ -136,6 +137,7 @@ TEST(ExecutionGraphContractTest, RejectsValuesOutsideContractRanges) {
     const std::vector<std::pair<JsonPath, juce::var>> invalidValues{
         {JsonPath{"graph", "timebase", "tempoChanges", "#0", "bpm"}, 0.0},
         {JsonPath{"graph", "masterGainDb"}, -91.0},
+        {JsonPath{"graph", "metronomeSound"}, "bell"},
         {JsonPath{"graph", "tracks", "#0", "gainDb"}, 1000.0},
         {JsonPath{"graph", "tracks", "#0", "pan"}, 1.1},
         {JsonPath{"graph", "automation", "#0", "points", "#0", "value"}, 1000.0},

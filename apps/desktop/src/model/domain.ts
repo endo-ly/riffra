@@ -118,6 +118,7 @@ export type {
   RenderStemsParams,
   AudioMeasurements,
   LoudnessMastering,
+  MetronomeSound,
   MixdownSettings,
   ScanIssue,
   ScanReport,

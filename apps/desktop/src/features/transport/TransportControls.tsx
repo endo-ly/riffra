@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { CanonicalState, CreativeSession } from '@/model/domain';
+import type { CanonicalState, CreativeSession, MetronomeSound } from '@/model/domain';
 import clsx from 'clsx';
 import { formatClock, formatMusicalPosition } from '@/features/arrange/model/arrange-timeline';
 import { TransportIcon } from './TransportIcon';
@@ -7,9 +7,14 @@ import type { TransportControlsApi } from './transport-api';
 import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
 import { tickToMusicalPosition } from '@/shared/session/musical-position';
 import { toast } from '@/shared/toasts';
+import { ContextMenu } from '@/shared/ui/ContextMenu';
 import styles from './TransportControls.module.css';
 
 const TIME_SIGNATURES = ['2/4', '3/4', '4/4', '5/4', '6/8', '7/8', '9/8', '12/8'];
+const METRONOME_SOUNDS: { sound: MetronomeSound; label: string }[] = [
+  { sound: 'beep', label: 'Beep' },
+  { sound: 'wood', label: 'Wood' },
+];
 
 interface TransportControlsProps {
   session: CreativeSession;
@@ -51,10 +56,21 @@ export function TransportControls(props: TransportControlsProps) {
   const initialDenominator = session.arrangement.timebase.timeSignatureChanges[0].denominator;
   const [tempoDraft, setTempoDraft] = useState(String(initialBpm));
   const [signatureDraft, setSignatureDraft] = useState(`${initialNumerator}/${initialDenominator}`);
+  const [metronomeMenu, setMetronomeMenu] = useState<{ x: number; y: number } | null>(null);
   useEffect(() => {
     setTempoDraft(String(initialBpm));
     setSignatureDraft(`${initialNumerator}/${initialDenominator}`);
   }, [initialBpm, initialNumerator, initialDenominator]);
+
+  const updateSettings = (patch: Parameters<TransportControlsApi['updateSessionSettings']>[0]) =>
+    void api
+      .updateSessionSettings(patch)
+      .then((result) =>
+        applyArrangementMutation(result, applyCanonicalState, (message) =>
+          toast(message, { kind: 'error' }),
+        ),
+      )
+      .catch(() => undefined);
 
   const commitTimebase = (nextSignature = signatureDraft) => {
     const bpm = Number(tempoDraft);
@@ -229,19 +245,12 @@ export function TransportControls(props: TransportControlsProps) {
           className={session.settings.metronomeEnabled ? styles.toggleActive : undefined}
           aria-pressed={session.settings.metronomeEnabled}
           aria-label="Toggle metronome"
-          title={session.settings.metronomeEnabled ? 'Disable metronome' : 'Enable metronome'}
-          onClick={() =>
-            void api
-              .updateSessionSettings({
-                metronomeEnabled: !session.settings.metronomeEnabled,
-              })
-              .then((result) =>
-                applyArrangementMutation(result, applyCanonicalState, (message) =>
-                  toast(message, { kind: 'error' }),
-                ),
-              )
-              .catch(() => undefined)
-          }
+          title={`${session.settings.metronomeEnabled ? 'Disable' : 'Enable'} metronome (right-click for sound)`}
+          onClick={() => updateSettings({ metronomeEnabled: !session.settings.metronomeEnabled })}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            setMetronomeMenu({ x: event.clientX, y: event.clientY });
+          }}
         >
           <TransportIcon name="metronome" />
         </button>
@@ -254,16 +263,7 @@ export function TransportControls(props: TransportControlsProps) {
           aria-pressed={session.settings.countInBeats > 0}
           aria-label={`Count-in: ${describeCountIn(session)}`}
           title={`Count-in: ${describeCountIn(session)}`}
-          onClick={() =>
-            void api
-              .updateSessionSettings({ countInBeats: nextCountInBeats(session) })
-              .then((result) =>
-                applyArrangementMutation(result, applyCanonicalState, (message) =>
-                  toast(message, { kind: 'error' }),
-                ),
-              )
-              .catch(() => undefined)
-          }
+          onClick={() => updateSettings({ countInBeats: nextCountInBeats(session) })}
         >
           <TransportIcon name="countIn" />
           {session.settings.countInBeats > 0 && (
@@ -273,6 +273,18 @@ export function TransportControls(props: TransportControlsProps) {
           )}
         </button>
       </div>
+      {metronomeMenu && (
+        <ContextMenu
+          x={metronomeMenu.x}
+          y={metronomeMenu.y}
+          items={METRONOME_SOUNDS.map(({ sound, label }) => ({
+            label,
+            checked: session.settings.metronomeSound === sound,
+            onClick: () => updateSettings({ metronomeSound: sound }),
+          }))}
+          onClose={() => setMetronomeMenu(null)}
+        />
+      )}
     </div>
   );
 }

@@ -60,12 +60,17 @@ void TimelineEngine::mixMetronome(float* const* outputChannels, const int channe
                                   const int sampleCount) noexcept {
     if (sampleCount <= 0) return;
     const auto* active = realtime.graph;
-    if (active == nullptr || !active->metronomeEnabled) return;
+    if (active == nullptr || !active->metronome.has_value()) return;
+    const auto& clicks = *active->metronome;
     const auto loopLength = active->loopEndSample - active->loopStartSample;
     const auto playbackOffset = juce::jlimit(0, sampleCount, realtime.lastMixPlaybackOffset);
     const auto countInRemaining = realtime.countInBlockStartRemainingSamples;
     const auto countingIn = realtime.recordingPhase == RecordingPhase::countingIn;
-    constexpr std::int64_t clickSamples = 1'920;
+    const auto clickAt = [](const std::vector<float>& click, const std::int64_t offset) noexcept {
+        return offset >= 0 && offset < static_cast<std::int64_t>(click.size())
+                   ? click[static_cast<std::size_t>(offset)]
+                   : 0.0f;
+    };
     const auto segmentIndexAt = [this](const int destinationSample) noexcept {
         for (int index = 0; index < realtime.metronomeTransportSegmentCount; ++index) {
             const auto& segment =
@@ -91,10 +96,7 @@ void TimelineEngine::mixMetronome(float* const* outputChannels, const int channe
             const auto offset =
                 (realtime.countInBeatSamples - remaining % realtime.countInBeatSamples) %
                 realtime.countInBeatSamples;
-            if (offset >= 0 && offset < clickSamples) {
-                const auto envelope = 1.0f - static_cast<float>(offset) / clickSamples;
-                value = 0.11f * envelope;
-            }
+            value = clickAt(clicks.beat, offset);
         } else {
             const auto segmentIndex = segmentIndexAt(sample);
             if (segmentIndex < 0) continue;
@@ -120,14 +122,10 @@ void TimelineEngine::mixMetronome(float* const* outputChannels, const int channe
                     position - active->timebase.tickToSample(
                                    static_cast<std::uint64_t>(std::llround(beatTick)),
                                    active->outputSampleRate);
-                if (offset >= 0 && offset < clickSamples) {
-                    const auto envelope = 1.0f - static_cast<float>(offset) / clickSamples;
-                    const auto amplitude = beat == 0 ? 0.18f : 0.11f;
-                    value = amplitude * envelope * metronomeGain;
-                }
+                value = clickAt(beat == 0 ? clicks.accent : clicks.beat, offset) * metronomeGain;
             }
         }
-        if (value <= 0.0f) continue;
+        if (value == 0.0f) continue;
         for (int channel = 0; channel < channelCount; ++channel) {
             if (outputChannels[channel] != nullptr) outputChannels[channel][sample] += value;
         }

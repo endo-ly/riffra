@@ -23,7 +23,20 @@ pub struct SessionSettings {
     pub loop_enabled: bool,
     pub count_in_beats: u8,
     pub metronome_enabled: bool,
+    #[serde(default)]
+    pub metronome_sound: MetronomeSound,
     pub note: String,
+}
+
+/// Click sound played by the metronome and the count-in.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum MetronomeSound {
+    /// Short electronic tone.
+    #[default]
+    Beep,
+    /// Struck woodblock.
+    Wood,
 }
 
 /// The canonical production-state model.
@@ -57,6 +70,7 @@ impl Default for SessionSettings {
             loop_enabled: false,
             count_in_beats: 0,
             metronome_enabled: false,
+            metronome_sound: MetronomeSound::default(),
             note: String::new(),
         }
     }

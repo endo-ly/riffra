@@ -2,6 +2,7 @@ import type {
   ArrangementMutationResult,
   AssetId,
   HistoryState,
+  MetronomeSound,
   ProjectActivationResult,
   ProjectState,
   ProjectExport,
@@ -108,6 +109,7 @@ export async function updateSessionSettings(patch: {
   loopEnabled?: boolean;
   countInBeats?: number;
   metronomeEnabled?: boolean;
+  metronomeSound?: MetronomeSound;
   note?: string;
 }): Promise<ArrangementMutationResult> {
   return dispatchControl({ command: 'session.settings.update', params: patch });

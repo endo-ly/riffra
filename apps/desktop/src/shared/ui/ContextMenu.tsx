@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import clsx from 'clsx';
 import styles from './ContextMenu.module.css';
 
 export interface ContextMenuItem {
@@ -6,6 +7,8 @@ export interface ContextMenuItem {
   onClick?: () => void;
   danger?: boolean;
   disabled?: boolean;
+  /** Marks the item as one choice of a group; `true` is the current choice. */
+  checked?: boolean;
   separator?: boolean;
 }
 
@@ -53,8 +56,9 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
           <button
             key={index}
             type="button"
-            role="menuitem"
-            className={item.danger ? styles.danger : ''}
+            role={item.checked === undefined ? 'menuitem' : 'menuitemradio'}
+            aria-checked={item.checked}
+            className={clsx(item.danger && styles.danger, item.checked && styles.checked)}
             disabled={item.disabled}
             onClick={() => {
               item.onClick?.();

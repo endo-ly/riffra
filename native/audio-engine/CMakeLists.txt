@@ -92,6 +92,8 @@ target_sources(riffra-render-core PRIVATE
   src/timeline/ControlGraphRegistry.h
   src/timeline/MidiSourceRegistry.cpp
   src/timeline/MidiSourceRegistry.h
+  src/timeline/MetronomeClicks.cpp
+  src/timeline/MetronomeClicks.h
   src/timeline/PreparedTimeline.h
   src/timeline/RealtimeCommand.h
   src/timeline/RealtimeFrame.h
@@ -512,6 +514,7 @@ if(BUILD_TESTING)
     tests/recording/RecordingCaptureRuntimeTest.cpp
     tests/recording/RecordingSessionTest.cpp
     tests/recording/ArrangeRecordingSessionTest.cpp
+    tests/timeline/MetronomeClicksTest.cpp
     tests/timeline/MidiSchedulerTest.cpp
     tests/concurrency/BoundedMpmcQueueTest.cpp
     tests/concurrency/RealtimeCommandQueueTest.cpp

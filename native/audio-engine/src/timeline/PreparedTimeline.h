@@ -8,6 +8,7 @@
 #include <optional>
 #include <vector>
 
+#include "MetronomeClicks.h"
 #include "MixerRuntime.h"
 #include "TimelineTimebase.h"
 #include "TrackRuntime.h"
@@ -90,7 +91,8 @@ struct PreparedTimeline final {
     bool punchEnabled = false;
     std::int64_t punchStartSample = 0;
     std::int64_t punchEndSample = 0;
-    bool metronomeEnabled = false;
+    /// Present while the metronome is enabled.
+    std::optional<MetronomeClicks> metronome;
     float masterGainDb = 0.0f;
     bool hasSolo = false;
     GraphSummary summary;

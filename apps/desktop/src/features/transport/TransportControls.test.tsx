@@ -3,7 +3,7 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useState } from 'react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TransportControls } from './TransportControls';
 import { canonicalState, defaultSession } from '@/native/browser-defaults';
 import { FakeNativeApi, fakeAudioStatus } from '@/native/native-api-fake';
@@ -54,5 +54,25 @@ describe('TransportControls', () => {
     });
     await waitFor(() => expect(screen.getByLabelText('Project time signature')).toHaveValue('3/4'));
     expect(api.calls.filter((call) => call === 'updateArrangementTimebase')).toHaveLength(2);
+  });
+
+  it('chooses the metronome sound from the metronome context menu', async () => {
+    // Arrange
+    const api = new FakeNativeApi({
+      bootstrapState: { canonical: canonicalState(defaultSession()) },
+      audio: fakeAudioStatus(),
+    });
+    const update = vi.spyOn(api, 'updateSessionSettings');
+    render(<Harness api={api} />);
+
+    // Act
+    fireEvent.contextMenu(screen.getByLabelText('Toggle metronome'));
+    const current = screen.getByRole('menuitemradio', { name: 'Beep' });
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Wood' }));
+
+    // Assert
+    expect(current).toHaveAttribute('aria-checked', 'true');
+    await waitFor(() => expect(update).toHaveBeenCalledWith({ metronomeSound: 'wood' }));
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
   });
 });

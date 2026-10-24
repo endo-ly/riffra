@@ -27,6 +27,7 @@ set(request_template [=[
       "loopRange": {"enabled": false, "startTick": 0, "endTick": 0},
       "punchRange": null,
       "metronomeEnabled": false,
+      "metronomeSound": "beep",
       "masterGainDb": 0.0,
       "automation": [],
       "mixer": {"masterEffects": [], "buses": [], "sends": [], "sidechainSends": []},

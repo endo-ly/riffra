@@ -33,6 +33,7 @@
       "endTick": 1920
     },
     "metronomeEnabled": true,
+    "metronomeSound": "wood",
     "masterGainDb": -6.0,
     "tracks": [
       {

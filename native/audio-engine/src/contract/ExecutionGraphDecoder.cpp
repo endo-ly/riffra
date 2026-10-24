@@ -763,25 +763,32 @@ bool decodeMixer(const juce::var& value, const juce::String& path, MixerSpec& ou
 
 bool decodeGraph(const juce::var& value, const juce::String& path, ExecutionGraph& output,
                  juce::String& error) {
-    ContractReader reader(value, path,
-                          {"timebase", "loopRange", "punchRange", "metronomeEnabled",
-                           "masterGainDb", "tracks", "mixdown", "mixer", "automation"},
-                          error);
+    ContractReader reader(
+        value, path,
+        {"timebase", "loopRange", "punchRange", "metronomeEnabled", "metronomeSound",
+         "masterGainDb", "tracks", "mixdown", "mixer", "automation"},
+        error);
     juce::var timebase;
     juce::var loopRange;
     juce::var punchRange;
     juce::var mixdown;
     juce::var mixer;
+    juce::String metronomeSound;
     juce::Array<juce::var> tracks;
     juce::Array<juce::var> automation;
+    int sound = 0;
     if (!reader.object("timebase", timebase) || !reader.object("loopRange", loopRange) ||
         !reader.value("punchRange", punchRange) ||
         !reader.boolean("metronomeEnabled", output.metronomeEnabled) ||
+        !reader.string("metronomeSound", metronomeSound) ||
         !reader.number("masterGainDb", output.masterGainDb) || !reader.array("tracks", tracks) ||
         !reader.object("mixdown", mixdown) || !reader.object("mixer", mixer) ||
         !reader.array("automation", automation) || !reader.finish() ||
+        !readEnum(metronomeSound, child(path, "metronomeSound"), {{"beep", 0}, {"wood", 1}}, sound,
+                  error) ||
         !decodeMixer(mixer, child(path, "mixer"), output.mixer, error))
         return false;
+    output.metronomeSound = static_cast<MetronomeSoundSpec>(sound);
     ContractReader mixReader(mixdown, child(path, "mixdown"),
                              {"musicalEndTick", "tailSeconds", "fadeOutSeconds"}, error);
     if (!mixReader.unsignedInteger("musicalEndTick", output.musicalEndTick) ||

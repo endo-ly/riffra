@@ -473,6 +473,7 @@ mod tests {
                     },
                     punch_range: None,
                     metronome_enabled: false,
+                    metronome_sound: riffra_core::MetronomeSound::Beep,
                     master_gain_db: (revision % 115) as f64 - 90.0,
                     tracks: Vec::new(),
                 },

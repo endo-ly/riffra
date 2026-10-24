@@ -320,12 +320,15 @@ struct MixerSpec final {
     bool operator==(const MixerSpec&) const = default;
 };
 
+enum class MetronomeSoundSpec { beep, wood };
+
 struct ExecutionGraph final {
     std::vector<AutomationLaneSpec> automation;
     TimebaseSpec timebase;
     LoopRangeSpec loopRange;
     std::optional<TickRangeSpec> punchRange;
     bool metronomeEnabled = false;
+    MetronomeSoundSpec metronomeSound = MetronomeSoundSpec::beep;
     double masterGainDb = 0.0;
     std::vector<TrackSpec> tracks;
     MixerSpec mixer;

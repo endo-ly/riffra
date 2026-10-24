@@ -58,6 +58,7 @@ fn snapshot() -> TimelineSnapshot {
             },
             punch_range: None,
             metronome_enabled: false,
+            metronome_sound: riffra_core::MetronomeSound::Beep,
             master_gain_db: 0.0,
             tracks: Vec::new(),
         },

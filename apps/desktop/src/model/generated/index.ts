@@ -168,6 +168,7 @@ export type { MasteringDeviation } from './MasteringDeviation';
 export type { MasteringReport } from './MasteringReport';
 export type { MeasurementRange } from './MeasurementRange';
 export type { MeasurementState } from './MeasurementState';
+export type { MetronomeSound } from './MetronomeSound';
 export type { MidiClip } from './MidiClip';
 export type { MidiClipCreateParams } from './MidiClipCreateParams';
 export type { MidiClipMove } from './MidiClipMove';

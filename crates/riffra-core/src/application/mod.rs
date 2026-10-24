@@ -74,6 +74,7 @@ pub struct SessionSettingsPatch {
     pub loop_enabled: Option<bool>,
     pub count_in_beats: Option<u8>,
     pub metronome_enabled: Option<bool>,
+    pub metronome_sound: Option<crate::MetronomeSound>,
     pub note: Option<String>,
 }
 

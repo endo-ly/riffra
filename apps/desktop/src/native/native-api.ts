@@ -54,6 +54,7 @@ import type {
   HostConnectionState,
   HostTarget,
   LocalHostInfo,
+  MetronomeSound,
   AudioMeterFrame,
   RecordingFinalized,
   RuntimeStartupFinished,
@@ -493,6 +494,7 @@ export interface ProjectSettingsApi {
     loopEnabled?: boolean;
     countInBeats?: number;
     metronomeEnabled?: boolean;
+    metronomeSound?: MetronomeSound;
     note?: string;
   }): Promise<ArrangementMutationResult>;
 }

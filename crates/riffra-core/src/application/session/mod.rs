@@ -77,6 +77,9 @@ where
             if let Some(metronome_enabled) = patch.metronome_enabled {
                 session.settings.metronome_enabled = metronome_enabled;
             }
+            if let Some(metronome_sound) = patch.metronome_sound {
+                session.settings.metronome_sound = metronome_sound;
+            }
             if let Some(note) = patch.note {
                 session.settings.note = note.chars().take(16_384).collect();
             }

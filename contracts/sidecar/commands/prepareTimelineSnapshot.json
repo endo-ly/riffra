@@ -10,6 +10,7 @@
         },
         "masterGainDb": 0.0,
         "metronomeEnabled": false,
+        "metronomeSound": "beep",
         "mixdown": {
           "fadeOutSeconds": 0.0,
           "musicalEndTick": 0,

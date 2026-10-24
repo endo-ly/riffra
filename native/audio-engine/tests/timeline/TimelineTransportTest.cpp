@@ -375,7 +375,7 @@ TEST(TimelineEngineTest, StopAdvancesThePlayheadOnlyThroughTheFadeBoundary) {
     // Assert: the playhead advances by the 5 ms fade only, the click continues
     // through it, and later stopped callbacks hold position.
     EXPECT_EQ(afterStop - beforeStop, 240);
-    EXPECT_GT(click.front(), 0.05f);
+    EXPECT_GT(*std::max_element(click.begin(), click.begin() + 120), 0.05f);
     EXPECT_LT(std::abs(click[239]), 0.001f);
     EXPECT_LT(*std::max_element(click.begin() + 240, click.end()), 0.001f);
     engine.mix(outputs.data(), 1, kBlockSamples);

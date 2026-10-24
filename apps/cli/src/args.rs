@@ -362,6 +362,9 @@ pub struct SessionSettingsArgs {
     /// Enable or disable the metronome click.
     #[arg(long)]
     pub metronome_enabled: Option<bool>,
+    /// Metronome click sound: `beep` is a short electronic tone, `wood` a struck woodblock.
+    #[arg(long, value_parser = ["beep", "wood"])]
+    pub metronome_sound: Option<String>,
     /// Free-form session note stored with the settings.
     #[arg(long)]
     pub note: Option<String>,
@@ -2776,6 +2779,7 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
                         loop_enabled: args.loop_enabled,
                         count_in_beats: args.count_in_beats,
                         metronome_enabled: args.metronome_enabled,
+                        metronome_sound: optional_text("/metronomeSound", args.metronome_sound)?,
                         note: args.note,
                     })
                     .into()
