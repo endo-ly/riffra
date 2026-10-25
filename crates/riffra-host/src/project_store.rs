@@ -70,23 +70,13 @@ impl ProjectStore {
     /// invalid, or when the Project cannot be created or loaded.
     pub fn initialize(&self) -> Result<ProjectInitialization, SessionLoadError> {
         fs::create_dir_all(&self.projects_dir)?;
-        for entry in fs::read_dir(&self.projects_dir)? {
-            let entry = entry?;
-            let file_type = entry.file_type()?;
-            if file_type.is_symlink() {
-                return Err(invalid_data("Project store contains a symbolic link").into());
-            }
-            if file_type.is_dir() {
-                let project_id = entry.file_name().to_string_lossy().into_owned();
-                validate_project_id(&project_id).map_err(invalid_data)?;
-            }
-        }
+        let projects = self.project_directories()?;
         ensure_shared_directories(&self.data_root)?;
 
-        if self.project_directories()?.is_empty() {
+        if projects.is_empty() {
             return self.initialize_new_project();
         }
-        let project_id = self.read_or_repair_active_project()?;
+        let project_id = self.read_or_repair_active_project(&projects)?;
         match self.load(&project_id) {
             Ok(loaded) => {
                 let storage = self.session_store(&project_id).map_err(invalid_data)?;
@@ -236,7 +226,7 @@ impl ProjectStore {
         Ok(())
     }
 
-    fn read_or_repair_active_project(&self) -> io::Result<String> {
+    fn read_or_repair_active_project(&self, projects: &[String]) -> io::Result<String> {
         let workspace = self.data_root.join(WORKSPACE_FILE);
         if workspace.is_file() {
             let payload = fs::read(&workspace)?;
@@ -244,10 +234,9 @@ impl ProjectStore {
             self.require_existing_project(&state.active_project_id)?;
             return Ok(state.active_project_id);
         }
-        let first = self
-            .project_directories()?
-            .into_iter()
-            .next()
+        let first = projects
+            .first()
+            .cloned()
             .ok_or_else(|| io::Error::other("DataRoot has no Project"))?;
         self.write_workspace(&first)?;
         Ok(first)
