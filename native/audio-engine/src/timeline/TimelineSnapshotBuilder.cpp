@@ -777,8 +777,7 @@ bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, Prepared
                 previous->outputSampleRate != sampleRate)
                 return;
             const auto* existing = previous->mixer.findBus(spec.id);
-            if (existing != nullptr && sameEffectTopology(existing->effectSpecs, spec.effects) &&
-                existing->effectSpecs == spec.effects &&
+            if (existing != nullptr && existing->effectSpecs == spec.effects &&
                 existing->effects->usesSameSidechainTargets(graph.mixer.sidechainSends)) {
                 bus->effects = existing->effects;
                 reused = true;
@@ -797,7 +796,6 @@ bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, Prepared
         const auto* previous = graphs.latestCommitted;
         if (previous != nullptr && !graphs.devicesNeedReprepare &&
             previous->preparedBlockSize == blockSize && previous->outputSampleRate == sampleRate &&
-            sameEffectTopology(previous->mixer.masterEffectSpecs, mixer.masterEffectSpecs) &&
             previous->mixer.masterEffectSpecs == mixer.masterEffectSpecs &&
             previous->mixer.masterEffects->usesSameSidechainTargets(graph.mixer.sidechainSends)) {
             mixer.masterEffects = previous->mixer.masterEffects;
