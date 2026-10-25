@@ -584,10 +584,36 @@ fn parse_u32(value: &str, label: &str) -> Result<u32, DomainError> {
         .map_err(|_| invalid_value(format!("{label} must be a non-negative integer")))
 }
 
+pub(crate) fn rational_to_ticks(
+    timebase: &ProjectTimebase,
+    mut numerator: u128,
+    mut denominator: u128,
+) -> Result<u64, DomainError> {
+    if denominator == 0 || timebase.ppq == 0 {
+        return Err(DomainError::InvalidMusicalValue(
+            "musical timebase is invalid".into(),
+        ));
+    }
+    let fraction_gcd = gcd_u128(numerator, denominator);
+    numerator /= fraction_gcd;
+    denominator /= fraction_gcd;
+    let whole_note_ticks = u128::from(timebase.ppq)
+        .checked_mul(4)
+        .ok_or_else(|| DomainError::InvalidMusicalValue("pattern offset is too large".into()))?;
+    let tick_gcd = gcd_u128(whole_note_ticks, denominator);
+    let scaled_numerator = numerator
+        .checked_mul(whole_note_ticks / tick_gcd)
+        .ok_or_else(|| DomainError::InvalidMusicalValue("pattern offset is too large".into()))?;
+    let scaled_denominator = denominator / tick_gcd;
+    let rounded = round_fraction(scaled_numerator, scaled_denominator);
+    u64::try_from(rounded)
+        .map_err(|_| DomainError::InvalidMusicalValue("pattern offset is too large".into()))
+}
+
 fn round_fraction(numerator: u128, denominator: u128) -> u128 {
     let whole = numerator / denominator;
     let remainder = numerator % denominator;
-    whole + u128::from(remainder * 2 >= denominator)
+    whole + u128::from(remainder >= denominator - remainder)
 }
 
 fn gcd(mut left: u32, mut right: u32) -> u32 {
@@ -599,7 +625,7 @@ fn gcd(mut left: u32, mut right: u32) -> u32 {
     left.max(1)
 }
 
-fn gcd_u128(mut left: u128, mut right: u128) -> u128 {
+pub(crate) fn gcd_u128(mut left: u128, mut right: u128) -> u128 {
     while right != 0 {
         let remainder = left % right;
         left = right;

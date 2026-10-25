@@ -10,6 +10,7 @@ pub use harmony::{
 pub use phrase::{ResolvedPhrase, ResolvedPhraseNote, resolve_phrase_pattern};
 
 use super::*;
+use crate::domain::music::{gcd_u128, rational_to_ticks};
 use crate::domain::{
     MidiNote, MusicalDuration, MusicalOffset, MusicalPitch, MusicalPosition, MusicalTimeDelta,
     ProjectTimebase, TimelineRegion, TimelineTick,
@@ -1022,43 +1023,6 @@ fn repeated_offset_to_ticks(
         .checked_mul(left_multiplier)
         .ok_or_else(|| DomainError::InvalidMusicalValue("pattern offset is too large".into()))?;
     rational_to_ticks(timebase, numerator, denominator)
-}
-
-fn rational_to_ticks(
-    timebase: &ProjectTimebase,
-    mut numerator: u128,
-    mut denominator: u128,
-) -> Result<u64, DomainError> {
-    if denominator == 0 || timebase.ppq == 0 {
-        return Err(DomainError::InvalidMusicalValue(
-            "musical timebase is invalid".into(),
-        ));
-    }
-    let fraction_gcd = gcd_u128(numerator, denominator);
-    numerator /= fraction_gcd;
-    denominator /= fraction_gcd;
-    let whole_note_ticks = u128::from(timebase.ppq)
-        .checked_mul(4)
-        .ok_or_else(|| DomainError::InvalidMusicalValue("pattern offset is too large".into()))?;
-    let tick_gcd = gcd_u128(whole_note_ticks, denominator);
-    let scaled_numerator = numerator
-        .checked_mul(whole_note_ticks / tick_gcd)
-        .ok_or_else(|| DomainError::InvalidMusicalValue("pattern offset is too large".into()))?;
-    let scaled_denominator = denominator / tick_gcd;
-    let whole = scaled_numerator / scaled_denominator;
-    let remainder = scaled_numerator % scaled_denominator;
-    let rounded = whole + u128::from(remainder >= scaled_denominator - remainder);
-    u64::try_from(rounded)
-        .map_err(|_| DomainError::InvalidMusicalValue("pattern offset is too large".into()))
-}
-
-fn gcd_u128(mut left: u128, mut right: u128) -> u128 {
-    while right != 0 {
-        let remainder = left % right;
-        left = right;
-        right = remainder;
-    }
-    left
 }
 
 fn normalize_region_name(name: String) -> Result<String, ApplicationError> {

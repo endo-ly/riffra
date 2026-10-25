@@ -11,3 +11,5 @@ pub use pitch::{MusicalNoteName, MusicalPitch};
 pub use time::{
     MusicalDuration, MusicalFraction, MusicalOffset, MusicalPosition, MusicalTimeDelta,
 };
+
+pub(crate) use time::{gcd_u128, rational_to_ticks};
