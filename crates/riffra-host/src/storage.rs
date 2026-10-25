@@ -759,9 +759,9 @@ mod tests {
     }
 
     #[test]
-    fn summary_falls_back_for_legacy_field_order_and_schema() {
+    fn summary_reads_fields_in_any_order() {
         // Arrange
-        let root = test_root("summary-legacy");
+        let root = test_root("summary-field-order");
         let store = SessionStore::new(&root, TEST_PROJECT_ID);
         store.ensure_layout().unwrap();
         let current = root
@@ -769,7 +769,7 @@ mod tests {
             .join(TEST_PROJECT_ID)
             .join("session.json");
         let mut session = CreativeSession::new(5_678);
-        session.project_name = Some("Legacy Order".into());
+        session.project_name = Some("Reordered Fields".into());
         session.score_source = Some(riffra_core::ScoreSource {
             file_name: "score.yaml".into(),
             yaml: "score".into(),
@@ -787,19 +787,9 @@ mod tests {
 
         // Act
         let old_order_summary = store.summary().unwrap();
-        let mut old_schema = serde_json::json!({
-            "schemaVersion": 1,
-            "session": serde_json::to_value(&session).unwrap(),
-        });
-        old_schema["session"]["scoreSource"] = serde_json::Value::Null;
-        fs::write(&current, serde_json::to_vec_pretty(&old_schema).unwrap()).unwrap();
-        let old_schema_summary = store.summary().unwrap();
-
         // Assert
-        assert_eq!(old_order_summary.name, "Legacy Order");
+        assert_eq!(old_order_summary.name, "Reordered Fields");
         assert_eq!(old_order_summary.updated_at_ms, 5_678);
-        assert_eq!(old_schema_summary.name, "Legacy Order");
-        assert_eq!(old_schema_summary.updated_at_ms, 5_678);
         let _ = fs::remove_dir_all(root);
     }
 

@@ -78,7 +78,7 @@ pub enum AssetKind {
 /// The operation that produced an [`Asset`], recorded by [`Provenance`].
 ///
 /// `Imported` covers assets brought in from outside Riffra (for example a
-/// reference WAV or a clip from a migrated v1 session) whose origin cannot be
+/// reference WAV) whose origin cannot be
 /// expressed by the in-process operations.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
