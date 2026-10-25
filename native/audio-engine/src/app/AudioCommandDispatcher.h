@@ -76,6 +76,8 @@ private:
     /// Fails the request when a realtime command could not be queued.
     [[nodiscard]] static bool rejectUnlessQueued(CommandResponder& responder, bool queued,
                                                  const juce::String& operation);
+    [[nodiscard]] bool ensureSafeUnmute(MuteReason reason, CommandResponder& responder,
+                                        const juce::String& operation);
     [[nodiscard]] bool reserveRecordingStop(CommandResponder& responder);
     void releaseRecordingStopReservation();
     void queueRecordingStop(const PendingRecordingStop& pending);

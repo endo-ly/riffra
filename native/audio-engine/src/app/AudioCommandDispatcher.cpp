@@ -161,20 +161,27 @@ void AudioCommandDispatcher::handle(const StatusCommand&, CommandResponder respo
     responder.respond(currentStatus());
 }
 
+bool AudioCommandDispatcher::ensureSafeUnmute(MuteReason reason, CommandResponder& responder,
+                                              const juce::String& operation) {
+    if (!context.pipeline.hasMuteReason(reason)) return true;
+    const auto panic = context.timelineEngine.panicAllInstrumentTracks();
+    if (rejectUnlessQueued(responder, panic.has_value(), operation)) return false;
+    if (!context.timelineEngine.waitForCommandApplied(*panic, kSafetyMutePanicApplyTimeout)) {
+        responder.fail("timeout", "The panic command was not applied; the mute remains on.",
+                       operation);
+        return false;
+    }
+    return true;
+}
+
 // Muting also silences instruments so held notes do not sound once unmuted.
 void AudioCommandDispatcher::handle(const SetEmergencyMuteCommand& command,
                                     CommandResponder responder) {
     if (command.muted) {
         context.pipeline.setUserEmergencyMute(true);
         (void)context.timelineEngine.panicAllInstrumentTracks();
-    } else if (context.pipeline.hasMuteReason(MuteReason::UserEmergency)) {
-        const auto panic = context.timelineEngine.panicAllInstrumentTracks();
-        if (rejectUnlessQueued(responder, panic.has_value(), "audio.emergencyMute")) return;
-        if (!context.timelineEngine.waitForCommandApplied(*panic, kSafetyMutePanicApplyTimeout)) {
-            responder.fail("timeout", "The panic command was not applied; the mute remains on.",
-                           "audio.emergencyMute");
-            return;
-        }
+    } else if (!ensureSafeUnmute(MuteReason::UserEmergency, responder, "audio.emergencyMute")) {
+        return;
     }
     if (!command.muted) context.pipeline.setUserEmergencyMute(false);
     responder.respond(currentStatus());
@@ -185,14 +192,9 @@ void AudioCommandDispatcher::handle(const SetFeedbackProtectionCommand& command,
     if (command.active) {
         context.pipeline.setFeedbackProtection(true);
         (void)context.timelineEngine.panicAllInstrumentTracks();
-    } else if (context.pipeline.hasMuteReason(MuteReason::FeedbackProtection)) {
-        const auto panic = context.timelineEngine.panicAllInstrumentTracks();
-        if (rejectUnlessQueued(responder, panic.has_value(), "audio.feedbackProtection")) return;
-        if (!context.timelineEngine.waitForCommandApplied(*panic, kSafetyMutePanicApplyTimeout)) {
-            responder.fail("timeout", "The panic command was not applied; the mute remains on.",
-                           "audio.feedbackProtection");
-            return;
-        }
+    } else if (!ensureSafeUnmute(MuteReason::FeedbackProtection, responder,
+                                 "audio.feedbackProtection")) {
+        return;
     }
     if (!command.active) context.pipeline.setFeedbackProtection(false);
     responder.respond(currentStatus());
@@ -203,14 +205,9 @@ void AudioCommandDispatcher::handle(const SetEngineTransitionMuteCommand& comman
     if (command.active) {
         context.pipeline.setEngineTransitionMute(true);
         (void)context.timelineEngine.panicAllInstrumentTracks();
-    } else if (context.pipeline.hasMuteReason(MuteReason::EngineTransition)) {
-        const auto panic = context.timelineEngine.panicAllInstrumentTracks();
-        if (rejectUnlessQueued(responder, panic.has_value(), "audio.engineTransitionMute")) return;
-        if (!context.timelineEngine.waitForCommandApplied(*panic, kSafetyMutePanicApplyTimeout)) {
-            responder.fail("timeout", "The panic command was not applied; the mute remains on.",
-                           "audio.engineTransitionMute");
-            return;
-        }
+    } else if (!ensureSafeUnmute(MuteReason::EngineTransition, responder,
+                                 "audio.engineTransitionMute")) {
+        return;
     }
     if (!command.active) context.pipeline.setEngineTransitionMute(false);
     responder.respond(currentStatus());
