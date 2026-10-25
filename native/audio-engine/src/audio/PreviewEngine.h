@@ -127,6 +127,7 @@ private:
     };
     bool publishState(std::unique_ptr<PreviewState> next, PreviewCommand::Kind kind,
                       juce::String& error, std::size_t index = 0, int key = -1);
+    void deactivateVoice(PreviewVoiceConfig& voice) noexcept;
     void reclaimRetiredState();
     void retireUnusedStates() noexcept;
     void applyPendingCommands(double sampleRate, bool outputSilenced = false) noexcept;

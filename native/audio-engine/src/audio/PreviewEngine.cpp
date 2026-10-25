@@ -181,12 +181,7 @@ bool PreviewEngine::startInstrumentPreview(const juce::String& definitionJson,
     auto next = std::make_unique<PreviewState>(controlState);
     for (auto& voice : next->voices) {
         if (!voice.active || voice.key == 1) continue;
-        voice.active = false;
-        voice.buffer = nullptr;
-        voice.key = -1;
-        voice.cursor = voice.start;
-        voice.loop = false;
-        voice.revision = ++previewSequence;
+        deactivateVoice(voice);
     }
     instrumentSessions.push_back(std::move(session));
     auto instrumentBuffer = std::make_unique<juce::AudioBuffer<float>>();
@@ -211,6 +206,15 @@ bool PreviewEngine::stopInstrumentPreview(juce::String* error) {
     return accepted;
 }
 
+void PreviewEngine::deactivateVoice(PreviewVoiceConfig& voice) noexcept {
+    voice.active = false;
+    voice.buffer = nullptr;
+    voice.key = -1;
+    voice.cursor = voice.start;
+    voice.loop = false;
+    voice.revision = ++previewSequence;
+}
+
 bool PreviewEngine::stopPreview(juce::String* error) {
     const std::lock_guard lock(controlMutex);
     reclaimRetiredState();
@@ -218,12 +222,7 @@ bool PreviewEngine::stopPreview(juce::String* error) {
     next->instrumentSession = nullptr;
     next->instrumentBuffer = nullptr;
     for (auto& voice : next->voices) {
-        voice.active = false;
-        voice.buffer = nullptr;
-        voice.key = -1;
-        voice.cursor = voice.start;
-        voice.loop = false;
-        voice.revision = ++previewSequence;
+        deactivateVoice(voice);
     }
     juce::String failure;
     const auto accepted = publishState(std::move(next), PreviewCommand::Kind::stopAll, failure);
@@ -237,12 +236,7 @@ bool PreviewEngine::stopPreviewForKey(const int voiceKey, juce::String* error) {
     auto next = std::make_unique<PreviewState>(controlState);
     for (auto& voice : next->voices) {
         if (!voice.active || voice.key != voiceKey) continue;
-        voice.active = false;
-        voice.buffer = nullptr;
-        voice.key = -1;
-        voice.cursor = voice.start;
-        voice.loop = false;
-        voice.revision = ++previewSequence;
+        deactivateVoice(voice);
     }
     juce::String failure;
     const auto accepted =
