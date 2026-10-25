@@ -10,8 +10,34 @@
 #include "ArrangementCaptureSink.h"
 #include "RecordingSession.h"
 #include "concurrency/BoundedMpmcQueue.h"
+#include "contract/ExecutionGraph.h"
 
 namespace riffra {
+
+/// Prepared capture settings for one armed track.
+struct RecordingTrackConfiguration final {
+    juce::String trackId;
+    TrackKindSpec kind = TrackKindSpec::audio;
+    int audioInputChannel = -1;
+    juce::String midiDeviceId;
+    int midiChannel = 0;
+    int pluginLatencySamples = 0;
+    int pluginTailSamples = 0;
+    std::vector<juce::String> sidechainInputs;
+};
+
+/// Prepared capture settings from the committed execution graph.
+struct RecordingConfiguration final {
+    double sampleRate = 0.0;
+    std::uint64_t timelineStartTick = 0;
+    bool loopEnabled = false;
+    std::int64_t loopStartSample = 0;
+    std::int64_t loopEndSample = 0;
+    bool punchEnabled = false;
+    std::int64_t punchStartSample = 0;
+    std::int64_t punchEndSample = 0;
+    std::vector<RecordingTrackConfiguration> tracks;
+};
 
 /// Capture totals of one arrange recording across all of its tracks.
 struct ArrangeRecordingSummary final {
@@ -41,9 +67,9 @@ struct ArrangeRecordingSummary final {
 
 class ArrangeRecordingSession final : public ArrangementCaptureSink {
 public:
-    static std::unique_ptr<ArrangeRecordingSession> create(const juce::File& directory,
-                                                           const juce::var& configuration,
-                                                           juce::String& error);
+    static std::unique_ptr<ArrangeRecordingSession> create(
+        const juce::File& directory, const RecordingConfiguration& configuration,
+        juce::String& error);
 
     bool beginAudioTrackCapture(const juce::String& trackId, std::uint64_t audioClockStartSample,
                                 std::uint64_t timelineStartSample) noexcept override;
@@ -124,7 +150,7 @@ private:
         };
         juce::String trackId;
         juce::String trackKey;
-        juce::String kind;
+        TrackKindSpec kind = TrackKindSpec::audio;
         int audioInputChannel = -1;
         juce::String midiDeviceId;
         int midiChannel = 0;
@@ -141,7 +167,8 @@ private:
     };
 
     ArrangeRecordingSession(juce::File directory, double sampleRate);
-    bool initialise(const juce::var& configuration, juce::String& error);
+    bool initialise(const RecordingConfiguration& configuration, juce::String& error);
+    TrackWriter* findTrack(const juce::String& trackId) noexcept;
     bool writeManifest(const juce::String& state, juce::String& error) const;
     void captureMidiTrack(const juce::String& trackId, std::optional<std::uint16_t> sourceIndex,
                           const juce::String& sourceDeviceId, const juce::MidiMessage& message,

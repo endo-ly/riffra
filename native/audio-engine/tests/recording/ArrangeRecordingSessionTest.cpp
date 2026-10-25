@@ -8,30 +8,29 @@
 namespace riffra {
 namespace {
 
-juce::var makeConfiguration() {
-    auto* configuration = new juce::DynamicObject();
-    configuration->setProperty("sampleRate", 48'000.0);
-    configuration->setProperty("timelineStartTick", 960);
-    configuration->setProperty("loopEnabled", true);
-    configuration->setProperty("loopStartSample", 24'000);
-    configuration->setProperty("loopEndSample", 48'000);
-    configuration->setProperty("punchEnabled", false);
+RecordingConfiguration makeConfiguration() {
+    RecordingConfiguration configuration;
+    configuration.sampleRate = 48'000.0;
+    configuration.timelineStartTick = 960;
+    configuration.loopEnabled = true;
+    configuration.loopStartSample = 24'000;
+    configuration.loopEndSample = 48'000;
+    configuration.punchEnabled = false;
 
-    juce::Array<juce::var> tracks;
-    const auto addTrack = [&tracks](const juce::String& id, const juce::String& kind, int input) {
-        auto* track = new juce::DynamicObject();
-        track->setProperty("trackId", id);
-        track->setProperty("kind", kind);
-        track->setProperty("audioInputChannel", input);
-        track->setProperty("pluginLatencySamples", input + 8);
-        track->setProperty("pluginTailSamples", input + 16);
-        tracks.add(juce::var(track));
+    const auto addTrack = [&configuration](const juce::String& id, TrackKindSpec kind, int input) {
+        RecordingTrackConfiguration track;
+        track.trackId = id;
+        track.kind = kind;
+        track.audioInputChannel = input;
+        track.pluginLatencySamples = input + 8;
+        track.pluginTailSamples = input + 16;
+        configuration.tracks.push_back(std::move(track));
     };
-    addTrack("track:guitar", "audio", 0);
-    addTrack("track:vocal", "audio", 1);
-    addTrack("track:keys", "instrument", -1);
-    configuration->setProperty("tracks", tracks);
-    return juce::var(configuration);
+    addTrack("track:guitar", TrackKindSpec::audio, 0);
+    addTrack("track:vocal", TrackKindSpec::audio, 1);
+    addTrack("track:keys", TrackKindSpec::instrument, -1);
+
+    return configuration;
 }
 
 bool writeCapture(ArrangeRecordingSession& session, juce::String& error) {
@@ -96,7 +95,10 @@ protected:
 
 TEST_F(ArrangeRecordingSessionTest, CreatesTrackRecordingFilesAndManifest) {
     juce::String error;
-    const auto configuration = makeConfiguration();
+    auto configuration = makeConfiguration();
+    configuration.tracks[0].sidechainInputs = {"device:compressor", "device:gate"};
+    configuration.tracks[2].midiDeviceId = "midi:keyboard";
+    configuration.tracks[2].midiChannel = 3;
     auto session = ArrangeRecordingSession::create(directory.get(), configuration, error);
     ASSERT_NE(session, nullptr) << error;
 
@@ -111,12 +113,37 @@ TEST_F(ArrangeRecordingSessionTest, CreatesTrackRecordingFilesAndManifest) {
                         .replaceWithText(juce::JSON::toString(manifest, true)));
     }
 
+    std::array<float, 16> sidechainLeft;
+    std::array<float, 16> sidechainRight;
+    sidechainLeft.fill(0.25f);
+    sidechainRight.fill(-0.5f);
+    const std::array<const float*, 2> sidechain{sidechainLeft.data(), sidechainRight.data()};
+    session->writeSidechain("track:guitar", "device:compressor", sidechain.data(), 16);
+    const auto sidechainFile =
+        session->prepareSidechainForReading("track:guitar", "device:compressor");
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    const std::unique_ptr<juce::AudioFormatReader> reader(formats.createReaderFor(sidechainFile));
+    ASSERT_NE(reader, nullptr);
+    EXPECT_EQ(reader->lengthInSamples, 16);
+    juce::AudioBuffer<float> capturedSidechain(2, 16);
+    ASSERT_TRUE(reader->read(&capturedSidechain, 0, 16, 0, true, true));
+    EXPECT_FLOAT_EQ(capturedSidechain.getSample(0, 0), 0.25f);
+    EXPECT_FLOAT_EQ(capturedSidechain.getSample(1, 0), -0.5f);
+
     ASSERT_TRUE(writeCapture(*session, error)) << error;
     manifest = test::parseJsonFile(directory.get().getChildFile("manifest.json"));
     ASSERT_TRUE(manifest.isObject());
     EXPECT_EQ(manifest.getProperty("state", {}).toString(), "completed");
     EXPECT_EQ(manifest.getProperty("capture", {}).getProperty("captureId", {}).toString(),
               "capture:test");
+
+    EXPECT_DOUBLE_EQ(static_cast<double>(manifest.getProperty("sampleRate", 0)), 48'000.0);
+    EXPECT_EQ(static_cast<juce::int64>(manifest.getProperty("timelineStartTick", 0)), 960);
+    const auto loop = manifest.getProperty("loopRange", {});
+    EXPECT_TRUE(static_cast<bool>(loop.getProperty("enabled", false)));
+    EXPECT_EQ(static_cast<juce::int64>(loop.getProperty("startSample", 0)), 24'000);
+    EXPECT_EQ(static_cast<juce::int64>(loop.getProperty("endSample", 0)), 48'000);
 
     // Arrange recording captures every Track into its own files and segments.
     const auto captureSegments = manifest.getProperty("captureSegments", {});
@@ -132,11 +159,24 @@ TEST_F(ArrangeRecordingSessionTest, CreatesTrackRecordingFilesAndManifest) {
     ASSERT_EQ(tracks.size(), 3);
     EXPECT_EQ(tracks[0].getProperty("trackId", {}).toString(), "track:guitar");
     EXPECT_EQ(tracks[0].getProperty("trackKey", {}).toString(), "0000");
+    EXPECT_EQ(tracks[0].getProperty("kind", {}).toString(), "audio");
+    EXPECT_EQ(static_cast<int>(tracks[0].getProperty("pluginLatencySamples", 0)), 8);
+    EXPECT_EQ(static_cast<int>(tracks[0].getProperty("pluginTailSamples", 0)), 16);
+    const auto sidechainInputs = tracks[0].getProperty("sidechainInputs", {});
+    ASSERT_EQ(sidechainInputs.size(), 2);
+    EXPECT_EQ(sidechainInputs[0].getProperty("deviceId", {}).toString(), "device:compressor");
+    EXPECT_EQ(sidechainInputs[0].getProperty("file", {}).toString(), "tracks/0000/sidechain-0.wav");
+    EXPECT_EQ(sidechainInputs[1].getProperty("deviceId", {}).toString(), "device:gate");
+    EXPECT_EQ(sidechainInputs[1].getProperty("file", {}).toString(), "tracks/0000/sidechain-1.wav");
     EXPECT_EQ(tracks[0].getProperty("rawFile", {}).toString(), "tracks/0000/raw.wav");
     EXPECT_EQ(tracks[1].getProperty("trackId", {}).toString(), "track:vocal");
     EXPECT_EQ(tracks[1].getProperty("trackKey", {}).toString(), "0001");
     EXPECT_EQ(tracks[2].getProperty("trackId", {}).toString(), "track:keys");
     EXPECT_EQ(tracks[2].getProperty("trackKey", {}).toString(), "0002");
+    EXPECT_EQ(tracks[2].getProperty("kind", {}).toString(), "instrument");
+    const auto midiInput = tracks[2].getProperty("midiInput", {});
+    EXPECT_EQ(midiInput.getProperty("deviceId", {}).toString(), "midi:keyboard");
+    EXPECT_EQ(static_cast<int>(midiInput.getProperty("channel", 0)), 3);
 
     EXPECT_TRUE(directory.get().getChildFile("tracks/0000/raw.wav").existsAsFile());
     EXPECT_TRUE(directory.get().getChildFile("tracks/0000/processed.wav").existsAsFile());

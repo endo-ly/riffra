@@ -153,23 +153,13 @@ int AudioEngine::serve(const std::optional<std::uint32_t> parentPid,
         }
     });
 
-    // Meter push thread: periodically writes peak/dropout meters to stdout so
-    // the Rust supervisor can emit compact audio-meter events to the frontend without
-    // React polling. 50 ms ≈ 20 fps, smooth enough for meter UI.
-    meterPushRunning.store(true, std::memory_order_release);
-    meterPushThread = std::thread([&] {
-        while (meterPushRunning.load(std::memory_order_acquire)) {
+    // Publish meters and transport at 50 ms intervals for frontend telemetry.
+    telemetryPushRunning.store(true, std::memory_order_release);
+    telemetryPushThread = std::thread([&] {
+        while (telemetryPushRunning.load(std::memory_order_acquire)) {
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
-            if (!meterPushRunning.load(std::memory_order_acquire)) break;
+            if (!telemetryPushRunning.load(std::memory_order_acquire)) break;
             writeEvent(AudioStatusBuilder::currentMeters(pipeline, timelineEngine));
-        }
-    });
-
-    transportPushRunning.store(true, std::memory_order_release);
-    transportPushThread = std::thread([&] {
-        while (transportPushRunning.load(std::memory_order_acquire)) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
-            if (!transportPushRunning.load(std::memory_order_acquire)) break;
             writeEvent(AudioStatusBuilder::currentTransport(timelineEngine));
         }
     });
@@ -269,10 +259,8 @@ int AudioEngine::serve(const std::optional<std::uint32_t> parentPid,
     if (watchdog.joinable()) watchdog.join();
     midiPollRunning.store(false, std::memory_order_release);
     if (midiPollThread.joinable()) midiPollThread.join();
-    meterPushRunning.store(false, std::memory_order_release);
-    if (meterPushThread.joinable()) meterPushThread.join();
-    transportPushRunning.store(false, std::memory_order_release);
-    if (transportPushThread.joinable()) transportPushThread.join();
+    telemetryPushRunning.store(false, std::memory_order_release);
+    if (telemetryPushThread.joinable()) telemetryPushThread.join();
     return 0;
 }
 

@@ -47,12 +47,10 @@ private:
     std::unique_ptr<AudioCommandDispatcher> commandDispatcher;
     std::atomic<bool> watchdogRunning{false};
     std::atomic<bool> midiPollRunning{false};
-    std::atomic<bool> meterPushRunning{false};
-    std::atomic<bool> transportPushRunning{false};
+    std::atomic<bool> telemetryPushRunning{false};
     std::thread watchdog;
     std::thread midiPollThread;
-    std::thread meterPushThread;
-    std::thread transportPushThread;
+    std::thread telemetryPushThread;
 };
 
 }  // namespace riffra

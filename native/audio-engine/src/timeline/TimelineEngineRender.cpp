@@ -295,10 +295,8 @@ void TimelineEngine::processLiveAudioTracks(PreparedTimeline& prepared,
                     const auto discontinuous = capture.state != RecordingCaptureState::capturing ||
                                                captureAudioStart != capture.endAudioSample;
                     if (discontinuous && capture.state == RecordingCaptureState::capturing) {
-                        if (!recordingCapture->endTrackCapture(track.id, capture))
-                            capture.state = RecordingCaptureState::idle;
-                        else
-                            capture.state = RecordingCaptureState::idle;
+                        (void)recordingCapture->endTrackCapture(track.id, capture);
+                        capture.state = RecordingCaptureState::idle;
                     }
                     if (capture.state == RecordingCaptureState::idle) {
                         (void)recordingCapture->beginTrackCapture(
@@ -315,10 +313,8 @@ void TimelineEngine::processLiveAudioTracks(PreparedTimeline& prepared,
                             captureTimelineStart + static_cast<std::uint64_t>(writeCount);
                     }
                 } else if (capture.state == RecordingCaptureState::capturing) {
-                    if (!recordingCapture->endTrackCapture(track.id, capture))
-                        capture.state = RecordingCaptureState::idle;
-                    else
-                        capture.state = RecordingCaptureState::idle;
+                    (void)recordingCapture->endTrackCapture(track.id, capture);
+                    capture.state = RecordingCaptureState::idle;
                 }
             }
         }

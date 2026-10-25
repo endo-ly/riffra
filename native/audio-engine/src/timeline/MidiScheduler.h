@@ -13,31 +13,10 @@
 
 namespace riffra {
 
-/// Source MIDI data read from the canonical timeline snapshot.
-struct MidiNote final {
+/// Conditions for compiling source MIDI into a prepared timeline clip.
+struct MidiCompileOptions final {
     std::uint64_t startTick = 0;
-    std::uint64_t durationTicks = 1;
-    int note = 0;
-    int velocity = 0;
-    int channel = 1;
-};
-
-struct MidiEvent final {
-    juce::String kind;
-    std::uint64_t tick = 0;
-    int channel = 1;
-    int data1 = 0;
-    int data2 = 0;
-};
-
-struct MidiClip final {
-    std::uint64_t startTick = 0;
-    std::uint64_t durationTicks = 1;
     bool loop = false;
-    bool muted = false;
-    std::vector<MidiNote> notes;
-    std::vector<MidiEvent> events;
-    std::vector<InstrumentControlEventSpec> instrumentControlEvents;
     bool directInstrumentEvents = false;
     std::uint64_t noteIdBase = 0;
 };
@@ -89,9 +68,9 @@ public:
     [[nodiscard]] static bool prepareBuffer(juce::MidiBuffer& buffer,
                                             std::size_t eventCapacity) noexcept;
 
-    [[nodiscard]] static bool compile(const MidiClip& source, const TimelineTimebase& timebase,
-                                      double sampleRate, CompiledMidiClip& destination,
-                                      juce::String& error,
+    [[nodiscard]] static bool compile(const MidiClipSpec& source, const MidiCompileOptions& options,
+                                      const TimelineTimebase& timebase, double sampleRate,
+                                      CompiledMidiClip& destination, juce::String& error,
                                       const MidiNoteTransform* transform = nullptr);
 
     static void schedule(const std::vector<CompiledMidiClip>& clips, std::int64_t rangeStart,

@@ -35,6 +35,8 @@
 
 namespace riffra {
 
+struct RecordingConfiguration;
+
 class AudioRenderPipeline;
 class TimelineEngineTestPeer;
 class TimelineSnapshotBuilder;
@@ -146,7 +148,7 @@ public:
     /// Generates processed recording variants after the realtime graph is stopped.
     bool processFinalizedRecording(ArrangementCaptureSink* sink, juce::String& error,
                                    const ProcessingProgressCallback& progress = {}) noexcept;
-    [[nodiscard]] juce::var recordingConfiguration() const;
+    [[nodiscard]] RecordingConfiguration recordingConfiguration() const;
     bool setRecordingSink(ArrangementCaptureSink* sink) noexcept;
     bool clearRecordingSink() noexcept;
 
