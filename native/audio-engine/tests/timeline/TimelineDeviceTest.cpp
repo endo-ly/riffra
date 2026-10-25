@@ -141,15 +141,27 @@ TEST(AudioCommandDispatcherTest, QueueFullDoesNotPreventSafetyMutes) {
     EXPECT_TRUE(pipeline.hasMuteReason(MuteReason::EngineTransition));
     EXPECT_TRUE(pipeline.isFeedbackSuspected());
 
-    // Releasing a safety mute still requires its panic command to be queued.
-    juce::var reply;
-    dispatcher.dispatch(
-        {requestId, SetEmergencyMuteCommand{false}},
-        CommandResponder(requestId, [&reply](const juce::var& value) { reply = value; }));
-    EXPECT_EQ(reply.getProperty("kind", {}).toString(), "error");
-    const auto error = reply.getProperty("error", {});
-    EXPECT_EQ(error.getProperty("kind", {}).toString(), "realtimeQueueFull");
+    const std::array<SidecarCommandSpec, 3> releaseCommands{
+        SetEmergencyMuteCommand{false},
+        SetFeedbackProtectionCommand{false},
+        SetEngineTransitionMuteCommand{false},
+    };
+    const std::array<juce::String, 3> operations{"audio.emergencyMute", "audio.feedbackProtection",
+                                                 "audio.engineTransitionMute"};
+    for (std::size_t index = 0; index < releaseCommands.size(); ++index) {
+        juce::var reply;
+        dispatcher.dispatch(
+            {requestId, releaseCommands[index]},
+            CommandResponder(requestId, [&reply](const juce::var& value) { reply = value; }));
+        EXPECT_EQ(reply.getProperty("kind", {}).toString(), "error");
+        const auto error = reply.getProperty("error", {});
+        EXPECT_EQ(error.getProperty("kind", {}).toString(), "realtimeQueueFull");
+        EXPECT_EQ(error.getProperty("operation", {}).toString(), operations[index]);
+        ++requestId;
+    }
     EXPECT_TRUE(pipeline.hasMuteReason(MuteReason::UserEmergency));
+    EXPECT_TRUE(pipeline.hasMuteReason(MuteReason::FeedbackProtection));
+    EXPECT_TRUE(pipeline.hasMuteReason(MuteReason::EngineTransition));
 }
 
 TEST(AudioCommandDispatcherTest, RejectsDeviceChangesDuringGraphOperations) {
@@ -235,19 +247,40 @@ TEST(AudioCommandDispatcherTest, PanicMustApplyBeforeASafetyMuteCanBeReleased) {
         return reply;
     };
 
-    // Act
-    EXPECT_NE(send(SetEmergencyMuteCommand{true}).getProperty("kind", {}).toString(), "error");
-    const auto delayedRelease = send(SetEmergencyMuteCommand{false});
+    const std::array<SidecarCommandSpec, 3> muteCommands{
+        SetEmergencyMuteCommand{true},
+        SetFeedbackProtectionCommand{true},
+        SetEngineTransitionMuteCommand{true},
+    };
+    const std::array<SidecarCommandSpec, 3> releaseCommands{
+        SetEmergencyMuteCommand{false},
+        SetFeedbackProtectionCommand{false},
+        SetEngineTransitionMuteCommand{false},
+    };
+    const std::array<MuteReason, 3> reasons{
+        MuteReason::UserEmergency, MuteReason::FeedbackProtection, MuteReason::EngineTransition};
+    const std::array<juce::String, 3> operations{"audio.emergencyMute", "audio.feedbackProtection",
+                                                 "audio.engineTransitionMute"};
 
-    // Assert
-    EXPECT_EQ(delayedRelease.getProperty("kind", {}).toString(), "error");
-    EXPECT_EQ(delayedRelease.getProperty("error", {}).getProperty("kind", {}).toString(),
-              "timeout");
-    EXPECT_TRUE(pipeline.hasMuteReason(MuteReason::UserEmergency));
+    // Act / Assert
+    for (const auto& command : muteCommands)
+        EXPECT_NE(send(command).getProperty("kind", {}).toString(), "error");
+    for (std::size_t index = 0; index < releaseCommands.size(); ++index) {
+        const auto delayedRelease = send(releaseCommands[index]);
+        EXPECT_EQ(delayedRelease.getProperty("kind", {}).toString(), "error");
+        const auto error = delayedRelease.getProperty("error", {});
+        EXPECT_EQ(error.getProperty("kind", {}).toString(), "timeout");
+        EXPECT_EQ(error.getProperty("operation", {}).toString(), operations[index]);
+        EXPECT_TRUE(pipeline.hasMuteReason(reasons[index]));
+    }
 
     timeline.setRealtimeOwner(RealtimeOwner::control);
-    EXPECT_NE(send(SetEmergencyMuteCommand{false}).getProperty("kind", {}).toString(), "error");
-    EXPECT_FALSE(pipeline.hasMuteReason(MuteReason::UserEmergency));
+    for (std::size_t index = 0; index < releaseCommands.size(); ++index) {
+        EXPECT_NE(send(releaseCommands[index]).getProperty("kind", {}).toString(), "error");
+        EXPECT_FALSE(pipeline.hasMuteReason(reasons[index]));
+        for (std::size_t remaining = index + 1; remaining < reasons.size(); ++remaining)
+            EXPECT_TRUE(pipeline.hasMuteReason(reasons[remaining]));
+    }
 }
 
 TEST(AudioCommandDispatcherTest, StopWaitDoesNotBlockFurtherCommandDispatch) {
