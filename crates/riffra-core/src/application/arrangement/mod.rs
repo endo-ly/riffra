@@ -8,17 +8,17 @@ where
 {
     /// Lists Tracks from the canonical production state.
     pub fn list_tracks(&mut self) -> Result<Vec<Track>, ApplicationError> {
-        Ok(self.get_session()?.arrangement.tracks)
+        Ok(self.core.snapshot().session.arrangement.tracks.clone())
     }
 
     /// Lists all Timeline Clips from the canonical production state.
     pub fn list_audio_clips(&mut self) -> Result<Vec<AudioClip>, ApplicationError> {
-        Ok(self.get_session()?.arrangement.audio_clips)
+        Ok(self.core.snapshot().session.arrangement.audio_clips.clone())
     }
 
     /// Lists all MIDI Clips from the canonical production state.
     pub fn list_midi_clips(&mut self) -> Result<Vec<MidiClip>, ApplicationError> {
-        Ok(self.get_session()?.arrangement.midi_clips)
+        Ok(self.core.snapshot().session.arrangement.midi_clips.clone())
     }
 
     /// Adds a Track and returns the identity allocated by Core.
