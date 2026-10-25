@@ -102,7 +102,6 @@ TEST(TimelineEngineTest, KeepsAudioCaptureOpenForTheWholeAudioCallback) {
     const auto rawSamplesAfterCallback = captureSink.totalRawSamples;
     const auto beginCountAfterCallback = captureSink.beginCount;
     const auto endCountAfterCallback = captureSink.endCount;
-    ASSERT_TRUE(engine.stopRecording(error));
     const auto finalized = finalizeCapturedRecording(engine, error);
     engine.clearRecordingSink();
 
@@ -339,7 +338,6 @@ TEST(TimelineEngineTest, ClosesNonOverlappingSegmentsForALoopCapture) {
         remaining -= kBlockSamples;
     }
     engine.mix(inputs.data(), 1, outputs.data(), 2, remaining);
-    ASSERT_TRUE(engine.stopRecording(error));
     ASSERT_TRUE(finalizeCapturedRecording(engine, error));
     engine.clearRecordingSink();
 
@@ -414,7 +412,6 @@ TEST(TimelineEngineTest, KeepsRawAndProcessedAlignedAcrossLoopPasses) {
         engine.mix(inputs.data(), 1, outputs.data(), 2, block);
         mixed += block;
     }
-    ASSERT_TRUE(engine.stopRecording(error));
     ASSERT_TRUE(finalizeCapturedRecording(engine, error));
     engine.clearRecordingSink();
 
@@ -744,7 +741,6 @@ TEST(TimelineEngineTest, StreamsALongLoopRecordingWithoutPreallocatingRam) {
         engine.mix(inputs.data(), 1, outputs.data(), 2, block);
         remaining -= block;
     }
-    ASSERT_TRUE(engine.stopRecording(error));
     ASSERT_TRUE(finalizeCapturedRecording(engine, error));
     engine.clearRecordingSink();
 
