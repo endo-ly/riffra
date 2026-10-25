@@ -8,14 +8,13 @@
 namespace riffra {
 namespace {
 
-MidiClip makeClip(const bool loop) {
-    MidiClip clip;
+MidiClipSpec makeClip() {
+    MidiClipSpec clip;
     clip.durationTicks = 4;
-    clip.loop = loop;
     clip.notes.push_back({0, 4, 60, 100, 1});
-    clip.events.push_back({"controlChange", 1, 1, 7, 100});
-    clip.events.push_back({"pitchBend", 2, 1, 0, 64});
-    clip.events.push_back({"channelPressure", 3, 1, 80, 0});
+    clip.events.push_back({MidiEventKindSpec::controlChange, 1, 1, 7, 100});
+    clip.events.push_back({MidiEventKindSpec::pitchBend, 2, 1, 0, 64});
+    clip.events.push_back({MidiEventKindSpec::channelPressure, 3, 1, 80, 0});
     return clip;
 }
 
@@ -29,12 +28,13 @@ std::vector<juce::MidiMessage> scheduledMessages(const CompiledMidiClip& clip,
 }
 
 TEST(MidiSchedulerTest, CompilesAndSortsPreparedTimelineEvents) {
-    MidiClip source = makeClip(false);
+    MidiClipSpec source = makeClip();
+    MidiCompileOptions options;
     CompiledMidiClip compiled;
     juce::String error;
 
-    ASSERT_TRUE(MidiScheduler::compile(source, TimelineTimebase{10, {{0, 60.0}}, {{0, 4, 4}}}, 10.0,
-                                       compiled, error));
+    ASSERT_TRUE(MidiScheduler::compile(
+        source, options, TimelineTimebase{10, {{0, 60.0}}, {{0, 4, 4}}}, 10.0, compiled, error));
     ASSERT_EQ(compiled.lengthSamples, 4);
     ASSERT_EQ(compiled.events.size(), 5u);
     EXPECT_TRUE(compiled.events[0].message.isNoteOn());
@@ -51,14 +51,15 @@ TEST(MidiSchedulerTest, PreparedNoteMappingIsSharedByNormalAndInternalInstrument
     settings.playableNotes = PlayableNotesSpec{PlayableNotesKindSpec::range, 60, 96, {}};
     settings.keyswitches.push_back({24, "Sustain"});
     const MidiNoteTransform transform(settings);
-    MidiClip source;
+    MidiClipSpec source;
+    MidiCompileOptions options;
     source.durationTicks = 960;
     source.notes = {{0, 120, 60, 100, 1}, {240, 120, 24, 100, 1}, {480, 120, 120, 100, 1}};
     const TimelineTimebase timebase{10, {{0, 60.0}}, {{0, 4, 4}}};
 
     CompiledMidiClip midi;
     juce::String error;
-    ASSERT_TRUE(MidiScheduler::compile(source, timebase, 10.0, midi, error, &transform))
+    ASSERT_TRUE(MidiScheduler::compile(source, options, timebase, 10.0, midi, error, &transform))
         << error.toStdString();
     std::vector<int> midiNotes;
     for (const auto& event : midi.events)
@@ -66,9 +67,10 @@ TEST(MidiSchedulerTest, PreparedNoteMappingIsSharedByNormalAndInternalInstrument
             midiNotes.push_back(event.message.getNoteNumber());
     EXPECT_EQ(midiNotes, (std::vector<int>{72, 72, 24, 24}));
 
-    source.directInstrumentEvents = true;
+    options.directInstrumentEvents = true;
     CompiledMidiClip internal;
-    ASSERT_TRUE(MidiScheduler::compile(source, timebase, 10.0, internal, error, &transform))
+    ASSERT_TRUE(
+        MidiScheduler::compile(source, options, timebase, 10.0, internal, error, &transform))
         << error.toStdString();
     std::vector<int> internalNotes;
     for (const auto& event : internal.events)
@@ -82,7 +84,7 @@ TEST(MidiSchedulerTest, EmitsClippedNoteOffAtClipBoundaryAfterSeek) {
     CompiledMidiClip compiled;
     juce::String error;
     ASSERT_TRUE(MidiScheduler::compile(
-        makeClip(false), TimelineTimebase{10, {{0, 60.0}}, {{0, 4, 4}}}, 10.0, compiled, error));
+        makeClip(), {}, TimelineTimebase{10, {{0, 60.0}}, {{0, 4, 4}}}, 10.0, compiled, error));
 
     const auto messages = scheduledMessages(compiled, 4, 1);
 
@@ -93,8 +95,9 @@ TEST(MidiSchedulerTest, EmitsClippedNoteOffAtClipBoundaryAfterSeek) {
 TEST(MidiSchedulerTest, EmitsLoopBoundaryOffBeforeTheNextLoopOn) {
     CompiledMidiClip compiled;
     juce::String error;
-    ASSERT_TRUE(MidiScheduler::compile(
-        makeClip(true), TimelineTimebase{10, {{0, 60.0}}, {{0, 4, 4}}}, 10.0, compiled, error));
+    ASSERT_TRUE(MidiScheduler::compile(makeClip(), {.loop = true},
+                                       TimelineTimebase{10, {{0, 60.0}}, {{0, 4, 4}}}, 10.0,
+                                       compiled, error));
 
     const auto messages = scheduledMessages(compiled, 4, 1);
 
@@ -174,16 +177,18 @@ TEST(MidiSchedulerTest, PreservesDenseBlocksAfterPrepareCapacityIsCalculated) {
 }
 
 TEST(MidiSchedulerTest, PreservesOverlappingNoteIdsPreciseControlsAndClipEndpoint) {
-    MidiClip source;
+    MidiClipSpec source;
+    MidiCompileOptions options;
     source.durationTicks = 3840;
-    source.directInstrumentEvents = true;
+    options.directInstrumentEvents = true;
     source.notes = {{480, 1440, 60, 90, 2}, {960, 1440, 60, 100, 2}};
     source.instrumentControlEvents = {{"bend", 1920, 2, "pitchBend", false, 0.12345f, {}},
                                       {"sustain", 3840, 3, "sustainPedal", false, 0.0f, {}}};
     TimelineTimebase timebase{960, {{0, 120.0}, {1920, 90.0}}, {{0, 4, 4}, {1920, 3, 4}}};
     CompiledMidiClip compiled;
     juce::String error;
-    ASSERT_TRUE(MidiScheduler::compile(source, timebase, 48000.0, compiled, error)) << error;
+    ASSERT_TRUE(MidiScheduler::compile(source, options, timebase, 48000.0, compiled, error))
+        << error;
     std::array<SonalloyEvent, 8> events{};
     std::array<InstrumentEventOrder, 8> ordering{};
     const auto count = MidiScheduler::scheduleInstrumentEvents({compiled}, 0, 112001, events.data(),
@@ -202,14 +207,16 @@ TEST(MidiSchedulerTest, PreservesOverlappingNoteIdsPreciseControlsAndClipEndpoin
 }
 
 TEST(MidiSchedulerTest, OrdersAdjacentClipsAndAllocatesDifferentLoopNoteIds) {
-    MidiClip source;
+    MidiClipSpec source;
+    MidiCompileOptions options;
     source.durationTicks = 960;
-    source.directInstrumentEvents = true;
-    source.loop = true;
+    options.directInstrumentEvents = true;
+    options.loop = true;
     source.notes = {{0, 960, 60, 100, 1}};
     CompiledMidiClip compiled;
     juce::String error;
-    ASSERT_TRUE(MidiScheduler::compile(source, TimelineTimebase{}, 48000.0, compiled, error));
+    ASSERT_TRUE(
+        MidiScheduler::compile(source, options, TimelineTimebase{}, 48000.0, compiled, error));
     compiled.noteIdStride = 1;
     std::array<SonalloyEvent, 8> events{};
     std::array<InstrumentEventOrder, 8> ordering{};
@@ -233,15 +240,17 @@ TEST(MidiSchedulerTest, OrdersAdjacentClipsAndAllocatesDifferentLoopNoteIds) {
 }
 
 TEST(MidiSchedulerTest, ParameterRampUsesVariablePpqTempoMapAndRestoresSeekState) {
-    MidiClip source;
+    MidiClipSpec source;
+    MidiCompileOptions options;
     source.durationTicks = 13440;
-    source.directInstrumentEvents = true;
+    options.directInstrumentEvents = true;
     source.instrumentControlEvents = {
         {"ramp", 0, 0, "parameterRamp", false, 0.25f, "tone", 0.75f, 6720}};
     TimelineTimebase timebase{3360, {{0, 120.0}, {3360, 60.0}}, {{0, 4, 4}}};
     CompiledMidiClip compiled;
     juce::String error;
-    ASSERT_TRUE(MidiScheduler::compile(source, timebase, 48000.0, compiled, error)) << error;
+    ASSERT_TRUE(MidiScheduler::compile(source, options, timebase, 48000.0, compiled, error))
+        << error;
     ASSERT_EQ(compiled.events.size(), 1u);
     EXPECT_EQ(compiled.events[0].instrumentEvent->duration_frames, 72000u);
     std::array<SonalloyEvent, 4> events{};
@@ -261,16 +270,18 @@ TEST(MidiSchedulerTest, ParameterRampUsesVariablePpqTempoMapAndRestoresSeekState
 }
 
 TEST(MidiSchedulerTest, RestoresLoopControlsFromPreviousIterationAndContinuesCurrentRamp) {
-    MidiClip source;
+    MidiClipSpec source;
+    MidiCompileOptions options;
     source.durationTicks = 1920;
-    source.loop = true;
-    source.directInstrumentEvents = true;
+    options.loop = true;
+    options.directInstrumentEvents = true;
     source.instrumentControlEvents = {
         {"ramp", 1536, 0, "parameterRamp", false, 0.2f, "tone", 0.8f, 192},
         {"change", 1536, 1, "parameterChange", false, 0.8f, "level"}};
     CompiledMidiClip compiled;
     juce::String error;
-    ASSERT_TRUE(MidiScheduler::compile(source, TimelineTimebase{}, 48000.0, compiled, error))
+    ASSERT_TRUE(
+        MidiScheduler::compile(source, options, TimelineTimebase{}, 48000.0, compiled, error))
         << error;
     for (auto& event : compiled.events)
         event.instrumentEvent->parameter_handle = event.parameter == "tone" ? 7 : 8;

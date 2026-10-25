@@ -388,51 +388,35 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
         std::uint64_t noteIdStride = 0;
         for (const auto& clip : trackSpec.midiClips) noteIdStride += clip.notes.size();
         for (const auto& clipSpec : trackSpec.midiClips) {
-            MidiClip midiClip;
-            midiClip.startTick = clipSpec.startTick;
-            midiClip.durationTicks = clipSpec.durationTicks;
-            midiClip.loop = clipSpec.loopEnabled;
-            midiClip.muted = clipSpec.muted;
-            midiClip.directInstrumentEvents =
+            MidiCompileOptions options;
+            options.startTick = clipSpec.startTick;
+            options.loop = clipSpec.loopEnabled;
+            options.directInstrumentEvents =
                 trackSpec.instrument.has_value() &&
                 std::holds_alternative<InternalInstrumentSpec>(*trackSpec.instrument);
-            midiClip.noteIdBase = nextTimelineNoteId;
+            options.noteIdBase = nextTimelineNoteId;
             nextTimelineNoteId += clipSpec.notes.size();
-            midiClip.instrumentControlEvents = clipSpec.instrumentControlEvents;
-            midiClip.notes.reserve(clipSpec.notes.size());
-            for (const auto& noteSpec : clipSpec.notes)
-                midiClip.notes.push_back({noteSpec.startTick, noteSpec.durationTicks, noteSpec.note,
-                                          noteSpec.velocity, noteSpec.channel});
-            midiClip.events.reserve(clipSpec.events.size());
-            for (const auto& eventSpec : clipSpec.events) {
-                const auto kind =
-                    eventSpec.kind == MidiEventKindSpec::controlChange ? "controlChange"
-                    : eventSpec.kind == MidiEventKindSpec::pitchBend   ? "pitchBend"
-                                                                       : "channelPressure";
-                midiClip.events.push_back(
-                    {kind, eventSpec.tick, eventSpec.channel, eventSpec.data1, eventSpec.data2});
-            }
-            const auto originalStart = midiClip.startTick;
-            const auto originalNoteBase = midiClip.noteIdBase;
+            const auto originalStart = options.startTick;
+            const auto originalNoteBase = options.noteIdBase;
             std::uint64_t iteration = 0;
             do {
                 const auto lastTempoTick = prepared->timebase.tempoChanges.back().tick;
-                midiClip.loop = clipSpec.loopEnabled && midiClip.startTick >= lastTempoTick;
-                midiClip.noteIdBase = originalNoteBase + iteration * noteIdStride;
+                options.loop = clipSpec.loopEnabled && options.startTick >= lastTempoTick;
+                options.noteIdBase = originalNoteBase + iteration * noteIdStride;
                 MidiScheduler::CompiledMidiClip compiled;
-                if (!MidiScheduler::compile(midiClip, prepared->timebase, outputSampleRate,
+                if (!MidiScheduler::compile(clipSpec, options, prepared->timebase, outputSampleRate,
                                             compiled, error, &track->runtime->midiNoteTransform))
                     return false;
                 compiled.noteIdStride = noteIdStride;
                 track->runtime->midiClips.push_back(std::move(compiled));
-                if (!clipSpec.loopEnabled || midiClip.loop) break;
+                if (!clipSpec.loopEnabled || options.loop) break;
                 if (++iteration > 100'000 ||
                     iteration > (std::numeric_limits<std::uint64_t>::max() - originalStart) /
-                                    midiClip.durationTicks) {
+                                    clipSpec.durationTicks) {
                     error = "Timeline loop preparation exceeds the supported event range.";
                     return false;
                 }
-                midiClip.startTick = originalStart + iteration * midiClip.durationTicks;
+                options.startTick = originalStart + iteration * clipSpec.durationTicks;
             } while (true);
         }
         track->runtime->midiEventCapacity =

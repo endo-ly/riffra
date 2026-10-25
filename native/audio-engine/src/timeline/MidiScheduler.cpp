@@ -208,27 +208,27 @@ bool MidiScheduler::prepareBuffer(juce::MidiBuffer& buffer,
     return true;
 }
 
-bool MidiScheduler::compile(const MidiClip& source, const TimelineTimebase& timebase,
-                            const double sampleRate, CompiledMidiClip& destination,
-                            juce::String& error, const MidiNoteTransform* const transform) {
+bool MidiScheduler::compile(const MidiClipSpec& source, const MidiCompileOptions& options,
+                            const TimelineTimebase& timebase, const double sampleRate,
+                            CompiledMidiClip& destination, juce::String& error,
+                            const MidiNoteTransform* const transform) {
     destination = {};
-    destination.startTick = source.startTick;
+    destination.startTick = options.startTick;
     destination.durationTicks = source.durationTicks;
-    destination.startSample = timebase.tickToSample(source.startTick, sampleRate);
-    if (source.startTick > std::numeric_limits<std::uint64_t>::max() - source.durationTicks) {
+    destination.startSample = timebase.tickToSample(options.startTick, sampleRate);
+    if (options.startTick > std::numeric_limits<std::uint64_t>::max() - source.durationTicks) {
         error = "Timeline MIDI clip end overflows the tick counter.";
         return false;
     }
     destination.lengthSamples = std::max<std::int64_t>(
-        1, timebase.tickToSample(source.startTick + source.durationTicks, sampleRate) -
+        1, timebase.tickToSample(options.startTick + source.durationTicks, sampleRate) -
                destination.startSample);
-    destination.loop = source.loop;
+    destination.loop = options.loop;
     destination.muted = source.muted;
-    std::uint64_t noteId = source.noteIdBase;
+    std::uint64_t noteId = options.noteIdBase;
     std::uint32_t noteOrder = 0;
     for (const auto& note : source.notes) {
-        if (note.durationTicks == 0 || note.startTick >= source.durationTicks || note.note < 0 ||
-            note.note > 127) {
+        if (note.durationTicks == 0 || note.startTick >= source.durationTicks || note.note > 127) {
             error = "Timeline MIDI note has an invalid musical range.";
             return false;
         }
@@ -241,18 +241,18 @@ bool MidiScheduler::compile(const MidiClip& source, const TimelineTimebase& time
         const auto noteStart = std::min<std::int64_t>(
             destination.lengthSamples - 1,
             std::max<std::int64_t>(
-                0, timebase.tickToSample(source.startTick + note.startTick, sampleRate) -
+                0, timebase.tickToSample(options.startTick + note.startTick, sampleRate) -
                        destination.startSample));
         const auto noteEnd = std::min<std::int64_t>(
             destination.lengthSamples,
             std::max<std::int64_t>(
                 noteStart + 1,
                 timebase.tickToSample(
-                    source.startTick + note.startTick +
+                    options.startTick + note.startTick +
                         std::min(note.durationTicks, source.durationTicks - note.startTick),
                     sampleRate) -
                     destination.startSample));
-        if (source.directInstrumentEvents) {
+        if (options.directInstrumentEvents) {
             SonalloyEvent on{};
             on.event_type = SONALLOY_EVENT_NOTE_ON;
             on.note_id = currentNoteId;
@@ -267,9 +267,9 @@ bool MidiScheduler::compile(const MidiClip& source, const TimelineTimebase& time
                 {noteEnd, 1, {}, note.startTick + note.durationTicks, noteOrder++, off, {}});
         } else {
             appendEvent(destination,
-                        juce::MidiMessage::noteOn(
-                            channel(note.channel), *outputNote,
-                            static_cast<juce::uint8>(juce::jlimit(1, 127, note.velocity))),
+                        juce::MidiMessage::noteOn(channel(note.channel), *outputNote,
+                                                  static_cast<juce::uint8>(juce::jlimit(
+                                                      1, 127, static_cast<int>(note.velocity)))),
                         noteStart, 1);
             appendEvent(destination, juce::MidiMessage::noteOff(channel(note.channel), *outputNote),
                         noteEnd, 0);
@@ -277,22 +277,23 @@ bool MidiScheduler::compile(const MidiClip& source, const TimelineTimebase& time
     }
     for (const auto& event : source.events) {
         if (event.tick >= source.durationTicks ||
-            (event.kind != "controlChange" && event.kind != "pitchBend" &&
-             event.kind != "channelPressure")) {
+            (event.kind != MidiEventKindSpec::controlChange &&
+             event.kind != MidiEventKindSpec::pitchBend &&
+             event.kind != MidiEventKindSpec::channelPressure)) {
             error = "Timeline MIDI event has an invalid type or musical position.";
             return false;
         }
         const auto offset = std::min<std::int64_t>(
             destination.lengthSamples - 1,
             std::max<std::int64_t>(
-                0, timebase.tickToSample(source.startTick + event.tick, sampleRate) -
+                0, timebase.tickToSample(options.startTick + event.tick, sampleRate) -
                        destination.startSample));
         const auto eventChannel = channel(event.channel);
-        if (event.kind == "controlChange")
+        if (event.kind == MidiEventKindSpec::controlChange)
             appendEvent(destination,
                         juce::MidiMessage::controllerEvent(eventChannel, event.data1, event.data2),
                         offset, 2);
-        else if (event.kind == "pitchBend")
+        else if (event.kind == MidiEventKindSpec::pitchBend)
             appendEvent(
                 destination,
                 juce::MidiMessage::pitchWheel(eventChannel, event.data1 | (event.data2 << 7)),
@@ -302,7 +303,7 @@ bool MidiScheduler::compile(const MidiClip& source, const TimelineTimebase& time
                         juce::MidiMessage::channelPressureChange(eventChannel, event.data1), offset,
                         2);
     }
-    if (!source.instrumentControlEvents.empty() && !source.directInstrumentEvents) {
+    if (!source.instrumentControlEvents.empty() && !options.directInstrumentEvents) {
         error = "Instrument controls require a Sonalloy instrument.";
         return false;
     }
@@ -317,9 +318,9 @@ bool MidiScheduler::compile(const MidiClip& source, const TimelineTimebase& time
             event.event_type = SONALLOY_EVENT_PARAMETER_RAMP;
             event.target_value = control.endValue;
             const auto frames =
-                timebase.tickToSample(source.startTick + control.tick + control.durationTicks,
+                timebase.tickToSample(options.startTick + control.tick + control.durationTicks,
                                       sampleRate) -
-                timebase.tickToSample(source.startTick + control.tick, sampleRate);
+                timebase.tickToSample(options.startTick + control.tick, sampleRate);
             if (frames <= 0 ||
                 static_cast<std::uint64_t>(frames) > std::numeric_limits<std::uint32_t>::max()) {
                 error = "Parameter ramp duration exceeds the instrument frame range.";
@@ -343,7 +344,7 @@ bool MidiScheduler::compile(const MidiClip& source, const TimelineTimebase& time
             error = "Unknown instrument control event.";
             return false;
         }
-        const auto offset = timebase.tickToSample(source.startTick + control.tick, sampleRate) -
+        const auto offset = timebase.tickToSample(options.startTick + control.tick, sampleRate) -
                             destination.startSample;
         destination.events.push_back(
             {offset, priority, {}, control.tick, control.sourceOrder, event, control.parameter});
