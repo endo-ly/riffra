@@ -44,11 +44,10 @@ bool ArrangeRecordingSession::initialise(const RecordingConfiguration& configura
         return false;
     }
     midiEvents = std::make_unique<MidiEventQueue>();
-    midiTrackEventCounts =
-        std::make_unique<std::atomic<std::size_t>[]>(static_cast<std::size_t>(values.size()));
+    midiTrackEventCounts = std::make_unique<std::atomic<std::size_t>[]>(values.size());
     for (std::size_t index = 0; index < values.size(); ++index)
-        midiTrackEventCounts[static_cast<std::size_t>(index)].store(0, std::memory_order_relaxed);
-    tracks.reserve(static_cast<std::size_t>(values.size()));
+        midiTrackEventCounts[index].store(0, std::memory_order_relaxed);
+    tracks.reserve(values.size());
     for (std::size_t index = 0; index < values.size(); ++index) {
         const auto& value = values[index];
         tracks.emplace_back();

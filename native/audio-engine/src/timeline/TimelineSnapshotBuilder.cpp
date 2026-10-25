@@ -390,7 +390,6 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
         for (const auto& clipSpec : trackSpec.midiClips) {
             MidiCompileOptions options;
             options.startTick = clipSpec.startTick;
-            options.loop = clipSpec.loopEnabled;
             options.directInstrumentEvents =
                 trackSpec.instrument.has_value() &&
                 std::holds_alternative<InternalInstrumentSpec>(*trackSpec.instrument);

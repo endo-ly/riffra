@@ -300,11 +300,11 @@ RecordingConfiguration TimelineEngine::recordingConfiguration() const {
         result.timelineStartTick =
             graph->timebase.sampleToTick(timelineSample, graph->outputSampleRate);
         result.loopEnabled = graph->loopEnabled;
-        result.loopStartSample = static_cast<juce::int64>(graph->loopStartSample);
-        result.loopEndSample = static_cast<juce::int64>(graph->loopEndSample);
+        result.loopStartSample = graph->loopStartSample;
+        result.loopEndSample = graph->loopEndSample;
         result.punchEnabled = graph->punchEnabled;
-        result.punchStartSample = static_cast<juce::int64>(graph->punchStartSample);
-        result.punchEndSample = static_cast<juce::int64>(graph->punchEndSample);
+        result.punchStartSample = graph->punchStartSample;
+        result.punchEndSample = graph->punchEndSample;
 
         for (const auto& track : graph->tracks) {
             if (!track->runtime->armed) continue;
