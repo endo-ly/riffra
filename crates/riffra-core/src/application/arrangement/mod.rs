@@ -59,13 +59,23 @@ where
                 .iter()
                 .position(|track| track.id == track_id)
                 .ok_or_else(|| crate::DomainError::UnknownTrack(track_id.to_owned()))?;
-            let source = arrangement.tracks[source_index].clone();
-            let source_sends = arrangement.mixer.sends.clone();
-            let source_sidechain_sends = arrangement.mixer.sidechain_sends.clone();
+            let source = &arrangement.tracks[source_index];
+            let source_lanes = arrangement
+                .automation_lanes
+                .iter()
+                .filter(|lane| {
+                    lane.target.is_on_track(
+                        source,
+                        &arrangement.mixer.sends,
+                        &arrangement.mixer.sidechain_sends,
+                    )
+                })
+                .cloned()
+                .collect::<Vec<_>>();
             let mut device_ids = std::collections::HashMap::new();
             let mut send_ids = std::collections::HashMap::new();
             let operation_id = next_id("duplicate");
-            let mut duplicate = arrangement.tracks[source_index].clone();
+            let mut duplicate = source.clone();
             duplicate.id = format!("track:{operation_id}");
             duplicate.name = format!("{} copy", duplicate.name);
             if let Some(instrument) = &mut duplicate.instrument {
@@ -163,14 +173,8 @@ where
                 .collect::<Vec<_>>();
             arrangement.midi_clips.extend(midi_clips);
 
-            let automation_lanes = arrangement
-                .automation_lanes
-                .iter()
-                .filter(|lane| {
-                    lane.target
-                        .is_on_track(&source, &source_sends, &source_sidechain_sends)
-                })
-                .cloned()
+            let automation_lanes = source_lanes
+                .into_iter()
                 .enumerate()
                 .map(|(index, mut lane)| {
                     lane.id = format!("automation:{duplicate_id}:{index}");
