@@ -120,6 +120,12 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     hostGeneration: hostConnection.state.generation,
   });
 
+  const arrangementTransport = useArrangementTransport(
+    api,
+    session?.arrangement.timebase ?? null,
+    hostConnection.state.generation,
+    projectId,
+  );
   const {
     transportPlaying,
     transportStarting,
@@ -131,14 +137,9 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
   } = useTransportController({
     api,
     sessionRef,
+    transport: arrangementTransport.transport,
     hostGeneration: hostConnection.state.generation,
   });
-  const arrangementTransport = useArrangementTransport(
-    api,
-    session?.arrangement.timebase ?? null,
-    hostConnection.state.generation,
-    projectId,
-  );
 
   const audioHook = useAudioSettings(api, {
     audio,

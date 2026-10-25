@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react';
 import type { ArrangementMutationResult, CanonicalState } from '@/model/domain';
 import { HostConnectionChangedError } from '@/native/invoke';
+import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
 interface ArrangeCommandOptions {
   applyCanonicalState: (canonical: CanonicalState) => boolean;
 }
@@ -18,8 +19,7 @@ export function useArrangeCommands({ applyCanonicalState }: ArrangeCommandOption
           setMessage('The edit was not applied.');
           return null;
         }
-        applyCanonicalState(next.canonical);
-        if (next.projection.state === 'failed') setMessage(next.projection.message);
+        applyArrangementMutation(next, applyCanonicalState, setMessage);
         return next.canonical.session;
       } catch (error) {
         if (error instanceof HostConnectionChangedError) return null;

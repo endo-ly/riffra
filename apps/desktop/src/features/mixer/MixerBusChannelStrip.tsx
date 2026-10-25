@@ -1,5 +1,6 @@
 import type { CanonicalState, MixBus } from '@/model/domain';
 import type { ArrangeWorkspaceApi } from '@/features/arrange/arrange-api';
+import { ChannelMixSlider } from './ChannelMixSlider';
 import { MixerMeter } from './MixerMeter';
 import { useChannelMixControl } from './hooks/useChannelMixControl';
 import { formatGainDb, formatPan } from '@/shared/audio/mix-format';
@@ -61,60 +62,30 @@ export function MixerBusChannelStrip(props: Props) {
         <span>
           PAN <output>{formatPan(mix.pan)}</output>
         </span>
-        <input
-          aria-label={`${bus.name} pan`}
-          type="range"
+        <ChannelMixSlider
+          mix={mix}
+          parameter="pan"
+          ariaLabel={`${bus.name} pan`}
           min={-1}
           max={1}
           step={0.01}
           value={mix.pan}
           disabled={props.disabled}
-          onPointerDown={() => mix.beginInteraction('pan')}
-          onChange={(e) => {
-            const value = Number(e.currentTarget.value);
-            mix.setPan(value);
-            mix.schedulePreview('pan', value);
-          }}
-          onPointerUp={(e) => void mix.commit('pan', Number(e.currentTarget.value))}
-          onPointerCancel={() => mix.cancel('pan')}
-          onKeyDown={(e) => {
-            if (e.key === 'Escape') mix.cancel('pan');
-            else mix.beginInteraction('pan');
-          }}
-          onKeyUp={(e) => {
-            if (e.key !== 'Escape') void mix.commit('pan', Number(e.currentTarget.value));
-          }}
-          onBlur={(e) => void mix.commit('pan', Number(e.currentTarget.value))}
         />
       </label>
       <div className={styles.mixControl}>
         <MixerMeter busId={bus.id} />
         <label className={styles.faderControl}>
           <span className={styles.faderLabel}>GAIN</span>
-          <input
-            aria-label={`${bus.name} gain`}
-            type="range"
+          <ChannelMixSlider
+            mix={mix}
+            parameter="gainDb"
+            ariaLabel={`${bus.name} gain`}
             min={-90}
             max={24}
             step={0.1}
             value={mix.gainDb}
             disabled={props.disabled}
-            onPointerDown={() => mix.beginInteraction('gainDb')}
-            onChange={(e) => {
-              const value = Number(e.currentTarget.value);
-              mix.setGainDb(value);
-              mix.schedulePreview('gainDb', value);
-            }}
-            onPointerUp={(e) => void mix.commit('gainDb', Number(e.currentTarget.value))}
-            onPointerCancel={() => mix.cancel('gainDb')}
-            onKeyDown={(e) => {
-              if (e.key === 'Escape') mix.cancel('gainDb');
-              else mix.beginInteraction('gainDb');
-            }}
-            onKeyUp={(e) => {
-              if (e.key !== 'Escape') void mix.commit('gainDb', Number(e.currentTarget.value));
-            }}
-            onBlur={(e) => void mix.commit('gainDb', Number(e.currentTarget.value))}
           />
           <output>{formatGainDb(mix.gainDb)}</output>
         </label>
