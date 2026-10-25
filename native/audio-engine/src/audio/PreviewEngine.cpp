@@ -37,8 +37,6 @@ bool PreviewEngine::publishState(std::unique_ptr<PreviewState> next,
     command.state = next.get();
     command.index = index;
     command.key = key;
-    command.session = next->instrumentSession;
-    command.buffer = next->instrumentBuffer;
     previewStates.push_back(std::move(next));
     if (!commands.tryPush(command)) {
         previewStates.pop_back();
@@ -422,10 +420,8 @@ void PreviewEngine::applyPreviewState(PreviewState& state, const double sampleRa
             }
             if (voice.state == VoiceState::inactive) finishVoiceFade(voice, index, sampleRate);
         }
-        const auto startingInstrument =
-            command != nullptr && command->kind == PreviewCommand::Kind::startInstrumentPreview;
-        const auto desired = startingInstrument ? command->session : state.instrumentSession;
-        const auto desiredBuffer = startingInstrument ? command->buffer : state.instrumentBuffer;
+        const auto desired = state.instrumentSession;
+        const auto desiredBuffer = state.instrumentBuffer;
         const auto current = audioInstrumentSession;
         if (desired != current) {
             if (current != nullptr) {

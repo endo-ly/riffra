@@ -124,8 +124,6 @@ private:
         int key = -1;
         int note = -1;
         float velocity = 0.0f;
-        InstrumentPreviewSession* session = nullptr;
-        juce::AudioBuffer<float>* buffer = nullptr;
     };
     bool publishState(std::unique_ptr<PreviewState> next, PreviewCommand::Kind kind,
                       juce::String& error, std::size_t index = 0, int key = -1);
