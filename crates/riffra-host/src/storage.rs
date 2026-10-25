@@ -87,25 +87,6 @@ impl SessionStore {
         fs::create_dir_all(self.generations_dir()?)
     }
 
-    /// Loads the active session or creates the first session for a new root.
-    ///
-    /// # Errors
-    /// Returns an error when the active session and every generation are
-    /// unreadable or when the new session cannot be persisted.
-    pub fn load_or_create(&self) -> Result<LoadedSession, SessionLoadError> {
-        self.ensure_layout()?;
-        if let Some(loaded) = self.load_saved()? {
-            return Ok(loaded);
-        }
-
-        let session = CreativeSession::new(now_ms());
-        self.save(&session)?;
-        Ok(LoadedSession {
-            session,
-            recovered_from_generation: false,
-        })
-    }
-
     /// Loads an existing Project without creating a replacement session.
     pub fn load_existing(&self) -> Result<LoadedSession, SessionLoadError> {
         self.ensure_layout()?;
@@ -630,7 +611,7 @@ mod tests {
         )
         .unwrap();
 
-        let loaded = store.load_or_create().unwrap();
+        let loaded = store.load_existing().unwrap();
         assert!(loaded.recovered_from_generation);
         assert_eq!(loaded.session.settings.note, "recover me");
         assert!(!store.recovery_candidates().unwrap().is_empty());
@@ -659,7 +640,7 @@ mod tests {
         fs::write(&current, b"not json").unwrap();
         let original = fs::read(&current).unwrap();
 
-        let error = store.load_or_create().unwrap_err();
+        let error = store.load_existing().unwrap_err();
         assert_eq!(error.0.kind(), io::ErrorKind::InvalidData);
         assert_eq!(fs::read(&current).unwrap(), original);
         let _ = fs::remove_dir_all(root);
@@ -702,7 +683,7 @@ mod tests {
         let mut session = CreativeSession::new(now_ms());
         session.project_name = Some("Clean".into());
         store.save(&session).unwrap();
-        let loaded = store.load_or_create().unwrap();
+        let loaded = store.load_existing().unwrap();
         assert_eq!(loaded.session.project_name.as_deref(), Some("Clean"));
         let summary = store.summary().unwrap();
         assert_eq!(summary.name, "Clean");
@@ -830,7 +811,7 @@ mod tests {
 
         // Load must reject the unknown reference rather than adopting an
         // unrecoverable session, and must never overwrite the original file.
-        let error = store.load_or_create().unwrap_err();
+        let error = store.load_existing().unwrap_err();
         assert_eq!(error.0.kind(), io::ErrorKind::InvalidData);
         assert_eq!(fs::read(&current).unwrap(), original);
         let _ = fs::remove_dir_all(root);
@@ -864,7 +845,7 @@ mod tests {
         push_audio_clip(&mut session, "clip:unknown", "unknown", mint_asset_id());
         fs::write(&current, serialize_session_document(&session).unwrap()).unwrap();
 
-        let loaded = store.load_or_create().unwrap();
+        let loaded = store.load_existing().unwrap();
         assert!(loaded.recovered_from_generation);
         assert_eq!(loaded.session.project_name.as_deref(), Some("Recoverable"));
         let _ = fs::remove_dir_all(root);

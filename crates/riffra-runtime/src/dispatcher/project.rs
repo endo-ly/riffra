@@ -315,7 +315,7 @@ mod tests {
 
         let project_store = ProjectStore::new(&root);
         let storage = project_store.session_store(&recovered_id).unwrap();
-        let mut session = storage.load_or_create().unwrap().session;
+        let mut session = storage.load_existing().unwrap().session;
         session.settings.note = "generation source".into();
         storage.save(&session).unwrap();
         std::fs::write(

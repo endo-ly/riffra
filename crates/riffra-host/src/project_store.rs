@@ -318,10 +318,10 @@ mod tests {
         let second = store.create(Some("Alpha".into())).unwrap();
         let first_storage = store.session_store(&first_id).unwrap();
         let second_storage = store.session_store(&second.project_id).unwrap();
-        let mut first_session = first_storage.load_or_create().unwrap().session;
+        let mut first_session = first_storage.load_existing().unwrap().session;
         first_session.settings.note = "first".into();
         first_storage.save(&first_session).unwrap();
-        let mut second_session = second_storage.load_or_create().unwrap().session;
+        let mut second_session = second_storage.load_existing().unwrap().session;
         second_session.settings.note = "second".into();
         second_session
             .arrangement
@@ -357,7 +357,7 @@ mod tests {
             reopened
                 .session_store(&first_id)
                 .unwrap()
-                .load_or_create()
+                .load_existing()
                 .unwrap()
                 .session
                 .settings
@@ -368,7 +368,7 @@ mod tests {
             reopened
                 .session_store(&second.project_id)
                 .unwrap()
-                .load_or_create()
+                .load_existing()
                 .unwrap()
                 .session
                 .settings
