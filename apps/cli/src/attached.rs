@@ -8,8 +8,6 @@ use riffra_runtime::api::params::{EmptyParams, IdParams};
 use riffra_runtime::api::{
     CommandScope, ControlCommand, ControlOutput, ProjectCommand, RuntimeCommand,
 };
-use serde_json::Value;
-use std::io::{BufRead, Write};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -134,107 +132,22 @@ impl AttachedBackend {
 
     /// Forwards JSON Lines from stdin as framed control requests.
     pub fn run_interactive(self) -> Result<(), String> {
-        let stdin = std::io::stdin();
-        let mut stdout = std::io::stdout().lock();
-        for (line_index, line) in stdin.lock().lines().enumerate() {
-            let line = line.map_err(|error| format!("request could not be read: {error}"))?;
-            if line.trim().is_empty() {
-                continue;
-            }
-            let response = self.interactive_response(&line, line_index + 1);
-            serde_json::to_writer(&mut stdout, &response)
-                .map_err(|error| format!("response could not be encoded: {error}"))?;
-            stdout
-                .write_all(b"\n")
-                .map_err(|error| format!("response could not be written: {error}"))?;
-            stdout
-                .flush()
-                .map_err(|error| format!("response could not be flushed: {error}"))?;
-        }
-        Ok(())
-    }
-
-    fn interactive_response(&self, line: &str, input_line: usize) -> ControlResponse {
-        let input_line = Some(input_line);
-        let request = match serde_json::from_str::<ControlRequest>(line) {
-            Ok(request) => request,
-            Err(error) => {
-                return ControlResponse::failure(
-                    request_id_from_json(line),
-                    None,
-                    with_input_line(
-                        ProtocolError::new(ErrorCode::InvalidRequest, error.to_string()),
-                        input_line,
-                    ),
-                );
-            }
-        };
-        if let Err(error) = request.validate() {
-            return ControlResponse::failure(
-                request.request_id,
-                None,
-                with_input_line(error, input_line),
-            );
-        }
-        let command = match crate::paths::decode_command(&request.command, request.params) {
-            Ok(command) => command,
-            Err(error) => {
-                return ControlResponse::failure(
+        crate::interactive::run(
+            std::io::stdin().lock(),
+            std::io::stdout().lock(),
+            |request, command, _| match self.request(
+                request.request_id.clone(),
+                command,
+                request.expected_sequence,
+                request.expected_project_id,
+            ) {
+                Ok(response) => compact_agent_response(response),
+                Err(error) => ControlResponse::failure(
                     request.request_id,
                     None,
-                    with_input_line(error, input_line),
-                );
-            }
-        };
-        match self.request(
-            request.request_id.clone(),
-            command,
-            request.expected_sequence,
-            request.expected_project_id,
-        ) {
-            Ok(response) => compact_agent_response(response),
-            Err(error) => ControlResponse::failure(
-                request.request_id,
-                None,
-                ProtocolError::new(ErrorCode::HostUnavailable, error),
-            ),
-        }
-    }
-}
-
-fn request_id_from_json(line: &str) -> String {
-    serde_json::from_str::<Value>(line)
-        .ok()
-        .and_then(|value| value.get("requestId")?.as_str().map(str::to_owned))
-        .unwrap_or_default()
-}
-
-fn with_input_line(mut error: ProtocolError, input_line: Option<usize>) -> ProtocolError {
-    let Some(input_line) = input_line else {
-        return error;
-    };
-    error.message = format!("input line {input_line}: {}", error.message);
-    let mut details = match error.details.take() {
-        Some(Value::Object(details)) => details,
-        _ => serde_json::Map::new(),
-    };
-    details.insert("inputLine".into(), serde_json::json!(input_line));
-    error.details = Some(Value::Object(details));
-    error
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn attached_interactive_errors_include_the_physical_input_line() {
-        let error = with_input_line(
-            ProtocolError::new(ErrorCode::InvalidRequest, "malformed JSON"),
-            Some(3),
-        );
-
-        assert_eq!(error.details.unwrap()["inputLine"], 3);
-        assert_eq!(error.message, "input line 3: malformed JSON");
+                    ProtocolError::new(ErrorCode::HostUnavailable, error),
+                ),
+            },
+        )
     }
 }
