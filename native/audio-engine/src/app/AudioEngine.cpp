@@ -204,8 +204,7 @@ int AudioEngine::serve(const std::optional<std::uint32_t> parentPid,
             writeEvent(currentStatus());
         };
 
-    pipeline.recording().setFinalizationDispatcher([&](std::unique_ptr<
-                                                           riffra::ArrangeRecordingSession>
+    pipeline.recording().setFinalizationDispatcher([&](std::unique_ptr<ArrangeRecordingSession>
                                                            session,
                                                        const juce::String& finalizationError) {
         if (session == nullptr) return;
