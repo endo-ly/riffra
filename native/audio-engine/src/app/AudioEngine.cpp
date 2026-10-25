@@ -197,16 +197,17 @@ int AudioEngine::serve(const std::optional<std::uint32_t> parentPid,
                 error << finishError;
             }
             const auto summary = session->summary();
-            pipeline.completeArrangeRecordingProcessing(summary, error);
+            pipeline.recording().completeProcessing(summary, error);
             writeEvent(RecordingCompleteSpec{
                 summary.directory, processed && finished,
                 error.isNotEmpty() ? std::optional<juce::String>(error) : std::nullopt});
             writeEvent(currentStatus());
         };
 
-    pipeline.setRecordingFinalizationDispatcher([&](std::unique_ptr<riffra::ArrangeRecordingSession>
-                                                        session,
-                                                    const juce::String& finalizationError) {
+    pipeline.recording().setFinalizationDispatcher([&](std::unique_ptr<
+                                                           riffra::ArrangeRecordingSession>
+                                                           session,
+                                                       const juce::String& finalizationError) {
         if (session == nullptr) return;
         auto owned = std::shared_ptr<riffra::ArrangeRecordingSession>(std::move(session));
         const auto submitted = runtimeLifecycle.submitWithProgress(
@@ -256,7 +257,7 @@ int AudioEngine::serve(const std::optional<std::uint32_t> parentPid,
     if (commandThread.joinable()) commandThread.join();
     if (!commandDispatcher->waitForBackgroundWork(std::chrono::milliseconds(1500))) std::_Exit(125);
     if (!runtimeLifecycle.waitForIdle(std::chrono::milliseconds(1500))) std::_Exit(125);
-    pipeline.setRecordingFinalizationDispatcher({});
+    pipeline.recording().setFinalizationDispatcher({});
     runtimeLifecycle.requestStop();
     runtimeLifecycle.join();
 

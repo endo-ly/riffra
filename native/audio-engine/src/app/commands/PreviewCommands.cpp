@@ -165,9 +165,9 @@ void AudioCommandDispatcher::handle(const StartTakeComparisonCommand& command,
         !loadComparisonFile(context.formatManager, targetRate, command.processedPath,
                             command.processedStartFrame, command.processedEndFrame,
                             context.comparisonProcessed, comparisonError) ||
-        !context.pipeline.startPreview(context.comparisonRaw, 0,
-                                       context.comparisonRaw.getNumSamples(), 1.0f, false,
-                                       comparisonError, 1)) {
+        !context.pipeline.preview().startPreview(context.comparisonRaw, 0,
+                                                 context.comparisonRaw.getNumSamples(), 1.0f, false,
+                                                 comparisonError, 1)) {
         responder.fail("takeComparison", comparisonError, "preview.takeComparison");
         return;
     }
@@ -180,7 +180,7 @@ void AudioCommandDispatcher::handle(const SwitchTakeComparisonVariantCommand& co
     const auto& buffer = command.variant == TakeComparisonVariantSpec::processed
                              ? context.comparisonProcessed
                              : context.comparisonRaw;
-    if (!context.pipeline.switchPreviewBuffer(1, buffer, comparisonError)) {
+    if (!context.pipeline.preview().switchPreviewBuffer(1, buffer, comparisonError)) {
         responder.fail("takeComparison", comparisonError, "preview.takeComparison");
         return;
     }
@@ -189,7 +189,7 @@ void AudioCommandDispatcher::handle(const SwitchTakeComparisonVariantCommand& co
 
 void AudioCommandDispatcher::handle(const StopTakeComparisonCommand&, CommandResponder responder) {
     juce::String error;
-    if (!context.pipeline.stopPreviewForKey(1, &error)) {
+    if (!context.pipeline.preview().stopPreviewForKey(1, &error)) {
         responder.fail("takeComparison", error, "preview.takeComparison.stop");
         return;
     }
@@ -229,8 +229,9 @@ void AudioCommandDispatcher::handle(const PreviewSampleCommand& command,
                 command.endMs.value_or(0) > 0
                     ? juce::jlimit(start + 1, static_cast<int>(length), toSample(*command.endMs))
                     : static_cast<int>(length);
-            if (!context.pipeline.startPreview(buffer, start, end, static_cast<float>(command.gain),
-                                               command.loop, previewError, -1) &&
+            if (!context.pipeline.preview().startPreview(buffer, start, end,
+                                                         static_cast<float>(command.gain),
+                                                         command.loop, previewError, -1) &&
                 previewError.isEmpty())
                 previewError = "Preview range is invalid.";
         }
@@ -287,7 +288,7 @@ void AudioCommandDispatcher::handle(const PreviewInstrumentCommand& command,
 
 void AudioCommandDispatcher::handle(const StopPreviewCommand&, CommandResponder responder) {
     juce::String error;
-    if (!context.pipeline.stopPreview(&error)) {
+    if (!context.pipeline.preview().stopPreview(&error)) {
         responder.fail("preview",
                        error.isNotEmpty() ? error : "The realtime preview command queue is full.",
                        "preview.stop");
@@ -299,7 +300,7 @@ void AudioCommandDispatcher::handle(const StopPreviewCommand&, CommandResponder 
 void AudioCommandDispatcher::handle(const StopInstrumentPreviewCommand&,
                                     CommandResponder responder) {
     juce::String error;
-    if (!context.pipeline.stopInstrumentPreview(&error)) {
+    if (!context.pipeline.preview().stopInstrumentPreview(&error)) {
         responder.fail("preview", error, "preview.instrument.stop");
         return;
     }

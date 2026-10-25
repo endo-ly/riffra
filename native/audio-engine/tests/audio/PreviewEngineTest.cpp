@@ -121,7 +121,7 @@ TEST(PreviewEngineTest, StopsAudibleVoicesWhileMutedWithoutReplayingTheirFade) {
 
             // Act
             (pipeline.*setter)(true);
-            ASSERT_TRUE(pipeline.stopPreview(&error)) << error;
+            ASSERT_TRUE(pipeline.preview().stopPreview(&error)) << error;
             pipeline.processBlock(nullptr, 0, output.getArrayOfWritePointers(), 2, 256, {});
             const auto stoppedWhileMuted = !preview.isPreviewing();
             const auto retainedResources = PreviewEngineTestPeer::resourceCount(preview);

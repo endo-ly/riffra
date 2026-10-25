@@ -8,7 +8,7 @@ void AudioCommandDispatcher::handle(const SetMidiListeningCommand& command,
                                     CommandResponder responder) {
     if (!command.listening) {
         juce::String error;
-        if (!context.pipeline.stopPreview(&error)) {
+        if (!context.pipeline.preview().stopPreview(&error)) {
             responder.fail("preview", error, "midi.listening");
             return;
         }

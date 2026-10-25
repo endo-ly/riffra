@@ -75,7 +75,7 @@ void AudioCommandDispatcher::recordingStopWorkerLoop() {
         }
 
         juce::String error;
-        const auto completed = context.pipeline.completeArrangeRecordingStop(pending, error);
+        const auto completed = context.pipeline.recording().completeStop(pending, error);
         if (completed != RealtimeRequest::accepted)
             writeEvent(FaultSpec{{"recording", error, "recording.stop", {}}});
         // The stop response reported the state at acceptance; this reports the applied stop.

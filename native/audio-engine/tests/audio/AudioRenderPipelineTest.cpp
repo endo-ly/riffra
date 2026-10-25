@@ -223,7 +223,7 @@ TEST(AudioRenderPipelineTest, DetachesRecordingBeforeFinalizationCompletes) {
                                  kBlockSize, error));
     AudioRenderPipeline callback(timeline);
     std::shared_ptr<ArrangeRecordingSession> detached;
-    callback.setRecordingFinalizationDispatcher(
+    callback.recording().setFinalizationDispatcher(
         [&detached](std::unique_ptr<ArrangeRecordingSession> session, const juce::String&) {
             detached = std::shared_ptr<ArrangeRecordingSession>(std::move(session));
         });
@@ -454,7 +454,7 @@ TEST(AudioRenderPipelineTest, PreviewControlUpdateKeepsAudioCallbackAvailable) {
     EXPECT_TRUE(controlSucceeded.load(std::memory_order_acquire));
 }
 
-TEST(AudioRenderPipelineTest, AllNotesOffReleasesSynthVoices) {
+TEST(AudioRenderPipelineTest, PanicReleasesSynthVoices) {
     PreviewEngine preview;
     preview.startSynthNote(60, 1.0f);
 
@@ -463,7 +463,7 @@ TEST(AudioRenderPipelineTest, AllNotesOffReleasesSynthVoices) {
     ASSERT_TRUE(preview.tryMix(attackOutputs.data(), 1, static_cast<int>(attack.size()), 48'000.0));
     EXPECT_GT(*std::max_element(attack.begin(), attack.end()), 0.0f);
 
-    preview.allNotesOff();
+    preview.requestPanic();
 
     std::array<float, 2048> release{};
     const std::array<float*, 1> releaseOutputs{release.data()};
@@ -481,7 +481,7 @@ TEST(AudioRenderPipelineTest, ReusesFinishedSynthVoiceSlots) {
 
     for (int note = 48; note < 64; ++note) preview.startSynthNote(note, 1.0f);
     ASSERT_TRUE(preview.tryMix(outputs.data(), 1, static_cast<int>(output.size()), 48'000.0));
-    preview.allNotesOff();
+    preview.requestPanic();
     for (int block = 0; block < 8; ++block)
         ASSERT_TRUE(preview.tryMix(outputs.data(), 1, static_cast<int>(output.size()), 48'000.0));
     ASSERT_FALSE(preview.isPreviewing());
@@ -579,16 +579,17 @@ TEST(AudioRenderPipelineTest, ConsumesPreviewCommandsUnderEverySafetyMute) {
 
         // Act
         for (int block = 0; block < 300; ++block) {
-            ASSERT_TRUE(pipeline.startPreview(source, 0, 512, 1.0f, true, error)) << error;
-            ASSERT_TRUE(pipeline.startSynthNote(60, 0.1f));
-            ASSERT_TRUE(pipeline.stopSynthNote(60));
-            ASSERT_TRUE(pipeline.stopPreview(&error)) << error;
+            ASSERT_TRUE(pipeline.preview().startPreview(source, 0, 512, 1.0f, true, error))
+                << error;
+            ASSERT_TRUE(pipeline.preview().startSynthNote(60, 0.1f));
+            ASSERT_TRUE(pipeline.preview().stopSynthNote(60));
+            ASSERT_TRUE(pipeline.preview().stopPreview(&error)) << error;
             pipeline.processBlock(nullptr, 0, channels.data(), 1, 32, {});
 
             // Assert
             for (const auto sample : output) EXPECT_FLOAT_EQ(sample, 0.0f);
         }
-        ASSERT_TRUE(pipeline.startSynthNote(60, 0.1f));
+        ASSERT_TRUE(pipeline.preview().startSynthNote(60, 0.1f));
     }
 }
 
