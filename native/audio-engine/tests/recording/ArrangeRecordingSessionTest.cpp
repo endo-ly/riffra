@@ -8,30 +8,29 @@
 namespace riffra {
 namespace {
 
-juce::var makeConfiguration() {
-    auto* configuration = new juce::DynamicObject();
-    configuration->setProperty("sampleRate", 48'000.0);
-    configuration->setProperty("timelineStartTick", 960);
-    configuration->setProperty("loopEnabled", true);
-    configuration->setProperty("loopStartSample", 24'000);
-    configuration->setProperty("loopEndSample", 48'000);
-    configuration->setProperty("punchEnabled", false);
+RecordingConfiguration makeConfiguration() {
+    RecordingConfiguration configuration;
+    configuration.sampleRate = 48'000.0;
+    configuration.timelineStartTick = 960;
+    configuration.loopEnabled = true;
+    configuration.loopStartSample = 24'000;
+    configuration.loopEndSample = 48'000;
+    configuration.punchEnabled = false;
 
-    juce::Array<juce::var> tracks;
-    const auto addTrack = [&tracks](const juce::String& id, const juce::String& kind, int input) {
-        auto* track = new juce::DynamicObject();
-        track->setProperty("trackId", id);
-        track->setProperty("kind", kind);
-        track->setProperty("audioInputChannel", input);
-        track->setProperty("pluginLatencySamples", input + 8);
-        track->setProperty("pluginTailSamples", input + 16);
-        tracks.add(juce::var(track));
+    const auto addTrack = [&configuration](const juce::String& id, TrackKindSpec kind, int input) {
+        RecordingTrackConfiguration track;
+        track.trackId = id;
+        track.kind = kind;
+        track.audioInputChannel = input;
+        track.pluginLatencySamples = input + 8;
+        track.pluginTailSamples = input + 16;
+        configuration.tracks.push_back(std::move(track));
     };
-    addTrack("track:guitar", "audio", 0);
-    addTrack("track:vocal", "audio", 1);
-    addTrack("track:keys", "instrument", -1);
-    configuration->setProperty("tracks", tracks);
-    return juce::var(configuration);
+    addTrack("track:guitar", TrackKindSpec::audio, 0);
+    addTrack("track:vocal", TrackKindSpec::audio, 1);
+    addTrack("track:keys", TrackKindSpec::instrument, -1);
+
+    return configuration;
 }
 
 bool writeCapture(ArrangeRecordingSession& session, juce::String& error) {

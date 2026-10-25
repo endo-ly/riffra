@@ -1,6 +1,7 @@
 #include <algorithm>
 
 #include "TimelineEngine.h"
+#include "recording/ArrangeRecordingSession.h"
 
 namespace riffra {
 
@@ -289,45 +290,43 @@ bool TimelineEngine::generateProcessedVariants(
     return true;
 }
 
-juce::var TimelineEngine::recordingConfiguration() const {
+RecordingConfiguration TimelineEngine::recordingConfiguration() const {
     const auto timelineSample = realtimeFrame.read().timelineSample;
     return graphRegistry.access([timelineSample](const ControlGraphRegistry::State& graphs) {
         const auto* graph = graphs.latestCommitted;
-        if (graph == nullptr) return juce::var();
-        auto* result = new juce::DynamicObject();
-        result->setProperty("sampleRate", graph->outputSampleRate);
-        const auto tick = static_cast<juce::int64>(
-            graph->timebase.sampleToTick(timelineSample, graph->outputSampleRate));
-        result->setProperty("timelineStartTick", tick);
-        result->setProperty("loopEnabled", graph->loopEnabled);
-        result->setProperty("loopStartSample", static_cast<juce::int64>(graph->loopStartSample));
-        result->setProperty("loopEndSample", static_cast<juce::int64>(graph->loopEndSample));
-        result->setProperty("punchEnabled", graph->punchEnabled);
-        result->setProperty("punchStartSample", static_cast<juce::int64>(graph->punchStartSample));
-        result->setProperty("punchEndSample", static_cast<juce::int64>(graph->punchEndSample));
-        juce::Array<juce::var> trackValues;
+        RecordingConfiguration result;
+        if (graph == nullptr) return result;
+        result.sampleRate = graph->outputSampleRate;
+        result.timelineStartTick =
+            graph->timebase.sampleToTick(timelineSample, graph->outputSampleRate);
+        result.loopEnabled = graph->loopEnabled;
+        result.loopStartSample = static_cast<juce::int64>(graph->loopStartSample);
+        result.loopEndSample = static_cast<juce::int64>(graph->loopEndSample);
+        result.punchEnabled = graph->punchEnabled;
+        result.punchStartSample = static_cast<juce::int64>(graph->punchStartSample);
+        result.punchEndSample = static_cast<juce::int64>(graph->punchEndSample);
+
         for (const auto& track : graph->tracks) {
             if (!track->runtime->armed) continue;
-            auto* value = new juce::DynamicObject();
-            value->setProperty("trackId", track->id);
-            value->setProperty("kind", track->runtime->instrumentTrack ? "instrument" : "audio");
-            value->setProperty("audioInputChannel", track->runtime->audioInputChannel);
-            value->setProperty("midiDeviceId", track->runtime->midiDeviceId);
-            value->setProperty("midiChannel", track->runtime->midiChannel);
-            value->setProperty("pluginLatencySamples",
-                               static_cast<int>(track->runtime->pluginDelaySamples));
-            value->setProperty("pluginTailSamples",
-                               static_cast<int>(track->runtime->pluginTailSamples));
-            juce::Array<juce::var> sidechainInputs;
+            RecordingTrackConfiguration value;
+            value.trackId = track->id;
+            value.kind =
+                track->runtime->instrumentTrack ? TrackKindSpec::instrument : TrackKindSpec::audio;
+            value.audioInputChannel = track->runtime->audioInputChannel;
+            value.midiDeviceId = track->runtime->midiDeviceId;
+            value.midiChannel = track->runtime->midiChannel;
+            value.pluginLatencySamples = static_cast<int>(track->runtime->pluginDelaySamples);
+            value.pluginTailSamples = static_cast<int>(track->runtime->pluginTailSamples);
+
             for (const auto& effect : track->effects) {
                 if (track->runtime->effects().sidechainBuffer(effect.id) != nullptr)
-                    sidechainInputs.add(effect.id);
+                    value.sidechainInputs.push_back(effect.id);
             }
-            value->setProperty("sidechainInputs", sidechainInputs);
-            trackValues.add(juce::var(value));
+
+            result.tracks.push_back(std::move(value));
         }
-        result->setProperty("tracks", trackValues);
-        return juce::var(result);
+
+        return result;
     });
 }
 
