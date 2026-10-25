@@ -1023,6 +1023,7 @@ mod tests {
             .execute("CREATE TABLE assets (id TEXT)", [])
             .unwrap();
         assert!(load(&root, &id).is_err());
+        assert!(resolve_content_location(&root, &id).is_err());
         drop(connection);
         fs::remove_dir_all(&root).unwrap();
         fs::create_dir_all(root.join("library/riffra.db")).unwrap();

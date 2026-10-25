@@ -207,6 +207,9 @@ mod tests {
             resources.built_in_base_dirs.get("preset-1"),
             Some(&preset_root)
         );
+        fs::remove_dir_all(root.0.join("library")).unwrap();
+        fs::write(root.0.join("library"), b"not a directory").unwrap();
+        assert!(resolve(&root.0, &catalog, &session).is_err());
     }
 
     fn test_catalog(root: &Path, preset_root: &Path) -> BuiltInInstrumentCatalog {
