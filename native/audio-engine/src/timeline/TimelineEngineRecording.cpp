@@ -4,12 +4,6 @@
 
 namespace riffra {
 
-namespace {
-
-constexpr auto kRecordingApplyTimeout = std::chrono::milliseconds(500);
-
-}  // namespace
-
 RealtimeRequest TimelineEngine::startRecording(const int countInBeats, juce::String& error) {
     const auto ready = graphRegistry.access([](const ControlGraphRegistry::State& graphs) {
         return graphs.latestCommitted != nullptr && graphs.latestCommitted->outputSampleRate > 0.0;
@@ -70,21 +64,6 @@ void TimelineEngine::startRecordingNow(RealtimeState& state, const int countInBe
     }
 }
 
-bool TimelineEngine::stopRecording(juce::String& error) {
-    RealtimeCommand command;
-    command.kind = RealtimeCommand::Kind::stopRecording;
-    const auto sequence = submit(command);
-    if (!sequence.has_value()) {
-        error = "The realtime command queue is full.";
-        return false;
-    }
-    if (!waitUntilApplied(*sequence, kRecordingApplyTimeout)) {
-        error = "The audio thread did not close the recording capture in time.";
-        return false;
-    }
-    return true;
-}
-
 void TimelineEngine::closeRecordingCaptures(RealtimeState& state) noexcept {
     if (state.recordingPhase == RecordingPhase::idle) return;
     state.recordingPhase = RecordingPhase::stopping;
@@ -98,16 +77,6 @@ void TimelineEngine::closeRecordingCaptures(RealtimeState& state) noexcept {
         (void)recordingCapture->endTrackCapture(track.id, runtime.recordingCapture);
         runtime.recordingCapture.state = RecordingCaptureState::idle;
     }
-}
-
-RealtimeRequest TimelineEngine::stopArrangeRecording(juce::String& error) {
-    const auto sequence = enqueueArrangeRecordingStop();
-    if (!sequence.has_value()) {
-        error = "The realtime command queue is full.";
-        return RealtimeRequest::queueFull;
-    }
-    waitForCommandApplied(*sequence);
-    return RealtimeRequest::accepted;
 }
 
 std::optional<std::uint64_t> TimelineEngine::enqueueArrangeRecordingStop() noexcept {

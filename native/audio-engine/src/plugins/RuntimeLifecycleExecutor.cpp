@@ -60,14 +60,7 @@ bool RuntimeLifecycleExecutor::enqueue(Task task, const std::chrono::millisecond
 
 bool RuntimeLifecycleExecutor::submitWithProgress(Task task,
                                                   const std::chrono::milliseconds stallTimeout) {
-    if (!task || stallTimeout <= std::chrono::milliseconds::zero()) return false;
-    {
-        const std::lock_guard lock(mutex);
-        if (stopping) return false;
-        lifecycleTasks.push_back(TimedTask{std::move(task), stallTimeout, true});
-    }
-    wake.notify_one();
-    return true;
+    return enqueue(std::move(task), stallTimeout, {}, true, true);
 }
 
 void RuntimeLifecycleExecutor::reportProgress() noexcept {

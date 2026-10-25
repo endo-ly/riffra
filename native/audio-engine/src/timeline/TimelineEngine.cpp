@@ -306,9 +306,6 @@ void TimelineEngine::applyRealtimeCommand(RealtimeState& state,
         case RealtimeCommand::Kind::startRecording:
             startRecordingNow(state, command.countInBeats);
             break;
-        case RealtimeCommand::Kind::stopRecording:
-            closeRecordingCaptures(state);
-            break;
         case RealtimeCommand::Kind::stopArrangeRecording:
             if (state.recordingPhase == RecordingPhase::countingIn) {
                 state.countInRemainingSamples = 0;

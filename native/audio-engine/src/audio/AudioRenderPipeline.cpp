@@ -25,7 +25,7 @@ void AudioRenderPipeline::setMuteReason(const MuteReason reason, const bool acti
     if (active) {
         muteReasons.fetch_or(bit, std::memory_order_acq_rel);
         resetGainOnNextCallback.store(true, std::memory_order_release);
-        previewEngine.requestSynthPanic();
+        previewEngine.requestPanic();
         pluginAudition.panic();
     } else {
         muteReasons.fetch_and(~bit, std::memory_order_acq_rel);
@@ -196,7 +196,7 @@ void AudioRenderPipeline::processBlock(const float* const* inputChannelData,
         feedbackSuspected.store(true, std::memory_order_release);
         previewEngine.applyPendingCommands(activeSampleRate.load(std::memory_order_acquire));
         PreviewEngine::PreviewCommand panic;
-        panic.kind = PreviewEngine::PreviewCommand::Kind::synthPanic;
+        panic.kind = PreviewEngine::PreviewCommand::Kind::panic;
         previewEngine.applyCommand(panic, activeSampleRate.load(std::memory_order_acquire));
         previewEngine.applyPendingCommands(activeSampleRate.load(std::memory_order_acquire), true);
         timelineEngine.panicActiveGraph();

@@ -5,7 +5,6 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
-#include <utility>
 
 #include "AudioMetrics.h"
 #include "AudioSafetyDsp.h"
@@ -92,56 +91,9 @@ public:
     [[nodiscard]] PluginAudition& audition() noexcept { return pluginAudition; }
     [[nodiscard]] RecordingController& recording() noexcept { return recordingController; }
 
-    RealtimeRequest startArrangeRecording(const juce::File& directory, int countInBeats,
-                                          juce::String& error) {
-        return recordingController.start(directory, countInBeats, error);
-    }
-    void setRecordingFinalizationDispatcher(
-        RecordingController::FinalizationDispatcher dispatcher) {
-        recordingController.setFinalizationDispatcher(std::move(dispatcher));
-    }
-    RealtimeRequest stopArrangeRecording(juce::String& error) {
-        return recordingController.stop(error);
-    }
-    RealtimeRequest requestArrangeRecordingStop(PendingRecordingStop& pending,
-                                                juce::String& error) {
-        return recordingController.requestStop(pending, error);
-    }
-    RealtimeRequest completeArrangeRecordingStop(const PendingRecordingStop& pending,
-                                                 juce::String& error) {
-        return recordingController.completeStop(pending, error);
-    }
-    std::unique_ptr<ArrangeRecordingSession> takeFinalizedRecording() noexcept {
-        return recordingController.takePendingFinalization();
-    }
-    void completeArrangeRecordingProcessing(const ArrangeRecordingSummary& summary,
-                                            const juce::String& error) {
-        recordingController.completeProcessing(summary, error);
-    }
-    bool startPreview(juce::AudioBuffer<float>& buffer, int startSample, int endSample, float gain,
-                      bool loop, juce::String& error, int voiceKey = -1) {
-        return previewEngine.startPreview(buffer, startSample, endSample, gain, loop, error,
-                                          voiceKey);
-    }
     bool startInstrumentPreview(const juce::String& definitionJson,
                                 const juce::String& definitionBaseDir, InstrumentPreviewSpec spec,
                                 juce::String& error);
-    bool stopInstrumentPreview(juce::String* error = nullptr) {
-        return previewEngine.stopInstrumentPreview(error);
-    }
-    bool stopPreview(juce::String* error = nullptr) { return previewEngine.stopPreview(error); }
-    bool stopPreviewForKey(int voiceKey, juce::String* error = nullptr) {
-        return previewEngine.stopPreviewForKey(voiceKey, error);
-    }
-    bool switchPreviewBuffer(int voiceKey, const juce::AudioBuffer<float>& buffer,
-                             juce::String& error) {
-        return previewEngine.switchPreviewBuffer(voiceKey, buffer, error);
-    }
-    bool startSynthNote(int note, float velocity) noexcept {
-        return previewEngine.startSynthNote(note, velocity);
-    }
-    bool stopSynthNote(int note) noexcept { return previewEngine.stopSynthNote(note); }
-    bool allNotesOff() noexcept { return previewEngine.allNotesOff(); }
     [[nodiscard]] bool isInstrumentPreviewing() const noexcept {
         return previewEngine.isInstrumentPreviewing();
     }

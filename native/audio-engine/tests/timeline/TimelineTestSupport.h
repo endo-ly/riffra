@@ -857,8 +857,10 @@ public:
 namespace {
 
 bool finalizeCapturedRecording(TimelineEngine& engine, juce::String& error) {
-    if (!engine.stopRecording(error) || !engine.finalizeRecording(error)) return false;
-    if (!engine.stop()) return false;
+    const auto sequence = engine.enqueueArrangeRecordingStop();
+    if (!sequence.has_value()) return false;
+    engine.waitForCommandApplied(*sequence);
+    if (!engine.finalizeRecording(error)) return false;
     return engine.processFinalizedRecording(TimelineEngineTestPeer::recordingSink(engine), error);
 }
 

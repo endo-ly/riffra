@@ -26,7 +26,6 @@ public:
     }
 
     [[nodiscard]] bool hasControl() const noexcept { return !controlQueue.empty(); }
-    [[nodiscard]] bool hasTelemetry() const noexcept { return !telemetryQueue.empty(); }
     [[nodiscard]] bool empty() const noexcept {
         return controlQueue.empty() && telemetryQueue.empty();
     }
@@ -38,7 +37,7 @@ public:
         return line;
     }
 
-    /// Removes the oldest telemetry frame. The caller must check `hasTelemetry` first.
+    /// Removes the oldest telemetry frame. Requires `!hasControl() && !empty()`.
     std::string takeTelemetry() {
         auto line = std::move(telemetryQueue.front());
         telemetryQueue.pop_front();

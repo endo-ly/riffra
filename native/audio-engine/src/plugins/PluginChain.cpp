@@ -250,22 +250,20 @@ void PluginChain::process(const float* const* inputChannels, const int inputChan
 }
 
 bool PluginChain::setBypassed(const juce::String& deviceId, const bool bypassed) noexcept {
-    const auto found = std::find_if(devices.begin(), devices.end(),
-                                    [&](const Device& device) { return device.id == deviceId; });
-    if (found == devices.end()) return false;
-    found->rack->setBypassed(bypassed);
+    auto* rack = findDevice(deviceId);
+    if (rack == nullptr) return false;
+    rack->setBypassed(bypassed);
     return true;
 }
 
 bool PluginChain::setParameter(const juce::String& deviceId, const int parameterIndex,
                                const float value, juce::String& error) noexcept {
-    const auto found = std::find_if(devices.begin(), devices.end(),
-                                    [&](const Device& device) { return device.id == deviceId; });
-    if (found == devices.end()) {
+    auto* rack = findDevice(deviceId);
+    if (rack == nullptr) {
         error = "Plugin Chain device was not found.";
         return false;
     }
-    return found->rack->setParameter(parameterIndex, value, error);
+    return rack->setParameter(parameterIndex, value, error);
 }
 
 bool PluginChain::applyState(const std::vector<PluginDeviceSpec>& values,

@@ -10,8 +10,8 @@ void AudioCommandDispatcher::handle(const StartArrangeRecordingCommand& command,
         return;
     }
     juce::String recordingError;
-    const auto started = context.pipeline.startArrangeRecording(
-        juce::File(command.directory), command.countInBeats, recordingError);
+    const auto started = context.pipeline.recording().start(juce::File(command.directory),
+                                                            command.countInBeats, recordingError);
     if (rejectUnlessAccepted(responder, started, "recording", recordingError, "recording.start"))
         return;
     responder.respond(currentStatus());
@@ -23,7 +23,7 @@ void AudioCommandDispatcher::handle(const StopArrangeRecordingCommand&,
 
     juce::String recordingError;
     PendingRecordingStop pending;
-    const auto requested = context.pipeline.requestArrangeRecordingStop(pending, recordingError);
+    const auto requested = context.pipeline.recording().requestStop(pending, recordingError);
     if (rejectUnlessAccepted(responder, requested, "recording", recordingError, "recording.stop")) {
         releaseRecordingStopReservation();
         return;

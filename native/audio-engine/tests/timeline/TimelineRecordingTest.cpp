@@ -102,7 +102,6 @@ TEST(TimelineEngineTest, KeepsAudioCaptureOpenForTheWholeAudioCallback) {
     const auto rawSamplesAfterCallback = captureSink.totalRawSamples;
     const auto beginCountAfterCallback = captureSink.beginCount;
     const auto endCountAfterCallback = captureSink.endCount;
-    ASSERT_TRUE(engine.stopRecording(error));
     const auto finalized = finalizeCapturedRecording(engine, error);
     engine.clearRecordingSink();
 
@@ -204,7 +203,7 @@ TEST(TimelineRecordingTest, RecordingStartQueueFullLeavesNoSessionOrSinkAndCanRe
     EXPECT_TRUE(pipeline.recordingStatus().active);
     EXPECT_TRUE(TimelineEngineTestPeer::hasRecordingSink(engine));
     ASSERT_EQ(pipeline.recording().stop(error), RealtimeRequest::accepted);
-    auto cancelled = pipeline.takeFinalizedRecording();
+    auto cancelled = pipeline.recording().takePendingFinalization();
     ASSERT_NE(cancelled, nullptr);
     EXPECT_TRUE(cancelled->cancel(error));
 }
@@ -241,7 +240,7 @@ TEST(TimelineRecordingTest, RecordingStopQueueFullLeavesCaptureActiveAndCanRetry
     EXPECT_EQ(engine.status().frame.recordingPhase, RecordingPhase::idle);
     EXPECT_EQ(engine.status().frame.transportState, TransportState::stopped);
     EXPECT_FALSE(TimelineEngineTestPeer::hasRecordingSink(engine));
-    auto finalized = pipeline.takeFinalizedRecording();
+    auto finalized = pipeline.recording().takePendingFinalization();
     ASSERT_NE(finalized, nullptr);
     EXPECT_TRUE(finalized->cancel(error));
 }
@@ -339,7 +338,6 @@ TEST(TimelineEngineTest, ClosesNonOverlappingSegmentsForALoopCapture) {
         remaining -= kBlockSamples;
     }
     engine.mix(inputs.data(), 1, outputs.data(), 2, remaining);
-    ASSERT_TRUE(engine.stopRecording(error));
     ASSERT_TRUE(finalizeCapturedRecording(engine, error));
     engine.clearRecordingSink();
 
@@ -414,7 +412,6 @@ TEST(TimelineEngineTest, KeepsRawAndProcessedAlignedAcrossLoopPasses) {
         engine.mix(inputs.data(), 1, outputs.data(), 2, block);
         mixed += block;
     }
-    ASSERT_TRUE(engine.stopRecording(error));
     ASSERT_TRUE(finalizeCapturedRecording(engine, error));
     engine.clearRecordingSink();
 
@@ -495,7 +492,7 @@ TEST(TimelineEngineTest, CompletesAProductionThreadedWriterRecording) {
     const auto beforeStop = callback.recording().status();
     juce::String stopError;
     ASSERT_EQ(callback.recording().stop(stopError), RealtimeRequest::accepted) << stopError;
-    auto detached = callback.takeFinalizedRecording();
+    auto detached = callback.recording().takePendingFinalization();
     const auto processed =
         detached != nullptr && engine.processFinalizedRecording(detached.get(), stopError);
     juce::String finishError;
@@ -561,7 +558,7 @@ TEST(TimelineEngineTest, ReplaysCapturedSidechainForProcessedTakesAndKeepsRawWhe
             engine.mix(inputs.data(), 2, outputs.data(), 2, std::min(64, 2537 - position));
         }
         ASSERT_EQ(pipeline.recording().stop(error), RealtimeRequest::accepted) << error;
-        auto capture = pipeline.takeFinalizedRecording();
+        auto capture = pipeline.recording().takePendingFinalization();
         ASSERT_NE(capture, nullptr);
         if (!replayable) {
             const auto auxiliaryFile = capture->prepareSidechainForReading("target", "fx:target");
@@ -644,7 +641,7 @@ TEST(TimelineEngineTest, ProductionWriterKeepsPartialLoopSegmentsAlignedInManife
         mixed += block;
     }
     ASSERT_EQ(callback.recording().stop(error), RealtimeRequest::accepted) << error;
-    auto detached = callback.takeFinalizedRecording();
+    auto detached = callback.recording().takePendingFinalization();
     ASSERT_NE(detached, nullptr);
     const auto processed = engine.processFinalizedRecording(detached.get(), error);
     juce::String finishError;
@@ -744,7 +741,6 @@ TEST(TimelineEngineTest, StreamsALongLoopRecordingWithoutPreallocatingRam) {
         engine.mix(inputs.data(), 1, outputs.data(), 2, block);
         remaining -= block;
     }
-    ASSERT_TRUE(engine.stopRecording(error));
     ASSERT_TRUE(finalizeCapturedRecording(engine, error));
     engine.clearRecordingSink();
 

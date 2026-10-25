@@ -18,7 +18,6 @@ struct RealtimeCommand final {
         setStarting,
         seek,
         startRecording,
-        stopRecording,
         stopArrangeRecording,
         panicAll,
         panicTrack,

@@ -135,7 +135,9 @@ TEST(TimelineRealtimeTest, RejectsPauseWhileArrangeRecordingIsActive) {
     EXPECT_EQ(engine.status().frame.recordingPhase, RecordingPhase::recording);
 
     engine.setRealtimeOwner(RealtimeOwner::control);
-    ASSERT_EQ(engine.stopArrangeRecording(error), RealtimeRequest::accepted);
+    const auto stopSequence = engine.enqueueArrangeRecordingStop();
+    ASSERT_TRUE(stopSequence.has_value());
+    engine.waitForCommandApplied(*stopSequence);
 }
 
 TEST(TimelineRealtimeTest, ReportsAPendingSeekTargetWhileStopped) {
@@ -314,7 +316,9 @@ TEST(TimelineRealtimeTest, RecordsMidiSourceIdRegisteredAfterGraphPublication) {
 
     // Assert
     engine.setRealtimeOwner(RealtimeOwner::control);
-    EXPECT_EQ(engine.stopArrangeRecording(error), RealtimeRequest::accepted);
+    const auto stopSequence = engine.enqueueArrangeRecordingStop();
+    ASSERT_TRUE(stopSequence.has_value());
+    engine.waitForCommandApplied(*stopSequence);
     ASSERT_TRUE(engine.finalizeRecording(error)) << error;
     EXPECT_EQ(sink.receivedMidiSourceId, "midi:keyboard");
     engine.clearRecordingSink();
@@ -332,18 +336,17 @@ TEST(TimelineRealtimeTest, ArrangeRecordingStopWaitsUntilItsQueuedCommandIsAppli
     engine.setRealtimeOwner(RealtimeOwner::audio);
 
     // Act
-    const auto nextSequence = TimelineEngineTestPeer::nextCommandSequence(engine);
-    auto stopped = std::async(std::launch::async, [&engine] {
-        juce::String stopError;
-        return engine.stopArrangeRecording(stopError);
+    const auto stopSequence = engine.enqueueArrangeRecordingStop();
+    ASSERT_TRUE(stopSequence.has_value());
+    auto stopped = std::async(std::launch::async, [&engine, sequence = *stopSequence] {
+        engine.waitForCommandApplied(sequence);
     });
     EXPECT_EQ(stopped.wait_for(std::chrono::milliseconds(600)), std::future_status::timeout);
-    EXPECT_EQ(TimelineEngineTestPeer::nextCommandSequence(engine), nextSequence + 1);
     EXPECT_EQ(engine.status().frame.recordingPhase, RecordingPhase::recording);
     engine.setRealtimeOwner(RealtimeOwner::control);
 
     // Assert
-    EXPECT_EQ(stopped.get(), RealtimeRequest::accepted);
+    stopped.get();
     EXPECT_EQ(engine.status().frame.recordingPhase, RecordingPhase::idle);
 }
 
@@ -444,7 +447,9 @@ TEST(TimelineRealtimeTest, TransformsPlaySurfaceNotesWithoutTransposingKeyswitch
     EXPECT_EQ(trace.lastMidiMessage.getNoteNumber(), 48);
 
     engine.setRealtimeOwner(RealtimeOwner::control);
-    ASSERT_EQ(engine.stopArrangeRecording(error), RealtimeRequest::accepted);
+    const auto stopSequence = engine.enqueueArrangeRecordingStop();
+    ASSERT_TRUE(stopSequence.has_value());
+    engine.waitForCommandApplied(*stopSequence);
     ASSERT_TRUE(engine.finalizeRecording(error)) << error;
     EXPECT_EQ(recordingSink.midiMessageCount, 4u);
     EXPECT_EQ(recordingSink.midiNotes[0], 36);
@@ -523,7 +528,6 @@ TEST(TimelineRealtimeTest, ProcessesALoopCaptureWithinThePreparedBlockSize) {
         engine.mix(inputs.data(), 1, outputs.data(), 2, kEngineBlockSamples);
         mixed += kEngineBlockSamples;
     }
-    ASSERT_TRUE(engine.stopRecording(error));
     ASSERT_TRUE(finalizeCapturedRecording(engine, error));
     engine.clearRecordingSink();
 

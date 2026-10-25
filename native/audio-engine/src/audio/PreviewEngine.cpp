@@ -298,8 +298,6 @@ bool PreviewEngine::stopSynthNote(const int note) noexcept {
     return commands.tryPush(command);
 }
 
-bool PreviewEngine::allNotesOff() noexcept { return requestSynthPanic(); }
-
 bool PreviewEngine::isPreviewing() const noexcept {
     return previewing.load(std::memory_order_acquire);
 }
@@ -339,7 +337,7 @@ void PreviewEngine::applyCommand(const PreviewCommand& command, const double sam
     } else if (command.kind == PreviewCommand::Kind::synthNoteOff) {
         for (auto& voice : synthVoices)
             if (voice.active && voice.note == command.note) voice.releasing = true;
-    } else if (command.kind == PreviewCommand::Kind::synthPanic) {
+    } else if (command.kind == PreviewCommand::Kind::panic) {
         for (auto& voice : synthVoices) voice.releasing = true;
         instrumentStopRequested = true;
         if (audioPreviewState != nullptr) applyPreviewState(*audioPreviewState, sampleRate);
@@ -634,9 +632,9 @@ void PreviewEngine::applyPendingCommands(const double sampleRate,
     retireUnusedStates();
 }
 
-bool PreviewEngine::requestSynthPanic() noexcept {
+bool PreviewEngine::requestPanic() noexcept {
     PreviewCommand command;
-    command.kind = PreviewCommand::Kind::synthPanic;
+    command.kind = PreviewCommand::Kind::panic;
     return commands.tryPush(command);
 }
 

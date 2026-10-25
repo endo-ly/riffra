@@ -38,7 +38,8 @@ public:
                              juce::String& error);
     bool startSynthNote(int note, float velocity) noexcept;
     bool stopSynthNote(int note) noexcept;
-    bool allNotesOff() noexcept;
+    /// Any producer thread. Releases fallback MIDI notes and safely stops instrument preview.
+    bool requestPanic() noexcept;
     [[nodiscard]] bool isPreviewing() const noexcept;
     [[nodiscard]] bool isInstrumentPreviewing() const noexcept;
 
@@ -49,7 +50,6 @@ public:
     // control update never causes a whole callback to be skipped.
     bool tryMix(float* const* outputChannelData, int numOutputChannels, int numSamples,
                 double sampleRate) noexcept;
-    bool requestSynthPanic() noexcept;
 
 private:
     friend class PreviewEngineTestPeer;
@@ -115,7 +115,7 @@ private:
             stopInstrumentPreview,
             synthNoteOn,
             synthNoteOff,
-            synthPanic,
+            panic,
             stopAll
         };
         Kind kind = Kind::publishPreviewState;

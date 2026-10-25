@@ -5,8 +5,8 @@
 #include <utility>
 
 #include "../timeline/SonalloyTestSupport.h"
+#include "audio/InstrumentPreviewContract.h"
 #include "audio/InstrumentPreviewSession.h"
-#include "audio/InstrumentPreviewTiming.h"
 #include "audio/PreviewEngine.h"
 
 namespace riffra {

@@ -95,15 +95,6 @@ std::unique_ptr<juce::AudioFormatWriter::ThreadedWriter> RecordingSession::creat
                                                                      kWriterBufferSamples);
 }
 
-bool RecordingSession::write(const float* const* rawData, const float* const* processedData,
-                             const int numSamples) noexcept {
-    if (finished || rawWriter == nullptr || processedWriter == nullptr || numSamples <= 0)
-        return false;
-    const auto rawWritten = writeRaw(rawData, numSamples);
-    const auto processedWritten = writeProcessed(processedData, numSamples);
-    return rawWritten && processedWritten;
-}
-
 bool RecordingSession::writeRaw(const float* const* rawData, const int numSamples) noexcept {
     if (finished || rawWriter == nullptr || numSamples <= 0) return false;
     const auto attemptedStart = rawAttemptedSamples.fetch_add(
@@ -120,21 +111,6 @@ bool RecordingSession::writeRaw(const float* const* rawData, const int numSample
         return false;
     }
     rawSamplesWritten.fetch_add(static_cast<std::uint64_t>(numSamples), std::memory_order_relaxed);
-    samplesWritten.fetch_add(static_cast<std::uint64_t>(numSamples), std::memory_order_relaxed);
-    return true;
-}
-
-bool RecordingSession::writeProcessed(const float* const* processedData,
-                                      const int numSamples) noexcept {
-    if (finished || processedWriter == nullptr || numSamples <= 0) return false;
-    const auto attemptedStart = processedAttemptedSamples.fetch_add(
-        static_cast<std::uint64_t>(numSamples), std::memory_order_relaxed);
-    if (!processedWriter->write(processedData, numSamples)) {
-        recordProcessedDropout(attemptedStart, numSamples);
-        return false;
-    }
-    processedSamplesWritten.fetch_add(static_cast<std::uint64_t>(numSamples),
-                                      std::memory_order_relaxed);
     return true;
 }
 
@@ -308,38 +284,6 @@ std::uint64_t RecordingSession::getFirstMissingSample() const noexcept {
 
 std::uint64_t RecordingSession::getLastMissingSample() const noexcept {
     return std::max(getRawLastMissingSample(), getProcessedLastMissingSample());
-}
-
-juce::var RecordingSession::status() const {
-    auto* result = new juce::DynamicObject();
-    result->setProperty("active", !finished);
-    result->setProperty("directory", recordingDirectory.getFullPathName());
-    result->setProperty("sampleRate", recordingSampleRate);
-    result->setProperty("rawChannels", rawChannelCount);
-    result->setProperty("processedChannels", processedChannelCount);
-    result->setProperty("samplesWritten", static_cast<juce::int64>(getSamplesWritten()));
-    result->setProperty("droppedBlocks", static_cast<juce::int64>(getDroppedBlocks()));
-    result->setProperty("missingSamples", static_cast<juce::int64>(getMissingSamples()));
-    result->setProperty("dropoutStartSample", static_cast<juce::int64>(getFirstMissingSample()));
-    result->setProperty("dropoutEndSample", static_cast<juce::int64>(getLastMissingSample()));
-    result->setProperty("rawAttemptedSamples", static_cast<juce::int64>(getRawAttemptedSamples()));
-    result->setProperty("processedAttemptedSamples",
-                        static_cast<juce::int64>(getProcessedAttemptedSamples()));
-    result->setProperty("rawDroppedBlocks", static_cast<juce::int64>(getRawDroppedBlocks()));
-    result->setProperty("processedDroppedBlocks",
-                        static_cast<juce::int64>(getProcessedDroppedBlocks()));
-    result->setProperty("rawMissingSamples", static_cast<juce::int64>(getRawMissingSamples()));
-    result->setProperty("processedMissingSamples",
-                        static_cast<juce::int64>(getProcessedMissingSamples()));
-    result->setProperty("rawDropoutStartSample",
-                        static_cast<juce::int64>(getRawFirstMissingSample()));
-    result->setProperty("rawDropoutEndSample", static_cast<juce::int64>(getRawLastMissingSample()));
-    result->setProperty("processedDropoutStartSample",
-                        static_cast<juce::int64>(getProcessedFirstMissingSample()));
-    result->setProperty("processedDropoutEndSample",
-                        static_cast<juce::int64>(getProcessedLastMissingSample()));
-    result->setProperty("recoveryStatus", getDroppedBlocks() == 0 ? "clean" : "partial");
-    return juce::var(result);
 }
 
 bool RecordingSession::writeManifest(const juce::String& state, juce::String& error) const {
