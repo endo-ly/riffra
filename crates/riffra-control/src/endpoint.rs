@@ -1,3 +1,4 @@
+use crate::local_files::{replace_file, set_private_directory, set_private_file};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::{Path, PathBuf};
@@ -160,56 +161,24 @@ pub fn publish_endpoint(data_root: &Path, descriptor: &EndpointDescriptor) -> Re
         .ok_or_else(|| "Riffra Host control endpoint has no parent directory".to_string())?;
     std::fs::create_dir_all(directory)
         .map_err(|error| format!("Riffra Host control directory could not be created: {error}"))?;
-    set_private_directory(directory)?;
+    set_private_directory(directory).map_err(|error| {
+        format!("Riffra Host control directory permissions could not be set: {error}")
+    })?;
     let temporary = directory.join(format!("host.{}.tmp", descriptor.instance_id));
     let bytes = serde_json::to_vec_pretty(descriptor)
         .map_err(|error| format!("Riffra Host control endpoint could not be encoded: {error}"))?;
     std::fs::write(&temporary, bytes)
         .map_err(|error| format!("Riffra Host control endpoint could not be written: {error}"))?;
-    set_private_file(&temporary)?;
-    if let Err(error) = replace_endpoint(&temporary, &path) {
+    set_private_file(&temporary).map_err(|error| {
+        format!("Riffra Host control endpoint permissions could not be set: {error}")
+    })?;
+    if let Err(error) = replace_file(&temporary, &path) {
         let _ = std::fs::remove_file(&temporary);
         return Err(format!(
             "Riffra Host control endpoint could not be published: {error}"
         ));
     }
     Ok(())
-}
-
-#[cfg(windows)]
-fn replace_endpoint(temporary: &Path, destination: &Path) -> io::Result<()> {
-    use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::Storage::FileSystem::{
-        MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
-    };
-
-    let source: Vec<u16> = temporary
-        .as_os_str()
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect();
-    let destination: Vec<u16> = destination
-        .as_os_str()
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect();
-    let result = unsafe {
-        MoveFileExW(
-            source.as_ptr(),
-            destination.as_ptr(),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-        )
-    };
-    if result == 0 {
-        Err(io::Error::last_os_error())
-    } else {
-        Ok(())
-    }
-}
-
-#[cfg(not(windows))]
-fn replace_endpoint(temporary: &Path, destination: &Path) -> io::Result<()> {
-    std::fs::rename(temporary, destination)
 }
 
 /// Removes the descriptor only when it still identifies this Host instance.
@@ -246,32 +215,6 @@ pub fn new_instance_id() -> String {
 /// Builds the user-scoped named pipe name for an instance.
 pub fn pipe_name(instance_id: &str) -> String {
     format!(r"\\.\pipe\riffra-{instance_id}")
-}
-
-#[cfg(unix)]
-fn set_private_directory(path: &Path) -> Result<(), String> {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).map_err(|error| {
-        format!("Riffra Host control directory permissions could not be set: {error}")
-    })
-}
-
-#[cfg(not(unix))]
-fn set_private_directory(_path: &Path) -> Result<(), String> {
-    Ok(())
-}
-
-#[cfg(unix)]
-fn set_private_file(path: &Path) -> Result<(), String> {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).map_err(|error| {
-        format!("Riffra Host control endpoint permissions could not be set: {error}")
-    })
-}
-
-#[cfg(not(unix))]
-fn set_private_file(_path: &Path) -> Result<(), String> {
-    Ok(())
 }
 
 #[cfg(test)]

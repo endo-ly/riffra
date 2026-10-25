@@ -6,6 +6,7 @@
 
 mod client;
 mod endpoint;
+mod local_files;
 mod protocol;
 mod registry;
 pub mod transport;
