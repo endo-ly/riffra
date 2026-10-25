@@ -180,7 +180,7 @@ export function useArrangeContextMenus({
           ),
           onClick: () => {
             closeContextMenu();
-            void editor.mergeAudioClipWithPrevious(clip);
+            void editor.mergeAudioClip(clip, 'previous');
           },
         },
         {
@@ -195,7 +195,7 @@ export function useArrangeContextMenus({
           ),
           onClick: () => {
             closeContextMenu();
-            void editor.mergeAudioClipWithNext(clip);
+            void editor.mergeAudioClip(clip, 'next');
           },
         },
         { separator: true },
@@ -288,7 +288,7 @@ export function useArrangeContextMenus({
           ),
           onClick: () => {
             closeContextMenu();
-            void editor.mergeMidiClipWithPrevious(clip);
+            void editor.mergeMidiClip(clip, 'previous');
           },
         },
         {
@@ -301,7 +301,7 @@ export function useArrangeContextMenus({
           ),
           onClick: () => {
             closeContextMenu();
-            void editor.mergeMidiClipWithNext(clip);
+            void editor.mergeMidiClip(clip, 'next');
           },
         },
         { separator: true },
