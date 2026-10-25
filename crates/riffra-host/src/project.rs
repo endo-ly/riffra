@@ -173,8 +173,8 @@ pub fn export(
 
     let manifest = ProjectManifest {
         exported_at_ms,
-        assets: assets.clone(),
-        instrument_snapshots: instrument_snapshots.clone(),
+        assets,
+        instrument_snapshots,
     };
     let payload = serde_json::to_vec_pretty(&manifest)
         .map_err(|error| format!("Project manifest could not be encoded: {error}"))?;
@@ -226,7 +226,7 @@ pub fn export(
             std::io::copy(&mut source, &mut archive)
                 .map_err(|error| format!("Project Asset could not be archived: {error}"))?;
         }
-        for snapshot in &instrument_snapshots {
+        for snapshot in &manifest.instrument_snapshots {
             for package_path in &snapshot.files {
                 let entry = package_path.as_str();
                 archive.start_file(entry, options).map_err(|error| {
@@ -261,7 +261,7 @@ pub fn export(
         path: output.to_string_lossy().into_owned(),
         session_id: session.session_id.clone(),
         exported_at_ms,
-        asset_count: assets.len(),
+        asset_count: manifest.assets.len(),
     })
 }
 
