@@ -274,7 +274,7 @@ pub fn midi_clip_for_take(
         .midi_asset_id
         .as_ref()
         .ok_or_else(|| "Recording Take has no MIDI Asset.".to_string())?;
-    let asset = asset::load(data_root, asset_id)
+    let asset = asset::load(data_root, asset_id)?
         .ok_or_else(|| format!("Recorded MIDI Asset is missing: {asset_id}"))?;
     let file = load_recorded_midi(Path::new(&asset.content_location))?;
     let sample_rate = file

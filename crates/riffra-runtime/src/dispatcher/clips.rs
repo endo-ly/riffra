@@ -13,7 +13,7 @@ impl HostDispatcher<'_> {
         params: ClipAddAssetParams,
     ) -> Result<ControlOutput, DispatchError> {
         let asset_id = parse_asset_id(&params.asset_id)?;
-        let asset = riffra_host::load(&self.data_root, &asset_id)
+        let asset = riffra_host::load(&self.data_root, &asset_id)?
             .ok_or_else(|| format!("Audio Asset is not registered: {asset_id}"))?;
         if asset.kind != AssetKind::Audio {
             return Err(format!("Asset {asset_id} is not an audio Asset.").into());
@@ -34,7 +34,7 @@ impl HostDispatcher<'_> {
                     sample_rate: metadata.sample_rate,
                     source_frames: metadata.frame_count,
                 },
-                |id| riffra_host::load(&self.data_root, id).is_some(),
+                |id| id == &asset.id,
             )?,
             application,
         )
@@ -46,7 +46,7 @@ impl HostDispatcher<'_> {
         params: ClipAddAssetParams,
     ) -> Result<ControlOutput, DispatchError> {
         let asset_id = parse_asset_id(&params.asset_id)?;
-        let asset = riffra_host::load(&self.data_root, &asset_id)
+        let asset = riffra_host::load(&self.data_root, &asset_id)?
             .ok_or_else(|| format!("MIDI Asset is not registered: {asset_id}"))?;
         if asset.kind != AssetKind::Midi {
             return Err(format!("Asset {asset_id} is not a MIDI Asset.").into());
@@ -80,7 +80,7 @@ impl HostDispatcher<'_> {
             .iter()
             .find(|clip| clip.id == clip_id)
             .ok_or_else(|| format!("Audio clip '{clip_id}' not found."))?;
-        let asset = riffra_host::load(&self.data_root, &clip.asset_id)
+        let asset = riffra_host::load(&self.data_root, &clip.asset_id)?
             .ok_or_else(|| format!("Audio Asset is not registered: {}", clip.asset_id))?;
         let bytes = std::fs::read(&asset.content_location)
             .map_err(|error| format!("Audio Asset could not be read: {error}"))?;

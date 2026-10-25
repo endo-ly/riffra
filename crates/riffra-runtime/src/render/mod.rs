@@ -863,13 +863,12 @@ fn build_render_plan(
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();
-    if let Some(missing_id) = source_ids
-        .iter()
-        .find(|asset_id| asset::load(data_root, asset_id).is_none())
-    {
-        return Err(format!(
-            "Offline Render source asset is not registered: {missing_id}"
-        ));
+    for asset_id in &source_ids {
+        if asset::load(data_root, asset_id)?.is_none() {
+            return Err(format!(
+                "Offline Render source asset is not registered: {asset_id}"
+            ));
+        }
     }
     let resources = resolve(data_root, built_in_instruments, &render_session);
     let (graph, diagnostics) = project_graph(&render_session, &resources);
@@ -1548,7 +1547,7 @@ pub(super) mod tests {
             assert_eq!(metadata.channels, 2);
             assert_eq!(metadata.sample_rate, pending.result.sample_rate);
             assert_eq!(metadata.frame_count, pending.result.frames);
-            let registered = asset::load(&root, &stem.asset_id).unwrap();
+            let registered = asset::load(&root, &stem.asset_id).unwrap().unwrap();
             assert_eq!(registered.content_location, stem.path);
         }
         let manifest: serde_json::Value = serde_json::from_slice(
@@ -1600,7 +1599,11 @@ pub(super) mod tests {
             !registry.complete_if_not_cancelled(&job_id, value, "done", move || output.commit(),)
         );
         assert!(!directory.exists());
-        assert!(asset_ids.iter().all(|id| asset::load(&root, id).is_none()));
+        assert!(
+            asset_ids
+                .iter()
+                .all(|id| asset::load(&root, id).unwrap().is_none())
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -2074,8 +2077,8 @@ pub(super) mod tests {
             Err(error) if error == format!("Source asset is not registered: {second_asset}")
         ));
         assert_eq!(fs::read_dir(root.join("renders")).unwrap().count(), 0);
-        assert!(asset::load(&root, &first_asset).is_some());
-        assert!(asset::load(&root, &second_asset).is_none());
+        assert!(asset::load(&root, &first_asset).unwrap().is_some());
+        assert!(asset::load(&root, &second_asset).unwrap().is_none());
         assert!(
             crate::library::search(&root, "First stem")
                 .unwrap()
@@ -2133,8 +2136,8 @@ pub(super) mod tests {
 
         assert!(directory.exists());
         assert!(output_path.exists());
-        assert!(asset::load(&root, &output_asset).is_some());
-        assert!(asset::load(&root, &dependent_asset).is_some());
+        assert!(asset::load(&root, &output_asset).unwrap().is_some());
+        assert!(asset::load(&root, &dependent_asset).unwrap().is_some());
         fs::remove_dir_all(root).unwrap();
     }
 

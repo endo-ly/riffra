@@ -10,7 +10,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::api::output::AudioStatus;
-use crate::asset::{load, resolve_content_location};
+use crate::asset::load;
 use crate::audio::AudioSupervisor;
 use riffra_core::{AssetId, AssetKind};
 
@@ -64,7 +64,7 @@ pub(crate) fn preview_asset(
     if !options.gain.is_finite() {
         return Err("Preview gain must be finite.".into());
     }
-    let asset = load(context.data_root, &asset_id)
+    let asset = load(context.data_root, &asset_id)?
         .ok_or_else(|| format!("Preview references an unregistered asset: {asset_id}"))?;
     if !is_previewable(asset.kind) {
         return Err(format!(
@@ -72,9 +72,7 @@ pub(crate) fn preview_asset(
             asset.name
         ));
     }
-    let location = resolve_content_location(context.data_root, &asset_id)
-        .ok_or_else(|| format!("Asset {asset_id} has no resolvable content location."))?;
-    let path = PathBuf::from(&location);
+    let path = PathBuf::from(&asset.content_location);
     if !path.is_file() {
         return Err(format!("Preview source does not exist: {}", path.display()));
     }
@@ -172,7 +170,7 @@ mod tests {
         std::fs::write(&source, minimal_smf(480)).unwrap();
 
         let id = import_midi_asset(&root, &source.to_string_lossy(), None).unwrap();
-        let asset = load(&root, &id).unwrap();
+        let asset = load(&root, &id).unwrap().unwrap();
         assert_eq!(asset.kind, AssetKind::Midi);
         assert_eq!(asset.name, "take");
         let provenance = asset.provenance.unwrap();

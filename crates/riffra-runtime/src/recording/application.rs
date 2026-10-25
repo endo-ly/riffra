@@ -1358,7 +1358,9 @@ fn place_recording_on_timeline(
     let audio_path = processed_asset_id
         .as_ref()
         .or(raw_asset_id.as_ref())
-        .and_then(|asset_id| crate::asset::load(&context.data_root, asset_id))
+        .map(|asset_id| crate::asset::load(&context.data_root, asset_id))
+        .transpose()?
+        .flatten()
         .map(|asset| asset.content_location);
     let audio_source = audio_path
         .as_ref()

@@ -29,9 +29,9 @@ pub fn start_take_comparison(
         .processed_audio
         .as_ref()
         .ok_or_else(|| "Take comparison requires a Processed Asset.".to_string())?;
-    let raw = asset::load(context.data_root, &raw_source.asset_id)
+    let raw = asset::load(context.data_root, &raw_source.asset_id)?
         .ok_or_else(|| "Take Raw Asset is unavailable.".to_string())?;
-    let processed = asset::load(context.data_root, &processed_source.asset_id)
+    let processed = asset::load(context.data_root, &processed_source.asset_id)?
         .ok_or_else(|| "Take Processed Asset is unavailable.".to_string())?;
     let raw_start_frame = raw_source.source_start_sample;
     let raw_end_frame = raw_source.source_end_sample;

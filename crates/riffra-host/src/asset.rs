@@ -210,7 +210,7 @@ fn register_with_id_impl(
             "Asset content file does not exist: {content_location}"
         ));
     }
-    if let Some(existing) = load(data_root, id) {
+    if let Some(existing) = load(data_root, id)? {
         let content_missing = !Path::new(&existing.content_location).is_file();
         if existing.kind != kind
             || (!content_missing && !same_content(&existing.content_location, content_location))
@@ -266,7 +266,7 @@ pub fn register_derived(
     let sources = source_ids
         .iter()
         .map(|id| {
-            load(data_root, id).ok_or_else(|| format!("Source asset is not registered: {id}"))
+            load(data_root, id)?.ok_or_else(|| format!("Source asset is not registered: {id}"))
         })
         .collect::<Result<Vec<_>, _>>()?;
     let source_refs = sources.iter().collect::<Vec<_>>();
@@ -494,7 +494,7 @@ pub fn update_metadata(
     tag: Option<String>,
     note: Option<String>,
 ) -> Result<(), String> {
-    let asset = load(data_root, id).ok_or_else(|| "Asset was not found.".to_string())?;
+    let asset = load(data_root, id)?.ok_or_else(|| "Asset was not found.".to_string())?;
     let updated = asset.update_metadata(None, Some(tag), Some(note), None, now_ms());
     let connection = open(data_root)?;
     connection
@@ -642,7 +642,7 @@ pub fn resolve_content_location(data_root: &Path, id: &AssetId) -> Option<String
 pub fn resolve_audio_path(data_root: &Path, value: &str) -> Result<PathBuf, String> {
     let asset_id =
         AssetId::from_normalized(value).map_err(|error| format!("Asset id is invalid: {error}"))?;
-    let asset = load(data_root, &asset_id)
+    let asset = load(data_root, &asset_id)?
         .ok_or_else(|| format!("Audio asset is not registered: {asset_id}"))?;
     if asset.kind != AssetKind::Audio {
         return Err(format!("Asset {asset_id} is not an audio asset."));
@@ -810,8 +810,11 @@ pub fn import_midi_bytes(data_root: &Path, name: &str, bytes: &[u8]) -> Result<A
 }
 
 /// Loads a full canonical [`Asset`] by id, including its provenance source ids.
-pub fn load(data_root: &Path, id: &AssetId) -> Option<Asset> {
-    let connection = open(data_root).ok()?;
+///
+/// # Errors
+/// Returns an error when the database or stored asset metadata cannot be read.
+pub fn load(data_root: &Path, id: &AssetId) -> Result<Option<Asset>, String> {
+    let connection = open(data_root)?;
     let row = connection
         .query_row(
             "SELECT id, kind, name, content_location,
@@ -835,7 +838,11 @@ pub fn load(data_root: &Path, id: &AssetId) -> Option<Asset> {
                 ))
             },
         )
-        .ok()?;
+        .optional()
+        .map_err(|error| format!("asset could not be read: {error}"))?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
     let (
         id_value,
         kind_value,
@@ -849,14 +856,22 @@ pub fn load(data_root: &Path, id: &AssetId) -> Option<Asset> {
         operation,
         parameters,
     ) = row;
-    let kind = kind_from_db(kind_value.as_deref()?)?;
-    let provenance = build_provenance(&connection, id.as_str(), operation, parameters)
-        .ok()
-        .flatten();
-    let created_at_ms = created_at_ms.and_then(u64_from_i64);
-    let updated_at_ms = updated_at_ms.and_then(u64_from_i64);
-    Some(Asset {
-        id: AssetId::from_normalized(id_value).ok()?,
+    let kind = kind_value
+        .as_deref()
+        .and_then(kind_from_db)
+        .ok_or("asset has an invalid kind")?;
+    let provenance = build_provenance(&connection, id.as_str(), operation, parameters)?;
+    let created_at_ms = created_at_ms
+        .map(u64::try_from)
+        .transpose()
+        .map_err(|_| "asset has an invalid creation timestamp")?;
+    let updated_at_ms = updated_at_ms
+        .map(u64::try_from)
+        .transpose()
+        .map_err(|_| "asset has an invalid update timestamp")?;
+    Ok(Some(Asset {
+        id: AssetId::from_normalized(id_value)
+            .map_err(|error| format!("asset has an invalid id: {error}"))?,
         kind,
         name,
         content_location,
@@ -866,7 +881,7 @@ pub fn load(data_root: &Path, id: &AssetId) -> Option<Asset> {
         tag,
         note,
         favorite: favorite.unwrap_or(0) != 0,
-    })
+    }))
 }
 
 fn build_provenance(
@@ -874,39 +889,40 @@ fn build_provenance(
     asset_id: &str,
     operation: Option<String>,
     parameters: Option<String>,
-) -> Result<Option<Provenance>, rusqlite::Error> {
+) -> Result<Option<Provenance>, String> {
     let Some(operation) = operation else {
         return Ok(None);
     };
-    let operation = operation_from_db(&operation);
-    let Some(operation) = operation else {
-        return Ok(None);
-    };
+    let operation =
+        operation_from_db(&operation).ok_or("asset has an invalid provenance operation")?;
     let parameters = parameters
-        .and_then(|value| {
-            serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&value).ok()
-        })
+        .map(|value| serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&value))
+        .transpose()
+        .map_err(|error| format!("asset provenance parameters could not be read: {error}"))?
         .unwrap_or_default();
-    let mut statement = connection.prepare(
-        "SELECT related_asset_id FROM asset_relations
+    let mut statement = connection
+        .prepare(
+            "SELECT related_asset_id FROM asset_relations
          WHERE asset_id = ?1 AND relation = ?2",
-    )?;
+        )
+        .map_err(|error| format!("asset provenance query could not be prepared: {error}"))?;
     let source_ids = statement
         .query_map(params![asset_id, DERIVED_FROM], |row| {
             row.get::<_, String>(0)
-        })?
-        .filter_map(Result::ok)
-        .filter_map(|value| AssetId::from_normalized(value).ok())
-        .collect::<Vec<_>>();
+        })
+        .map_err(|error| format!("asset provenance could not be queried: {error}"))?
+        .map(|row| {
+            let value =
+                row.map_err(|error| format!("asset provenance source could not be read: {error}"))?;
+            AssetId::from_normalized(value)
+                .map_err(|error| format!("asset provenance source is invalid: {error}"))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
     Ok(Some(Provenance {
         source_asset_ids: source_ids,
         operation,
         parameters,
     }))
-}
-
-fn u64_from_i64(value: i64) -> Option<u64> {
-    u64::try_from(value).ok()
 }
 
 fn safe_name(value: &str) -> String {
@@ -947,6 +963,61 @@ mod tests {
     fn write_wav(path: &Path) {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, b"RIFF\0\0\0\0WAVE").unwrap();
+    }
+
+    #[test]
+    fn load_distinguishes_missing_assets_from_database_and_record_errors() {
+        // Arrange
+        let root = root("load-errors");
+        let id = mint_asset_id();
+        let location = root.join("source.wav");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(&location, b"audio").unwrap();
+
+        // Act / Assert
+        assert!(load(&root, &id).unwrap().is_none());
+        register_with_id(
+            &root,
+            &id,
+            AssetKind::Audio,
+            "Source",
+            &location.to_string_lossy(),
+            None,
+        )
+        .unwrap();
+        assert!(load(&root, &id).unwrap().unwrap().provenance.is_none());
+        let connection = open(&root).unwrap();
+        for (column, value) in [
+            ("kind", "invalid"),
+            ("provenance_operation", "invalid"),
+            ("provenance_parameters", "invalid"),
+        ] {
+            connection.execute("UPDATE assets SET kind = 'audio', provenance_operation = 'imported', provenance_parameters = '{}'", []).unwrap();
+            connection
+                .execute(&format!("UPDATE assets SET {column} = ?1"), [value])
+                .unwrap();
+            assert!(load(&root, &id).is_err(), "{column}");
+        }
+        connection
+            .execute("UPDATE assets SET provenance_parameters = '{}'", [])
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO asset_relations VALUES (?1, 'invalid', 'derived-from')",
+                [id.as_str()],
+            )
+            .unwrap();
+        assert!(load(&root, &id).is_err());
+        connection.execute("DROP TABLE assets", []).unwrap();
+        connection
+            .execute("CREATE TABLE assets (id TEXT)", [])
+            .unwrap();
+        assert!(load(&root, &id).is_err());
+        drop(connection);
+        fs::remove_dir_all(&root).unwrap();
+        fs::create_dir_all(root.join("library/riffra.db")).unwrap();
+        assert!(load(&root, &id).is_err());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -1010,7 +1081,7 @@ mod tests {
             }),
         )
         .unwrap();
-        let loaded = load(&root, &processed).unwrap();
+        let loaded = load(&root, &processed).unwrap().unwrap();
         assert_eq!(loaded.id, processed);
         assert_eq!(loaded.kind, AssetKind::Audio);
         assert_eq!(loaded.content_location, processed_wav.to_string_lossy());
@@ -1109,7 +1180,7 @@ mod tests {
         bytes.extend_from_slice(&track);
 
         let id = import_midi_bytes(&root, "dropped", &bytes).unwrap();
-        let asset = load(&root, &id).unwrap();
+        let asset = load(&root, &id).unwrap().unwrap();
         assert_eq!(asset.kind, AssetKind::Midi);
         assert_eq!(asset.name, "dropped");
         assert_eq!(

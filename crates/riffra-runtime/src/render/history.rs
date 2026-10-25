@@ -270,9 +270,15 @@ fn render_file_status(
         .ok()
         .and_then(|path| fs::metadata(path).ok())
         .map(|metadata| metadata.len());
-    let asset_registered = asset::load(data_root, &asset_id).is_some_and(|asset| {
-        asset.kind == riffra_core::AssetKind::Audio && asset.content_location == stored_path
-    });
+    let asset_registered = match asset::load(data_root, &asset_id) {
+        Ok(asset) => asset.is_some_and(|asset| {
+            asset.kind == riffra_core::AssetKind::Audio && asset.content_location == stored_path
+        }),
+        Err(error) => {
+            diagnostics.push(error);
+            false
+        }
+    };
     if !asset_registered {
         diagnostics.push(format!(
             "Asset registration does not match render file {stored_path} ({asset_id})"
@@ -528,7 +534,7 @@ fn verify_owned_render_directory(
         if !path.is_file() {
             return Err(format!("render WAV is missing: {}", path.display()));
         }
-        let asset = asset::load(data_root, id)
+        let asset = asset::load(data_root, id)?
             .ok_or_else(|| format!("render Asset is not registered: {id}"))?;
         if asset.kind != riffra_core::AssetKind::Audio || asset.content_location != *stored_path {
             return Err(format!(
@@ -1147,7 +1153,7 @@ mod tests {
         assert_eq!(deleted.deleted_file_count, 2);
         assert!(!Path::new(&render.path).exists());
         assert!(output.is_file());
-        assert!(asset::load(&root, &render.asset_id).is_none());
+        assert!(asset::load(&root, &render.asset_id).unwrap().is_none());
         assert!(list_renders(&root).unwrap().is_empty());
         fs::remove_dir_all(root).unwrap();
     }
@@ -1213,7 +1219,7 @@ mod tests {
         assert!(generation_error.contains("saved session"));
         assert!(generation_error.contains("Clip clip"));
         assert!(Path::new(&render.path).is_file());
-        assert!(asset::load(&root, &render.asset_id).is_some());
+        assert!(asset::load(&root, &render.asset_id).unwrap().is_some());
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1280,7 +1286,7 @@ mod tests {
         assert!(recording_error.contains("recording"));
         assert!(recording_error.contains("raw audio"));
         assert!(Path::new(&render.path).is_file());
-        assert!(asset::load(&root, &render.asset_id).is_some());
+        assert!(asset::load(&root, &render.asset_id).unwrap().is_some());
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1325,7 +1331,7 @@ mod tests {
         .unwrap_err();
         assert!(restored.contains("was restored"));
         assert!(directory.is_dir());
-        assert!(asset::load(&root, &render.asset_id).is_some());
+        assert!(asset::load(&root, &render.asset_id).unwrap().is_some());
         delete_render(
             &root,
             &store,

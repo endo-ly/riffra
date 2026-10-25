@@ -120,7 +120,7 @@ pub fn export(
     let mut assets = Vec::new();
     let mut asset_sources = Vec::new();
     for (index, asset_id) in referenced_asset_ids(session).into_iter().enumerate() {
-        let Some(canonical) = asset::load(data_root, &asset_id) else {
+        let Some(canonical) = asset::load(data_root, &asset_id)? else {
             assets.push(PackagedAsset {
                 asset_id: asset_id.clone(),
                 name: "missing".into(),
@@ -389,7 +389,7 @@ fn import_packaged_asset(
             asset.asset_id
         )
     })?;
-    if let Some(existing) = asset::load(data_root, &asset.asset_id) {
+    if let Some(existing) = asset::load(data_root, &asset.asset_id)? {
         if Path::new(&existing.content_location).is_file() {
             if !files_equal(Path::new(&existing.content_location), staging_path)? {
                 return Err(format!(
@@ -438,7 +438,7 @@ fn import_packaged_asset(
 }
 
 fn import_missing_asset(data_root: &Path, asset: &PackagedAsset) -> Result<(), String> {
-    if asset::load(data_root, &asset.asset_id).is_some() {
+    if asset::load(data_root, &asset.asset_id)?.is_some() {
         return Ok(());
     }
     let location = asset::unique_import_destination_with_ext(data_root, &asset.name, "missing")?;
@@ -974,6 +974,27 @@ mod tests {
     }
 
     #[test]
+    fn export_distinguishes_unregistered_assets_from_database_failures() {
+        // Arrange
+        let root = std::env::temp_dir().join(format!("riffra-project-db-error-{}", now_ms()));
+        let session = session_with_midi_clip(riffra_core::mint_asset_id());
+        let output = package_path(&root, "missing.riffra");
+
+        // Act / Assert
+        let exported = export(&root, &session, 42, &output).unwrap();
+        let manifest = read_manifest(Path::new(&exported.path));
+        assert_eq!(manifest["assets"][0]["state"], "missing");
+        let connection = rusqlite::Connection::open(root.join("library/riffra.db")).unwrap();
+        connection.execute("DROP TABLE assets", []).unwrap();
+        connection
+            .execute("CREATE TABLE assets (id TEXT)", [])
+            .unwrap();
+        assert!(export(&root, &session, 42, &output).is_err());
+        drop(connection);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn exports_session_manifest_without_path_traversal() {
         let root = std::env::temp_dir().join(format!("riffra-project-{}", now_ms()));
         let session = CreativeSession::new(now_ms());
@@ -1116,7 +1137,7 @@ mod tests {
         .unwrap();
 
         import(&target_root, &package).unwrap();
-        let restored = asset::load(&target_root, &asset_id).unwrap();
+        let restored = asset::load(&target_root, &asset_id).unwrap().unwrap();
         assert_eq!(restored.content_location, existing.to_string_lossy());
         assert_eq!(fs::read(existing).unwrap(), content);
 
@@ -1163,7 +1184,7 @@ mod tests {
             Some(asset_id.clone())
         );
 
-        let restored_asset = asset::load(&root, &asset_id).unwrap();
+        let restored_asset = asset::load(&root, &asset_id).unwrap().unwrap();
         assert_eq!(restored_asset.kind, AssetKind::Midi);
         assert!(restored_asset.content_location.ends_with(".mid"));
         let restored_bytes = fs::read(&restored_asset.content_location).unwrap();
@@ -1220,7 +1241,7 @@ mod tests {
 
         let imported = import(&target_root, &package).unwrap();
         assert_eq!(imported.arrangement.audio_clips[0].asset_id, asset_id);
-        let restored = asset::load(&target_root, &asset_id).unwrap();
+        let restored = asset::load(&target_root, &asset_id).unwrap().unwrap();
         assert_eq!(restored.name, "Original take");
         assert!(
             !Path::new(&restored.content_location).exists(),
