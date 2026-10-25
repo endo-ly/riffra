@@ -870,7 +870,7 @@ fn build_render_plan(
             ));
         }
     }
-    let resources = resolve(data_root, built_in_instruments, &render_session);
+    let resources = resolve(data_root, built_in_instruments, &render_session)?;
     let (graph, diagnostics) = project_graph(&render_session, &resources);
     let dependency_warnings = validate_render_dependencies(&render_session, &diagnostics)?;
 

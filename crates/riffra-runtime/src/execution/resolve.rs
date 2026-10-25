@@ -17,13 +17,13 @@ pub(crate) fn resolve(
     data_root: &Path,
     catalog: &BuiltInInstrumentCatalog,
     session: &CreativeSession,
-) -> ResolvedResources {
+) -> Result<ResolvedResources, String> {
     let mut audio_paths = HashMap::new();
     for clip in &session.arrangement.audio_clips {
         if audio_paths.contains_key(&clip.asset_id) {
             continue;
         }
-        if let Some(path) = asset::resolve_content_location(data_root, &clip.asset_id) {
+        if let Some(path) = asset::resolve_content_location(data_root, &clip.asset_id)? {
             let path = PathBuf::from(path);
             if path.is_file() {
                 audio_paths.insert(clip.asset_id.clone(), path);
@@ -67,12 +67,12 @@ pub(crate) fn resolve(
         }
     }
 
-    ResolvedResources {
+    Ok(ResolvedResources {
         audio_paths,
         existing_plugin_paths,
         built_in_base_dirs,
         data_root: data_root.to_path_buf(),
-    }
+    })
 }
 
 #[cfg(test)]
@@ -194,7 +194,7 @@ mod tests {
             ));
 
         let catalog = test_catalog(&root.0, &preset_root);
-        let resources = resolve(&root.0, &catalog, &session);
+        let resources = resolve(&root.0, &catalog, &session).unwrap();
 
         assert_eq!(resources.audio_paths.get(&asset_id), Some(&audio));
         assert!(!resources.audio_paths.contains_key(&missing_asset_id));

@@ -1064,13 +1064,17 @@ mod tests {
             .collect()
         );
 
-        let original_location = asset::resolve_content_location(&root, &asset_id).unwrap();
+        let original_location = asset::resolve_content_location(&root, &asset_id)
+            .unwrap()
+            .unwrap();
         fs::remove_file(original_location).unwrap();
 
         // Restore content while retaining the canonical AssetId.
         let restored = import(&root, Path::new(&exported.path)).unwrap();
         assert_eq!(restored.arrangement.audio_clips[0].asset_id, asset_id);
-        let location = asset::resolve_content_location(&root, &asset_id).unwrap();
+        let location = asset::resolve_content_location(&root, &asset_id)
+            .unwrap()
+            .unwrap();
         assert_eq!(fs::read(&location).unwrap(), content);
         let _ = fs::remove_dir_all(root);
     }
@@ -1156,7 +1160,12 @@ mod tests {
         let manifest = read_manifest(Path::new(&exported.path));
         assert_eq!(manifest["assets"][0]["packagePath"], "assets/1-bass.mid");
 
-        fs::remove_file(asset::resolve_content_location(&root, &asset_id).unwrap()).unwrap();
+        fs::remove_file(
+            asset::resolve_content_location(&root, &asset_id)
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap();
         let restored = import(&root, Path::new(&exported.path)).unwrap();
         assert_eq!(
             restored.arrangement.midi_clips[0].asset_id,
@@ -1184,7 +1193,9 @@ mod tests {
         let exported = export(&root, &session, 9, &output).unwrap();
 
         // Replace the canonical content with different bytes under the same id.
-        let location = asset::resolve_content_location(&root, &asset_id).unwrap();
+        let location = asset::resolve_content_location(&root, &asset_id)
+            .unwrap()
+            .unwrap();
         fs::write(&location, b"different").unwrap();
 
         let result = import(&root, Path::new(&exported.path));

@@ -277,12 +277,15 @@ fn apply_project_runtime_candidate(
     state
         .runtime
         .apply_candidate_and_wait(
-            Arc::new(project_session(
-                &state.data_root,
-                state.built_in_instruments.as_ref(),
-                project_id,
-                session,
-            )),
+            Arc::new(
+                project_session(
+                    &state.data_root,
+                    state.built_in_instruments.as_ref(),
+                    project_id,
+                    session,
+                )
+                .map_err(command_error)?,
+            ),
             key,
             PROJECT_RUNTIME_TIMEOUT,
         )
@@ -350,12 +353,15 @@ pub(super) fn apply_project_runtime_transition(
     state
         .runtime
         .apply_and_wait(
-            Arc::new(project_session(
-                &state.data_root,
-                state.built_in_instruments.as_ref(),
-                project_id,
-                &canonical.session,
-            )),
+            Arc::new(
+                project_session(
+                    &state.data_root,
+                    state.built_in_instruments.as_ref(),
+                    project_id,
+                    &canonical.session,
+                )
+                .map_err(command_error)?,
+            ),
             riffra_core::ProjectionKey {
                 sequence: canonical.sequence,
                 session_revision: canonical.session.arrangement.revision,

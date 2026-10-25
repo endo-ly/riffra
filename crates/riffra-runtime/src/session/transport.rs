@@ -22,7 +22,7 @@ pub fn sync_arrangement_runtime<D: RuntimeDriver>(
                 context.built_in_instruments,
                 &canonical.project_id,
                 &canonical.session,
-            )),
+            )?),
             riffra_core::ProjectionKey {
                 sequence: canonical.sequence,
                 session_revision: canonical.session.arrangement.revision,
@@ -61,7 +61,7 @@ pub fn prepare_arrangement_candidate<D: RuntimeDriver>(
                 context.built_in_instruments,
                 &context.snapshot.project_id,
                 candidate,
-            )),
+            )?),
             riffra_core::ProjectionKey {
                 sequence: expected_sequence.saturating_add(1),
                 session_revision: candidate.arrangement.revision,
@@ -99,7 +99,7 @@ mod tests {
         )
         .unwrap();
         let catalog = crate::instrument::BuiltInInstrumentCatalog::load(&resource_root).unwrap();
-        let projection = project_session(&resource_root, &catalog, "project", &session);
+        let projection = project_session(&resource_root, &catalog, "project", &session).unwrap();
 
         assert_eq!(
             projection.diagnostics.missing_device_ids,

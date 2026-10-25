@@ -624,14 +624,23 @@ fn set_source_relations(
 
 /// Resolves an [`AssetId`] to its content file location. Returns `None` when the
 /// canonical record is missing (a lone file is never auto-restored).
-pub fn resolve_content_location(data_root: &Path, id: &AssetId) -> Option<String> {
-    let connection = open(data_root).ok()?;
+///
+/// # Errors
+/// Returns an error when the database or saved location cannot be read.
+pub fn resolve_content_location(data_root: &Path, id: &AssetId) -> Result<Option<String>, String> {
+    let connection = open(data_root)?;
     let location: Option<String> = connection
-        .prepare("SELECT content_location FROM assets WHERE id = ?1")
-        .ok()?
-        .query_row(params![id.as_str()], |row| row.get(0))
-        .ok();
-    location.filter(|value| !value.is_empty())
+        .query_row(
+            "SELECT content_location FROM assets WHERE id = ?1",
+            params![id.as_str()],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| format!("asset content location could not be read: {error}"))?;
+    match location {
+        Some(location) if location.is_empty() => Err("asset content location is empty".into()),
+        location => Ok(location),
+    }
 }
 
 /// Resolves a string AssetId (any form accepted by [`AssetId::from_normalized`])
@@ -976,6 +985,7 @@ mod tests {
 
         // Act / Assert
         assert!(load(&root, &id).unwrap().is_none());
+        assert!(resolve_content_location(&root, &id).unwrap().is_none());
         register_with_id(
             &root,
             &id,
@@ -1017,6 +1027,7 @@ mod tests {
         fs::remove_dir_all(&root).unwrap();
         fs::create_dir_all(root.join("library/riffra.db")).unwrap();
         assert!(load(&root, &id).is_err());
+        assert!(resolve_content_location(&root, &id).is_err());
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1034,7 +1045,7 @@ mod tests {
         )
         .unwrap();
         assert!(id.as_str().starts_with("asset:"));
-        let resolved = resolve_content_location(&root, &id).unwrap();
+        let resolved = resolve_content_location(&root, &id).unwrap().unwrap();
         assert_eq!(resolved, wav.to_string_lossy());
         let _ = std::fs::remove_dir_all(root);
     }
@@ -1095,7 +1106,7 @@ mod tests {
     fn resolve_returns_none_when_no_canonical_record_exists() {
         let root = root("none");
         let orphan = mint_asset_id();
-        assert!(resolve_content_location(&root, &orphan).is_none());
+        assert!(resolve_content_location(&root, &orphan).unwrap().is_none());
         let _ = std::fs::remove_dir_all(root);
     }
 

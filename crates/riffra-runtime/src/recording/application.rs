@@ -125,12 +125,15 @@ fn start_recording_in_session(
         .project_id()
         .map_err(|error| error.to_string())?;
     context.runtime.apply_and_wait(
-        Arc::new(project_session(
-            &context.data_root,
-            context.built_in_instruments.as_ref(),
-            &project_id,
-            session,
-        )),
+        Arc::new(
+            project_session(
+                &context.data_root,
+                context.built_in_instruments.as_ref(),
+                &project_id,
+                session,
+            )
+            .unwrap(),
+        ),
         riffra_core::ProjectionKey {
             sequence: projection.sequence,
             session_revision: session.arrangement.revision,

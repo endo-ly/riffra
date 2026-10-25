@@ -162,7 +162,7 @@ impl HostState {
                     self.built_in_instruments.as_ref(),
                     &project_id,
                     &snapshot.session,
-                )),
+                )?),
                 riffra_core::ProjectionKey {
                     sequence: snapshot.sequence,
                     session_revision: snapshot.session.arrangement.revision,
