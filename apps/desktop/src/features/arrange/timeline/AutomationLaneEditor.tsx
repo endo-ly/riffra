@@ -50,9 +50,7 @@ export function AutomationLaneEditor(props: Props) {
     return ownerKind && ownerId !== null ? { kind: ownerKind, id: ownerId } : null;
   }, [ownerKind, ownerId]);
   const devices = owner ? automationDevices(props.session, owner) : [];
-  const deviceKey = JSON.stringify(
-    devices.map((device) => [device.id, device.plugin.disabledPlaceholder]),
-  );
+  const deviceKey = JSON.stringify(devices.map((device) => [device.id, device.plugin]));
   const [parameters, setParameters] = useState<Record<string, DeviceParameterInfo[]>>({});
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -60,9 +58,9 @@ export function AutomationLaneEditor(props: Props) {
     setParameters({});
     setError(null);
     if (!owner) return;
-    const available = (JSON.parse(deviceKey) as [string, boolean][]).filter(
-      ([, disabledPlaceholder]) => !disabledPlaceholder,
-    );
+    const available = (
+      JSON.parse(deviceKey) as [string, { disabledPlaceholder: boolean }][]
+    ).filter(([, plugin]) => !plugin.disabledPlaceholder);
     void Promise.allSettled(
       available.map(async ([id]) => [id, await props.api.listDeviceParameters(owner, id)] as const),
     ).then((results) => {
