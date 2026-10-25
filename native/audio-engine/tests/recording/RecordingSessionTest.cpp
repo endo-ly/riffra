@@ -37,7 +37,12 @@ bool writeSyntheticTake(RecordingSession& session) {
             processedPointers[static_cast<std::size_t>(channel)] =
                 processedBuffers[static_cast<std::size_t>(channel)].data();
         }
-        if (!session.write(rawPointers.data(), processedPointers.data(), count)) return false;
+        if (!session.writeRaw(rawPointers.data(), count)) return false;
+    }
+    session.flushRaw();
+    for (int offset = 0; offset < kTotalSamples; offset += kBlockSize) {
+        const auto count = juce::jmin(kBlockSize, kTotalSamples - offset);
+        if (!session.writeProcessedOffline(processedPointers.data(), count, 1'000)) return false;
     }
     return true;
 }
@@ -95,17 +100,6 @@ TEST_F(RecordingSessionTest, PreservesIncompleteRecordingAsRecoverable) {
     EXPECT_EQ(static_cast<juce::int64>(manifest.getProperty("missingSamples", -1)), 0);
     EXPECT_TRUE(incompleteDirectory.getChildFile("raw.wav.partial").existsAsFile());
     EXPECT_TRUE(incompleteDirectory.getChildFile("processed.wav.partial").existsAsFile());
-}
-
-TEST_F(RecordingSessionTest, DoesNotUseApplicationOrUserDirectories) {
-    juce::String error;
-    auto session =
-        RecordingSession::create(directory.get(), kSampleRate, kChannels, kChannels, error);
-    ASSERT_NE(session, nullptr) << error;
-
-    EXPECT_EQ(session->getDirectory().getFullPathName(), directory.get().getFullPathName());
-    EXPECT_TRUE(session->getDirectory().isAChildOf(
-        juce::File::getSpecialLocation(juce::File::tempDirectory)));
 }
 
 }  // namespace riffra

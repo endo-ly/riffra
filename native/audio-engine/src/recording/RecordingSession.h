@@ -19,10 +19,7 @@ public:
     RecordingSession(const RecordingSession&) = delete;
     RecordingSession& operator=(const RecordingSession&) = delete;
 
-    bool write(const float* const* rawData, const float* const* processedData,
-               int numSamples) noexcept;
     bool writeRaw(const float* const* rawData, int numSamples) noexcept;
-    bool writeProcessed(const float* const* processedData, int numSamples) noexcept;
     bool writeProcessedOffline(const float* const* processedData, int numSamples,
                                int timeoutMs) noexcept;
     /// Flush and close the raw writer so the file can be read back.
@@ -55,7 +52,6 @@ public:
     [[nodiscard]] std::uint64_t getFirstMissingSample() const noexcept;
     [[nodiscard]] std::uint64_t getLastMissingSample() const noexcept;
     [[nodiscard]] juce::File getDirectory() const { return recordingDirectory; }
-    [[nodiscard]] juce::var status() const;
 
 private:
     RecordingSession(juce::File directory, double sampleRate, int rawChannels,
@@ -82,7 +78,6 @@ private:
     juce::TimeSliceThread writerThread{"Riffra recording writer"};
     std::unique_ptr<juce::AudioFormatWriter::ThreadedWriter> rawWriter;
     std::unique_ptr<juce::AudioFormatWriter::ThreadedWriter> processedWriter;
-    std::atomic<std::uint64_t> samplesWritten{0};
     std::atomic<std::uint64_t> rawSamplesWritten{0};
     std::atomic<std::uint64_t> processedSamplesWritten{0};
     std::atomic<std::uint64_t> rawAttemptedSamples{0};
