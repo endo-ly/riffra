@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { LocalHostInfo } from '@/model/domain';
 import { setHostConnectionAvailability, setHostGeneration } from '@/native/invoke';
 import { FakeNativeApi } from '@/native/native-api-fake';
+import type { HostConnectionBootstrap } from '@/native/native-api';
 import { useHostConnection } from './useHostConnection';
 
 const hostA: LocalHostInfo = {
@@ -57,5 +58,59 @@ describe('useHostConnection', () => {
 
     await waitFor(() => expect(result.current.hosts).toEqual([hostB]));
     expect(api.calls.filter((call) => call === 'listLocalHosts')).toHaveLength(2);
+  });
+
+  it('ignores a stale switch response after reconnect supersedes it', async () => {
+    const api = new FakeNativeApi();
+    const bootstrap = await api.bootstrap();
+    const initialState = await api.getHostConnectionState();
+    const staleState = {
+      ...initialState,
+      mode: 'embedded' as const,
+      generation: initialState.generation + 2,
+    };
+    const currentState = {
+      ...initialState,
+      mode: 'attached' as const,
+      generation: initialState.generation + 1,
+    };
+    let resolveSwitch!: (result: HostConnectionBootstrap) => void;
+    api.setResponse(
+      'switchHost',
+      () =>
+        new Promise<HostConnectionBootstrap>((resolve) => {
+          resolveSwitch = resolve;
+        }),
+    );
+    api.setResponse('reconnectHost', {
+      state: currentState,
+      bootstrap: { ...bootstrap, hostConnection: currentState },
+    });
+    const { result } = renderHook(() => useHostConnection(api));
+    await waitFor(() => expect(api.calls).toContain('listLocalHosts'));
+
+    let switchOperation!: Promise<HostConnectionBootstrap | null>;
+    act(() => {
+      switchOperation = result.current.switchHost({ type: 'embedded' });
+    });
+    await waitFor(() => expect(result.current.switching).toBe(true));
+    await act(async () => {
+      await result.current.reconnect();
+    });
+
+    expect(result.current.state).toEqual(currentState);
+    expect(result.current.switching).toBe(false);
+    await act(async () => {
+      resolveSwitch({
+        state: staleState,
+        bootstrap: { ...bootstrap, hostConnection: staleState },
+      });
+      await switchOperation;
+    });
+
+    expect(result.current.state).toEqual(currentState);
+    expect(result.current.switching).toBe(false);
+    expect(api.calls).toContain('switchHost');
+    expect(api.calls).toContain('reconnectHost');
   });
 });
