@@ -15,7 +15,7 @@
 namespace riffra {
 namespace {
 
-enum class OutputKind { control, state, telemetry };
+enum class OutputKind { control, telemetry };
 
 class OutputWriter final {
 public:

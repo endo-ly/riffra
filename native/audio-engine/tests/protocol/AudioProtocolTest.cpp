@@ -30,7 +30,7 @@ TEST(AudioProtocolTest, ControlOutputDiscardsQueuedTelemetry) {
     queue.enqueueControl("new control");
     ASSERT_TRUE(queue.hasControl());
     EXPECT_EQ(queue.takeControl(), "new control");
-    EXPECT_FALSE(queue.hasTelemetry());
+    EXPECT_TRUE(queue.empty());
 }
 
 TEST(AudioDeviceServiceTest, ReportsInitialMetersForTheActiveProject) {
