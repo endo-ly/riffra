@@ -15,10 +15,10 @@ use crate::audio::AudioSupervisor;
 use riffra_core::{AssetId, AssetKind};
 
 /// Concrete dependencies an Asset Application Operation needs.
-pub struct AssetPreviewContext<'a> {
-    pub audio: &'a AudioSupervisor,
-    pub data_root: &'a Path,
-    pub safe_mode: bool,
+pub(crate) struct AssetPreviewContext<'a> {
+    pub(crate) audio: &'a AudioSupervisor,
+    pub(crate) data_root: &'a Path,
+    pub(crate) safe_mode: bool,
 }
 
 /// Preview tuning for [`preview_asset`]. Mirrors the runtime's existing preview
@@ -26,15 +26,15 @@ pub struct AssetPreviewContext<'a> {
 /// tuning it does not care about.
 #[derive(Clone, Debug, Default, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct AssetPreviewOptions {
+pub(crate) struct AssetPreviewOptions {
     #[serde(default)]
-    pub start_ms: u64,
+    pub(crate) start_ms: u64,
     #[serde(default)]
-    pub end_ms: Option<u64>,
+    pub(crate) end_ms: Option<u64>,
     #[serde(default)]
-    pub looped: bool,
+    pub(crate) looped: bool,
     #[serde(default = "default_gain")]
-    pub gain: f32,
+    pub(crate) gain: f32,
 }
 
 fn default_gain() -> f32 {
@@ -50,7 +50,7 @@ fn is_previewable(kind: AssetKind) -> bool {
 /// Starts an Audio Runtime preview for a canonical Asset. The AssetId is the
 /// only identifier React supplies; content-location resolution, file-existence
 /// checks, and the runtime call all stay inside Rust.
-pub fn preview_asset(
+pub(crate) fn preview_asset(
     context: &AssetPreviewContext<'_>,
     asset_id: AssetId,
     options: AssetPreviewOptions,
@@ -104,7 +104,7 @@ pub fn preview_asset(
 /// Returns a string error when the path is not a `.mid`/`.midi` file, the file
 /// cannot be read, the bytes are not a valid SMF, the copy cannot be written,
 /// or canonical registration fails.
-pub fn import_midi_asset(
+pub(crate) fn import_midi_asset(
     data_root: &Path,
     source_path: &str,
     name: Option<&str>,
@@ -112,20 +112,9 @@ pub fn import_midi_asset(
     riffra_host::import_midi_asset(data_root, source_path, name)
 }
 
-/// Imports a Standard MIDI File delivered as an in-memory byte payload. Used by
-/// HTML5 drag-and-drop, where the OS file path is not exposed to the webview;
-/// the caller supplies the display name (typically the dropped file's stem).
-///
-/// # Errors
-/// Returns a string error when the name is empty, the bytes are not a valid
-/// SMF, the file cannot be written, or canonical registration fails.
-pub fn import_midi_bytes(data_root: &Path, name: &str, bytes: &[u8]) -> Result<AssetId, String> {
-    riffra_host::import_midi_bytes(data_root, name, bytes)
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{import_midi_asset, import_midi_bytes};
+    use super::import_midi_asset;
     use crate::asset::load;
     use riffra_core::{AssetKind, ProvenanceOperation};
     use std::path::PathBuf;
@@ -238,34 +227,6 @@ mod tests {
         let error =
             import_midi_asset(&root, &root.join("ghost.mid").to_string_lossy(), None).unwrap_err();
         assert!(error.contains("could not be read"));
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn imports_midi_bytes_as_an_imported_asset() {
-        let root = test_root("bytes");
-        let bytes = minimal_smf(480);
-        let id = import_midi_bytes(&root, "dropped", &bytes).unwrap();
-        let asset = load(&root, &id).unwrap();
-        assert_eq!(asset.kind, AssetKind::Midi);
-        assert_eq!(asset.name, "dropped");
-        let provenance = asset.provenance.unwrap();
-        assert_eq!(provenance.operation, ProvenanceOperation::Imported);
-        let destination = PathBuf::from(&asset.content_location);
-        assert!(destination.starts_with(root.join("assets").join("imports")));
-        assert_eq!(
-            destination.extension().and_then(|value| value.to_str()),
-            Some("mid")
-        );
-        assert_eq!(std::fs::read(&destination).unwrap(), bytes);
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn rejects_an_empty_name_for_byte_import() {
-        let root = test_root("empty-name");
-        let error = import_midi_bytes(&root, "   ", &minimal_smf(480)).unwrap_err();
-        assert!(error.contains("must not be empty"));
         let _ = std::fs::remove_dir_all(root);
     }
 }

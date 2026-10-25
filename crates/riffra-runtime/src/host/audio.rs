@@ -357,12 +357,7 @@ fn native_audio_error(error: NativeAudioError) -> ProtocolError {
         }
         _ => ErrorCode::CommandFailed,
     };
-    ProtocolError::new(code, descriptor.message).with_details(serde_json::json!({
-        "domain": "nativeAudio",
-        "kind": descriptor.kind,
-        "operation": descriptor.operation,
-        "details": descriptor.details,
-    }))
+    crate::audio::native_error_protocol(code, descriptor)
 }
 
 #[cfg(test)]

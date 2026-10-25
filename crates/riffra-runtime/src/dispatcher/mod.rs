@@ -7,7 +7,7 @@ use crate::api::{
 use crate::instrument::BuiltInInstrumentCatalog;
 use riffra_control::{ControlRequest, ErrorCode, ProtocolError};
 use riffra_core::application::ApplicationMutation;
-use riffra_core::ports::{PortError, SessionStorage};
+use riffra_core::ports::SessionStorage;
 use riffra_core::{AppCore, ApplicationError, AssetId, CreativeSession};
 use riffra_host::{DataRootLease, ProjectStore};
 use serde_json::Value;
@@ -24,6 +24,11 @@ mod music;
 mod project;
 mod session;
 mod track;
+
+/// Returns whether a read command has an external effect that requires project serialization.
+pub(crate) fn canonical_read_requires_project_writer(command: &CanonicalCommand) -> bool {
+    matches!(command, CanonicalCommand::AssetImportMidi(_))
+}
 
 #[derive(Debug)]
 pub enum DispatchError {
@@ -72,9 +77,10 @@ impl DispatchError {
         match self {
             Self::InvalidRequest { message, details } => {
                 let error = ProtocolError::new(ErrorCode::InvalidRequest, message);
-                details
-                    .clone()
-                    .map_or(error.clone(), |details| error.with_details(details))
+                match details {
+                    Some(details) => error.with_details(details.clone()),
+                    None => error,
+                }
             }
             Self::CommandFailed(message) => ProtocolError::new(ErrorCode::CommandFailed, message),
             Self::RuntimeUnavailable(message) => {
@@ -219,14 +225,6 @@ impl ProjectStoreRef<'_> {
     }
 }
 
-#[derive(Default)]
-struct MemorySessionStorage;
-impl SessionStorage for MemorySessionStorage {
-    fn save(&self, _session: &CreativeSession) -> Result<(), PortError> {
-        Ok(())
-    }
-}
-
 /// Shared canonical command application used by Standalone and live Hosts.
 pub struct HostDispatcher<'a> {
     _lease: Option<DataRootLease>,
@@ -250,6 +248,31 @@ pub type Dispatcher = HostDispatcher<'static>;
 pub struct DispatchResult {
     pub output: ControlOutput,
     pub sequence: u64,
+}
+
+fn validate_dispatch_preconditions(
+    scope: CommandScope,
+    expected_sequence: Option<u64>,
+    expected_project_id: Option<&str>,
+    canonical: &riffra_core::CanonicalState,
+) -> Result<(), DispatchError> {
+    if let (CommandScope::Project { .. }, Some(expected_project_id)) = (scope, expected_project_id)
+        && expected_project_id != canonical.project_id
+    {
+        return Err(DispatchError::ProjectConflict {
+            expected_project_id: expected_project_id.to_owned(),
+            current_project_id: canonical.project_id.clone(),
+        });
+    }
+    if let Some(expected_sequence) = expected_sequence
+        && expected_sequence != canonical.sequence
+    {
+        return Err(DispatchError::Conflict {
+            expected_sequence,
+            current_sequence: canonical.sequence,
+        });
+    }
+    Ok(())
 }
 
 impl HostDispatcher<'static> {
@@ -333,34 +356,41 @@ impl<'a> HostDispatcher<'a> {
         if matches!(command, ControlCommand::Runtime(_)) {
             return Err(DispatchError::requires_live_host());
         }
+
+        let command = match command {
+            ControlCommand::Canonical(command)
+                if command.access() == CanonicalAccess::Read
+                    && !canonical_read_requires_project_writer(&command) =>
+            {
+                let snapshot = self.core.cell().read();
+                validate_dispatch_preconditions(
+                    policy.scope,
+                    expected_sequence,
+                    expected_project_id,
+                    &snapshot.canonical,
+                )?;
+                return self.execute_read_canonical(command, &snapshot.canonical);
+            }
+            command => command,
+        };
+
         let mut writer = (policy.scope != CommandScope::Host).then(|| self.core.cell().write());
         let canonical = writer.as_ref().map_or_else(
             || self.core.cell().read().canonical.clone(),
             |writer| writer.project().core.canonical_state(),
         );
-        if let (CommandScope::Project { .. }, Some(expected_project_id)) =
-            (policy.scope, expected_project_id)
-            && expected_project_id != canonical.project_id
-        {
-            return Err(DispatchError::ProjectConflict {
-                expected_project_id: expected_project_id.into(),
-                current_project_id: canonical.project_id,
-            });
-        }
-        if let Some(expected_sequence) = expected_sequence
-            && expected_sequence != canonical.sequence
-        {
-            return Err(DispatchError::Conflict {
-                expected_sequence,
-                current_sequence: canonical.sequence,
-            });
-        }
+        validate_dispatch_preconditions(
+            policy.scope,
+            expected_sequence,
+            expected_project_id,
+            &canonical,
+        )?;
         match command {
+            ControlCommand::Canonical(command) if command.access() == CanonicalAccess::Read => {
+                self.execute_read_canonical(command, &canonical)
+            }
             ControlCommand::Canonical(command) => {
                 let access = command.access();
-                if access == CanonicalAccess::Read {
-                    return self.execute_read_canonical(command, canonical);
-                }
                 let (result, committed) = self.execute_canonical(
                     writer
                         .as_mut()
@@ -369,12 +399,7 @@ impl<'a> HostDispatcher<'a> {
                     access,
                     canonical,
                 )?;
-                self.publish_standalone(
-                    writer
-                        .as_ref()
-                        .expect("canonical mutation holds the writer"),
-                    committed,
-                );
+                self.publish_standalone(committed);
                 Ok(result)
             }
             ControlCommand::Project(command) => {
@@ -410,16 +435,10 @@ impl<'a> HostDispatcher<'a> {
     pub(crate) fn execute_read_canonical(
         &self,
         command: CanonicalCommand,
-        canonical: riffra_core::CanonicalState,
+        canonical: &riffra_core::CanonicalState,
     ) -> Result<DispatchResult, DispatchError> {
         let sequence = canonical.sequence;
-        let mut core = AppCore::new(
-            canonical.project_id.clone(),
-            canonical.session.clone(),
-            sequence,
-        );
-        let storage = MemorySessionStorage;
-        let output = self.run_canonical(&mut core.application(&storage), command, canonical)?;
+        let output = self.run_read_canonical(command, canonical)?;
         Ok(DispatchResult { output, sequence })
     }
 
@@ -463,14 +482,10 @@ impl<'a> HostDispatcher<'a> {
             .map_err(DispatchError::CommandFailed)
     }
 
-    fn publish_standalone<T>(
-        &self,
-        writer: &crate::host::open_project::ProjectWriter<'_>,
-        committed: crate::host::open_project::Committed<T>,
-    ) {
+    fn publish_standalone<T>(&self, committed: crate::host::open_project::Committed<T>) {
         crate::library::index::refresh(
             &self.data_root,
-            &writer.project().storage,
+            &committed.snapshot.canonical.project_id,
             &committed.snapshot.canonical.session,
         );
     }
@@ -538,7 +553,7 @@ fn parse_asset_id(value: &str) -> Result<AssetId, DispatchError> {
 #[cfg(test)]
 mod tests {
     use super::{Dispatcher, HostDispatcher};
-    use crate::api::{CommandExecutor, ControlCommand};
+    use crate::api::{CanonicalAccess, CommandExecutor, ControlCommand};
     use crate::test_support::{command, mutated_session, output_value};
     use riffra_control::{ControlRequest, ErrorCode};
     use riffra_host::now_ms;
@@ -556,6 +571,25 @@ mod tests {
         )
         .unwrap();
         (dispatcher, root)
+    }
+
+    #[test]
+    fn midi_import_is_a_read_command_that_still_requires_project_serialization() {
+        let ControlCommand::Canonical(import) =
+            ControlCommand::decode("asset.import-midi", json!({"path":"song.mid"})).unwrap()
+        else {
+            panic!("MIDI import is a canonical command");
+        };
+        assert_eq!(import.access(), CanonicalAccess::Read);
+        assert!(super::canonical_read_requires_project_writer(&import));
+
+        let ControlCommand::Canonical(track_list) =
+            ControlCommand::decode("track.list", json!({})).unwrap()
+        else {
+            panic!("Track list is a canonical command");
+        };
+        assert_eq!(track_list.access(), CanonicalAccess::Read);
+        assert!(!super::canonical_read_requires_project_writer(&track_list));
     }
 
     #[test]

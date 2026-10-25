@@ -28,7 +28,8 @@ pub use music::{
     MusicalHarmonyEventView, MusicalMidiNoteInput, MusicalMidiNotePatch, MusicalMidiNoteView,
     MusicalNoteClipView, MusicalNoteListNoteView, MusicalNoteListRequest, MusicalNoteListView,
     MusicalNoteScope, MusicalNoteTimebaseView, MusicalNoteTransformRequest, MusicalRegionView,
-    RawMidiNoteView, ResolvedPhrase, ResolvedPhraseNote,
+    RawMidiNoteView, ResolvedPhrase, ResolvedPhraseNote, get_musical_note, list_harmony_events,
+    list_musical_notes, list_regions, resolve_harmony_chord, resolve_phrase_pattern,
 };
 pub use session::{
     ClipInspection, EffectInspection, InspectionCounts, InspectionSelection, InstrumentInspection,

@@ -1,6 +1,6 @@
-pub mod application;
-pub mod materialize;
-pub mod model;
+pub(crate) mod application;
+pub(crate) mod materialize;
+pub(crate) mod model;
 mod repository;
 
 pub use application::{

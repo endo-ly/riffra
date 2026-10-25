@@ -1190,7 +1190,7 @@ fn commit_recording_session(
     let committed = writer
         .commit(|mut app| app.commit_recording(base, candidate))
         .map_err(|error| error.to_string())?;
-    Ok(context.host.publish_commit(&writer, committed).0)
+    Ok(context.host.publish_commit(committed).0)
 }
 
 fn next_recording_pass_ordinal(

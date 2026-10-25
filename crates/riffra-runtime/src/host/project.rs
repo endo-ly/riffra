@@ -1,4 +1,5 @@
 use super::HostState;
+use super::control::audio_error;
 use crate::api::output::{ProjectActivationResult, ProjectState};
 use crate::api::{ControlOutput, ProjectCommand};
 use crate::execution::project_session;
@@ -60,7 +61,7 @@ pub(super) fn dispatch(
                     })
                 })
                 .map_err(|error| command_error(error.to_string()))?;
-            let (mutation, _) = state.publish_commit(writer, committed);
+            let (mutation, _) = state.publish_commit(committed);
             let project_state = project_state(state)?;
             state
                 .events
@@ -246,13 +247,10 @@ fn activate_project_inner(
         canonical: snapshot.canonical.clone(),
         recovery: prepared.recovery,
     };
-    state.publish_commit(
-        writer,
-        super::open_project::Committed {
-            snapshot,
-            value: (),
-        },
-    );
+    state.publish_commit(super::open_project::Committed {
+        snapshot,
+        value: (),
+    });
     state
         .events
         .emit(crate::HostEvent::ProjectActivated(activation.clone()));
@@ -381,10 +379,6 @@ fn project_runtime_projection_error(error: crate::RuntimeError) -> ProtocolError
 
 fn command_error(message: impl Into<String>) -> ProtocolError {
     ProtocolError::new(ErrorCode::CommandFailed, message)
-}
-
-fn audio_error(error: crate::NativeAudioError) -> ProtocolError {
-    error.protocol_error()
 }
 
 #[cfg(test)]

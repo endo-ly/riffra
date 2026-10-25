@@ -54,13 +54,6 @@ fn repair_previous_arrangement<D: RuntimeDriver>(
 /// Validates a plugin-bearing candidate against the real Arrangement Runtime
 /// before persisting it. A failed candidate never becomes part of the
 /// canonical Session, and a persistence failure repairs the previous graph.
-pub(super) fn commit_device_arrangement<D: RuntimeDriver>(
-    context: &mut SessionContext<'_, D>,
-    prepared: riffra_core::PreparedSession,
-) -> Result<crate::api::output::ArrangementMutationResult, AdapterError> {
-    commit_device_arrangement_with_created_ids(context, prepared, Default::default())
-}
-
 pub(super) fn commit_device_arrangement_with_created_ids<D: RuntimeDriver>(
     context: &mut SessionContext<'_, D>,
     prepared: riffra_core::PreparedSession,
@@ -69,80 +62,46 @@ pub(super) fn commit_device_arrangement_with_created_ids<D: RuntimeDriver>(
     if let Err(error) =
         prepare_arrangement_candidate(context, prepared.session(), prepared.sequence())
     {
-        return Err(match error {
-            AdapterError::Conflict {
-                expected_sequence,
-                current_sequence,
-            } => AdapterError::Conflict {
-                expected_sequence,
-                current_sequence,
-            },
-            AdapterError::ProjectConflict {
-                expected_project_id,
-                current_project_id,
-            } => AdapterError::ProjectConflict {
-                expected_project_id,
-                current_project_id,
-            },
-            AdapterError::RuntimeUnavailable(message) => {
-                AdapterError::runtime(repair_previous_arrangement(context, message))
-            }
-            AdapterError::Native(error) => AdapterError::Native({
-                let descriptor = error.descriptor();
-                crate::NativeAudioError::structured(
-                    descriptor.kind,
-                    repair_previous_arrangement(context, descriptor.message),
-                    descriptor.operation.as_deref().unwrap_or_default(),
-                    descriptor.details,
-                )
-            }),
-            AdapterError::CommandFailed(message) => {
-                AdapterError::command(repair_previous_arrangement(context, message))
-            }
-        });
+        return Err(repair_candidate_error(context, error, false));
     }
     let committed = match context.commit(|mut app| app.commit_prepared(prepared)) {
         Ok(committed) => committed,
-        Err(error) => {
-            return Err(match error {
-                AdapterError::Conflict {
-                    expected_sequence,
-                    current_sequence,
-                } => {
-                    let _ = repair_previous_arrangement(context, error.to_string());
-                    AdapterError::Conflict {
-                        expected_sequence,
-                        current_sequence,
-                    }
-                }
-                AdapterError::ProjectConflict {
-                    expected_project_id,
-                    current_project_id,
-                } => AdapterError::ProjectConflict {
-                    expected_project_id,
-                    current_project_id,
-                },
-                AdapterError::RuntimeUnavailable(message) => {
-                    AdapterError::runtime(repair_previous_arrangement(context, message))
-                }
-                AdapterError::Native(error) => AdapterError::Native({
-                    let descriptor = error.descriptor();
-                    crate::NativeAudioError::structured(
-                        descriptor.kind,
-                        repair_previous_arrangement(context, descriptor.message),
-                        descriptor.operation.as_deref().unwrap_or_default(),
-                        descriptor.details,
-                    )
-                }),
-                AdapterError::CommandFailed(message) => {
-                    AdapterError::command(repair_previous_arrangement(context, message))
-                }
-            });
-        }
+        Err(error) => return Err(repair_candidate_error(context, error, true)),
     };
     let mut mutation = committed.0;
     mutation.created_entity_ids = created_entity_ids;
     Ok(mutation)
+}
+
+fn repair_candidate_error<D: RuntimeDriver>(
+    context: &mut SessionContext<'_, D>,
+    error: AdapterError,
+    restore_on_conflict: bool,
+) -> AdapterError {
+    match error {
+        conflict @ AdapterError::Conflict { .. } => {
+            if restore_on_conflict {
+                let _ = repair_previous_arrangement(context, conflict.to_string());
+            }
+            conflict
+        }
+        conflict @ AdapterError::ProjectConflict { .. } => conflict,
+        AdapterError::RuntimeUnavailable(message) => {
+            AdapterError::runtime(repair_previous_arrangement(context, message))
+        }
+        AdapterError::Native(error) => {
+            let descriptor = error.descriptor();
+            AdapterError::Native(crate::NativeAudioError::structured(
+                descriptor.kind,
+                repair_previous_arrangement(context, descriptor.message),
+                descriptor.operation.unwrap_or_default(),
+                descriptor.details,
+            ))
+        }
+        AdapterError::CommandFailed(message) => {
+            AdapterError::command(repair_previous_arrangement(context, message))
+        }
+    }
 }
 
 pub fn set_track_audio_input(
@@ -531,7 +490,7 @@ pub(crate) fn replace_missing_track_plugin_with_expected_sequence(
         Some(sequence) => prepared.with_expected_sequence(sequence),
         None => prepared,
     };
-    commit_device_arrangement(context, prepared)
+    commit_device_arrangement_with_created_ids(context, prepared, Default::default())
 }
 
 #[cfg(test)]
@@ -734,7 +693,8 @@ mod tests {
 
         // Act
         let candidate = prepared_plugin_candidate(&context);
-        let result = commit_device_arrangement(&mut context, candidate);
+        let result =
+            commit_device_arrangement_with_created_ids(&mut context, candidate, Default::default());
 
         // Assert
         assert!(result.is_err());
@@ -774,7 +734,8 @@ mod tests {
 
         // Act
         let candidate = prepared_plugin_candidate(&context);
-        let result = commit_device_arrangement(&mut context, candidate);
+        let result =
+            commit_device_arrangement_with_created_ids(&mut context, candidate, Default::default());
 
         // Assert
         assert!(matches!(
@@ -812,7 +773,8 @@ mod tests {
         assert_eq!(committed.snapshot.canonical.sequence, 1);
 
         // Act
-        let result = commit_device_arrangement(&mut context, candidate);
+        let result =
+            commit_device_arrangement_with_created_ids(&mut context, candidate, Default::default());
 
         // Assert
         assert!(matches!(
@@ -843,7 +805,8 @@ mod tests {
 
         // Act
         let candidate = prepared_plugin_candidate(&context);
-        let result = commit_device_arrangement(&mut context, candidate);
+        let result =
+            commit_device_arrangement_with_created_ids(&mut context, candidate, Default::default());
 
         // Assert
         assert!(result.is_err());

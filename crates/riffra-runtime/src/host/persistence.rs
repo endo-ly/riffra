@@ -298,7 +298,7 @@ impl HostState {
                 )
             })
             .map_err(|error| error.to_string())?;
-        self.publish_commit(writer, committed);
+        self.publish_commit(committed);
         Ok(())
     }
 }
@@ -557,7 +557,7 @@ mod tests {
         });
 
         let mut pending = periodic.join().unwrap();
-        let (result, _) = state.publish_commit(&writer, committed);
+        let (result, _) = state.publish_commit(committed);
         assert_eq!(pending.len(), 1);
         assert_eq!(result.canonical, own_snapshot.canonical);
         drop(writer);

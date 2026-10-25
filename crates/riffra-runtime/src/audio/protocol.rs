@@ -21,7 +21,7 @@ use crate::model::{
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
-fn normalize_sample_rate(rate: f64) -> Option<u32> {
+pub(crate) fn normalize_sample_rate(rate: f64) -> Option<u32> {
     if !rate.is_finite() || rate <= 0.0 || rate > f64::from(u32::MAX) {
         return None;
     }

@@ -37,15 +37,7 @@ pub(crate) fn prepare(
     let storage = project_store
         .session_store(project_id)
         .map_err(|error| error.to_string())?;
-    let project_state = ProjectState {
-        active_project_id: project_id.to_owned(),
-        projects: project_store
-            .list()
-            .map_err(|error| error.to_string())?
-            .into_iter()
-            .map(ProjectSummary::from)
-            .collect(),
-    };
+    let project_state = state(project_store, project_id)?;
     let recovery = recovery(&storage, loaded.recovered_from_generation)?;
     Ok(PreparedActivation {
         loaded,
