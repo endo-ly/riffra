@@ -135,9 +135,9 @@ pub fn export(
         let base = source_path
             .file_stem()
             .and_then(|name| name.to_str())
-            .map(safe_name)
+            .map(|name| asset::safe_name(name, "project"))
             .filter(|name| !name.is_empty())
-            .unwrap_or_else(|| safe_name(&canonical.name));
+            .unwrap_or_else(|| asset::safe_name(&canonical.name, "project"));
         let extension = source_path
             .extension()
             .and_then(|extension| extension.to_str())
@@ -800,27 +800,6 @@ fn resolve_packaged_path(
         return Err("Project package path is not a safe relative path.".into());
     }
     Ok(package_root.join(relative))
-}
-
-fn safe_name(value: &str) -> String {
-    let mut result = value
-        .chars()
-        .filter_map(|character| {
-            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
-                Some(character)
-            } else if character.is_whitespace() {
-                Some('-')
-            } else {
-                None
-            }
-        })
-        .collect::<String>();
-    result.truncate(80);
-    if result.is_empty() {
-        "project".into()
-    } else {
-        result
-    }
 }
 
 fn files_equal(left: &Path, right: &Path) -> Result<bool, String> {

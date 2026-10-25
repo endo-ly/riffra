@@ -745,7 +745,7 @@ pub(crate) fn unique_import_destination_with_ext(
     let directory = data_root.join("assets").join("imports");
     fs::create_dir_all(&directory)
         .map_err(|error| format!("Import asset folder could not be created: {error}"))?;
-    let safe = safe_name(name);
+    let safe = safe_name(name, "asset");
     let extension = extension.trim_start_matches('.');
     if extension.is_empty()
         || !extension
@@ -925,7 +925,7 @@ fn build_provenance(
     }))
 }
 
-fn safe_name(value: &str) -> String {
+pub(crate) fn safe_name(value: &str, fallback: &str) -> String {
     let mut result = value
         .chars()
         .filter_map(|character| {
@@ -940,7 +940,7 @@ fn safe_name(value: &str) -> String {
         .collect::<String>();
     result.truncate(80);
     if result.is_empty() {
-        "asset".into()
+        fallback.into()
     } else {
         result
     }
