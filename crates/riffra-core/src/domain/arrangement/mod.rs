@@ -1715,27 +1715,10 @@ impl Arrangement {
                 return Err("Audio clips require ids, names, tracks and asset ids.".into());
             }
             clip.validate_and_normalize()?;
-            let mut candidate = Arrangement {
-                revision: arrangement.revision,
-                timebase: arrangement.timebase.clone(),
-                loop_range: arrangement.loop_range,
-                punch_range: arrangement.punch_range,
-                tracks: arrangement.tracks.clone(),
-                mixer: Mixer::default(),
-                audio_clips: Vec::new(),
-                midi_clips: Vec::new(),
-                automation_lanes: Vec::new(),
-                markers: Vec::new(),
-                regions: Vec::new(),
-                harmony_events: arrangement.harmony_events.clone(),
-                recording_sessions: arrangement.recording_sessions.clone(),
-                recording_passes: arrangement.recording_passes.clone(),
-                takes: arrangement.takes.clone(),
-            };
-            candidate
-                .add_audio_clip(clip, |_| true)
+            arrangement
+                .validate_audio_clip(&clip)
                 .map_err(|error| error.to_string())?;
-            normalized_clips.push(candidate.audio_clips.pop().expect("validated clip"));
+            normalized_clips.push(clip);
         }
         arrangement.audio_clips = normalized_clips;
         if arrangement.midi_clips.len() > 256 {
