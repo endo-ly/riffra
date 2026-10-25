@@ -987,9 +987,10 @@ impl HostState {
                 return adapter_mutation(commit.map(|(mutation, _)| mutation));
             }
 
-            RuntimeCommand::MissingList(_) => {
-                ControlOutput::Missing(missing::collect_missing(&self.data_root, &current.session))
-            }
+            RuntimeCommand::MissingList(_) => ControlOutput::Missing(
+                missing::collect_missing(&self.data_root, &current.session)
+                    .map_err(command_error)?,
+            ),
 
             RuntimeCommand::RecordStart(params) => {
                 if self.safe_mode {
@@ -1176,9 +1177,11 @@ impl HostState {
                         ProtocolError::new(ErrorCode::InvalidRequest, error.to_string())
                     })?;
                     PathBuf::from(
-                        crate::asset::resolve_content_location(&self.data_root, &id).ok_or_else(
-                            || command_error(format!("asset is not available: {id}")),
-                        )?,
+                        crate::asset::resolve_content_location(&self.data_root, &id)
+                            .map_err(command_error)?
+                            .ok_or_else(|| {
+                                command_error(format!("asset is not available: {id}"))
+                            })?,
                     )
                 } else {
                     params.path.map(PathBuf::from).ok_or_else(|| {

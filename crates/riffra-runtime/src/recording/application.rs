@@ -130,7 +130,7 @@ fn start_recording_in_session(
             context.built_in_instruments.as_ref(),
             &project_id,
             session,
-        )),
+        )?),
         riffra_core::ProjectionKey {
             sequence: projection.sequence,
             session_revision: session.arrangement.revision,
@@ -1358,7 +1358,9 @@ fn place_recording_on_timeline(
     let audio_path = processed_asset_id
         .as_ref()
         .or(raw_asset_id.as_ref())
-        .and_then(|asset_id| crate::asset::load(&context.data_root, asset_id))
+        .map(|asset_id| crate::asset::load(&context.data_root, asset_id))
+        .transpose()?
+        .flatten()
         .map(|asset| asset.content_location);
     let audio_source = audio_path
         .as_ref()
@@ -1858,32 +1860,72 @@ mod tests {
     }
 
     #[test]
-    fn no_armed_track_rejects_recording_before_audio_start() {
-        let root = temp_root("no-armed-track");
-        let audio = AudioSupervisor::offline("test");
-        let mut session = CreativeSession::new(1);
-        session
-            .arrangement
-            .tracks
-            .push(Track::audio("track:unarmed".into(), "Unarmed".into()));
-        let ctx = context_for(&root, &audio, false);
-        let storage = ctx.host.project.write().project().storage.clone();
-        ctx.host
-            .project
-            .write()
-            .replace(crate::host::open_project::OpenProject {
-                storage,
-                core: AppCore::new(
-                    ctx.host.project.read().canonical.project_id.clone(),
-                    session,
-                    0,
-                ),
-                recovered_from_generation: false,
-            });
-        let error = start_recording(&ctx).unwrap_err();
+    fn recording_preconditions_reject_start_before_audio_capture() {
+        for armed in [false, true] {
+            // Arrange
+            let root = temp_root("start-preconditions");
+            let audio = AudioSupervisor::offline("test");
+            let ctx = context_for(&root, &audio, false);
+            let mut session = CreativeSession::new(1);
+            let mut track = Track::audio("track:audio".into(), "Audio".into());
+            track.armed = armed;
+            session.arrangement.tracks.push(track);
+            if armed {
+                let source = root.join("source.wav");
+                fs::write(&source, b"audio").unwrap();
+                let asset_id = asset::register(
+                    &root,
+                    AssetKind::Audio,
+                    "Source",
+                    &source.to_string_lossy(),
+                    None,
+                )
+                .unwrap();
+                session.arrangement.audio_clips.push(AudioClip::full_source(
+                    "clip:audio".into(),
+                    "Audio".into(),
+                    "track:audio".into(),
+                    asset_id,
+                    TimelineTick(0),
+                    48_000,
+                    48_000,
+                ));
+                let database = root.join("library/riffra.db");
+                fs::remove_file(&database).unwrap();
+                fs::create_dir(database).unwrap();
+            }
+            let project_id = ctx.host.project.read().canonical.project_id.clone();
+            ctx.host
+                .project
+                .write()
+                .replace(crate::host::open_project::OpenProject {
+                    storage: ctx.storage.clone(),
+                    core: AppCore::new(project_id, session, 0),
+                    recovered_from_generation: false,
+                });
 
-        assert_eq!(error, "No tracks are armed for recording.");
-        let _ = fs::remove_dir_all(root);
+            // Act
+            let error = start_recording(&ctx).unwrap_err();
+
+            // Assert
+            if armed {
+                assert!(
+                    error.starts_with("Library database could not be opened:"),
+                    "{error}"
+                );
+            } else {
+                assert_eq!(error, "No tracks are armed for recording.");
+            }
+            assert!(!audio.status().unwrap().recording.active);
+            assert!(
+                fs::read_dir(root.join("recordings/inbox"))
+                    .unwrap()
+                    .next()
+                    .is_none()
+            );
+            drop(ctx);
+            let _ = fs::remove_dir_all(root);
+        }
     }
 
     #[test]

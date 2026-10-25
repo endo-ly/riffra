@@ -370,12 +370,15 @@ fn restore_startup_runtime(
 
     runtime
         .apply_and_wait(
-            Arc::new(project_session(
-                data_root,
-                built_in_instruments,
-                &target.project_id,
-                &target.canonical.session,
-            )),
+            Arc::new(
+                project_session(
+                    data_root,
+                    built_in_instruments,
+                    &target.project_id,
+                    &target.canonical.session,
+                )
+                .map_err(StartupRuntimeError::Feature)?,
+            ),
             riffra_core::ProjectionKey {
                 sequence: target.canonical.sequence,
                 session_revision: target.canonical.session.arrangement.revision,

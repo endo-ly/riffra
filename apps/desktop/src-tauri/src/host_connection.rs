@@ -23,7 +23,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
 use std::time::Duration;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter};
 use ts_rs::TS;
 
 const EVENT_BUFFER_LIMIT: usize = 512;
@@ -336,10 +336,13 @@ impl DesktopEventRouter {
             .delivery
             .lock()
             .expect("Host event delivery lock was poisoned");
-        if generation <= self.discarded_through.load(Ordering::Acquire) {
+        let active_generation = self.active_generation.load(Ordering::Acquire);
+        if generation != active_generation
+            && generation <= self.discarded_through.load(Ordering::Acquire)
+        {
             return;
         }
-        match generation.cmp(&self.active_generation.load(Ordering::Acquire)) {
+        match generation.cmp(&active_generation) {
             std::cmp::Ordering::Equal => self.emit_frame(frame),
             std::cmp::Ordering::Greater => {
                 let mut pending = self.pending.lock().expect("Host event buffer was poisoned");
@@ -414,8 +417,10 @@ impl DesktopEventRouter {
     }
 
     fn emit_host_event(&self, generation: u64, event: HostEvent) {
-        let frame = host_event_frame(event);
-        self.receive(generation, frame);
+        match event.to_control_frame() {
+            Ok(frame) => self.receive(generation, frame),
+            Err(error) => tracing::error!(%error, "Host event could not be encoded"),
+        }
     }
 
     fn emit_frame(&self, frame: HostEventFrame) {
@@ -512,7 +517,8 @@ impl HostConnectionManager {
             }
             Err(error) => return Err(error.to_string()),
         };
-        self.install_prepared(prepared)?;
+        let (_, old) = self.install_prepared(prepared)?;
+        shutdown_old(old);
         Ok(Arc::clone(self))
     }
 
@@ -618,42 +624,57 @@ impl HostConnectionManager {
             .invalidate(state.generation, &state, bootstrap.as_ref());
     }
 
-    fn install_prepared(&self, prepared: PreparedHost) -> Result<(), String> {
-        let reader_status = prepared.reader_error.clone();
-        let reader_status_guard = reader_status.as_ref().map(|status| {
-            status
-                .lock()
-                .expect("Host event reader status was poisoned")
-        });
-        if let Some(error) = reader_status_guard
-            .as_ref()
-            .and_then(|status| (**status).clone())
-        {
-            drop(reader_status_guard);
-            shutdown_old(prepared.active);
-            return Err(format!("Host event connection failed: {error}"));
-        }
+    fn install_prepared(
+        &self,
+        mut prepared: PreparedHost,
+    ) -> Result<(HostConnectionBootstrap, ActiveHost), String> {
         let state = prepared.active.state();
-        *self
-            .active
-            .write()
-            .expect("Host connection lock was poisoned") = prepared.active;
-        *self
-            .bootstrap
-            .write()
-            .expect("Host bootstrap lock was poisoned") = Some(prepared.bootstrap.clone());
-        *self
-            .active_project_id
-            .write()
-            .expect("active Project lock was poisoned") =
-            Some(prepared.bootstrap.project_state.active_project_id.clone());
-        let connection = HostConnectionBootstrap {
-            state: state.clone(),
-            bootstrap: self.to_desktop_bootstrap(&state, &prepared.bootstrap),
-        };
-        self.router.activate(state.generation, &connection);
-        drop(reader_status_guard);
-        Ok(())
+        let generation = state.generation;
+        let result = (|| {
+            let reader_status_guard = prepared.reader_error.as_ref().map(|status| {
+                status
+                    .lock()
+                    .expect("Host event reader status was poisoned")
+            });
+            if let Some(error) = reader_status_guard
+                .as_ref()
+                .and_then(|status| (**status).clone())
+            {
+                return Err(format!("Host event connection failed: {error}"));
+            }
+            let mut active = self
+                .active
+                .write()
+                .map_err(|_| "Host connection lock was poisoned".to_string())?;
+            let mut bootstrap = self
+                .bootstrap
+                .write()
+                .map_err(|_| "Host bootstrap lock was poisoned".to_string())?;
+            let mut active_project_id = self
+                .active_project_id
+                .write()
+                .map_err(|_| "active Project lock was poisoned".to_string())?;
+            let connection = HostConnectionBootstrap {
+                bootstrap: self.to_desktop_bootstrap(&state, &prepared.bootstrap),
+                state,
+            };
+            std::mem::swap(&mut *active, &mut prepared.active);
+            *bootstrap = Some(prepared.bootstrap.clone());
+            *active_project_id = Some(prepared.bootstrap.project_state.active_project_id.clone());
+            drop(active_project_id);
+            drop(bootstrap);
+            drop(active);
+            self.router.activate(generation, &connection);
+            Ok(connection)
+        })();
+        match result {
+            Ok(connection) => Ok((connection, prepared.active)),
+            Err(error) => {
+                self.router.discard(generation);
+                shutdown_old(prepared.active);
+                Err(error)
+            }
+        }
     }
 
     fn prepare_embedded(&self, generation: u64) -> Result<PreparedHost, HostError> {
@@ -918,74 +939,30 @@ impl HostConnectionManager {
                 return Err(error);
             }
         };
-        let _write = self
-            .operation_barrier
-            .write()
-            .map_err(|_| "Host operation barrier was poisoned".to_string())?;
+        let write = match self.operation_barrier.write() {
+            Ok(write) => write,
+            Err(_) => {
+                self.router.discard(generation);
+                shutdown_old(prepared.active);
+                return Err("Host operation barrier was poisoned".into());
+            }
+        };
         // Re-check after target preparation so a recording that started while
         // the target was bootstrapping cannot be cut off by the swap.
-        if let Err(error) = ensure_no_active_recording(self.current_recording_active()?) {
+        if let Err(error) = self
+            .current_recording_active()
+            .and_then(ensure_no_active_recording)
+        {
             self.router.discard(generation);
-            drop(_write);
+            drop(write);
             shutdown_old(prepared.active);
             return Err(error);
         }
-        let reader_status = prepared.reader_error.clone();
-        let reader_status_guard = reader_status.as_ref().map(|status| {
-            status
-                .lock()
-                .expect("Host event reader status was poisoned")
-        });
-        if let Some(error) = reader_status_guard
-            .as_ref()
-            .and_then(|status| (**status).clone())
-        {
-            drop(reader_status_guard);
-            self.router.discard(generation);
-            drop(_write);
-            shutdown_old(prepared.active);
-            return Err(format!("Host event connection failed: {error}"));
-        }
-        let old = {
-            let mut active = self
-                .active
-                .write()
-                .map_err(|_| "Host connection lock was poisoned".to_string())?;
-            std::mem::replace(
-                &mut *active,
-                ActiveHost::Disconnected {
-                    data_root: None,
-                    instance_id: None,
-                    pid: None,
-                    generation,
-                    reason: "Host switch in progress".into(),
-                },
-            )
-        };
-        let state = prepared.active.state();
-        *self
-            .active
-            .write()
-            .map_err(|_| "Host connection lock was poisoned".to_string())? = prepared.active;
-        *self
-            .bootstrap
-            .write()
-            .map_err(|_| "Host bootstrap lock was poisoned".to_string())? =
-            Some(prepared.bootstrap.clone());
-        *self
-            .active_project_id
-            .write()
-            .map_err(|_| "active Project lock was poisoned".to_string())? =
-            Some(prepared.bootstrap.project_state.active_project_id.clone());
-        let result = HostConnectionBootstrap {
-            state: state.clone(),
-            bootstrap: self.to_desktop_bootstrap(&state, &prepared.bootstrap),
-        };
-        self.router.activate(state.generation, &result);
-        drop(reader_status_guard);
-        drop(_write);
+        let installed = self.install_prepared(prepared);
+        drop(write);
+        let (connection, old) = installed?;
         shutdown_old(old);
-        Ok(result)
+        Ok(connection)
     }
 
     /// Reconnects through the last Data Root rather than trusting an old endpoint.
@@ -1301,41 +1278,6 @@ fn is_telemetry_event(event: &str) -> bool {
     matches!(event, "audio-meters" | "transport-status")
 }
 
-fn host_event_frame(event: HostEvent) -> HostEventFrame {
-    match event {
-        HostEvent::CanonicalStateChanged(value) => {
-            HostEventFrame::new("canonical-state-changed", json!(value))
-        }
-        HostEvent::ProjectStateChanged(value) => {
-            HostEventFrame::new("project-state-changed", json!(value))
-        }
-        HostEvent::ProjectActivated(value) => {
-            HostEventFrame::new("project-activated", json!(value))
-        }
-        HostEvent::RuntimeStartupFinished(value) => {
-            HostEventFrame::new("runtime-startup-finished", json!(value))
-        }
-        HostEvent::RuntimeProjectionStatus(value) => {
-            HostEventFrame::new("runtime-projection-status", json!(value))
-        }
-        HostEvent::AudioStatus(value) => HostEventFrame::new("audio-status", json!(value)),
-        HostEvent::AudioMeters(value) => HostEventFrame::new("audio-meters", json!(value)),
-        HostEvent::TransportStatus(value) => HostEventFrame::new("transport-status", json!(value)),
-        HostEvent::RecordingFinalized(value) => {
-            HostEventFrame::new("recording-finalized", json!(value))
-        }
-        HostEvent::RuntimeRestarted(value) => {
-            HostEventFrame::new("runtime-restarted", json!(value))
-        }
-        HostEvent::PluginStateChanged(value) => {
-            HostEventFrame::new("plugin-state-changed", json!(value))
-        }
-        HostEvent::PluginParameterChanged(value) => {
-            HostEventFrame::new("plugin-parameter-changed", json!(value))
-        }
-    }
-}
-
 fn map_runtime_recovery_candidates(
     candidates: Vec<riffra_runtime::RecoveryCandidate>,
 ) -> Vec<RecoveryCandidate> {
@@ -1360,56 +1302,6 @@ fn default_vst3_root() -> String {
     {
         "/usr/lib/vst3".into()
     }
-}
-
-#[tauri::command]
-pub(crate) fn get_host_connection_state(
-    state: State<'_, crate::AppState>,
-) -> Result<HostConnectionState, NativeCommandError> {
-    Ok(state.host_connection.state())
-}
-
-#[tauri::command]
-pub(crate) async fn list_local_hosts(
-    app: AppHandle,
-) -> Result<Vec<LocalHostInfo>, NativeCommandError> {
-    tauri::async_runtime::spawn_blocking(move || {
-        app.state::<crate::AppState>()
-            .host_connection
-            .list_local_hosts()
-    })
-    .await
-    .map_err(|error| {
-        NativeCommandError::command_failed(format!("Local Host discovery failed: {error}"))
-    })?
-    .map_err(|error| NativeCommandError::host_unavailable(error.to_string()))
-}
-
-#[tauri::command]
-pub(crate) async fn switch_host(
-    target: HostTarget,
-    app: AppHandle,
-) -> Result<HostConnectionBootstrap, NativeCommandError> {
-    let manager = Arc::clone(&app.state::<crate::AppState>().host_connection);
-    tauri::async_runtime::spawn_blocking(move || manager.switch(target))
-        .await
-        .map_err(|error| {
-            NativeCommandError::command_failed(format!("Host switch failed: {error}"))
-        })?
-        .map_err(|error| NativeCommandError::host_unavailable(error.to_string()))
-}
-
-#[tauri::command]
-pub(crate) async fn reconnect_host(
-    app: AppHandle,
-) -> Result<HostConnectionBootstrap, NativeCommandError> {
-    let manager = Arc::clone(&app.state::<crate::AppState>().host_connection);
-    tauri::async_runtime::spawn_blocking(move || manager.reconnect())
-        .await
-        .map_err(|error| {
-            NativeCommandError::command_failed(format!("Host reconnect failed: {error}"))
-        })?
-        .map_err(|error| NativeCommandError::host_unavailable(error.to_string()))
 }
 
 #[cfg(test)]
@@ -1716,8 +1608,8 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_target_preparation_keeps_the_current_host() {
-        let (manager, _outlet) = test_manager("failed");
+    fn failed_preparation_and_activation_keep_the_current_host_and_events() {
+        let (manager, outlet) = test_manager("failed");
         let before = manager.state();
         assert_eq!(before.mode, HostConnectionMode::Embedded);
 
@@ -1732,6 +1624,41 @@ mod tests {
         assert_eq!(after.mode, before.mode);
         assert_eq!(after.instance_id, before.instance_id);
         assert_eq!(after.generation, before.generation);
+
+        let host = standalone_host("failed-activation");
+        let generation = manager.allocate_generation();
+        let prepared = manager
+            .prepare_attached_data_root(host.data_root(), generation)
+            .unwrap();
+        *prepared.reader_error.as_ref().unwrap().lock().unwrap() = Some("reader closed".into());
+        let error = match manager.install_prepared(prepared) {
+            Err(error) => error,
+            Ok(_) => panic!("a failed reader must not become active"),
+        };
+        assert!(error.contains("reader closed"));
+        assert_eq!(manager.state().instance_id, before.instance_id);
+        assert_eq!(manager.state().generation, before.generation);
+        assert!(host_status_ok(host.data_root()));
+        manager.dispatch(add_track("Still active")).unwrap();
+        manager.router.receive(
+            before.generation,
+            HostEventFrame::new("transport-status", json!({"position":"active"})),
+        );
+        manager.router.receive(
+            generation,
+            HostEventFrame::new("transport-status", json!({"position":"discarded"})),
+        );
+        let events = outlet.events();
+        let positions = events
+            .iter()
+            .filter_map(|event| match event {
+                RecordedEvent::Frame { payload } => payload["position"].as_str(),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(positions, ["active"]);
+        host.shutdown();
+        cleanup(&[host.data_root().to_path_buf()]);
 
         manager.shutdown();
         cleanup(&[

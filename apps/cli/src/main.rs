@@ -1,6 +1,7 @@
 mod args;
 mod attached;
 mod instrument;
+mod interactive;
 mod output;
 mod paths;
 mod resources;
@@ -9,15 +10,16 @@ mod serve;
 use args::{Cli, CliCommand, RequestError};
 use attached::AttachedBackend;
 use clap::Parser;
+use interactive::with_input_line;
 use output::{compact_agent_response, write_audio_diagnostics};
 use riffra_control::{
     CommandResult, ControlRequest, ControlResponse, ErrorCode, LocalHostDiscovery,
-    LocalHostRegistry, ProtocolError,
+    LocalHostRegistry,
 };
 use riffra_runtime::Dispatcher;
 use riffra_runtime::api::params::EmptyParams;
 use riffra_runtime::api::{CanonicalCommand, ControlCommand, RuntimeCommand};
-use std::io::{self, BufRead, Write};
+use std::io;
 use std::path::Path;
 use std::thread;
 use std::time::Duration;
@@ -394,67 +396,28 @@ fn list_hosts() -> Result<(), String> {
 }
 
 fn run_interactive(dispatcher: &Dispatcher) -> Result<(), String> {
-    let stdin = io::stdin();
-    let mut stdout = io::stdout().lock();
-    for (line_index, line) in stdin.lock().lines().enumerate() {
-        let line = line.map_err(|error| format!("request could not be read: {error}"))?;
-        if line.trim().is_empty() {
-            continue;
-        }
-        let response = handle_request_at(dispatcher, &line, Some(line_index + 1));
-        serde_json::to_writer(&mut stdout, &response)
-            .map_err(|error| format!("response could not be encoded: {error}"))?;
-        stdout
-            .write_all(b"\n")
-            .map_err(|error| format!("response could not be written: {error}"))?;
-        stdout
-            .flush()
-            .map_err(|error| format!("response could not be flushed: {error}"))?;
-    }
-    Ok(())
+    interactive::run(
+        io::stdin().lock(),
+        io::stdout().lock(),
+        |request, command, input_line| {
+            execute_interactive(dispatcher, request, command, input_line)
+        },
+    )
 }
 
 #[cfg(test)]
 fn handle_request(dispatcher: &Dispatcher, line: &str) -> ControlResponse {
-    handle_request_at(dispatcher, line, None)
+    interactive::handle_line(line, None, |request, command, input_line| {
+        execute_interactive(dispatcher, request, command, input_line)
+    })
 }
 
-fn handle_request_at(
+fn execute_interactive(
     dispatcher: &Dispatcher,
-    line: &str,
+    request: ControlRequest,
+    command: ControlCommand,
     input_line: Option<usize>,
 ) -> ControlResponse {
-    let request_id = request_id_from_json(line);
-    let request = match serde_json::from_str::<ControlRequest>(line) {
-        Ok(request) => request,
-        Err(error) => {
-            return ControlResponse::failure(
-                request_id,
-                None,
-                with_input_line(
-                    ProtocolError::new(ErrorCode::InvalidRequest, error.to_string()),
-                    input_line,
-                ),
-            );
-        }
-    };
-    if let Err(error) = request.validate() {
-        return ControlResponse::failure(
-            request.request_id,
-            None,
-            with_input_line(error, input_line),
-        );
-    }
-    let command = match paths::decode_command(&request.command, request.params) {
-        Ok(command) => command,
-        Err(error) => {
-            return ControlResponse::failure(
-                request.request_id,
-                None,
-                with_input_line(error, input_line),
-            );
-        }
-    };
     let mut normalized =
         command.into_request(request.request_id.clone(), request.expected_sequence);
     normalized.expected_project_id = request.expected_project_id;
@@ -476,32 +439,11 @@ fn handle_request_at(
     }
 }
 
-fn with_input_line(mut error: ProtocolError, input_line: Option<usize>) -> ProtocolError {
-    let Some(input_line) = input_line else {
-        return error;
-    };
-    error.message = format!("input line {input_line}: {}", error.message);
-    let mut details = match error.details.take() {
-        Some(serde_json::Value::Object(details)) => details,
-        _ => serde_json::Map::new(),
-    };
-    details.insert("inputLine".into(), serde_json::json!(input_line));
-    error.details = Some(serde_json::Value::Object(details));
-    error
-}
-
 fn write_response(response: &ControlResponse) -> Result<(), String> {
     serde_json::to_writer_pretty(io::stdout().lock(), response)
         .map_err(|error| format!("response could not be encoded: {error}"))?;
     println!();
     Ok(())
-}
-
-fn request_id_from_json(line: &str) -> String {
-    serde_json::from_str::<serde_json::Value>(line)
-        .ok()
-        .and_then(|value| value.get("requestId")?.as_str().map(str::to_owned))
-        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -728,7 +670,13 @@ mod tests {
             ErrorCode::InvalidRequest
         );
 
-        let response = super::handle_request_at(&dispatcher, "{\"requestId\":", Some(3));
+        let response = super::interactive::handle_line(
+            "{\"requestId\":",
+            Some(3),
+            |request, command, line| {
+                super::execute_interactive(&dispatcher, request, command, line)
+            },
+        );
         assert!(!response.ok);
         let error = response.error.unwrap();
         assert_eq!(error.code, ErrorCode::InvalidRequest);

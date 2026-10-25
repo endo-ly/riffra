@@ -1,3 +1,4 @@
+use crate::local_files::{replace_file, set_private_directory, set_private_file};
 use crate::{
     ControlRequest, EndpointDescriptor, LocalControlEndpoint, LocalHostClient, LocalHostClientError,
 };
@@ -104,11 +105,13 @@ impl LocalHostRegistry {
                 "local Host registry entry could not be written: {error}"
             ));
         }
-        if let Err(error) = set_private_file(&temporary) {
+        if let Err(error) = set_private_file(&temporary).map_err(|error| {
+            format!("local Host registry entry permissions could not be set: {error}")
+        }) {
             let _ = std::fs::remove_file(&temporary);
             return Err(error);
         }
-        if let Err(error) = replace_entry(&temporary, &path) {
+        if let Err(error) = replace_file(&temporary, &path) {
             let _ = std::fs::remove_file(&temporary);
             return Err(format!(
                 "local Host registry entry could not be published: {error}"
@@ -251,7 +254,9 @@ impl LocalHostRegistry {
             if !is_root && !is_private_parent {
                 break;
             }
-            set_private_directory(directory)?;
+            set_private_directory(directory).map_err(|error| {
+                format!("local Host registry directory permissions could not be set: {error}")
+            })?;
             is_root = false;
             let Some(parent) = directory.parent() else {
                 break;
@@ -359,67 +364,6 @@ pub fn now_ms() -> u64 {
 fn current_user_id() -> u32 {
     // SAFETY: geteuid has no preconditions and does not borrow memory.
     unsafe { libc::geteuid() }
-}
-
-#[cfg(unix)]
-fn set_private_directory(path: &Path) -> Result<(), String> {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).map_err(|error| {
-        format!("local Host registry directory permissions could not be set: {error}")
-    })
-}
-
-#[cfg(not(unix))]
-fn set_private_directory(_path: &Path) -> Result<(), String> {
-    Ok(())
-}
-
-#[cfg(unix)]
-fn set_private_file(path: &Path) -> Result<(), String> {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-        .map_err(|error| format!("local Host registry entry permissions could not be set: {error}"))
-}
-
-#[cfg(not(unix))]
-fn set_private_file(_path: &Path) -> Result<(), String> {
-    Ok(())
-}
-
-#[cfg(windows)]
-fn replace_entry(temporary: &Path, destination: &Path) -> io::Result<()> {
-    use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::Storage::FileSystem::{
-        MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
-    };
-
-    let source: Vec<u16> = temporary
-        .as_os_str()
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect();
-    let destination: Vec<u16> = destination
-        .as_os_str()
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect();
-    let result = unsafe {
-        MoveFileExW(
-            source.as_ptr(),
-            destination.as_ptr(),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-        )
-    };
-    if result == 0 {
-        Err(io::Error::last_os_error())
-    } else {
-        Ok(())
-    }
-}
-
-#[cfg(not(windows))]
-fn replace_entry(temporary: &Path, destination: &Path) -> io::Result<()> {
-    std::fs::rename(temporary, destination)
 }
 
 #[cfg(test)]

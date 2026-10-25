@@ -10,6 +10,7 @@ pub use harmony::{
 pub use phrase::{ResolvedPhrase, ResolvedPhraseNote, resolve_phrase_pattern};
 
 use super::*;
+use crate::domain::music::{gcd_u128, rational_to_ticks};
 use crate::domain::{
     MidiNote, MusicalDuration, MusicalOffset, MusicalPitch, MusicalPosition, MusicalTimeDelta,
     ProjectTimebase, TimelineRegion, TimelineTick,
@@ -226,13 +227,18 @@ pub fn list_musical_notes(
         )));
     }
     let query = resolve_note_range(&timebase, request.start, request.end)?;
-    let clips = select_note_clips(&session.arrangement.midi_clips, &request.scope)?;
+    let mut clips = select_note_clips(&session.arrangement.midi_clips, &request.scope)?;
+    clips.sort_by(|left, right| {
+        left.start_tick
+            .cmp(&right.start_tick)
+            .then_with(|| left.id.cmp(&right.id))
+    });
     if request.scope.track_id.is_some() && query.is_none() {
         return Err(ApplicationError::InvalidCommand(
             "track note list requires both start and end".into(),
         ));
     }
-    let mut clip_views = clips
+    let clip_views = clips
         .into_iter()
         .filter_map(|clip| {
             let mut notes = clip
@@ -240,7 +246,13 @@ pub fn list_musical_notes(
                 .iter()
                 .filter(|note| note_overlaps_range(clip, note, query))
                 .collect::<Vec<_>>();
-            notes.sort_by_key(|note| (note.start_tick, note.note, note.id.clone()));
+            notes.sort_by(|left, right| {
+                (left.start_tick, left.note, &left.id).cmp(&(
+                    right.start_tick,
+                    right.note,
+                    &right.id,
+                ))
+            });
             if request.scope.track_id.is_some() && notes.is_empty() {
                 return None;
             }
@@ -284,24 +296,6 @@ pub fn list_musical_notes(
             }))
         })
         .collect::<Result<Vec<_>, ApplicationError>>()?;
-    clip_views.sort_by(|left, right| {
-        let left_clip = session
-            .arrangement
-            .midi_clips
-            .iter()
-            .find(|clip| clip.id == left.clip_id)
-            .expect("selected clip remains in session");
-        let right_clip = session
-            .arrangement
-            .midi_clips
-            .iter()
-            .find(|clip| clip.id == right.clip_id)
-            .expect("selected clip remains in session");
-        left_clip
-            .start_tick
-            .cmp(&right_clip.start_tick)
-            .then_with(|| left.clip_id.cmp(&right.clip_id))
-    });
     let count = clip_views.iter().map(|clip| clip.notes.len()).sum();
     Ok(MusicalNoteListView {
         count,
@@ -1022,43 +1016,6 @@ fn repeated_offset_to_ticks(
         .checked_mul(left_multiplier)
         .ok_or_else(|| DomainError::InvalidMusicalValue("pattern offset is too large".into()))?;
     rational_to_ticks(timebase, numerator, denominator)
-}
-
-fn rational_to_ticks(
-    timebase: &ProjectTimebase,
-    mut numerator: u128,
-    mut denominator: u128,
-) -> Result<u64, DomainError> {
-    if denominator == 0 || timebase.ppq == 0 {
-        return Err(DomainError::InvalidMusicalValue(
-            "musical timebase is invalid".into(),
-        ));
-    }
-    let fraction_gcd = gcd_u128(numerator, denominator);
-    numerator /= fraction_gcd;
-    denominator /= fraction_gcd;
-    let whole_note_ticks = u128::from(timebase.ppq)
-        .checked_mul(4)
-        .ok_or_else(|| DomainError::InvalidMusicalValue("pattern offset is too large".into()))?;
-    let tick_gcd = gcd_u128(whole_note_ticks, denominator);
-    let scaled_numerator = numerator
-        .checked_mul(whole_note_ticks / tick_gcd)
-        .ok_or_else(|| DomainError::InvalidMusicalValue("pattern offset is too large".into()))?;
-    let scaled_denominator = denominator / tick_gcd;
-    let whole = scaled_numerator / scaled_denominator;
-    let remainder = scaled_numerator % scaled_denominator;
-    let rounded = whole + u128::from(remainder >= scaled_denominator - remainder);
-    u64::try_from(rounded)
-        .map_err(|_| DomainError::InvalidMusicalValue("pattern offset is too large".into()))
-}
-
-fn gcd_u128(mut left: u128, mut right: u128) -> u128 {
-    while right != 0 {
-        let remainder = left % right;
-        left = right;
-        right = remainder;
-    }
-    left
 }
 
 fn normalize_region_name(name: String) -> Result<String, ApplicationError> {

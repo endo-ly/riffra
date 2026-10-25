@@ -27,15 +27,22 @@ pub(crate) fn project_committed<D: RuntimeDriver>(
         sequence: canonical.sequence,
         session_revision: canonical.session.arrangement.revision,
     };
-    let outcome = runtime.project_canonical(
-        Arc::new(project_session(
-            data_root,
-            built_in_instruments,
-            &canonical.project_id,
-            &canonical.session,
-        )),
-        key,
-    );
+    let projected = match project_session(
+        data_root,
+        built_in_instruments,
+        &canonical.project_id,
+        &canonical.session,
+    ) {
+        Ok(projected) => projected,
+        Err(message) => {
+            return ArrangementMutationResult {
+                canonical,
+                projection: ArrangementProjectionOutcome::Failed { message },
+                created_entity_ids: Default::default(),
+            };
+        }
+    };
+    let outcome = runtime.project_canonical(Arc::new(projected), key);
     let projection = match outcome {
         crate::runtime::CanonicalProjectionOutcome::Adopted => {
             ArrangementProjectionOutcome::NotRequired

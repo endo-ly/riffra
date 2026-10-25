@@ -87,25 +87,6 @@ impl SessionStore {
         fs::create_dir_all(self.generations_dir()?)
     }
 
-    /// Loads the active session or creates the first session for a new root.
-    ///
-    /// # Errors
-    /// Returns an error when the active session and every generation are
-    /// unreadable or when the new session cannot be persisted.
-    pub fn load_or_create(&self) -> Result<LoadedSession, SessionLoadError> {
-        self.ensure_layout()?;
-        if let Some(loaded) = self.load_saved()? {
-            return Ok(loaded);
-        }
-
-        let session = CreativeSession::new(now_ms());
-        self.save(&session)?;
-        Ok(LoadedSession {
-            session,
-            recovered_from_generation: false,
-        })
-    }
-
     /// Loads an existing Project without creating a replacement session.
     pub fn load_existing(&self) -> Result<LoadedSession, SessionLoadError> {
         self.ensure_layout()?;
@@ -630,7 +611,7 @@ mod tests {
         )
         .unwrap();
 
-        let loaded = store.load_or_create().unwrap();
+        let loaded = store.load_existing().unwrap();
         assert!(loaded.recovered_from_generation);
         assert_eq!(loaded.session.settings.note, "recover me");
         assert!(!store.recovery_candidates().unwrap().is_empty());
@@ -659,7 +640,7 @@ mod tests {
         fs::write(&current, b"not json").unwrap();
         let original = fs::read(&current).unwrap();
 
-        let error = store.load_or_create().unwrap_err();
+        let error = store.load_existing().unwrap_err();
         assert_eq!(error.0.kind(), io::ErrorKind::InvalidData);
         assert_eq!(fs::read(&current).unwrap(), original);
         let _ = fs::remove_dir_all(root);
@@ -702,7 +683,7 @@ mod tests {
         let mut session = CreativeSession::new(now_ms());
         session.project_name = Some("Clean".into());
         store.save(&session).unwrap();
-        let loaded = store.load_or_create().unwrap();
+        let loaded = store.load_existing().unwrap();
         assert_eq!(loaded.session.project_name.as_deref(), Some("Clean"));
         let summary = store.summary().unwrap();
         assert_eq!(summary.name, "Clean");
@@ -759,9 +740,9 @@ mod tests {
     }
 
     #[test]
-    fn summary_falls_back_for_legacy_field_order_and_schema() {
+    fn summary_reads_fields_in_any_order() {
         // Arrange
-        let root = test_root("summary-legacy");
+        let root = test_root("summary-field-order");
         let store = SessionStore::new(&root, TEST_PROJECT_ID);
         store.ensure_layout().unwrap();
         let current = root
@@ -769,7 +750,7 @@ mod tests {
             .join(TEST_PROJECT_ID)
             .join("session.json");
         let mut session = CreativeSession::new(5_678);
-        session.project_name = Some("Legacy Order".into());
+        session.project_name = Some("Reordered Fields".into());
         session.score_source = Some(riffra_core::ScoreSource {
             file_name: "score.yaml".into(),
             yaml: "score".into(),
@@ -787,19 +768,9 @@ mod tests {
 
         // Act
         let old_order_summary = store.summary().unwrap();
-        let mut old_schema = serde_json::json!({
-            "schemaVersion": 1,
-            "session": serde_json::to_value(&session).unwrap(),
-        });
-        old_schema["session"]["scoreSource"] = serde_json::Value::Null;
-        fs::write(&current, serde_json::to_vec_pretty(&old_schema).unwrap()).unwrap();
-        let old_schema_summary = store.summary().unwrap();
-
         // Assert
-        assert_eq!(old_order_summary.name, "Legacy Order");
+        assert_eq!(old_order_summary.name, "Reordered Fields");
         assert_eq!(old_order_summary.updated_at_ms, 5_678);
-        assert_eq!(old_schema_summary.name, "Legacy Order");
-        assert_eq!(old_schema_summary.updated_at_ms, 5_678);
         let _ = fs::remove_dir_all(root);
     }
 
@@ -840,7 +811,7 @@ mod tests {
 
         // Load must reject the unknown reference rather than adopting an
         // unrecoverable session, and must never overwrite the original file.
-        let error = store.load_or_create().unwrap_err();
+        let error = store.load_existing().unwrap_err();
         assert_eq!(error.0.kind(), io::ErrorKind::InvalidData);
         assert_eq!(fs::read(&current).unwrap(), original);
         let _ = fs::remove_dir_all(root);
@@ -874,7 +845,7 @@ mod tests {
         push_audio_clip(&mut session, "clip:unknown", "unknown", mint_asset_id());
         fs::write(&current, serialize_session_document(&session).unwrap()).unwrap();
 
-        let loaded = store.load_or_create().unwrap();
+        let loaded = store.load_existing().unwrap();
         assert!(loaded.recovered_from_generation);
         assert_eq!(loaded.session.project_name.as_deref(), Some("Recoverable"));
         let _ = fs::remove_dir_all(root);

@@ -95,7 +95,7 @@ fn current_dropout_information(manifest: &RecordingManifest) -> DropoutInformati
 }
 
 fn canonical_asset_location(data_root: &Path, id: &AssetId, label: &str) -> Result<String, String> {
-    asset::load(data_root, id)
+    asset::load(data_root, id)?
         .map(|asset| asset.content_location)
         .ok_or_else(|| format!("Completed recording references an unknown {label} Asset {id}."))
 }

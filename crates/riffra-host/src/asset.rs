@@ -210,7 +210,7 @@ fn register_with_id_impl(
             "Asset content file does not exist: {content_location}"
         ));
     }
-    if let Some(existing) = load(data_root, id) {
+    if let Some(existing) = load(data_root, id)? {
         let content_missing = !Path::new(&existing.content_location).is_file();
         if existing.kind != kind
             || (!content_missing && !same_content(&existing.content_location, content_location))
@@ -266,7 +266,7 @@ pub fn register_derived(
     let sources = source_ids
         .iter()
         .map(|id| {
-            load(data_root, id).ok_or_else(|| format!("Source asset is not registered: {id}"))
+            load(data_root, id)?.ok_or_else(|| format!("Source asset is not registered: {id}"))
         })
         .collect::<Result<Vec<_>, _>>()?;
     let source_refs = sources.iter().collect::<Vec<_>>();
@@ -494,7 +494,7 @@ pub fn update_metadata(
     tag: Option<String>,
     note: Option<String>,
 ) -> Result<(), String> {
-    let asset = load(data_root, id).ok_or_else(|| "Asset was not found.".to_string())?;
+    let asset = load(data_root, id)?.ok_or_else(|| "Asset was not found.".to_string())?;
     let updated = asset.update_metadata(None, Some(tag), Some(note), None, now_ms());
     let connection = open(data_root)?;
     connection
@@ -624,14 +624,23 @@ fn set_source_relations(
 
 /// Resolves an [`AssetId`] to its content file location. Returns `None` when the
 /// canonical record is missing (a lone file is never auto-restored).
-pub fn resolve_content_location(data_root: &Path, id: &AssetId) -> Option<String> {
-    let connection = open(data_root).ok()?;
+///
+/// # Errors
+/// Returns an error when the database or saved location cannot be read.
+pub fn resolve_content_location(data_root: &Path, id: &AssetId) -> Result<Option<String>, String> {
+    let connection = open(data_root)?;
     let location: Option<String> = connection
-        .prepare("SELECT content_location FROM assets WHERE id = ?1")
-        .ok()?
-        .query_row(params![id.as_str()], |row| row.get(0))
-        .ok();
-    location.filter(|value| !value.is_empty())
+        .query_row(
+            "SELECT content_location FROM assets WHERE id = ?1",
+            params![id.as_str()],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| format!("asset content location could not be read: {error}"))?;
+    match location {
+        Some(location) if location.is_empty() => Err("asset content location is empty".into()),
+        location => Ok(location),
+    }
 }
 
 /// Resolves a string AssetId (any form accepted by [`AssetId::from_normalized`])
@@ -642,7 +651,7 @@ pub fn resolve_content_location(data_root: &Path, id: &AssetId) -> Option<String
 pub fn resolve_audio_path(data_root: &Path, value: &str) -> Result<PathBuf, String> {
     let asset_id =
         AssetId::from_normalized(value).map_err(|error| format!("Asset id is invalid: {error}"))?;
-    let asset = load(data_root, &asset_id)
+    let asset = load(data_root, &asset_id)?
         .ok_or_else(|| format!("Audio asset is not registered: {asset_id}"))?;
     if asset.kind != AssetKind::Audio {
         return Err(format!("Asset {asset_id} is not an audio asset."));
@@ -745,7 +754,7 @@ pub(crate) fn unique_import_destination_with_ext(
     let directory = data_root.join("assets").join("imports");
     fs::create_dir_all(&directory)
         .map_err(|error| format!("Import asset folder could not be created: {error}"))?;
-    let safe = safe_name(name);
+    let safe = safe_name(name, "asset");
     let extension = extension.trim_start_matches('.');
     if extension.is_empty()
         || !extension
@@ -810,8 +819,11 @@ pub fn import_midi_bytes(data_root: &Path, name: &str, bytes: &[u8]) -> Result<A
 }
 
 /// Loads a full canonical [`Asset`] by id, including its provenance source ids.
-pub fn load(data_root: &Path, id: &AssetId) -> Option<Asset> {
-    let connection = open(data_root).ok()?;
+///
+/// # Errors
+/// Returns an error when the database or stored asset metadata cannot be read.
+pub fn load(data_root: &Path, id: &AssetId) -> Result<Option<Asset>, String> {
+    let connection = open(data_root)?;
     let row = connection
         .query_row(
             "SELECT id, kind, name, content_location,
@@ -835,7 +847,11 @@ pub fn load(data_root: &Path, id: &AssetId) -> Option<Asset> {
                 ))
             },
         )
-        .ok()?;
+        .optional()
+        .map_err(|error| format!("asset could not be read: {error}"))?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
     let (
         id_value,
         kind_value,
@@ -849,14 +865,22 @@ pub fn load(data_root: &Path, id: &AssetId) -> Option<Asset> {
         operation,
         parameters,
     ) = row;
-    let kind = kind_from_db(kind_value.as_deref()?)?;
-    let provenance = build_provenance(&connection, id.as_str(), operation, parameters)
-        .ok()
-        .flatten();
-    let created_at_ms = created_at_ms.and_then(u64_from_i64);
-    let updated_at_ms = updated_at_ms.and_then(u64_from_i64);
-    Some(Asset {
-        id: AssetId::from_normalized(id_value).ok()?,
+    let kind = kind_value
+        .as_deref()
+        .and_then(kind_from_db)
+        .ok_or("asset has an invalid kind")?;
+    let provenance = build_provenance(&connection, id.as_str(), operation, parameters)?;
+    let created_at_ms = created_at_ms
+        .map(u64::try_from)
+        .transpose()
+        .map_err(|_| "asset has an invalid creation timestamp")?;
+    let updated_at_ms = updated_at_ms
+        .map(u64::try_from)
+        .transpose()
+        .map_err(|_| "asset has an invalid update timestamp")?;
+    Ok(Some(Asset {
+        id: AssetId::from_normalized(id_value)
+            .map_err(|error| format!("asset has an invalid id: {error}"))?,
         kind,
         name,
         content_location,
@@ -866,7 +890,7 @@ pub fn load(data_root: &Path, id: &AssetId) -> Option<Asset> {
         tag,
         note,
         favorite: favorite.unwrap_or(0) != 0,
-    })
+    }))
 }
 
 fn build_provenance(
@@ -874,30 +898,35 @@ fn build_provenance(
     asset_id: &str,
     operation: Option<String>,
     parameters: Option<String>,
-) -> Result<Option<Provenance>, rusqlite::Error> {
+) -> Result<Option<Provenance>, String> {
     let Some(operation) = operation else {
         return Ok(None);
     };
-    let operation = operation_from_db(&operation);
-    let Some(operation) = operation else {
-        return Ok(None);
-    };
+    let operation =
+        operation_from_db(&operation).ok_or("asset has an invalid provenance operation")?;
     let parameters = parameters
-        .and_then(|value| {
-            serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&value).ok()
-        })
+        .map(|value| serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&value))
+        .transpose()
+        .map_err(|error| format!("asset provenance parameters could not be read: {error}"))?
         .unwrap_or_default();
-    let mut statement = connection.prepare(
-        "SELECT related_asset_id FROM asset_relations
+    let mut statement = connection
+        .prepare(
+            "SELECT related_asset_id FROM asset_relations
          WHERE asset_id = ?1 AND relation = ?2",
-    )?;
+        )
+        .map_err(|error| format!("asset provenance query could not be prepared: {error}"))?;
     let source_ids = statement
         .query_map(params![asset_id, DERIVED_FROM], |row| {
             row.get::<_, String>(0)
-        })?
-        .filter_map(Result::ok)
-        .filter_map(|value| AssetId::from_normalized(value).ok())
-        .collect::<Vec<_>>();
+        })
+        .map_err(|error| format!("asset provenance could not be queried: {error}"))?
+        .map(|row| {
+            let value =
+                row.map_err(|error| format!("asset provenance source could not be read: {error}"))?;
+            AssetId::from_normalized(value)
+                .map_err(|error| format!("asset provenance source is invalid: {error}"))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
     Ok(Some(Provenance {
         source_asset_ids: source_ids,
         operation,
@@ -905,11 +934,7 @@ fn build_provenance(
     }))
 }
 
-fn u64_from_i64(value: i64) -> Option<u64> {
-    u64::try_from(value).ok()
-}
-
-fn safe_name(value: &str) -> String {
+pub(crate) fn safe_name(value: &str, fallback: &str) -> String {
     let mut result = value
         .chars()
         .filter_map(|character| {
@@ -924,7 +949,7 @@ fn safe_name(value: &str) -> String {
         .collect::<String>();
     result.truncate(80);
     if result.is_empty() {
-        "asset".into()
+        fallback.into()
     } else {
         result
     }
@@ -950,6 +975,64 @@ mod tests {
     }
 
     #[test]
+    fn load_distinguishes_missing_assets_from_database_and_record_errors() {
+        // Arrange
+        let root = root("load-errors");
+        let id = mint_asset_id();
+        let location = root.join("source.wav");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(&location, b"audio").unwrap();
+
+        // Act / Assert
+        assert!(load(&root, &id).unwrap().is_none());
+        assert!(resolve_content_location(&root, &id).unwrap().is_none());
+        register_with_id(
+            &root,
+            &id,
+            AssetKind::Audio,
+            "Source",
+            &location.to_string_lossy(),
+            None,
+        )
+        .unwrap();
+        assert!(load(&root, &id).unwrap().unwrap().provenance.is_none());
+        let connection = open(&root).unwrap();
+        for (column, value) in [
+            ("kind", "invalid"),
+            ("provenance_operation", "invalid"),
+            ("provenance_parameters", "invalid"),
+        ] {
+            connection.execute("UPDATE assets SET kind = 'audio', provenance_operation = 'imported', provenance_parameters = '{}'", []).unwrap();
+            connection
+                .execute(&format!("UPDATE assets SET {column} = ?1"), [value])
+                .unwrap();
+            assert!(load(&root, &id).is_err(), "{column}");
+        }
+        connection
+            .execute("UPDATE assets SET provenance_parameters = '{}'", [])
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO asset_relations VALUES (?1, 'invalid', 'derived-from')",
+                [id.as_str()],
+            )
+            .unwrap();
+        assert!(load(&root, &id).is_err());
+        connection.execute("DROP TABLE assets", []).unwrap();
+        connection
+            .execute("CREATE TABLE assets (id TEXT)", [])
+            .unwrap();
+        assert!(load(&root, &id).is_err());
+        assert!(resolve_content_location(&root, &id).is_err());
+        drop(connection);
+        fs::remove_dir_all(&root).unwrap();
+        fs::create_dir_all(root.join("library/riffra.db")).unwrap();
+        assert!(load(&root, &id).is_err());
+        assert!(resolve_content_location(&root, &id).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn register_mints_a_fresh_id_and_resolves_back_to_the_content_file() {
         let root = root("register");
         let wav = root.join("take.wav");
@@ -963,7 +1046,7 @@ mod tests {
         )
         .unwrap();
         assert!(id.as_str().starts_with("asset:"));
-        let resolved = resolve_content_location(&root, &id).unwrap();
+        let resolved = resolve_content_location(&root, &id).unwrap().unwrap();
         assert_eq!(resolved, wav.to_string_lossy());
         let _ = std::fs::remove_dir_all(root);
     }
@@ -1010,7 +1093,7 @@ mod tests {
             }),
         )
         .unwrap();
-        let loaded = load(&root, &processed).unwrap();
+        let loaded = load(&root, &processed).unwrap().unwrap();
         assert_eq!(loaded.id, processed);
         assert_eq!(loaded.kind, AssetKind::Audio);
         assert_eq!(loaded.content_location, processed_wav.to_string_lossy());
@@ -1024,7 +1107,7 @@ mod tests {
     fn resolve_returns_none_when_no_canonical_record_exists() {
         let root = root("none");
         let orphan = mint_asset_id();
-        assert!(resolve_content_location(&root, &orphan).is_none());
+        assert!(resolve_content_location(&root, &orphan).unwrap().is_none());
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -1109,7 +1192,7 @@ mod tests {
         bytes.extend_from_slice(&track);
 
         let id = import_midi_bytes(&root, "dropped", &bytes).unwrap();
-        let asset = load(&root, &id).unwrap();
+        let asset = load(&root, &id).unwrap().unwrap();
         assert_eq!(asset.kind, AssetKind::Midi);
         assert_eq!(asset.name, "dropped");
         assert_eq!(

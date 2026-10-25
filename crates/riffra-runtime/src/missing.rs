@@ -1,11 +1,7 @@
 use crate::api::output::MissingDependency;
 use crate::asset;
-use riffra_core::{AssetId, CreativeSession, Vst3Plugin};
+use riffra_core::{CreativeSession, Vst3Plugin};
 use std::path::Path;
-
-fn resolve_location(data_root: &Path, asset_id: &AssetId) -> Option<String> {
-    asset::resolve_content_location(data_root, asset_id)
-}
 
 fn collect_missing_plugin(
     missing: &mut Vec<MissingDependency>,
@@ -30,11 +26,17 @@ fn collect_missing_plugin(
 /// present on disk. The session is still safe to open; this list is surfaced so
 /// the user can relink, replace, ignore, or keep the reference as a disabled
 /// placeholder.
-pub fn collect_missing(data_root: &Path, session: &CreativeSession) -> Vec<MissingDependency> {
+///
+/// # Errors
+/// Returns an error when an asset location cannot be read from the database.
+pub fn collect_missing(
+    data_root: &Path,
+    session: &CreativeSession,
+) -> Result<Vec<MissingDependency>, String> {
     let mut missing = Vec::new();
 
     for clip in &session.arrangement.audio_clips {
-        let Some(location) = resolve_location(data_root, &clip.asset_id) else {
+        let Some(location) = asset::resolve_content_location(data_root, &clip.asset_id)? else {
             // An unresolvable asset id is itself a missing dependency.
             missing.push(MissingDependency {
                 kind: "file".into(),
@@ -100,7 +102,7 @@ pub fn collect_missing(data_root: &Path, session: &CreativeSession) -> Vec<Missi
         }
     }
 
-    missing
+    Ok(missing)
 }
 
 #[cfg(test)]
@@ -148,7 +150,7 @@ mod tests {
     fn collects_missing_assets_and_plugins_without_rejecting_session() {
         let data_root = root();
         let (session, _) = session_with_missing_asset(&data_root);
-        let missing = collect_missing(&data_root, &session);
+        let missing = collect_missing(&data_root, &session).unwrap();
         assert_eq!(missing.len(), 2);
         assert!(
             missing
@@ -156,6 +158,9 @@ mod tests {
                 .any(|item| item.kind == "file" && item.asset_id.is_some())
         );
         assert!(missing.iter().any(|item| item.kind == "plugin"));
+        std::fs::remove_dir_all(data_root.join("library")).unwrap();
+        std::fs::create_dir_all(data_root.join("library/riffra.db")).unwrap();
+        assert!(collect_missing(&data_root, &session).is_err());
         assert!(session.validate_and_normalize().is_ok());
         let _ = std::fs::remove_dir_all(data_root);
     }
@@ -173,7 +178,7 @@ mod tests {
             .unwrap()
             .plugin
             .path = bundle.to_string_lossy().into_owned();
-        let missing = collect_missing(&data_root, &session);
+        let missing = collect_missing(&data_root, &session).unwrap();
         assert!(missing.iter().all(|item| item.kind != "plugin"));
         let _ = std::fs::remove_dir_all(data_root);
     }
@@ -213,7 +218,7 @@ mod tests {
             .master_effects
             .push(missing_device("effect:master", "Master FX"));
 
-        let missing = collect_missing(&data_root, &session);
+        let missing = collect_missing(&data_root, &session).unwrap();
         assert_eq!(missing.len(), 4);
         assert!(
             missing

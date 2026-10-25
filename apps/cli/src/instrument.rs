@@ -9,15 +9,6 @@ use std::process::{Command, Stdio};
 
 const PASSTHROUGH_SUBCOMMANDS: [&str; 5] = ["init", "validate", "inspect", "render", "audition"];
 
-#[derive(Clone, Debug)]
-pub(crate) enum PassthroughCommand {
-    Init(Vec<OsString>),
-    Validate(Vec<OsString>),
-    Inspect(Vec<OsString>),
-    Render(Vec<OsString>),
-    Audition(Vec<OsString>),
-}
-
 pub(crate) fn prepare_cli_args<I>(args: I) -> Vec<OsString>
 where
     I: IntoIterator<Item = OsString>,
@@ -43,48 +34,48 @@ where
     prepared
 }
 
-pub(crate) fn passthrough_command(cli: &Cli) -> Option<PassthroughCommand> {
+pub(crate) fn passthrough_command(cli: &Cli) -> Option<&InstrumentCommand> {
     let Some(CliCommand::Instrument { command }) = cli.command.as_ref() else {
         return None;
     };
     match command {
-        InstrumentCommand::Init(args) => Some(PassthroughCommand::Init(args.args.clone())),
-        InstrumentCommand::Validate(args) => Some(PassthroughCommand::Validate(args.args.clone())),
-        InstrumentCommand::Inspect(args) => Some(PassthroughCommand::Inspect(args.args.clone())),
-        InstrumentCommand::Render(args) => Some(PassthroughCommand::Render(args.args.clone())),
-        InstrumentCommand::Audition(args) => Some(PassthroughCommand::Audition(args.args.clone())),
+        InstrumentCommand::Init(_)
+        | InstrumentCommand::Validate(_)
+        | InstrumentCommand::Inspect(_)
+        | InstrumentCommand::Render(_)
+        | InstrumentCommand::Audition(_) => Some(command),
         _ => None,
     }
 }
 
 pub(crate) fn run(
-    command: PassthroughCommand,
+    command: &InstrumentCommand,
     data_root: Option<&Path>,
 ) -> Result<(), PassthroughError> {
     let binaries = RuntimeBinaries::beside_current_executable().map_err(PassthroughError::spawn)?;
-    let mut args = Vec::new();
     let (subcommand, forwarded) = match command {
-        PassthroughCommand::Init(mut forwarded) => {
-            if forwarded.is_empty() {
-                let data_root = data_root.ok_or_else(|| {
-                    PassthroughError::message("--data-root is required for instrument init")
-                })?;
-                let definition = create_draft_definition(data_root)
-                    .map_err(|error| PassthroughError::message(error.to_string()))?;
-                forwarded.push(definition.into_os_string());
-            }
-            ("instrument init", forwarded)
-        }
-        PassthroughCommand::Validate(forwarded) => ("instrument validate", forwarded),
-        PassthroughCommand::Inspect(forwarded) => ("instrument inspect", forwarded),
-        PassthroughCommand::Render(forwarded) => ("render", forwarded),
-        PassthroughCommand::Audition(forwarded) => ("audition", forwarded),
+        InstrumentCommand::Init(args) => ("instrument init", &args.args),
+        InstrumentCommand::Validate(args) => ("instrument validate", &args.args),
+        InstrumentCommand::Inspect(args) => ("instrument inspect", &args.args),
+        InstrumentCommand::Render(args) => ("render", &args.args),
+        InstrumentCommand::Audition(args) => ("audition", &args.args),
+        _ => unreachable!("only Sonalloy passthrough commands are forwarded"),
     };
-    args.extend(subcommand.split_ascii_whitespace().map(OsString::from));
-    args.extend(forwarded);
+    let mut process = Command::new(&binaries.sonalloy);
+    process.args(subcommand.split_ascii_whitespace());
+    if matches!(command, InstrumentCommand::Init(_)) && forwarded.is_empty() {
+        let data_root = data_root.ok_or_else(|| {
+            PassthroughError::message("--data-root is required for instrument init")
+        })?;
+        process.arg(
+            create_draft_definition(data_root)
+                .map_err(|error| PassthroughError::message(error.to_string()))?,
+        );
+    } else {
+        process.args(forwarded);
+    }
 
-    let status = Command::new(&binaries.sonalloy)
-        .args(args)
+    let status = process
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
@@ -151,14 +142,15 @@ mod tests {
             ])
             .unwrap();
             let args = match passthrough_command(&cli).unwrap() {
-                PassthroughCommand::Init(args)
-                | PassthroughCommand::Validate(args)
-                | PassthroughCommand::Inspect(args)
-                | PassthroughCommand::Render(args)
-                | PassthroughCommand::Audition(args) => args,
+                InstrumentCommand::Init(args)
+                | InstrumentCommand::Validate(args)
+                | InstrumentCommand::Inspect(args)
+                | InstrumentCommand::Render(args)
+                | InstrumentCommand::Audition(args) => args,
+                _ => panic!("expected a Sonalloy passthrough command"),
             };
             assert_eq!(
-                args,
+                args.args,
                 [
                     OsString::from("note"),
                     OsString::from("definition.json"),
@@ -181,8 +173,8 @@ mod tests {
 
         assert!(matches!(
             passthrough_command(&cli),
-            Some(PassthroughCommand::Validate(args))
-                if args == [OsString::from("--help")]
+            Some(InstrumentCommand::Validate(args))
+                if args.args == [OsString::from("--help")]
         ));
     }
 

@@ -61,12 +61,8 @@ where
                     .filter(|value| !value.is_empty());
             }
             if let Some(master_db) = patch.master_db {
-                if !master_db.is_finite() {
-                    return Err(ApplicationError::InvalidCommand(
-                        "master gain must be finite".into(),
-                    ));
-                }
-                session.settings.master_db = master_db.clamp(-90.0, 0.0);
+                session.settings.master_db = crate::SessionSettings::normalize_master_db(master_db)
+                    .map_err(ApplicationError::InvalidCommand)?;
             }
             if let Some(loop_enabled) = patch.loop_enabled {
                 session.settings.loop_enabled = loop_enabled;
@@ -81,7 +77,7 @@ where
                 session.settings.metronome_sound = metronome_sound;
             }
             if let Some(note) = patch.note {
-                session.settings.note = note.chars().take(16_384).collect();
+                session.settings.note = note;
             }
             Ok(())
         })

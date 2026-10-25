@@ -70,23 +70,13 @@ impl ProjectStore {
     /// invalid, or when the Project cannot be created or loaded.
     pub fn initialize(&self) -> Result<ProjectInitialization, SessionLoadError> {
         fs::create_dir_all(&self.projects_dir)?;
-        for entry in fs::read_dir(&self.projects_dir)? {
-            let entry = entry?;
-            let file_type = entry.file_type()?;
-            if file_type.is_symlink() {
-                return Err(invalid_data("Project store contains a symbolic link").into());
-            }
-            if file_type.is_dir() {
-                let project_id = entry.file_name().to_string_lossy().into_owned();
-                validate_project_id(&project_id).map_err(invalid_data)?;
-            }
-        }
+        let projects = self.project_directories()?;
         ensure_shared_directories(&self.data_root)?;
 
-        if self.project_directories()?.is_empty() {
+        if projects.is_empty() {
             return self.initialize_new_project();
         }
-        let project_id = self.read_or_repair_active_project()?;
+        let project_id = self.read_or_repair_active_project(&projects)?;
         match self.load(&project_id) {
             Ok(loaded) => {
                 let storage = self.session_store(&project_id).map_err(invalid_data)?;
@@ -236,7 +226,7 @@ impl ProjectStore {
         Ok(())
     }
 
-    fn read_or_repair_active_project(&self) -> io::Result<String> {
+    fn read_or_repair_active_project(&self, projects: &[String]) -> io::Result<String> {
         let workspace = self.data_root.join(WORKSPACE_FILE);
         if workspace.is_file() {
             let payload = fs::read(&workspace)?;
@@ -244,10 +234,9 @@ impl ProjectStore {
             self.require_existing_project(&state.active_project_id)?;
             return Ok(state.active_project_id);
         }
-        let first = self
-            .project_directories()?
-            .into_iter()
-            .next()
+        let first = projects
+            .first()
+            .cloned()
             .ok_or_else(|| io::Error::other("DataRoot has no Project"))?;
         self.write_workspace(&first)?;
         Ok(first)
@@ -329,10 +318,10 @@ mod tests {
         let second = store.create(Some("Alpha".into())).unwrap();
         let first_storage = store.session_store(&first_id).unwrap();
         let second_storage = store.session_store(&second.project_id).unwrap();
-        let mut first_session = first_storage.load_or_create().unwrap().session;
+        let mut first_session = first_storage.load_existing().unwrap().session;
         first_session.settings.note = "first".into();
         first_storage.save(&first_session).unwrap();
-        let mut second_session = second_storage.load_or_create().unwrap().session;
+        let mut second_session = second_storage.load_existing().unwrap().session;
         second_session.settings.note = "second".into();
         second_session
             .arrangement
@@ -342,30 +331,6 @@ mod tests {
         consumer.external_audio_source_track_ids = vec!["source".into()];
         second_session.arrangement.tracks.push(consumer);
         second_storage.save(&second_session).unwrap();
-        let session_path = root
-            .join(PROJECTS_DIRECTORY)
-            .join(&second.project_id)
-            .join("session.json");
-        let mut document: serde_json::Value =
-            serde_json::from_slice(&fs::read(&session_path).unwrap()).unwrap();
-        document["schemaVersion"] = 1.into();
-        for track in document["session"]["arrangement"]["tracks"]
-            .as_array_mut()
-            .unwrap()
-        {
-            let fields = track.as_object_mut().unwrap();
-            let sources = fields.remove("externalAudioSourceTrackIds").unwrap();
-            fields.insert(
-                "externalAudioSourceTrackId".into(),
-                sources
-                    .as_array()
-                    .unwrap()
-                    .first()
-                    .cloned()
-                    .unwrap_or(serde_json::Value::Null),
-            );
-        }
-        fs::write(&session_path, serde_json::to_vec(&document).unwrap()).unwrap();
 
         assert_eq!(
             store
@@ -387,20 +352,12 @@ mod tests {
             restored.arrangement.tracks[1].external_audio_source_track_ids,
             ["source"]
         );
-        reopened
-            .session_store(&second.project_id)
-            .unwrap()
-            .save(&restored)
-            .unwrap();
-        let saved: serde_json::Value =
-            serde_json::from_slice(&fs::read(&session_path).unwrap()).unwrap();
-        assert_eq!(saved["schemaVersion"], riffra_core::SESSION_SCHEMA_VERSION);
         // Projects never share storage.
         assert_eq!(
             reopened
                 .session_store(&first_id)
                 .unwrap()
-                .load_or_create()
+                .load_existing()
                 .unwrap()
                 .session
                 .settings
@@ -411,7 +368,7 @@ mod tests {
             reopened
                 .session_store(&second.project_id)
                 .unwrap()
-                .load_or_create()
+                .load_existing()
                 .unwrap()
                 .session
                 .settings

@@ -120,7 +120,7 @@ pub fn export(
     let mut assets = Vec::new();
     let mut asset_sources = Vec::new();
     for (index, asset_id) in referenced_asset_ids(session).into_iter().enumerate() {
-        let Some(canonical) = asset::load(data_root, &asset_id) else {
+        let Some(canonical) = asset::load(data_root, &asset_id)? else {
             assets.push(PackagedAsset {
                 asset_id: asset_id.clone(),
                 name: "missing".into(),
@@ -135,9 +135,9 @@ pub fn export(
         let base = source_path
             .file_stem()
             .and_then(|name| name.to_str())
-            .map(safe_name)
+            .map(|name| asset::safe_name(name, "project"))
             .filter(|name| !name.is_empty())
-            .unwrap_or_else(|| safe_name(&canonical.name));
+            .unwrap_or_else(|| asset::safe_name(&canonical.name, "project"));
         let extension = source_path
             .extension()
             .and_then(|extension| extension.to_str())
@@ -173,8 +173,8 @@ pub fn export(
 
     let manifest = ProjectManifest {
         exported_at_ms,
-        assets: assets.clone(),
-        instrument_snapshots: instrument_snapshots.clone(),
+        assets,
+        instrument_snapshots,
     };
     let payload = serde_json::to_vec_pretty(&manifest)
         .map_err(|error| format!("Project manifest could not be encoded: {error}"))?;
@@ -226,7 +226,7 @@ pub fn export(
             std::io::copy(&mut source, &mut archive)
                 .map_err(|error| format!("Project Asset could not be archived: {error}"))?;
         }
-        for snapshot in &instrument_snapshots {
+        for snapshot in &manifest.instrument_snapshots {
             for package_path in &snapshot.files {
                 let entry = package_path.as_str();
                 archive.start_file(entry, options).map_err(|error| {
@@ -261,7 +261,7 @@ pub fn export(
         path: output.to_string_lossy().into_owned(),
         session_id: session.session_id.clone(),
         exported_at_ms,
-        asset_count: assets.len(),
+        asset_count: manifest.assets.len(),
     })
 }
 
@@ -389,7 +389,7 @@ fn import_packaged_asset(
             asset.asset_id
         )
     })?;
-    if let Some(existing) = asset::load(data_root, &asset.asset_id) {
+    if let Some(existing) = asset::load(data_root, &asset.asset_id)? {
         if Path::new(&existing.content_location).is_file() {
             if !files_equal(Path::new(&existing.content_location), staging_path)? {
                 return Err(format!(
@@ -438,7 +438,7 @@ fn import_packaged_asset(
 }
 
 fn import_missing_asset(data_root: &Path, asset: &PackagedAsset) -> Result<(), String> {
-    if asset::load(data_root, &asset.asset_id).is_some() {
+    if asset::load(data_root, &asset.asset_id)?.is_some() {
         return Ok(());
     }
     let location = asset::unique_import_destination_with_ext(data_root, &asset.name, "missing")?;
@@ -802,27 +802,6 @@ fn resolve_packaged_path(
     Ok(package_root.join(relative))
 }
 
-fn safe_name(value: &str) -> String {
-    let mut result = value
-        .chars()
-        .filter_map(|character| {
-            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
-                Some(character)
-            } else if character.is_whitespace() {
-                Some('-')
-            } else {
-                None
-            }
-        })
-        .collect::<String>();
-    result.truncate(80);
-    if result.is_empty() {
-        "project".into()
-    } else {
-        result
-    }
-}
-
 fn files_equal(left: &Path, right: &Path) -> Result<bool, String> {
     files_equal_with_label(left, right, "Asset")
 }
@@ -974,6 +953,27 @@ mod tests {
     }
 
     #[test]
+    fn export_distinguishes_unregistered_assets_from_database_failures() {
+        // Arrange
+        let root = std::env::temp_dir().join(format!("riffra-project-db-error-{}", now_ms()));
+        let session = session_with_midi_clip(riffra_core::mint_asset_id());
+        let output = package_path(&root, "missing.riffra");
+
+        // Act / Assert
+        let exported = export(&root, &session, 42, &output).unwrap();
+        let manifest = read_manifest(Path::new(&exported.path));
+        assert_eq!(manifest["assets"][0]["state"], "missing");
+        let connection = rusqlite::Connection::open(root.join("library/riffra.db")).unwrap();
+        connection.execute("DROP TABLE assets", []).unwrap();
+        connection
+            .execute("CREATE TABLE assets (id TEXT)", [])
+            .unwrap();
+        assert!(export(&root, &session, 42, &output).is_err());
+        drop(connection);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn exports_session_manifest_without_path_traversal() {
         let root = std::env::temp_dir().join(format!("riffra-project-{}", now_ms()));
         let session = CreativeSession::new(now_ms());
@@ -1064,13 +1064,17 @@ mod tests {
             .collect()
         );
 
-        let original_location = asset::resolve_content_location(&root, &asset_id).unwrap();
+        let original_location = asset::resolve_content_location(&root, &asset_id)
+            .unwrap()
+            .unwrap();
         fs::remove_file(original_location).unwrap();
 
         // Restore content while retaining the canonical AssetId.
         let restored = import(&root, Path::new(&exported.path)).unwrap();
         assert_eq!(restored.arrangement.audio_clips[0].asset_id, asset_id);
-        let location = asset::resolve_content_location(&root, &asset_id).unwrap();
+        let location = asset::resolve_content_location(&root, &asset_id)
+            .unwrap()
+            .unwrap();
         assert_eq!(fs::read(&location).unwrap(), content);
         let _ = fs::remove_dir_all(root);
     }
@@ -1116,7 +1120,7 @@ mod tests {
         .unwrap();
 
         import(&target_root, &package).unwrap();
-        let restored = asset::load(&target_root, &asset_id).unwrap();
+        let restored = asset::load(&target_root, &asset_id).unwrap().unwrap();
         assert_eq!(restored.content_location, existing.to_string_lossy());
         assert_eq!(fs::read(existing).unwrap(), content);
 
@@ -1156,14 +1160,19 @@ mod tests {
         let manifest = read_manifest(Path::new(&exported.path));
         assert_eq!(manifest["assets"][0]["packagePath"], "assets/1-bass.mid");
 
-        fs::remove_file(asset::resolve_content_location(&root, &asset_id).unwrap()).unwrap();
+        fs::remove_file(
+            asset::resolve_content_location(&root, &asset_id)
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap();
         let restored = import(&root, Path::new(&exported.path)).unwrap();
         assert_eq!(
             restored.arrangement.midi_clips[0].asset_id,
             Some(asset_id.clone())
         );
 
-        let restored_asset = asset::load(&root, &asset_id).unwrap();
+        let restored_asset = asset::load(&root, &asset_id).unwrap().unwrap();
         assert_eq!(restored_asset.kind, AssetKind::Midi);
         assert!(restored_asset.content_location.ends_with(".mid"));
         let restored_bytes = fs::read(&restored_asset.content_location).unwrap();
@@ -1184,7 +1193,9 @@ mod tests {
         let exported = export(&root, &session, 9, &output).unwrap();
 
         // Replace the canonical content with different bytes under the same id.
-        let location = asset::resolve_content_location(&root, &asset_id).unwrap();
+        let location = asset::resolve_content_location(&root, &asset_id)
+            .unwrap()
+            .unwrap();
         fs::write(&location, b"different").unwrap();
 
         let result = import(&root, Path::new(&exported.path));
@@ -1220,7 +1231,7 @@ mod tests {
 
         let imported = import(&target_root, &package).unwrap();
         assert_eq!(imported.arrangement.audio_clips[0].asset_id, asset_id);
-        let restored = asset::load(&target_root, &asset_id).unwrap();
+        let restored = asset::load(&target_root, &asset_id).unwrap().unwrap();
         assert_eq!(restored.name, "Original take");
         assert!(
             !Path::new(&restored.content_location).exists(),

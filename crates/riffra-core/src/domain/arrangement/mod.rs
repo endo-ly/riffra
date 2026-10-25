@@ -1715,27 +1715,10 @@ impl Arrangement {
                 return Err("Audio clips require ids, names, tracks and asset ids.".into());
             }
             clip.validate_and_normalize()?;
-            let mut candidate = Arrangement {
-                revision: arrangement.revision,
-                timebase: arrangement.timebase.clone(),
-                loop_range: arrangement.loop_range,
-                punch_range: arrangement.punch_range,
-                tracks: arrangement.tracks.clone(),
-                mixer: Mixer::default(),
-                audio_clips: Vec::new(),
-                midi_clips: Vec::new(),
-                automation_lanes: Vec::new(),
-                markers: Vec::new(),
-                regions: Vec::new(),
-                harmony_events: arrangement.harmony_events.clone(),
-                recording_sessions: arrangement.recording_sessions.clone(),
-                recording_passes: arrangement.recording_passes.clone(),
-                takes: arrangement.takes.clone(),
-            };
-            candidate
-                .add_audio_clip(clip, |_| true)
+            arrangement
+                .validate_audio_clip(&clip)
                 .map_err(|error| error.to_string())?;
-            normalized_clips.push(candidate.audio_clips.pop().expect("validated clip"));
+            normalized_clips.push(clip);
         }
         arrangement.audio_clips = normalized_clips;
         if arrangement.midi_clips.len() > 256 {
@@ -1846,38 +1829,39 @@ impl Arrangement {
             .iter()
             .map(|recording| recording.id.as_str())
             .collect::<std::collections::HashSet<_>>();
-        let pass_ids = arrangement
+        let passes_by_id = arrangement
             .recording_passes
             .iter()
-            .map(|pass| pass.id.as_str())
-            .collect::<std::collections::HashSet<_>>();
-        let take_ids = arrangement
+            .map(|pass| (pass.id.as_str(), pass))
+            .collect::<std::collections::HashMap<_, _>>();
+        let takes_by_id = arrangement
             .takes
             .iter()
-            .map(|take| take.id.as_str())
-            .collect::<std::collections::HashSet<_>>();
+            .map(|take| (take.id.as_str(), take))
+            .collect::<std::collections::HashMap<_, _>>();
         if session_ids.len() != arrangement.recording_sessions.len()
-            || pass_ids.len() != arrangement.recording_passes.len()
-            || take_ids.len() != arrangement.takes.len()
+            || passes_by_id.len() != arrangement.recording_passes.len()
+            || takes_by_id.len() != arrangement.takes.len()
         {
             return Err("Recording Session, Pass, and Take IDs must be unique.".into());
         }
+        let audio_clips_by_id = arrangement
+            .audio_clips
+            .iter()
+            .map(|clip| (clip.id.as_str(), clip))
+            .collect::<std::collections::HashMap<_, _>>();
+        let midi_clips_by_id = arrangement
+            .midi_clips
+            .iter()
+            .map(|clip| (clip.id.as_str(), clip))
+            .collect::<std::collections::HashMap<_, _>>();
         for recording in &arrangement.recording_sessions {
             let mut slot_track_ids = std::collections::HashSet::new();
             if recording.id.trim().is_empty()
                 || recording.track_slots.iter().any(|slot| {
-                    let take = arrangement
-                        .takes
-                        .iter()
-                        .find(|take| take.id == slot.active_take_id);
-                    let audio_clip = arrangement
-                        .audio_clips
-                        .iter()
-                        .find(|clip| clip.id == slot.timeline_clip_id);
-                    let midi_clip = arrangement
-                        .midi_clips
-                        .iter()
-                        .find(|clip| clip.id == slot.timeline_clip_id);
+                    let take = takes_by_id.get(slot.active_take_id.as_str());
+                    let audio_clip = audio_clips_by_id.get(slot.timeline_clip_id.as_str());
+                    let midi_clip = midi_clips_by_id.get(slot.timeline_clip_id.as_str());
                     !slot_track_ids.insert(slot.track_id.as_str())
                         || !track_ids.contains(slot.track_id.as_str())
                         || take.is_none_or(|take| {
@@ -1898,10 +1882,8 @@ impl Arrangement {
                         }
                 })
                 || recording.pass_ids.iter().any(|id| {
-                    arrangement
-                        .recording_passes
-                        .iter()
-                        .find(|pass| pass.id == *id)
+                    passes_by_id
+                        .get(id.as_str())
                         .is_none_or(|pass| pass.session_id != recording.id)
                 })
             {
@@ -1918,23 +1900,16 @@ impl Arrangement {
                 || pass.duration_ticks == 0
                 || pass.track_take_ids.iter().any(|id| {
                     !pass_take_ids.insert(id.as_str())
-                        || arrangement
-                            .takes
-                            .iter()
-                            .find(|take| take.id == *id)
-                            .is_none_or(|take| {
-                                take.pass_id != pass.id || take.session_id != pass.session_id
-                            })
+                        || takes_by_id.get(id.as_str()).is_none_or(|take| {
+                            take.pass_id != pass.id || take.session_id != pass.session_id
+                        })
                 })
             {
                 return Err("Recording Passes contain invalid references or ranges.".into());
             }
         }
         for take in &arrangement.takes {
-            let pass = arrangement
-                .recording_passes
-                .iter()
-                .find(|pass| pass.id == take.pass_id);
+            let pass = passes_by_id.get(take.pass_id.as_str());
             let audio_sources_valid = take
                 .raw_audio
                 .iter()

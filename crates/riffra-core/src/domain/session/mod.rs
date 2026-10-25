@@ -76,6 +76,15 @@ impl Default for SessionSettings {
     }
 }
 
+impl SessionSettings {
+    pub(crate) fn normalize_master_db(value: f64) -> Result<f64, String> {
+        if !value.is_finite() {
+            return Err("master gain must be finite".into());
+        }
+        Ok(value.clamp(-90.0, 0.0))
+    }
+}
+
 impl CreativeSession {
     /// Creates a fresh session with an empty arrangement and neutral playback
     /// settings.
@@ -116,14 +125,13 @@ impl CreativeSession {
         }
         let settings = &mut self.settings;
         settings.mixdown.validate()?;
-        if !settings.master_db.is_finite() {
-            return Err("Master gain must be finite.".into());
-        }
-        settings.master_db = settings.master_db.clamp(-90.0, 0.0);
+        settings.master_db = SessionSettings::normalize_master_db(settings.master_db)?;
         if settings.count_in_beats > 8 {
             return Err("Count-in must be between 0 and 8 beats.".into());
         }
-        settings.note.truncate(16_384);
+        if let Some((boundary, _)) = settings.note.char_indices().nth(16_384) {
+            settings.note.truncate(boundary);
+        }
 
         Arrangement::validate_and_normalize(&mut self.arrangement)?;
         Ok(self)
@@ -180,6 +188,29 @@ impl MixdownSettings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn settings_normalization_limits_unicode_notes_and_master_gain() {
+        for text in ["a", "あ", "aあ🎵"] {
+            // Arrange
+            let mut session = CreativeSession::new(123);
+            session.settings.note = text.repeat(16_385);
+            let expected = session
+                .settings
+                .note
+                .chars()
+                .take(16_384)
+                .collect::<String>();
+            session.settings.master_db = 10.0;
+
+            // Act
+            let normalized = session.validate_and_normalize().unwrap();
+
+            // Assert
+            assert_eq!(normalized.settings.note, expected);
+            assert_eq!(normalized.settings.master_db, 0.0);
+        }
+    }
 
     #[test]
     fn emptied_preserves_identity_and_resets_contents() {

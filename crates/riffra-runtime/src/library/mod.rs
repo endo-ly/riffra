@@ -251,7 +251,7 @@ pub fn update_metadata(
     // Read Model entry. The metadata is written to whichever store owns the
     // row; nothing is mirrored across the two.
     if let Ok(asset_id) = AssetId::from_normalized(id)
-        && asset::load(data_root, &asset_id).is_some()
+        && asset::load(data_root, &asset_id)?.is_some()
     {
         asset::update_metadata(data_root, &asset_id, tag.clone(), note.clone())?;
         let connection = open(data_root)?;

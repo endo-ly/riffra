@@ -25,7 +25,7 @@ pub(crate) fn project_session(
     catalog: &BuiltInInstrumentCatalog,
     project_id: &str,
     session: &CreativeSession,
-) -> ProjectedTimeline {
-    let resources = resolve(data_root, catalog, session);
-    project(project_id, session, &resources)
+) -> Result<ProjectedTimeline, String> {
+    let resources = resolve(data_root, catalog, session)?;
+    Ok(project(project_id, session, &resources))
 }
