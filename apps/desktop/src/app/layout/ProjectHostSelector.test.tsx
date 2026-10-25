@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { HostConnectionState, LocalHostInfo } from '@/model/domain';
@@ -66,6 +66,59 @@ describe('ProjectHostSelector', () => {
     expect(screen.getByRole('menuitem', { name: /project-a/i })).toBeInTheDocument();
     expect(screen.getByText(/PID 18420 · Ready/)).toBeInTheDocument();
     expect(onRefresh).toHaveBeenCalledOnce();
+  });
+
+  it('lists Projects by most recent update, or by name on request', async () => {
+    const project = (projectId: string, name: string, updatedAtMs: number) => ({
+      projectId,
+      name,
+      updatedAtMs,
+      error: null,
+    });
+    const projectState = {
+      activeProjectId: 'gamma',
+      projects: [
+        project('beta', 'Beta', 1),
+        project('gamma', 'Gamma', 3),
+        project('alpha', 'Alpha', 2),
+      ],
+    };
+    const user = userEvent.setup();
+    renderSelector(embedded, { projectState });
+    const listedNames = () =>
+      within(screen.getByRole('group', { name: 'Projects' }))
+        .getAllByRole('menuitem')
+        .map((item) => item.querySelector('span')?.textContent);
+
+    await user.click(screen.getByRole('button', { name: /Project: Gamma/ }));
+    const byRecent = listedNames();
+    await user.click(screen.getByRole('button', { name: 'Name' }));
+
+    expect(byRecent).toEqual(['Gamma', 'Alpha', 'Beta']);
+    expect(listedNames()).toEqual(['Alpha', 'Beta', 'Gamma']);
+  });
+
+  it('opens the first matching Project on Enter, but not on an IME confirmation', async () => {
+    const onOpenProject = vi.fn().mockResolvedValue(null);
+    const projectState = {
+      ...defaultProjectState(),
+      projects: [
+        ...defaultProjectState().projects,
+        { projectId: 'night', name: 'Night Circuit', updatedAtMs: 1, error: null },
+      ],
+    };
+    const user = userEvent.setup();
+    renderSelector(embedded, { onOpenProject, projectState });
+
+    await user.click(screen.getByRole('button', { name: /Project: Untitled Project/ }));
+    await user.keyboard('night');
+    const search = screen.getByRole('textbox', { name: 'Search Projects' });
+    fireEvent.keyDown(search, { key: 'Enter', isComposing: true });
+    const openedWhileComposing = onOpenProject.mock.calls.length;
+    await user.keyboard('{Enter}');
+
+    expect(openedWhileComposing).toBe(0);
+    expect(onOpenProject).toHaveBeenCalledWith('night');
   });
 
   it('routes the external package action through Import Project', async () => {

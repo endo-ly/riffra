@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type {
   HostConnectionState,
   HostTarget,
@@ -9,8 +10,20 @@ import type {
 } from '@/model/domain';
 import type { HostConnectionBootstrap } from '@/native/native-api';
 import { openHostDataRoot } from '@/native/dialog';
+import controls from '@/shared/ui/controls.module.css';
 import { Icon } from '@/shared/ui/primitives';
 import styles from './ProjectHostSelector.module.css';
+
+type ProjectOrder = 'recent' | 'name';
+
+const PROJECT_ORDER_LABELS: Record<ProjectOrder, string> = { recent: 'Recent', name: 'Name' };
+
+const projectNameCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+
+const PROJECT_ORDERS: Record<ProjectOrder, (a: ProjectSummary, b: ProjectSummary) => number> = {
+  recent: (a, b) => b.updatedAtMs - a.updatedAtMs,
+  name: (a, b) => projectNameCollator.compare(a.name, b.name),
+};
 
 interface ProjectHostSelectorProps {
   state: HostConnectionState;
@@ -31,14 +44,24 @@ interface ProjectHostSelectorProps {
   onRenameProject?: (name: string) => Promise<unknown>;
 }
 
+/** Viewport position of the open panel, taken from the trigger when it opens. */
+interface PanelAnchor {
+  left: number;
+  top: number;
+}
+
 export function ProjectHostSelector(props: ProjectHostSelectorProps) {
-  const [open, setOpen] = useState(false);
+  const [anchor, setAnchor] = useState<PanelAnchor | null>(null);
   const [nameDraft, setNameDraft] = useState('');
   const [query, setQuery] = useState('');
+  const [order, setOrder] = useState<ProjectOrder>('recent');
   const [refreshing, setRefreshing] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const discardNameDraftRef = useRef(false);
   const { onRefresh, onSwitch } = props;
+  const open = anchor !== null;
+  const close = () => setAnchor(null);
 
   const hostLabel = getHostLabel(props.state, props.hosts);
   const projects = props.projectState?.projects ?? [];
@@ -49,9 +72,11 @@ export function ProjectHostSelector(props: ProjectHostSelectorProps) {
   const projectActionsDisabled =
     props.switching || props.projectSwitching || props.state.mode === 'disconnected';
   const normalizedQuery = query.trim().toLocaleLowerCase();
-  const visibleProjects = normalizedQuery
-    ? projects.filter((project) => project.name.toLocaleLowerCase().includes(normalizedQuery))
-    : projects;
+  const visibleProjects = (
+    normalizedQuery
+      ? projects.filter((project) => project.name.toLocaleLowerCase().includes(normalizedQuery))
+      : projects
+  ).toSorted(PROJECT_ORDERS[order]);
 
   useEffect(() => {
     if (!open) return;
@@ -61,19 +86,19 @@ export function ProjectHostSelector(props: ProjectHostSelectorProps) {
   useEffect(() => {
     if (!open) return;
     const onPointerDown = (event: MouseEvent) => {
-      const container = containerRef.current;
-      if (!container || container.contains(event.target as Node)) return;
+      const target = event.target as Node;
+      if (triggerRef.current?.contains(target) || panelRef.current?.contains(target)) return;
       // Blur first so a pending rename commits before the input unmounts.
       if (
         document.activeElement instanceof HTMLElement &&
-        container.contains(document.activeElement)
+        panelRef.current?.contains(document.activeElement)
       ) {
         document.activeElement.blur();
       }
-      setOpen(false);
+      setAnchor(null);
     };
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOpen(false);
+      if (event.key === 'Escape') setAnchor(null);
     };
     window.addEventListener('mousedown', onPointerDown);
     window.addEventListener('keydown', onKeyDown);
@@ -102,17 +127,17 @@ export function ProjectHostSelector(props: ProjectHostSelectorProps) {
 
   const closeOnSuccess = (operation: Promise<unknown> | undefined) => {
     if (!operation) {
-      setOpen(false);
+      close();
       return;
     }
     void operation.then((result) => {
-      if (result) setOpen(false);
+      if (result) close();
     });
   };
 
   const openProject = (project: ProjectSummary) => {
     if (project.projectId === activeProjectId) {
-      setOpen(false);
+      close();
       return;
     }
     closeOnSuccess(props.onOpenProject?.(project.projectId));
@@ -122,14 +147,14 @@ export function ProjectHostSelector(props: ProjectHostSelectorProps) {
 
   const hostBusy = props.switching || props.projectSwitching;
   const hostSection = (
-    <div className={styles.hostSection}>
-      <div className={styles.hostHeader}>
-        <span>Host</span>
+    <section className={styles.section}>
+      <header className={styles.sectionHeader}>
+        <h3>Host</h3>
         {props.state.mode === 'disconnected' && (
           <button
             type="button"
             role="menuitem"
-            className={styles.ghostButton}
+            className={styles.textButton}
             disabled={hostBusy}
             onClick={() => void props.onReconnect()}
           >
@@ -139,7 +164,7 @@ export function ProjectHostSelector(props: ProjectHostSelectorProps) {
         <button
           type="button"
           role="menuitem"
-          className={styles.ghostButton}
+          className={styles.textButton}
           disabled={hostBusy}
           onClick={() => {
             void openHostDataRoot()
@@ -154,26 +179,26 @@ export function ProjectHostSelector(props: ProjectHostSelectorProps) {
         <button
           type="button"
           role="menuitem"
-          className={styles.ghostButton}
+          className={styles.textButton}
           disabled={hostBusy || refreshing}
           onClick={refreshSelector}
         >
           {refreshing ? 'Refreshing…' : 'Refresh'}
         </button>
-      </div>
+      </header>
       <div role="group" aria-label="Hosts">
         <button
           type="button"
           role="menuitem"
-          className={styles.hostItem}
+          className={styles.row}
           aria-current={props.state.mode === 'embedded' || undefined}
           disabled={hostBusy}
           onClick={() =>
-            props.state.mode === 'embedded' ? setOpen(false) : switchHost({ type: 'embedded' })
+            props.state.mode === 'embedded' ? close() : switchHost({ type: 'embedded' })
           }
         >
           <i className={styles.hostDot} data-mode="embedded" />
-          <strong>Local Desktop</strong>
+          <span className={styles.rowName}>Local Desktop</span>
           {props.state.mode === 'embedded' && <Icon name="check" />}
         </button>
         {props.hosts.map((host) => {
@@ -182,20 +207,22 @@ export function ProjectHostSelector(props: ProjectHostSelectorProps) {
             <button
               type="button"
               role="menuitem"
-              className={styles.hostItem}
+              className={styles.row}
               key={host.instanceId}
               title={host.dataRoot}
               aria-current={current || undefined}
               disabled={hostBusy}
               onClick={() =>
                 current
-                  ? setOpen(false)
+                  ? close()
                   : switchHost({ type: 'registration', instanceId: host.instanceId })
               }
             >
               <i className={styles.hostDot} data-mode="attached" />
-              <strong>{host.projectName ?? basename(host.dataRoot) ?? host.instanceId}</strong>
-              <small>
+              <span className={styles.rowName}>
+                {host.projectName ?? basename(host.dataRoot) ?? host.instanceId}
+              </span>
+              <small className={styles.rowDetail}>
                 PID {host.pid} · {host.safeMode ? 'Safe Mode' : host.status}
               </small>
               {current && <Icon name="check" />}
@@ -203,7 +230,7 @@ export function ProjectHostSelector(props: ProjectHostSelectorProps) {
           );
         })}
       </div>
-    </div>
+    </section>
   );
 
   const projectSection = (
@@ -228,7 +255,7 @@ export function ProjectHostSelector(props: ProjectHostSelectorProps) {
             onKeyDown={(event) => {
               if (event.key === 'Enter') {
                 event.currentTarget.blur();
-                setOpen(false);
+                close();
               } else if (event.key === 'Escape') {
                 discardNameDraftRef.current = true;
                 event.currentTarget.blur();
@@ -238,13 +265,14 @@ export function ProjectHostSelector(props: ProjectHostSelectorProps) {
           <button
             type="button"
             role="menuitem"
-            className={styles.ghostButton}
+            className={controls.smallButton}
             disabled={projectActionsDisabled}
             onClick={() => {
               props.onExportProject?.();
-              setOpen(false);
+              close();
             }}
           >
+            <Icon name="export" />
             Export…
           </button>
         </div>
@@ -253,47 +281,73 @@ export function ProjectHostSelector(props: ProjectHostSelectorProps) {
           {activeProject && ` · Updated ${formatUpdatedAt(activeProject.updatedAtMs)}`}
         </span>
       </div>
-      <label className={styles.search}>
-        <Icon name="search" />
-        <input
-          aria-label="Search Projects"
-          placeholder="Search Projects"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-        />
-      </label>
-      <div className={styles.list} role="group" aria-label="Projects">
-        {visibleProjects.map((project) => {
-          const current = project.projectId === activeProjectId;
-          return (
-            <button
-              type="button"
-              role="menuitem"
-              className={styles.item}
-              key={project.projectId}
-              aria-current={current || undefined}
-              disabled={projectActionsDisabled}
-              onClick={() => openProject(project)}
-            >
-              <span className={styles.itemText}>
-                <strong>{project.name}</strong>
+      <section className={`${styles.section} ${styles.projects}`}>
+        <header className={styles.sectionHeader}>
+          <h3>
+            Projects <span className={styles.count}>{projects.length}</span>
+          </h3>
+          <div className={controls.segmented} role="group" aria-label="Project order">
+            {(Object.keys(PROJECT_ORDER_LABELS) as ProjectOrder[]).map((value) => (
+              <button
+                type="button"
+                key={value}
+                aria-pressed={order === value}
+                onClick={() => setOrder(value)}
+              >
+                {PROJECT_ORDER_LABELS[value]}
+              </button>
+            ))}
+          </div>
+        </header>
+        <label className={styles.search}>
+          <Icon name="search" />
+          <input
+            aria-label="Search Projects"
+            placeholder="Search Projects"
+            value={query}
+            autoFocus
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              const first = visibleProjects[0];
+              // Enter that confirms an IME conversion only finishes typing the query.
+              if (event.key !== 'Enter' || event.nativeEvent.isComposing) return;
+              if (first && !projectActionsDisabled) openProject(first);
+            }}
+          />
+        </label>
+        <div className={styles.list} role="group" aria-label="Projects">
+          {visibleProjects.map((project) => {
+            const current = project.projectId === activeProjectId;
+            return (
+              <button
+                type="button"
+                role="menuitem"
+                className={styles.row}
+                key={project.projectId}
+                title={project.error ?? undefined}
+                aria-current={current || undefined}
+                disabled={projectActionsDisabled}
+                onClick={() => openProject(project)}
+              >
+                <span className={styles.rowName}>{project.name}</span>
                 {project.error ? (
-                  <small className={styles.itemError}>{project.error}</small>
+                  <small className={styles.rowError}>{project.error}</small>
+                ) : current ? (
+                  <Icon name="check" />
                 ) : (
-                  <small>{current ? 'Open' : formatUpdatedAt(project.updatedAtMs)}</small>
+                  <small className={styles.rowDetail}>{formatUpdatedAt(project.updatedAtMs)}</small>
                 )}
-              </span>
-              {current && <Icon name="check" />}
-            </button>
-          );
-        })}
-        {visibleProjects.length === 0 && <p className={styles.empty}>No matching Projects</p>}
-      </div>
-      <div className={styles.footer}>
+              </button>
+            );
+          })}
+          {visibleProjects.length === 0 && <p className={styles.empty}>No matching Projects</p>}
+        </div>
+      </section>
+      <div className={styles.actions}>
         <button
           type="button"
           role="menuitem"
-          className={styles.footerButton}
+          className={`${controls.smallButton} ${controls.accent}`}
           disabled={projectActionsDisabled}
           onClick={() => closeOnSuccess(props.onCreateProject?.())}
         >
@@ -303,28 +357,47 @@ export function ProjectHostSelector(props: ProjectHostSelectorProps) {
         <button
           type="button"
           role="menuitem"
-          className={styles.footerButton}
+          className={controls.smallButton}
           disabled={projectActionsDisabled}
           onClick={() => {
             props.onImportProject?.();
-            setOpen(false);
+            close();
           }}
         >
+          <Icon name="import" />
           Import…
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          className={controls.smallButton}
+          title="Import Score YAML"
+          disabled={projectActionsDisabled}
+          onClick={() => {
+            props.onImportScore?.();
+            close();
+          }}
+        >
+          <Icon name="import" />
+          Score YAML…
         </button>
       </div>
     </>
   );
 
   return (
-    <div ref={containerRef} className={styles.selector} data-project-host-selector>
+    <div className={styles.selector} data-project-host-selector>
       <button
+        ref={triggerRef}
         type="button"
         className={styles.trigger}
         aria-label={`${projectName ? 'Project' : 'Host'}: ${projectName ?? hostLabel}`}
         aria-expanded={open}
         title={props.state.dataRoot ?? hostLabel}
-        onClick={() => setOpen((current) => !current)}
+        onClick={(event) => {
+          const bounds = event.currentTarget.getBoundingClientRect();
+          setAnchor((current) => (current ? null : { left: bounds.left, top: bounds.bottom + 4 }));
+        }}
       >
         <span className={styles.triggerText}>
           {projectName ? (
@@ -349,27 +422,24 @@ export function ProjectHostSelector(props: ProjectHostSelectorProps) {
         </span>
         <Icon name="chevron" />
       </button>
-      {open && (
-        <div className={styles.panel} role="menu">
-          {props.projectState && projectSection}
-          {hostSection}
-          {(props.error || props.projectError) && (
-            <p className={styles.error}>{props.projectError ?? props.error}</p>
-          )}
-          <button
-            type="button"
-            role="menuitem"
-            className={styles.footerButton}
-            disabled={projectActionsDisabled}
-            onClick={() => {
-              props.onImportScore?.();
-              setOpen(false);
-            }}
+      {anchor &&
+        // The Global Control Bar isolates its stacking, so the panel renders at the document
+        // root to stay above the workspace below it.
+        createPortal(
+          <div
+            ref={panelRef}
+            className={styles.panel}
+            role="menu"
+            style={{ left: anchor.left, top: anchor.top }}
           >
-            Import Score YAML…
-          </button>
-        </div>
-      )}
+            {props.projectState && projectSection}
+            {hostSection}
+            {(props.error || props.projectError) && (
+              <p className={styles.error}>{props.projectError ?? props.error}</p>
+            )}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }
