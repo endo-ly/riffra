@@ -306,9 +306,9 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
 
     pub fn stop(&self) -> Result<RuntimeProjectionStatus, RuntimeError> {
         let lease = self.transport.acquire()?;
-        lease.request_stop()?;
+        let controller_result = lease.request_stop().map(|_| ());
         self.projection.notify();
-        lease.stop()?;
+        lease.run_native_after_stop_request(controller_result, || lease.stop())?;
         drop(lease);
         Ok(self.status())
     }
@@ -320,9 +320,9 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
     /// Returns an error if the active runtime cannot accept the pause request.
     pub fn pause(&self) -> Result<RuntimeProjectionStatus, RuntimeError> {
         let lease = self.transport.acquire()?;
-        lease.request_stop()?;
+        let controller_result = lease.request_stop().map(|_| ());
         self.projection.notify();
-        lease.pause()?;
+        lease.run_native_after_stop_request(controller_result, || lease.pause())?;
         drop(lease);
         Ok(self.status())
     }
@@ -332,9 +332,9 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
         F: FnOnce() -> Result<(), RuntimeError>,
     {
         let lease = self.transport.acquire()?;
-        lease.request_stop()?;
+        let controller_result = lease.request_stop().map(|_| ());
         self.projection.notify();
-        lease.stop()?;
+        lease.run_native_after_stop_request(controller_result, || lease.stop())?;
         seek()
     }
 }

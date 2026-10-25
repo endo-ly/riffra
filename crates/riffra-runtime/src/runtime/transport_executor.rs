@@ -124,6 +124,16 @@ impl<D: TransportDriver> TransportExecutionLease<'_, D> {
         self.executor.driver.pause_timeline()
     }
 
+    pub(crate) fn run_native_after_stop_request(
+        &self,
+        controller_result: Result<(), RuntimeError>,
+        native_action: impl FnOnce() -> Result<(), RuntimeError>,
+    ) -> Result<(), RuntimeError> {
+        let native_result = native_action();
+        controller_result?;
+        native_result
+    }
+
     pub(crate) fn set_transport_starting(&self) -> Result<(), RuntimeError> {
         self.executor.driver.set_transport_starting()
     }
@@ -226,6 +236,7 @@ mod tests {
     struct FakeTransportDriver {
         played: AtomicU64,
         stopped: AtomicU64,
+        paused: AtomicU64,
         play_probe: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
     }
 
@@ -234,6 +245,7 @@ mod tests {
             Self {
                 played: AtomicU64::new(0),
                 stopped: AtomicU64::new(0),
+                paused: AtomicU64::new(0),
                 play_probe: Mutex::new(None),
             }
         }
@@ -253,6 +265,7 @@ mod tests {
         }
 
         fn pause_timeline(&self) -> Result<(), RuntimeError> {
+            self.paused.fetch_add(1, Ordering::Relaxed);
             Ok(())
         }
 
@@ -325,11 +338,25 @@ mod tests {
             lease.request_stop(),
             Err(RuntimeError::Internal(message)) if message == "transport state was poisoned"
         ));
+        let stop_result =
+            lease.run_native_after_stop_request(lease.request_stop().map(|_| ()), || lease.stop());
+        assert!(matches!(
+            stop_result,
+            Err(RuntimeError::Internal(message)) if message == "transport state was poisoned"
+        ));
+        let pause_result =
+            lease.run_native_after_stop_request(lease.request_stop().map(|_| ()), || lease.pause());
+        assert!(matches!(
+            pause_result,
+            Err(RuntimeError::Internal(message)) if message == "transport state was poisoned"
+        ));
         assert!(matches!(
             lease.play_if_current(Some(operation), None),
             Err(RuntimeError::Internal(message)) if message == "transport state was poisoned"
         ));
         assert_eq!(driver.played.load(Ordering::Relaxed), 0);
+        assert_eq!(driver.stopped.load(Ordering::Relaxed), 1);
+        assert_eq!(driver.paused.load(Ordering::Relaxed), 1);
     }
 
     #[test]
