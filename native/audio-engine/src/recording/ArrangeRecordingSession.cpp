@@ -104,14 +104,20 @@ bool ArrangeRecordingSession::initialise(const RecordingConfiguration& configura
     return writeManifest("recording", error);
 }
 
+ArrangeRecordingSession::TrackWriter* ArrangeRecordingSession::findTrack(
+    const juce::String& trackId) noexcept {
+    const auto found = std::find_if(tracks.begin(), tracks.end(), [&](const TrackWriter& track) {
+        return track.trackId == trackId;
+    });
+    return found != tracks.end() ? &*found : nullptr;
+}
+
 bool ArrangeRecordingSession::beginAudioTrackCapture(
     const juce::String& trackId, const std::uint64_t audioClockStartSample,
     const std::uint64_t timelineStartSample) noexcept {
     if (finished.load(std::memory_order_acquire)) return false;
-    const auto found = std::find_if(tracks.begin(), tracks.end(), [&](const TrackWriter& track) {
-        return track.trackId == trackId;
-    });
-    if (found == tracks.end() || found->audio == nullptr || found->captureActive ||
+    auto* found = findTrack(trackId);
+    if (found == nullptr || found->audio == nullptr || found->captureActive ||
         found->captureSegmentCount >= found->captureSegments.capacity())
         return false;
     found->captureSegments.emplace_back();
@@ -135,10 +141,8 @@ bool ArrangeRecordingSession::beginAudioTrackCapture(
 void ArrangeRecordingSession::writeAudioTrack(const juce::String& trackId, const float* raw,
                                               const int rawSampleCount) noexcept {
     if (finished.load(std::memory_order_acquire) || (rawSampleCount > 0 && raw == nullptr)) return;
-    const auto found = std::find_if(tracks.begin(), tracks.end(), [&](const TrackWriter& track) {
-        return track.trackId == trackId;
-    });
-    if (found == tracks.end() || found->audio == nullptr) return;
+    auto* found = findTrack(trackId);
+    if (found == nullptr || found->audio == nullptr) return;
     if (rawSampleCount > 0) {
         const std::array<const float*, 1> rawChannels{raw};
         (void)found->audio->writeRaw(rawChannels.data(), rawSampleCount);
@@ -148,10 +152,8 @@ void ArrangeRecordingSession::writeAudioTrack(const juce::String& trackId, const
 bool ArrangeRecordingSession::endAudioTrackCapture(const juce::String& trackId,
                                                    const std::uint64_t audioClockEndSample,
                                                    const std::uint64_t timelineEndSample) noexcept {
-    const auto found = std::find_if(tracks.begin(), tracks.end(), [&](const TrackWriter& track) {
-        return track.trackId == trackId;
-    });
-    if (found == tracks.end() || found->audio == nullptr || !found->captureActive ||
+    auto* found = findTrack(trackId);
+    if (found == nullptr || found->audio == nullptr || !found->captureActive ||
         found->captureSegmentCount == 0)
         return false;
     auto& segment = found->captureSegments[found->captureSegmentCount - 1];
@@ -203,10 +205,9 @@ void ArrangeRecordingSession::captureMidiTrack(const juce::String& trackId,
                                                const juce::MidiMessage& message,
                                                const std::uint64_t audioSample) noexcept {
     if (finished.load(std::memory_order_acquire)) return;
-    const auto found = std::find_if(tracks.begin(), tracks.end(), [&](const TrackWriter& track) {
-        return track.trackId == trackId && track.kind == TrackKindSpec::instrument;
-    });
-    if (found == tracks.end() || midiEvents == nullptr || midiTrackEventCounts == nullptr) return;
+    auto* found = findTrack(trackId);
+    if (found != nullptr && found->kind != TrackKindSpec::instrument) return;
+    if (found == nullptr || midiEvents == nullptr || midiTrackEventCounts == nullptr) return;
     auto& eventCount = midiTrackEventCounts[found->midiTrackIndex];
     auto currentCount = eventCount.load(std::memory_order_relaxed);
     auto reserved = false;
@@ -310,20 +311,16 @@ void ArrangeRecordingSession::setCaptureRange(const std::uint64_t startAudioSamp
 }
 
 juce::File ArrangeRecordingSession::prepareRawForReading(const juce::String& trackId) noexcept {
-    const auto found = std::find_if(tracks.begin(), tracks.end(), [&](const TrackWriter& track) {
-        return track.trackId == trackId;
-    });
-    if (found == tracks.end() || found->audio == nullptr) return {};
+    auto* found = findTrack(trackId);
+    if (found == nullptr || found->audio == nullptr) return {};
     return found->audio->flushRaw();
 }
 
 std::vector<std::pair<std::uint64_t, std::uint64_t>> ArrangeRecordingSession::getRawSegmentRanges(
     const juce::String& trackId) noexcept {
     std::vector<std::pair<std::uint64_t, std::uint64_t>> result;
-    const auto found = std::find_if(tracks.begin(), tracks.end(), [&](const TrackWriter& track) {
-        return track.trackId == trackId;
-    });
-    if (found == tracks.end()) return result;
+    auto* found = findTrack(trackId);
+    if (found == nullptr) return result;
     result.reserve(found->captureSegmentCount);
     for (std::size_t i = 0; i < found->captureSegmentCount; ++i) {
         const auto& segment = found->captureSegments[i];
@@ -340,11 +337,9 @@ bool ArrangeRecordingSession::writeProcessedAudioTrackOffline(const juce::String
     if (finished.load(std::memory_order_acquire) || processed == nullptr || sampleCount <= 0)
         return false;
 
-    const auto found = std::find_if(tracks.begin(), tracks.end(), [&](const TrackWriter& track) {
-        return track.trackId == trackId;
-    });
+    auto* found = findTrack(trackId);
 
-    if (found == tracks.end() || found->audio == nullptr) return false;
+    if (found == nullptr || found->audio == nullptr) return false;
 
     return found->audio->writeProcessedOffline(processed, sampleCount, timeoutMs);
 }
@@ -353,9 +348,8 @@ void ArrangeRecordingSession::writeSidechain(const juce::String& trackId,
                                              const juce::String& deviceId,
                                              const float* const* channels,
                                              const int sampleCount) noexcept {
-    for (auto& track : tracks) {
-        if (track.trackId != trackId) continue;
-        for (auto& input : track.auxiliaryInputs) {
+    if (auto* track = findTrack(trackId)) {
+        for (auto& input : track->auxiliaryInputs) {
             if (input.deviceId != deviceId) continue;
             if (input.writer == nullptr || !input.writer->write(channels, sampleCount))
                 input.failed = true;
@@ -366,9 +360,8 @@ void ArrangeRecordingSession::writeSidechain(const juce::String& trackId,
 
 juce::File ArrangeRecordingSession::prepareSidechainForReading(
     const juce::String& trackId, const juce::String& deviceId) noexcept {
-    for (auto& track : tracks) {
-        if (track.trackId != trackId) continue;
-        for (auto& input : track.auxiliaryInputs) {
+    if (auto* track = findTrack(trackId)) {
+        for (auto& input : track->auxiliaryInputs) {
             if (input.deviceId != deviceId) continue;
             input.writer.reset();
             return input.failed ? juce::File{} : input.file;

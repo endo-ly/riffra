@@ -168,6 +168,7 @@ private:
 
     ArrangeRecordingSession(juce::File directory, double sampleRate);
     bool initialise(const RecordingConfiguration& configuration, juce::String& error);
+    TrackWriter* findTrack(const juce::String& trackId) noexcept;
     bool writeManifest(const juce::String& state, juce::String& error) const;
     void captureMidiTrack(const juce::String& trackId, std::optional<std::uint16_t> sourceIndex,
                           const juce::String& sourceDeviceId, const juce::MidiMessage& message,
