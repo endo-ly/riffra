@@ -1,6 +1,7 @@
 use super::*;
-use crate::host_connection::{HostConnectionBootstrap, HostTarget, LocalHostInfo};
-use crate::model::HostConnectionState;
+use crate::host_connection::{
+    HostConnectionBootstrap, HostConnectionState, HostTarget, LocalHostInfo,
+};
 use riffra_runtime::api::ControlCommand;
 use serde_json::Value;
 use tauri::State;
