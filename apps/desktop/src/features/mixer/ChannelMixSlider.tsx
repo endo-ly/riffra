@@ -67,5 +67,14 @@ function handleKeyDown(
 }
 
 function isMixAdjustmentKey(key: string): boolean {
-  return ['ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'].includes(key);
+  return [
+    'ArrowLeft',
+    'ArrowRight',
+    'ArrowUp',
+    'ArrowDown',
+    'Home',
+    'End',
+    'PageUp',
+    'PageDown',
+  ].includes(key);
 }
