@@ -6,6 +6,8 @@ export function isEditableTypingTarget(target: EventTarget | null): boolean {
     (element.tagName === 'INPUT' ||
       element.tagName === 'TEXTAREA' ||
       element.tagName === 'SELECT' ||
-      element.isContentEditable),
+      element.isContentEditable ||
+      (typeof element.closest === 'function' &&
+        Boolean(element.closest('[contenteditable="true"]')))),
   );
 }

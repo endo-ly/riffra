@@ -10,7 +10,7 @@ import type { ArrangementMutationResult, CreativeSession, Marker } from '@/model
 import type { ArrangeApi, TransportApi } from '@/native/native-api';
 import { HostConnectionChangedError } from '@/native/invoke';
 import { tickToMusicalPosition } from '@/shared/session/musical-position';
-import { isEditableTarget } from '../model/interaction';
+import { isEditableTypingTarget } from '@/shared/input';
 
 type RangeKind = 'loop' | 'punch';
 type ArrangeRulerApi = Pick<
@@ -354,7 +354,7 @@ export function useArrangeRulerController({
 
   const handleKeyboard = useCallback(
     (event: KeyboardEvent) => {
-      if (event.defaultPrevented || isEditableTarget(event.target)) return false;
+      if (event.defaultPrevented || isEditableTypingTarget(event.target)) return false;
       if (event.key === 'Escape') {
         clearRulerSelection();
         return true;

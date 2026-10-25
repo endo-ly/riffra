@@ -7,17 +7,12 @@ import type {
   ProjectState,
   ProjectExport,
 } from '@/model/domain';
-import { defaultProjectState, defaultSession } from '../browser-defaults';
+import { canonicalState, defaultProjectState, defaultSession } from '../browser-defaults';
 import { dispatchControl, dispatchControlOrFallback, invokeHostOrFallback } from '../invoke';
 
 function defaultArrangementMutation(): ArrangementMutationResult {
   return {
-    canonical: {
-      projectId: defaultProjectState().activeProjectId,
-      session: defaultSession(),
-      sequence: 0,
-      history: { canUndo: false, canRedo: false },
-    },
+    canonical: canonicalState(defaultSession()),
     createdEntityIds: {},
     projection: { state: 'notRequired' },
   };
@@ -83,12 +78,7 @@ export async function importProject(path: string): Promise<ProjectActivationResu
 function defaultProjectActivationResult(): ProjectActivationResult {
   return {
     projectState: defaultProjectState(),
-    canonical: {
-      projectId: defaultProjectState().activeProjectId,
-      session: defaultSession(),
-      sequence: 0,
-      history: { canUndo: false, canRedo: false },
-    },
+    canonical: canonicalState(defaultSession()),
     recovery: { recoveredFromGeneration: false, recoveryCandidates: [] },
   };
 }

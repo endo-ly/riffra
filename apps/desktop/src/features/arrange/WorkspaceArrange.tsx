@@ -40,7 +40,7 @@ import {
   type TrackSize,
 } from '@/features/arrange/model/arrange-timeline';
 import { HostConnectionChangedError } from '@/native/invoke';
-import { isEditableTarget } from '@/features/arrange/model/interaction';
+import { isEditableTypingTarget } from '@/shared/input';
 import { useArrangeEditor, type ArrangeSelection } from '@/features/arrange/hooks/useArrangeEditor';
 import { useArrangeStatusToast } from '@/features/arrange/hooks/useArrangeStatusToast';
 import type { useArrangeLowerAreaController } from '@/features/arrange/hooks/useArrangeLowerAreaController';
@@ -342,19 +342,19 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
         toggleComputerKeyboard();
         return;
       }
-      if (event.key === ' ' && !isEditableTarget(event.target)) {
+      if (event.key === ' ' && !isEditableTypingTarget(event.target)) {
         event.preventDefault();
         onToggleTransport();
         return;
       }
       if (event.key.toLowerCase() === 'z' && !event.ctrlKey && !event.altKey && !event.metaKey) {
-        if (!rulerTimeSelection || isEditableTarget(event.target)) return;
+        if (!rulerTimeSelection || isEditableTypingTarget(event.target)) return;
         event.preventDefault();
         zoomToRange(rulerTimeSelection.startTick, rulerTimeSelection.endTick);
         return;
       }
       if (event.key.toLowerCase() === 'f' && !event.ctrlKey && !event.altKey && !event.metaKey) {
-        if (isEditableTarget(event.target)) return;
+        if (isEditableTypingTarget(event.target)) return;
         const clipEdges = [
           ...arrangement.audioClips.flatMap((clip) => [
             clip.startTick,

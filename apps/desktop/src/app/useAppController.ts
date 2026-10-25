@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { isEditableTypingTarget } from '@/shared/input';
 import { logNativeError } from '@/native/invoke';
 import { defaultNativeApi } from '@/native/native';
@@ -13,7 +13,6 @@ import { useBackgroundJobs } from '@/app/runtime/useBackgroundJobs';
 import { useTransportController } from '@/features/transport/hooks/useTransportController';
 import { useArrangementTransport } from '@/features/transport/hooks/useArrangementTransport';
 import { useLibrary } from '@/features/library/hooks/useLibrary';
-import { useBrowserSearch } from '@/features/browser/hooks/useBrowserSearch';
 import { useInbox } from '@/features/library/hooks/useInbox';
 import { useInstrumentLibrary } from '@/features/instruments/hooks/useInstrumentLibrary';
 import { useAudioSettings } from '@/features/audio/hooks/useAudioSettings';
@@ -175,8 +174,8 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     toggleRecording,
   } = recording;
 
-  const browserSearch = useBrowserSearch();
-  const { query, setQuery, normalizedQuery } = browserSearch;
+  const [query, setQuery] = useState('');
+  const normalizedQuery = useMemo(() => query.trim().toLocaleLowerCase(), [query]);
 
   const library = useLibrary(api, {
     setAudio,

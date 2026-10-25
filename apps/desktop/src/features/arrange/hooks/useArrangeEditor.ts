@@ -8,7 +8,7 @@ import {
   type ArrangeTool,
   type SnapGrid,
 } from '@/features/arrange/model/arrange-timeline';
-import { isEditableTarget } from '@/features/arrange/model/interaction';
+import { isEditableTypingTarget } from '@/shared/input';
 import { useClipInteractions } from './useClipInteractions';
 import { useArrangeCommands } from './useArrangeCommands';
 
@@ -189,7 +189,7 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {
       const key = event.key.toLowerCase();
-      if (isEditableTarget(event.target)) return;
+      if (isEditableTypingTarget(event.target)) return;
       if (event.ctrlKey && key === 'a') {
         event.preventDefault();
         setSelectedClipIds([

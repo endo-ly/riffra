@@ -8,7 +8,7 @@ import type {
   ProjectTimebase,
 } from '@/model/domain';
 import { automationTargetKey, type AutomationOption } from '../model/automation-targets';
-import { isEditableTarget } from '@/features/arrange/model/interaction';
+import { isEditableTypingTarget } from '@/shared/input';
 import { automationValueAt } from '@/features/arrange/model/automation-value';
 import { useAutomationValueDisplay } from '@/features/arrange/model/useAutomationValueDisplay';
 import styles from '../WorkspaceArrange.module.css';
@@ -247,7 +247,7 @@ export function AutomationLaneView(props: AutomationLaneViewProps) {
         onPointerDown={addPoint}
         onKeyDown={(event) => {
           if (event.key !== 'Delete' || !selectedId) return;
-          if (isEditableTarget(event.target)) return;
+          if (isEditableTypingTarget(event.target)) return;
           event.preventDefault();
           const next = points.filter((point) => point.id !== selectedId);
           setPoints(next);

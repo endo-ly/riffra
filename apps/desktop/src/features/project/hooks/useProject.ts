@@ -45,7 +45,6 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UsePro
   const [exportMessage, setExportMessage] = useState<string | null>(null);
   const [projectSwitching, setProjectSwitching] = useState(false);
   const [projectError, setProjectError] = useState<string | null>(null);
-  const sessionRef = useRef<CreativeSession | null>(null);
   const sequenceRef = useRef(-1);
   const canonicalStateRef = useRef<CanonicalState | null>(null);
   const lastActivationRef = useRef<{
@@ -54,14 +53,12 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UsePro
   } | null>(null);
   const activeProjectIdRef = useRef<string | null>(boot?.projectState.activeProjectId ?? null);
   const switchingRef = useRef(false);
-  sessionRef.current = session;
   useEffect(() => {
     sequenceRef.current = -1;
     activeProjectIdRef.current = null;
     switchingRef.current = false;
     canonicalStateRef.current = null;
     lastActivationRef.current = null;
-    sessionRef.current = null;
     setSession(null);
     setHistoryState({ canUndo: false, canRedo: false });
     setAutosaveError(null);
@@ -85,7 +82,6 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UsePro
       if (canonical.sequence <= sequenceRef.current) return false;
       sequenceRef.current = canonical.sequence;
       canonicalStateRef.current = canonical;
-      sessionRef.current = canonical.session;
       setSession(canonical.session);
       setHistoryState(canonical.history);
       setBoot((current) => (current ? { ...current, canonical } : current));
@@ -111,7 +107,6 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UsePro
       lastActivationRef.current = identity;
       sequenceRef.current = activation.canonical.sequence;
       canonicalStateRef.current = activation.canonical;
-      sessionRef.current = activation.canonical.session;
       setSession(activation.canonical.session);
       setHistoryState(activation.canonical.history);
       setBoot((current) =>
