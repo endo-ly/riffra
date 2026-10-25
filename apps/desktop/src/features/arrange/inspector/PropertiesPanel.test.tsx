@@ -7,6 +7,7 @@ import { PropertiesPanel } from './PropertiesPanel';
 import { canonicalState, defaultSession } from '@/native/browser-defaults';
 import { toAssetId } from '@/native/contracts';
 import { FakeNativeApi, fakeAudioStatus } from '@/native/native-api-fake';
+import type { AudioClip, MidiClip } from '@/model/domain';
 
 afterEach(cleanup);
 
@@ -47,39 +48,47 @@ function renderPanel(
   );
 }
 
+function audioClip(id: string, name: string, startTick: number): AudioClip {
+  return {
+    id,
+    name,
+    trackId: 'track:audio',
+    assetId: toAssetId('asset:018f85b9-5fe1-7ef2-91d8-e6b4e665d41a'),
+    startTick,
+    sourceRange: { start: 0, end: 1_000 },
+    sourceSampleRate: 48_000,
+    timelineDuration: { frames: 1_000, sampleRate: 48_000 },
+    gainDb: 0,
+    pan: 0,
+    fadeIn: { frames: 0, sampleRate: 48_000 },
+    fadeOut: { frames: 0, sampleRate: 48_000 },
+    fadeShape: 'equalPower',
+    loopEnabled: false,
+    muted: false,
+    takeVariant: 'raw',
+  };
+}
+
+function midiClip(): MidiClip {
+  return {
+    instrumentControlEvents: [],
+    id: 'clip:midi',
+    name: 'MIDI Clip',
+    trackId: 'track:instrument',
+    startTick: 0,
+    durationTicks: 960,
+    notes: [],
+    events: [],
+    muted: false,
+    loopEnabled: false,
+  };
+}
+
 describe('PropertiesPanel', () => {
   it('limits mixed clip selections to shared clip actions', () => {
     const session = defaultSession();
-    session.arrangement.audioClips.push({
-      id: 'clip:audio',
-      name: 'Audio Clip',
-      trackId: 'track:audio',
-      assetId: toAssetId('asset:018f85b9-5fe1-7ef2-91d8-e6b4e665d41a'),
-      startTick: 0,
-      sourceRange: { start: 0, end: 1_000 },
-      sourceSampleRate: 48_000,
-      timelineDuration: { frames: 1_000, sampleRate: 48_000 },
-      gainDb: 0,
-      pan: 0,
-      fadeIn: { frames: 0, sampleRate: 48_000 },
-      fadeOut: { frames: 0, sampleRate: 48_000 },
-      fadeShape: 'equalPower',
-      loopEnabled: false,
-      muted: false,
-      takeVariant: 'raw',
-    });
-    session.arrangement.midiClips.push({
-      instrumentControlEvents: [],
-      id: 'clip:midi',
-      name: 'MIDI Clip',
-      trackId: 'track:instrument',
-      startTick: 0,
-      durationTicks: 960,
-      notes: [],
-      events: [],
-      muted: false,
-      loopEnabled: false,
-    });
+    session.arrangement.audioClips.push(audioClip('clip:audio', 'Audio Clip', 0));
+    session.arrangement.midiClips.push(midiClip());
 
     renderPanel({ kind: 'clips', clipIds: ['clip:audio', 'clip:midi'] }, session);
 
@@ -92,42 +101,11 @@ describe('PropertiesPanel', () => {
 
   it('does not offer Crossfade when a mixed selection contains two Audio Clips', () => {
     const session = defaultSession();
-    const audioClip = {
-      id: 'clip:audio-a',
-      name: 'Audio Clip A',
-      trackId: 'track:audio',
-      assetId: toAssetId('asset:018f85b9-5fe1-7ef2-91d8-e6b4e665d41a'),
-      startTick: 0,
-      sourceRange: { start: 0, end: 1_000 },
-      sourceSampleRate: 48_000,
-      timelineDuration: { frames: 1_000, sampleRate: 48_000 },
-      gainDb: 0,
-      pan: 0,
-      fadeIn: { frames: 0, sampleRate: 48_000 },
-      fadeOut: { frames: 0, sampleRate: 48_000 },
-      fadeShape: 'equalPower' as const,
-      loopEnabled: false,
-      muted: false,
-      takeVariant: 'raw' as const,
-    };
-    session.arrangement.audioClips.push(audioClip, {
-      ...audioClip,
-      id: 'clip:audio-b',
-      name: 'Audio Clip B',
-      startTick: 1_000,
-    });
-    session.arrangement.midiClips.push({
-      instrumentControlEvents: [],
-      id: 'clip:midi',
-      name: 'MIDI Clip',
-      trackId: 'track:instrument',
-      startTick: 0,
-      durationTicks: 960,
-      notes: [],
-      events: [],
-      muted: false,
-      loopEnabled: false,
-    });
+    session.arrangement.audioClips.push(
+      audioClip('clip:audio-a', 'Audio Clip A', 0),
+      audioClip('clip:audio-b', 'Audio Clip B', 1_000),
+    );
+    session.arrangement.midiClips.push(midiClip());
 
     renderPanel({ kind: 'clips', clipIds: ['clip:audio-a', 'clip:audio-b', 'clip:midi'] }, session);
 
