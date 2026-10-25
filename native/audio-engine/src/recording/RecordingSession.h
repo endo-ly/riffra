@@ -32,8 +32,6 @@ public:
     /// Completes an intentional raw-only capture without publishing an empty processed file.
     bool finishRawOnly(juce::String& error);
 
-    [[nodiscard]] int getRawChannels() const noexcept { return rawChannelCount; }
-    [[nodiscard]] int getProcessedChannels() const noexcept { return processedChannelCount; }
     [[nodiscard]] std::uint64_t getSamplesWritten() const noexcept;
     [[nodiscard]] std::uint64_t getRawSamplesWritten() const noexcept;
     [[nodiscard]] std::uint64_t getProcessedSamplesWritten() const noexcept;
@@ -49,13 +47,14 @@ public:
     [[nodiscard]] std::uint64_t getProcessedLastMissingSample() const noexcept;
     [[nodiscard]] std::uint64_t getDroppedBlocks() const noexcept;
     [[nodiscard]] std::uint64_t getMissingSamples() const noexcept;
-    [[nodiscard]] std::uint64_t getFirstMissingSample() const noexcept;
-    [[nodiscard]] std::uint64_t getLastMissingSample() const noexcept;
     [[nodiscard]] juce::File getDirectory() const { return recordingDirectory; }
 
 private:
     RecordingSession(juce::File directory, double sampleRate, int rawChannels,
                      int processedChannels);
+
+    [[nodiscard]] std::uint64_t getFirstMissingSample() const noexcept;
+    [[nodiscard]] std::uint64_t getLastMissingSample() const noexcept;
 
     bool initialise(juce::String& error);
     bool finishProducts(bool processedSuccessfully, bool processedRequired, juce::String& error);

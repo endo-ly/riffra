@@ -1,7 +1,6 @@
 #include <gtest/gtest.h>
 
 #include <array>
-#include <vector>
 
 #include "../support/TestSupport.h"
 #include "recording/RecordingSession.h"
@@ -15,28 +14,20 @@ constexpr int kBlockSize = 128;
 constexpr int kTotalSamples = 2'048;
 
 bool writeSyntheticTake(RecordingSession& session) {
-    std::array<std::vector<float>, kChannels> rawBuffers;
-    std::array<std::vector<float>, kChannels> processedBuffers;
-    for (auto& buffer : rawBuffers) buffer.resize(kBlockSize);
-    for (auto& buffer : processedBuffers) buffer.resize(kBlockSize);
+    std::array<std::array<float, kBlockSize>, kChannels> rawBuffers{};
+    std::array<std::array<float, kBlockSize>, kChannels> processedBuffers{};
     std::array<const float*, kChannels> rawPointers{};
     std::array<const float*, kChannels> processedPointers{};
+    for (std::size_t channel = 0; channel < kChannels; ++channel) {
+        const auto value = channel == 0 ? 0.25f : -0.25f;
+        rawBuffers[channel].fill(value);
+        processedBuffers[channel].fill(value * 0.5f);
+        rawPointers[channel] = rawBuffers[channel].data();
+        processedPointers[channel] = processedBuffers[channel].data();
+    }
 
     for (int offset = 0; offset < kTotalSamples; offset += kBlockSize) {
         const auto count = juce::jmin(kBlockSize, kTotalSamples - offset);
-        for (int sample = 0; sample < count; ++sample) {
-            const auto value = 0.25f;
-            rawBuffers[0][sample] = value;
-            rawBuffers[1][sample] = -value;
-            processedBuffers[0][sample] = value * 0.5f;
-            processedBuffers[1][sample] = -value * 0.5f;
-        }
-        for (int channel = 0; channel < kChannels; ++channel) {
-            rawPointers[static_cast<std::size_t>(channel)] =
-                rawBuffers[static_cast<std::size_t>(channel)].data();
-            processedPointers[static_cast<std::size_t>(channel)] =
-                processedBuffers[static_cast<std::size_t>(channel)].data();
-        }
         if (!session.writeRaw(rawPointers.data(), count)) return false;
     }
     session.flushRaw();
