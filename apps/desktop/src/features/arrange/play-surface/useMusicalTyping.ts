@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import {
   MUSICAL_TYPING_DEFAULT_OCTAVE,
   MUSICAL_TYPING_DEFAULT_VELOCITY,
@@ -8,10 +8,9 @@ import {
   MUSICAL_TYPING_OCTAVE_DOWN_KEY,
   MUSICAL_TYPING_OCTAVE_UP_KEY,
   baseNoteForOctave,
-  encodeNoteOff,
-  encodeNoteOn,
 } from '@/features/arrange/play-surface/musical-typing';
 import { isEditableTypingTarget } from '@/shared/input';
+import { useHeldMidiNotes } from './useHeldMidiNotes';
 
 interface UseMusicalTypingOptions {
   /** When false, all listeners detach and any held notes are released. */
@@ -40,79 +39,29 @@ export function useMusicalTyping({
   sendMidi,
   onOctaveChange,
 }: UseMusicalTypingOptions) {
-  const [activeNotes, setActiveNotes] = useState<ReadonlySet<number>>(() => new Set());
   const heldKeysRef = useRef<Set<string>>(new Set());
-  const heldNoteCountsRef = useRef<Map<number, number>>(new Map());
-  const heldNoteTargetsRef = useRef<Map<number, string>>(new Map());
-  const previousTargetTrackIdRef = useRef(targetTrackId);
-  const paramsRef = useRef({ octave, velocity, targetTrackId, sendMidi, onOctaveChange });
-  paramsRef.current = { octave, velocity, targetTrackId, sendMidi, onOctaveChange };
+  const paramsRef = useRef({ octave, onOctaveChange });
+  paramsRef.current = { octave, onOctaveChange };
+  const previousOctaveRef = useRef(octave);
+  const clearHeldKeys = useCallback(() => heldKeysRef.current.clear(), []);
+  const {
+    activeNotes,
+    releaseAll: releaseHeldNotes,
+    noteOn,
+    noteOff,
+  } = useHeldMidiNotes({
+    enabled,
+    targetTrackId,
+    velocity,
+    channel: 0,
+    sendMidi,
+    onReleaseAll: clearHeldKeys,
+  });
 
-  const noteOn = useCallback((note: number) => {
-    const { velocity: vel, targetTrackId: trackId, sendMidi: sm } = paramsRef.current;
-    if (!trackId) return;
-    const count = (heldNoteCountsRef.current.get(note) ?? 0) + 1;
-    heldNoteCountsRef.current.set(note, count);
-    if (count === 1) {
-      heldNoteTargetsRef.current.set(note, trackId);
-      void sm(trackId, encodeNoteOn(note, vel));
-      setActiveNotes((prev) => {
-        const next = new Set(prev);
-        next.add(note);
-        return next;
-      });
-    }
-  }, []);
-
-  const noteOff = useCallback((note: number) => {
-    const currentCount = heldNoteCountsRef.current.get(note);
-    if (currentCount == null) return;
-    const count = currentCount - 1;
-    if (count <= 0) {
-      heldNoteCountsRef.current.delete(note);
-      const trackId = heldNoteTargetsRef.current.get(note);
-      heldNoteTargetsRef.current.delete(note);
-      if (trackId) void paramsRef.current.sendMidi(trackId, encodeNoteOff(note));
-      setActiveNotes((prev) => {
-        const next = new Set(prev);
-        next.delete(note);
-        return next;
-      });
-    } else {
-      heldNoteCountsRef.current.set(note, count);
-    }
-  }, []);
-
-  const releaseHeldNotes = useCallback(() => {
-    const { sendMidi: sm } = paramsRef.current;
-    heldNoteTargetsRef.current.forEach((trackId, note) => {
-      void sm(trackId, encodeNoteOff(note));
-    });
-    heldKeysRef.current.clear();
-    heldNoteCountsRef.current.clear();
-    heldNoteTargetsRef.current.clear();
-    setActiveNotes(new Set());
-  }, []);
-
-  // Release notes whenever typing becomes disabled or the component unmounts.
   useEffect(() => {
-    if (!enabled) {
-      releaseHeldNotes();
-      return;
-    }
-    return releaseHeldNotes;
-  }, [enabled, releaseHeldNotes]);
-
-  // If the octave changes while notes are held, release them so they do not hang.
-  useEffect(() => {
-    if (heldNoteTargetsRef.current.size === 0) return;
-    releaseHeldNotes();
+    if (previousOctaveRef.current !== octave) releaseHeldNotes();
+    previousOctaveRef.current = octave;
   }, [octave, releaseHeldNotes]);
-
-  useEffect(() => {
-    if (previousTargetTrackIdRef.current !== targetTrackId) releaseHeldNotes();
-    previousTargetTrackIdRef.current = targetTrackId;
-  }, [releaseHeldNotes, targetTrackId]);
 
   useEffect(() => {
     if (!enabled) return;

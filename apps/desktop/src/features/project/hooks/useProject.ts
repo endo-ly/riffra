@@ -45,8 +45,6 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UsePro
   const [exportMessage, setExportMessage] = useState<string | null>(null);
   const [projectSwitching, setProjectSwitching] = useState(false);
   const [projectError, setProjectError] = useState<string | null>(null);
-  const sessionRef = useRef<CreativeSession | null>(null);
-  const sequenceRef = useRef(-1);
   const canonicalStateRef = useRef<CanonicalState | null>(null);
   const lastActivationRef = useRef<{
     projectId: string;
@@ -54,14 +52,11 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UsePro
   } | null>(null);
   const activeProjectIdRef = useRef<string | null>(boot?.projectState.activeProjectId ?? null);
   const switchingRef = useRef(false);
-  sessionRef.current = session;
   useEffect(() => {
-    sequenceRef.current = -1;
     activeProjectIdRef.current = null;
     switchingRef.current = false;
     canonicalStateRef.current = null;
     lastActivationRef.current = null;
-    sessionRef.current = null;
     setSession(null);
     setHistoryState({ canUndo: false, canRedo: false });
     setAutosaveError(null);
@@ -82,10 +77,8 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UsePro
   const applyCanonicalState = useCallback(
     (canonical: CanonicalState): boolean => {
       if (canonical.projectId !== activeProjectIdRef.current) return false;
-      if (canonical.sequence <= sequenceRef.current) return false;
-      sequenceRef.current = canonical.sequence;
+      if (canonical.sequence <= (canonicalStateRef.current?.sequence ?? -1)) return false;
       canonicalStateRef.current = canonical;
-      sessionRef.current = canonical.session;
       setSession(canonical.session);
       setHistoryState(canonical.history);
       setBoot((current) => (current ? { ...current, canonical } : current));
@@ -105,13 +98,11 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UsePro
         lastActivation.sequence === identity.sequence
       )
         return false;
-      if (activation.canonical.sequence < sequenceRef.current) return false;
+      if (activation.canonical.sequence < (canonicalStateRef.current?.sequence ?? -1)) return false;
       if (activation.canonical.projectId !== identity.projectId) return false;
       activeProjectIdRef.current = identity.projectId;
       lastActivationRef.current = identity;
-      sequenceRef.current = activation.canonical.sequence;
       canonicalStateRef.current = activation.canonical;
-      sessionRef.current = activation.canonical.session;
       setSession(activation.canonical.session);
       setHistoryState(activation.canonical.history);
       setBoot((current) =>
@@ -140,10 +131,10 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UsePro
     return { ...next, canonical: current };
   }, []);
   const refreshHistory = useCallback(async () => {
-    const sequenceAtRequest = sequenceRef.current;
+    const sequenceAtRequest = canonicalStateRef.current?.sequence ?? -1;
     try {
       const nextHistory = await getHistoryState();
-      if (sequenceRef.current !== sequenceAtRequest) return;
+      if ((canonicalStateRef.current?.sequence ?? -1) !== sequenceAtRequest) return;
       setHistoryState(nextHistory);
     } catch (error) {
       setAutosaveError(

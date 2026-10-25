@@ -1,6 +1,6 @@
 import { listen } from '@tauri-apps/api/event';
 import type { BootstrapState, RecoveryCandidate, RuntimeStartupFinished } from '@/model/domain';
-import { defaultProjectState, defaultSession } from '../browser-defaults';
+import { canonicalState, defaultProjectState, defaultSession } from '../browser-defaults';
 import {
   getHostGeneration,
   invokeHostOrFallback,
@@ -16,12 +16,7 @@ export async function bootstrap(): Promise<BootstrapState> {
     'get_bootstrap_state',
     {},
     {
-      canonical: {
-        projectId: defaultProjectState().activeProjectId,
-        session,
-        sequence: 0,
-        history: { canUndo: false, canRedo: false },
-      },
+      canonical: canonicalState(session),
       projectState: defaultProjectState(),
       pluginCatalog: [],
       runtimeStarted: false,

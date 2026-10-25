@@ -6,13 +6,22 @@ import { useRef } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { defaultSession } from '@/native/browser-defaults';
 import { FakeNativeApi } from '@/native/native-api-fake';
+import { useArrangementTransport } from './useArrangementTransport';
 import { useTransportController } from './useTransportController';
 
 afterEach(cleanup);
 
 function Harness({ api }: { api: FakeNativeApi }) {
   const sessionRef = useRef(defaultSession());
-  const transport = useTransportController({ api, sessionRef });
+  const arrangementTransport = useArrangementTransport(
+    api,
+    sessionRef.current.arrangement.timebase,
+  );
+  const transport = useTransportController({
+    api,
+    sessionRef,
+    transport: arrangementTransport.transport,
+  });
   return (
     <>
       <button onClick={() => void transport.playTransport()}>Play</button>

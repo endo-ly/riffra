@@ -10,7 +10,7 @@ import type { ArrangementMutationResult, CreativeSession, Marker } from '@/model
 import type { ArrangeApi, TransportApi } from '@/native/native-api';
 import { HostConnectionChangedError } from '@/native/invoke';
 import { tickToMusicalPosition } from '@/shared/session/musical-position';
-import { isEditableTarget } from '../model/interaction';
+import { isEditableTypingTarget } from '@/shared/input';
 
 type RangeKind = 'loop' | 'punch';
 type ArrangeRulerApi = Pick<
@@ -248,41 +248,52 @@ export function useArrangeRulerController({
     [api, pixelsPerTick, seekLocally, setMessage, snapTick],
   );
 
-  const dragLoopHandle = useCallback(
-    (event: PointerEvent<HTMLSpanElement>, boundary: 'start' | 'end') => {
+  const dragRangeHandle = useCallback(
+    (event: PointerEvent<HTMLSpanElement>, kind: RangeKind, boundary: 'start' | 'end') => {
       event.stopPropagation();
       event.preventDefault();
+      const range = kind === 'loop' ? arrangement.loopRange : arrangement.punchRange;
+      if (!range) return;
       const originX = event.clientX;
-      const range = arrangement.loopRange;
       const origin = boundary === 'start' ? range.startTick : range.endTick;
       const computeNext = (clientX: number, altKey: boolean) =>
         snapTick(origin + (clientX - originX) / pixelsPerTick, altKey);
+      const clearPreview = () => {
+        if (kind === 'loop') setLoopPreview(null);
+        else setPunchPreview(null);
+      };
       const applyPreview = (clientX: number, altKey: boolean) => {
         const next = computeNext(clientX, altKey);
-        setLoopPreview({
-          enabled: range.enabled,
-          startTick: boundary === 'start' ? next : range.startTick,
-          endTick: boundary === 'end' ? next : range.endTick,
-        });
+        const startTick = boundary === 'start' ? next : range.startTick;
+        const endTick = boundary === 'end' ? next : range.endTick;
+        if (kind === 'loop')
+          setLoopPreview({ enabled: arrangement.loopRange.enabled, startTick, endTick });
+        else setPunchPreview({ startTick, endTick });
       };
       const move = (pointer: globalThis.PointerEvent) =>
         applyPreview(pointer.clientX, pointer.altKey);
       const finish = (pointer: globalThis.PointerEvent) => {
         gestureCleanupRef.current?.();
         const next = computeNext(pointer.clientX, pointer.altKey);
-        if (next !== origin) {
-          void commit(
-            api.updateTimelineLoopRange(
-              range.enabled,
-              position(boundary === 'start' ? next : range.startTick),
-              position(boundary === 'end' ? next : range.endTick),
-            ),
-          ).finally(() => setLoopPreview(null));
-        } else setLoopPreview(null);
+        if (next === origin) {
+          clearPreview();
+          return;
+        }
+        const startTick = boundary === 'start' ? next : range.startTick;
+        const endTick = boundary === 'end' ? next : range.endTick;
+        const operation =
+          kind === 'loop'
+            ? api.updateTimelineLoopRange(
+                arrangement.loopRange.enabled,
+                position(startTick),
+                position(endTick),
+              )
+            : api.updateTimelinePunchRange(true, position(startTick), position(endTick));
+        void commit(operation).finally(clearPreview);
       };
       const cancel = () => {
         gestureCleanupRef.current?.();
-        setLoopPreview(null);
+        clearPreview();
       };
       const cleanup = () => {
         window.removeEventListener('pointermove', move);
@@ -297,64 +308,24 @@ export function useArrangeRulerController({
       window.addEventListener('pointercancel', cancel);
       applyPreview(event.clientX, event.altKey);
     },
-    [api, arrangement.loopRange, commit, pixelsPerTick, position, snapTick],
+    [api, arrangement.loopRange, arrangement.punchRange, commit, pixelsPerTick, position, snapTick],
+  );
+
+  const dragLoopHandle = useCallback(
+    (event: PointerEvent<HTMLSpanElement>, boundary: 'start' | 'end') =>
+      dragRangeHandle(event, 'loop', boundary),
+    [dragRangeHandle],
   );
 
   const dragPunchHandle = useCallback(
-    (event: PointerEvent<HTMLSpanElement>, boundary: 'start' | 'end') => {
-      event.stopPropagation();
-      event.preventDefault();
-      const originX = event.clientX;
-      const range = arrangement.punchRange;
-      if (!range) return;
-      const origin = boundary === 'start' ? range.startTick : range.endTick;
-      const computeNext = (clientX: number, altKey: boolean) =>
-        snapTick(origin + (clientX - originX) / pixelsPerTick, altKey);
-      const applyPreview = (clientX: number, altKey: boolean) => {
-        const next = computeNext(clientX, altKey);
-        setPunchPreview({
-          startTick: boundary === 'start' ? next : range.startTick,
-          endTick: boundary === 'end' ? next : range.endTick,
-        });
-      };
-      const move = (pointer: globalThis.PointerEvent) =>
-        applyPreview(pointer.clientX, pointer.altKey);
-      const finish = (pointer: globalThis.PointerEvent) => {
-        gestureCleanupRef.current?.();
-        const next = computeNext(pointer.clientX, pointer.altKey);
-        if (next !== origin) {
-          void commit(
-            api.updateTimelinePunchRange(
-              true,
-              position(boundary === 'start' ? next : range.startTick),
-              position(boundary === 'end' ? next : range.endTick),
-            ),
-          ).finally(() => setPunchPreview(null));
-        } else setPunchPreview(null);
-      };
-      const cancel = () => {
-        gestureCleanupRef.current?.();
-        setPunchPreview(null);
-      };
-      const cleanup = () => {
-        window.removeEventListener('pointermove', move);
-        window.removeEventListener('pointerup', finish);
-        window.removeEventListener('pointercancel', cancel);
-        if (gestureCleanupRef.current === cleanup) gestureCleanupRef.current = null;
-      };
-      gestureCleanupRef.current?.();
-      gestureCleanupRef.current = cleanup;
-      window.addEventListener('pointermove', move);
-      window.addEventListener('pointerup', finish);
-      window.addEventListener('pointercancel', cancel);
-      applyPreview(event.clientX, event.altKey);
-    },
-    [api, arrangement.punchRange, commit, pixelsPerTick, position, snapTick],
+    (event: PointerEvent<HTMLSpanElement>, boundary: 'start' | 'end') =>
+      dragRangeHandle(event, 'punch', boundary),
+    [dragRangeHandle],
   );
 
   const handleKeyboard = useCallback(
     (event: KeyboardEvent) => {
-      if (event.defaultPrevented || isEditableTarget(event.target)) return false;
+      if (event.defaultPrevented || isEditableTypingTarget(event.target)) return false;
       if (event.key === 'Escape') {
         clearRulerSelection();
         return true;

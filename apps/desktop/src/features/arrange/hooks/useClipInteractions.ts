@@ -367,127 +367,77 @@ export function useClipInteractions(options: ClipInteractionOptions) {
     ],
   );
 
-  const mergeAudioClipWithNext = useCallback(
-    async (clip: AudioClip) => {
-      const endTick = clip.startTick + clipDurationTicks(clip, timebase);
-      const next = arrangement.audioClips.find(
+  const mergeAudioClip = useCallback(
+    async (clip: AudioClip, direction: 'next' | 'previous') => {
+      const clipEndTick = clip.startTick + clipDurationTicks(clip, timebase);
+      const adjacent = arrangement.audioClips.find(
         (item) =>
           item.id !== clip.id &&
           item.trackId === clip.trackId &&
           item.assetId === clip.assetId &&
-          item.startTick === endTick &&
-          item.sourceRange.start === clip.sourceRange.end,
+          (direction === 'next'
+            ? item.startTick === clipEndTick && item.sourceRange.start === clip.sourceRange.end
+            : item.startTick + clipDurationTicks(item, timebase) === clip.startTick &&
+              item.sourceRange.end === clip.sourceRange.start),
       );
-      if (!next) {
+      if (!adjacent) {
         setMessage('No adjacent clip to merge with.');
         return;
       }
-      const sourceRange = { start: clip.sourceRange.start, end: next.sourceRange.end };
-      const timelineDuration = {
-        frames: next.sourceRange.end - clip.sourceRange.start,
-        sampleRate: clip.sourceSampleRate,
+      const target = direction === 'next' ? clip : adjacent;
+      const removed = direction === 'next' ? adjacent : clip;
+      const sourceRange = {
+        start: direction === 'next' ? clip.sourceRange.start : adjacent.sourceRange.start,
+        end: direction === 'next' ? adjacent.sourceRange.end : clip.sourceRange.end,
       };
       const updated = await commit(
-        commands.updateAudioClip(clip.id, { sourceRange, timelineDuration }),
+        commands.updateAudioClip(target.id, {
+          sourceRange,
+          timelineDuration: {
+            frames: sourceRange.end - sourceRange.start,
+            sampleRate: clip.sourceSampleRate,
+          },
+        }),
       );
-      if (updated) {
-        await commit(commands.removeTimelineClips([next.id], []));
-      }
+      if (updated) await commit(commands.removeTimelineClips([removed.id], []));
     },
     [arrangement.audioClips, commands, commit, setMessage, timebase],
   );
 
-  const mergeMidiClipWithNext = useCallback(
-    async (clip: MidiClip) => {
-      const endTick = clip.startTick + midiClipDurationTicks(clip);
-      const next = arrangement.midiClips.find(
-        (item) =>
-          item.id !== clip.id && item.trackId === clip.trackId && item.startTick === endTick,
-      );
-      if (!next) {
-        setMessage('No adjacent MIDI clip to merge with.');
-        return;
-      }
-      const durationTicks = midiClipDurationTicks(clip) + midiClipDurationTicks(next);
-      const shiftedNotes = next.notes.map((note) => ({
-        ...note,
-        startTick: note.startTick + endTick - clip.startTick,
-      }));
-      const notes = [...clip.notes, ...shiftedNotes];
-      const shiftedEvents = next.events.map((event) => ({
-        ...event,
-        tick: event.tick + endTick - clip.startTick,
-      }));
-      const events = [...clip.events, ...shiftedEvents];
-      const updated = await commit(
-        commands.updateMidiClip(clip.id, { durationTicks, notes, events }),
-      );
-      if (updated) {
-        await commit(commands.removeTimelineClips([], [next.id]));
-      }
-    },
-    [arrangement.midiClips, commands, commit, setMessage],
-  );
-
-  const mergeAudioClipWithPrevious = useCallback(
-    async (clip: AudioClip) => {
-      const prev = arrangement.audioClips.find(
+  const mergeMidiClip = useCallback(
+    async (clip: MidiClip, direction: 'next' | 'previous') => {
+      const clipEndTick = clip.startTick + midiClipDurationTicks(clip);
+      const adjacent = arrangement.midiClips.find(
         (item) =>
           item.id !== clip.id &&
           item.trackId === clip.trackId &&
-          item.assetId === clip.assetId &&
-          item.startTick + clipDurationTicks(item, timebase) === clip.startTick &&
-          item.sourceRange.end === clip.sourceRange.start,
+          (direction === 'next'
+            ? item.startTick === clipEndTick
+            : item.startTick + midiClipDurationTicks(item) === clip.startTick),
       );
-      if (!prev) {
-        setMessage('No adjacent clip to merge with.');
-        return;
-      }
-      const sourceRange = { start: prev.sourceRange.start, end: clip.sourceRange.end };
-      const timelineDuration = {
-        frames: clip.sourceRange.end - prev.sourceRange.start,
-        sampleRate: clip.sourceSampleRate,
-      };
-      const updated = await commit(
-        commands.updateAudioClip(prev.id, { sourceRange, timelineDuration }),
-      );
-      if (updated) {
-        await commit(commands.removeTimelineClips([clip.id], []));
-      }
-    },
-    [arrangement.audioClips, commands, commit, setMessage, timebase],
-  );
-
-  const mergeMidiClipWithPrevious = useCallback(
-    async (clip: MidiClip) => {
-      const prev = arrangement.midiClips.find(
-        (item) =>
-          item.id !== clip.id &&
-          item.trackId === clip.trackId &&
-          item.startTick + midiClipDurationTicks(item) === clip.startTick,
-      );
-      if (!prev) {
+      if (!adjacent) {
         setMessage('No adjacent MIDI clip to merge with.');
         return;
       }
-      const prevEnd = prev.startTick + midiClipDurationTicks(prev);
-      const durationTicks = midiClipDurationTicks(prev) + midiClipDurationTicks(clip);
-      const shiftedNotes = clip.notes.map((note) => ({
+      const target = direction === 'next' ? clip : adjacent;
+      const shifted = direction === 'next' ? adjacent : clip;
+      const offset = shifted.startTick - target.startTick;
+      const shiftedNotes = shifted.notes.map((note) => ({
         ...note,
-        startTick: note.startTick + prevEnd - prev.startTick,
+        startTick: note.startTick + offset,
       }));
-      const notes = [...prev.notes, ...shiftedNotes];
-      const shiftedEvents = clip.events.map((event) => ({
+      const shiftedEvents = shifted.events.map((event) => ({
         ...event,
-        tick: event.tick + prevEnd - prev.startTick,
+        tick: event.tick + offset,
       }));
-      const events = [...prev.events, ...shiftedEvents];
       const updated = await commit(
-        commands.updateMidiClip(prev.id, { durationTicks, notes, events }),
+        commands.updateMidiClip(target.id, {
+          durationTicks: midiClipDurationTicks(target) + midiClipDurationTicks(shifted),
+          notes: [...target.notes, ...shiftedNotes],
+          events: [...target.events, ...shiftedEvents],
+        }),
       );
-      if (updated) {
-        await commit(commands.removeTimelineClips([], [clip.id]));
-      }
+      if (updated) await commit(commands.removeTimelineClips([], [shifted.id]));
     },
     [arrangement.midiClips, commands, commit, setMessage],
   );
@@ -537,9 +487,7 @@ export function useClipInteractions(options: ClipInteractionOptions) {
     beginMidiTrim,
     beginTrim,
     beginFade,
-    mergeAudioClipWithNext,
-    mergeMidiClipWithNext,
-    mergeAudioClipWithPrevious,
-    mergeMidiClipWithPrevious,
+    mergeAudioClip,
+    mergeMidiClip,
   };
 }

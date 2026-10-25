@@ -8,10 +8,14 @@ import { useArrangeLowerAreaController } from './hooks/useArrangeLowerAreaContro
 import { WorkspaceArrange } from './WorkspaceArrange';
 import { useArrangementTransport } from '@/features/transport/hooks/useArrangementTransport';
 import {
+  type AudioClip,
   type AudioClipMove,
   type ArrangementMutationResult,
   type CreativeSession,
+  type MidiClip,
+  type MidiEvent,
   type RuntimeProjectionStatus,
+  type Track,
 } from '@/model/domain';
 import { canonicalState, defaultSession } from '@/native/browser-defaults';
 import { toAssetId } from '@/native/contracts';
@@ -149,7 +153,157 @@ function offGridAudioMoveSession(): CreativeSession {
   return session;
 }
 
+function mergeTrack(id: string, kind: Track['kind']): Track {
+  return {
+    externalAudioSourceTrackIds: [],
+    panLaw: 'equalPower',
+    id,
+    name: id,
+    kind,
+    gainDb: 0,
+    pan: 0,
+    muted: false,
+    solo: false,
+    armed: false,
+    monitoring: 'off',
+    midiInput: {},
+    effects: [],
+  };
+}
+
+function mergeAudioClip(id: string, startTick: number, sourceStart: number): AudioClip {
+  return {
+    id,
+    name: id,
+    trackId: 'track:audio',
+    assetId: toAssetId('asset:audio'),
+    startTick,
+    sourceRange: { start: sourceStart, end: sourceStart + 48_000 },
+    sourceSampleRate: 48_000,
+    timelineDuration: { frames: 48_000, sampleRate: 48_000 },
+    gainDb: 0,
+    pan: 0,
+    fadeIn: { frames: 0, sampleRate: 48_000 },
+    fadeOut: { frames: 0, sampleRate: 48_000 },
+    fadeShape: 'equalPower',
+    loopEnabled: false,
+    muted: false,
+    takeVariant: 'raw',
+  };
+}
+
+function mergeMidiClip(
+  id: string,
+  startTick: number,
+  durationTicks: number,
+  noteId: string,
+  noteStartTick: number,
+  eventId: string,
+  eventTick: number,
+): MidiClip {
+  const event: MidiEvent = {
+    id: eventId,
+    kind: 'controlChange',
+    tick: eventTick,
+    channel: 0,
+    data1: 1,
+    data2: 64,
+  };
+  return {
+    instrumentControlEvents: [],
+    id,
+    name: id,
+    trackId: 'track:instrument',
+    startTick,
+    durationTicks,
+    notes: [
+      {
+        id: noteId,
+        note: 60,
+        startTick: noteStartTick,
+        durationTicks: 120,
+        velocity: 96,
+        channel: 0,
+      },
+    ],
+    events: [event],
+    muted: false,
+    loopEnabled: false,
+  };
+}
+
 describe('WorkspaceArrange', () => {
+  it.each(['next', 'previous'] as const)(
+    'merges adjacent Audio clips with the %s clip into the previous clip',
+    async (direction) => {
+      const session = defaultSession();
+      session.arrangement.tracks.push(mergeTrack('track:audio', 'audio'));
+      session.arrangement.audioClips.push(
+        mergeAudioClip('clip:audio:first', 0, 0),
+        mergeAudioClip('clip:audio:second', 1_920, 48_000),
+      );
+      const api = new FakeNativeApi();
+      const update = vi.spyOn(api, 'updateAudioClip').mockResolvedValue(mutationResult(session));
+      const remove = vi
+        .spyOn(api, 'removeTimelineClips')
+        .mockResolvedValue(mutationResult(session));
+      const { container } = render(<Harness api={api} initialSession={session} />);
+      const selectedClipId = direction === 'next' ? 'clip:audio:first' : 'clip:audio:second';
+
+      fireEvent.contextMenu(container.querySelector(`[data-clip-id="${selectedClipId}"]`)!);
+      fireEvent.click(
+        screen.getByRole('menuitem', {
+          name: `Merge with ${direction === 'next' ? 'Next' : 'Previous'}`,
+        }),
+      );
+
+      await waitFor(() => expect(remove).toHaveBeenCalledWith(['clip:audio:second'], []));
+      expect(update).toHaveBeenCalledWith('clip:audio:first', {
+        sourceRange: { start: 0, end: 96_000 },
+        timelineDuration: { frames: 96_000, sampleRate: 48_000 },
+      });
+    },
+  );
+
+  it.each(['next', 'previous'] as const)(
+    'merges adjacent MIDI notes and events with the %s clip into the previous clip',
+    async (direction) => {
+      const session = defaultSession();
+      session.arrangement.tracks.push(mergeTrack('track:instrument', 'instrument'));
+      session.arrangement.midiClips.push(
+        mergeMidiClip('clip:midi:first', 0, 960, 'note:first', 120, 'event:first', 100),
+        mergeMidiClip('clip:midi:second', 960, 1_920, 'note:second', 60, 'event:second', 200),
+      );
+      const api = new FakeNativeApi();
+      const update = vi.spyOn(api, 'updateMidiClip').mockResolvedValue(mutationResult(session));
+      const remove = vi
+        .spyOn(api, 'removeTimelineClips')
+        .mockResolvedValue(mutationResult(session));
+      const { container } = render(<Harness api={api} initialSession={session} />);
+      const selectedClipId = direction === 'next' ? 'clip:midi:first' : 'clip:midi:second';
+
+      fireEvent.contextMenu(container.querySelector(`[data-clip-id="${selectedClipId}"]`)!);
+      fireEvent.click(
+        screen.getByRole('menuitem', {
+          name: `Merge with ${direction === 'next' ? 'Next' : 'Previous'}`,
+        }),
+      );
+
+      await waitFor(() => expect(remove).toHaveBeenCalledWith([], ['clip:midi:second']));
+      expect(update).toHaveBeenCalledWith('clip:midi:first', {
+        durationTicks: 2_880,
+        notes: [
+          expect.objectContaining({ id: 'note:first', startTick: 120 }),
+          expect.objectContaining({ id: 'note:second', startTick: 1_020 }),
+        ],
+        events: [
+          expect.objectContaining({ id: 'event:first', tick: 100 }),
+          expect.objectContaining({ id: 'event:second', tick: 1_160 }),
+        ],
+      });
+    },
+  );
+
   it('returns the playhead and timeline viewport to start on a transport discontinuity', async () => {
     const api = new FakeNativeApi();
     const { container } = render(<Harness api={api} />);
@@ -1956,7 +2110,7 @@ describe('WorkspaceArrange', () => {
     expect(lowerArea).toHaveAttribute('data-view', 'devices');
   });
 
-  it('plays the focused instrument from the computer keyboard and shows the Play Surface in the lower area', async () => {
+  it('plays the focused instrument from the keyboard and drum pads on their MIDI channels', async () => {
     // Arrange
     const session = defaultSession();
     session.arrangement.tracks.push({
@@ -2025,6 +2179,24 @@ describe('WorkspaceArrange', () => {
     // Assert
     expect(lowerArea).toHaveAttribute('data-view', 'playSurface');
     expect(screen.getByRole('region', { name: 'Play Surface' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Drum Pads' }));
+    const pad = screen.getByRole('gridcell', {
+      name: 'Crash Cymbal 1 (MIDI 49, key Q)',
+    });
+    Object.defineProperty(pad, 'setPointerCapture', {
+      configurable: true,
+      value: vi.fn(),
+    });
+    fireEvent.pointerDown(pad, { pointerId: 1 });
+    fireEvent.keyDown(window, { key: 'q' });
+    await waitFor(() => expect(sendMidi).toHaveBeenCalledWith('track:live', [0x99, 49, 100]));
+    fireEvent.keyUp(window, { key: 'q' });
+    expect(
+      sendMidi.mock.calls.filter(([, bytes]) => bytes[0] === 0x89 && bytes[1] === 49),
+    ).toHaveLength(0);
+    fireEvent.pointerUp(pad, { pointerId: 1 });
+    await waitFor(() => expect(sendMidi).toHaveBeenCalledWith('track:live', [0x89, 49, 0]));
+
     fireEvent.click(screen.getByRole('button', { name: 'Play Surface' }));
     expect(lowerArea).toHaveAttribute('data-view', 'midiEditor');
   });

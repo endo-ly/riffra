@@ -13,7 +13,7 @@ import type {
   RecordingAsset,
   Track,
 } from '@/model/domain';
-import { RIFFRA_PLUGIN_MIME } from '@/shared/plugin-drag';
+import { RIFFRA_PLUGIN_MIME } from '@/shared/browser-drag';
 
 const bass: InstrumentLibraryItem = {
   id: 'builtin:bass',

@@ -16,9 +16,7 @@ import {
   resolvePlacementTarget,
   type BrowserPlacement,
 } from '@/features/arrange/model/browser-placement';
-import { writeAssetDrag } from '@/shared/asset-drag';
-import { writeInstrumentDrag } from '@/shared/instrument-drag';
-import { writePluginDrag } from '@/shared/plugin-drag';
+import { writeAssetDrag, writeInstrumentDrag, writePluginDrag } from '@/shared/browser-drag';
 import { showToast } from '@/shared/toasts';
 import { ConfirmDialog } from '@/shared/ui/ConfirmDialog';
 import { ContextMenu, type ContextMenuItem } from '@/shared/ui/ContextMenu';

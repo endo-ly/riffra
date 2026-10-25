@@ -1,16 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import type { CreativeSession } from '@/model/domain';
+import { useCallback, useEffect, useRef } from 'react';
+import type { CreativeSession, TransportStatus } from '@/model/domain';
 import { logNativeError } from '@/native/invoke';
-import type { NativeEventApi, TransportApi } from '@/native/native-api';
+import type { TransportApi } from '@/native/native-api';
 interface TransportControllerOptions {
   hostGeneration?: number;
-  api: Pick<
-    NativeEventApi & TransportApi,
-    'onTransportStatus' | 'playTimeline' | 'pauseTimeline' | 'stopTimeline' | 'goToStartTimeline'
-  >;
+  api: Pick<TransportApi, 'playTimeline' | 'pauseTimeline' | 'stopTimeline' | 'goToStartTimeline'>;
   sessionRef: {
     current: CreativeSession | null;
   };
+  transport: TransportStatus | null;
 }
 /**
  * Owns transport operation cancellation. Ordering is assigned by the Host
@@ -19,17 +17,12 @@ interface TransportControllerOptions {
 export function useTransportController({
   api,
   sessionRef,
+  transport,
   hostGeneration = 0,
 }: TransportControllerOptions) {
-  const [timelinePlaying, setTimelinePlaying] = useState(false);
-  const [timelineStarting, setTimelineStarting] = useState(false);
-  const [timelinePaused, setTimelinePaused] = useState(false);
   const pendingPlayRef = useRef<Promise<void> | null>(null);
   useEffect(() => {
     pendingPlayRef.current = null;
-    setTimelinePlaying(false);
-    setTimelineStarting(false);
-    setTimelinePaused(false);
   }, [hostGeneration]);
   const cancelPendingPlay = useCallback(() => {
     pendingPlayRef.current = null;
@@ -83,17 +76,10 @@ export function useTransportController({
       await api.goToStartTimeline();
     });
   }, [api, cancelPendingPlay, runImmediateTransportOperation]);
-  useEffect(() => {
-    return api.onTransportStatus((status) => {
-      setTimelinePlaying(status.state === 'playing');
-      setTimelineStarting(status.state === 'starting');
-      setTimelinePaused(status.state === 'paused');
-    });
-  }, [api]);
   return {
-    transportPlaying: timelinePlaying,
-    transportStarting: timelineStarting,
-    transportPaused: timelinePaused,
+    transportPlaying: transport?.state === 'playing',
+    transportStarting: transport?.state === 'starting',
+    transportPaused: transport?.state === 'paused',
     playTransport,
     pauseTransport,
     stopTransport,

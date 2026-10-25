@@ -42,8 +42,13 @@ interface Props {
 }
 
 export function AutomationLaneEditor(props: Props) {
-  const ownerKey = JSON.stringify(automationOwner(props.session.arrangement, props.target));
-  const owner = useMemo(() => JSON.parse(ownerKey) as EffectOwner | null, [ownerKey]);
+  const ownerCandidate = automationOwner(props.session.arrangement, props.target);
+  const ownerKind = ownerCandidate?.kind ?? null;
+  const ownerId = ownerCandidate && 'id' in ownerCandidate ? ownerCandidate.id : null;
+  const owner = useMemo<EffectOwner | null>(() => {
+    if (ownerKind === 'master') return { kind: 'master' };
+    return ownerKind && ownerId !== null ? { kind: ownerKind, id: ownerId } : null;
+  }, [ownerKind, ownerId]);
   const devices = owner ? automationDevices(props.session, owner) : [];
   const deviceKey = JSON.stringify(devices.map((device) => [device.id, device.plugin]));
   const [parameters, setParameters] = useState<Record<string, DeviceParameterInfo[]>>({});
@@ -52,15 +57,12 @@ export function AutomationLaneEditor(props: Props) {
     let disposed = false;
     setParameters({});
     setError(null);
-    const queryOwner = JSON.parse(ownerKey) as EffectOwner | null;
-    if (!queryOwner) return;
+    if (!owner) return;
     const available = (
       JSON.parse(deviceKey) as [string, { disabledPlaceholder: boolean }][]
     ).filter(([, plugin]) => !plugin.disabledPlaceholder);
     void Promise.allSettled(
-      available.map(
-        async ([id]) => [id, await props.api.listDeviceParameters(queryOwner, id)] as const,
-      ),
+      available.map(async ([id]) => [id, await props.api.listDeviceParameters(owner, id)] as const),
     ).then((results) => {
       if (disposed) return;
       const entries: [string, DeviceParameterInfo[]][] = [];
@@ -74,7 +76,7 @@ export function AutomationLaneEditor(props: Props) {
     return () => {
       disposed = true;
     };
-  }, [ownerKey, deviceKey, props.session.sessionId, props.api]);
+  }, [owner, deviceKey, props.session.sessionId, props.api]);
   const deviceId = props.target.kind === 'deviceParameter' ? props.target.deviceId : undefined;
   const parameterId =
     props.target.kind === 'deviceParameter' ? props.target.parameterId : undefined;

@@ -23,7 +23,7 @@ import {
 } from '@/features/arrange/model/arrange-timeline';
 import type { SnapGrid } from '@/features/arrange/model/arrange-timeline';
 import { isBlackKey, midiNoteName } from '@/features/arrange/play-surface/musical-typing';
-import { isEditableTarget } from '@/features/arrange/model/interaction';
+import { isEditableTypingTarget } from '@/shared/input';
 import { toast } from '@/shared/toasts';
 import { ContextMenu, type ContextMenuItem } from '@/shared/ui/ContextMenu';
 import {
@@ -651,7 +651,7 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
   };
 
   const handleEditorKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (isEditableTarget(event.target)) return;
+    if (isEditableTypingTarget(event.target)) return;
     const key = event.key.toLowerCase();
     const modifier = event.ctrlKey || event.metaKey;
     let operation: MidiEditResult | undefined;

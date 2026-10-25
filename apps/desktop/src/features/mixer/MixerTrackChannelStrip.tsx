@@ -4,6 +4,7 @@ import type { AutomationLane, CanonicalState, Track } from '@/model/domain';
 import type { ArrangeApi, AudioApi } from '@/native/native-api';
 import { Icon } from '@/shared/ui/primitives';
 import { resolveTrackColor } from '@/features/arrange/model/track-colors';
+import { ChannelMixSlider } from './ChannelMixSlider';
 import { MixerMeter } from './MixerMeter';
 import { useChannelMixControl } from './hooks/useChannelMixControl';
 import styles from './Mixer.module.css';
@@ -58,9 +59,6 @@ export function MixerTrackChannelStrip(props: MixerTrackChannelStripProps) {
       setPendingSwitch(null);
     }
   };
-  const commitValue = (parameter: 'gainDb' | 'pan', value: number) => {
-    void mix.commit(parameter, value);
-  };
   return (
     <article
       className={`${styles.channel}${props.selected ? ` ${styles.selected}` : ''}`}
@@ -103,36 +101,20 @@ export function MixerTrackChannelStrip(props: MixerTrackChannelStripProps) {
           PAN · STATIC <output>{formatPan(mix.pan)}</output>
           {props.panAutomation?.points.length ? <b>AUTO</b> : null}
         </span>
-        <input
-          type="range"
-          min="-1"
-          max="1"
-          step="0.01"
+        <ChannelMixSlider
+          mix={mix}
+          parameter="pan"
+          min={-1}
+          max={1}
+          step={0.01}
           value={mix.pan}
           disabled={props.disabled}
-          aria-label={`${track.name} pan`}
-          onPointerDown={() => mix.beginInteraction('pan')}
-          onChange={(event) => {
-            const value = Number(event.currentTarget.value);
-            mix.setPan(value);
-            mix.schedulePreview('pan', value);
-          }}
-          onPointerUp={(event) => commitValue('pan', Number(event.currentTarget.value))}
-          onPointerCancel={() => mix.cancel('pan')}
-          onKeyDown={(event) => {
-            if (event.key === 'Escape') mix.cancel('pan');
-            else if (isMixAdjustmentKey(event.key)) mix.beginInteraction('pan');
-          }}
-          onKeyUp={(event) => {
-            if (isMixAdjustmentKey(event.key))
-              commitValue('pan', Number(event.currentTarget.value));
-          }}
+          ariaLabel={`${track.name} pan`}
           onDoubleClick={() => {
             mix.setPan(0);
             mix.schedulePreview('pan', 0);
-            commitValue('pan', 0);
+            void mix.commit('pan', 0);
           }}
-          onBlur={(event) => commitValue('pan', Number(event.currentTarget.value))}
         />
       </label>
 
@@ -144,36 +126,20 @@ export function MixerTrackChannelStrip(props: MixerTrackChannelStripProps) {
             <span>GAIN · STATIC</span>
             {props.volumeAutomation?.points.length ? <b>AUTO</b> : null}
           </span>
-          <input
-            type="range"
-            min="-90"
-            max="24"
-            step="0.1"
+          <ChannelMixSlider
+            mix={mix}
+            parameter="gainDb"
+            min={-90}
+            max={24}
+            step={0.1}
             value={mix.gainDb}
             disabled={props.disabled}
-            aria-label={`${track.name} gain`}
-            onPointerDown={() => mix.beginInteraction('gainDb')}
-            onChange={(event) => {
-              const value = Number(event.currentTarget.value);
-              mix.setGainDb(value);
-              mix.schedulePreview('gainDb', value);
-            }}
-            onPointerUp={(event) => commitValue('gainDb', Number(event.currentTarget.value))}
-            onPointerCancel={() => mix.cancel('gainDb')}
-            onKeyDown={(event) => {
-              if (event.key === 'Escape') mix.cancel('gainDb');
-              else if (isMixAdjustmentKey(event.key)) mix.beginInteraction('gainDb');
-            }}
-            onKeyUp={(event) => {
-              if (isMixAdjustmentKey(event.key))
-                commitValue('gainDb', Number(event.currentTarget.value));
-            }}
+            ariaLabel={`${track.name} gain`}
             onDoubleClick={() => {
               mix.setGainDb(0);
               mix.schedulePreview('gainDb', 0);
-              commitValue('gainDb', 0);
+              void mix.commit('gainDb', 0);
             }}
-            onBlur={(event) => commitValue('gainDb', Number(event.currentTarget.value))}
           />
           <output>{formatGainDb(mix.gainDb)}</output>
         </label>
@@ -208,7 +174,4 @@ export function MixerTrackChannelStrip(props: MixerTrackChannelStripProps) {
       </div>
     </article>
   );
-}
-function isMixAdjustmentKey(key: string): boolean {
-  return ['ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'].includes(key);
 }
