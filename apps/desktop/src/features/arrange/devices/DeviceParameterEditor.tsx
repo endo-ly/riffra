@@ -57,8 +57,12 @@ function ParameterControl({
   automationValue?: number;
 }) {
   const [draft, setDraft] = useState(parameter.value);
-  const ownerKey = JSON.stringify(owner);
-  const formatterOwner = useMemo(() => JSON.parse(ownerKey) as EffectOwner, [ownerKey]);
+  const ownerKind = owner.kind;
+  const ownerId = 'id' in owner ? owner.id : null;
+  const formatterOwner = useMemo<EffectOwner>(() => {
+    if (ownerKind === 'master') return { kind: 'master' };
+    return { kind: ownerKind, id: ownerId! };
+  }, [ownerKind, ownerId]);
   const formatAutomationValue = useCallback(
     (value: number) =>
       api.formatDeviceParameterValue(formatterOwner, deviceId, parameter.index, value),

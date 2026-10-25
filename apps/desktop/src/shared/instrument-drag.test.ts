@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { readInstrumentDrag, type RiffraInstrumentDragPayload } from './instrument-drag';
+import { readInstrumentDrag, type RiffraInstrumentDragPayload } from './browser-drag';
 
 const payload: RiffraInstrumentDragPayload = {
   version: 1,

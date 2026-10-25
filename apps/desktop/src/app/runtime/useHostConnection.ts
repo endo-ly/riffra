@@ -100,14 +100,16 @@ export function useHostConnection(
     };
   }, [api, refresh]);
 
-  const switchHost = useCallback(
-    async (target: HostTarget): Promise<HostConnectionBootstrap | null> => {
+  const changeConnection = useCallback(
+    async (
+      operation: () => Promise<HostConnectionBootstrap>,
+    ): Promise<HostConnectionBootstrap | null> => {
       const serial = ++switchSerial.current;
       ++refreshSerial.current;
       setSwitching(true);
       setError(null);
       try {
-        const result = await api.switchHost(target);
+        const result = await operation();
         if (serial === switchSerial.current && result.state.generation >= getHostGeneration()) {
           setHostGeneration(result.state.generation);
           setHostConnectionAvailability(result.state.mode !== 'disconnected');
@@ -123,31 +125,17 @@ export function useHostConnection(
         if (serial === switchSerial.current) setSwitching(false);
       }
     },
-    [api],
+    [],
   );
 
-  const reconnect = useCallback(async (): Promise<HostConnectionBootstrap | null> => {
-    const serial = ++switchSerial.current;
-    ++refreshSerial.current;
-    setSwitching(true);
-    setError(null);
-    try {
-      const result = await api.reconnectHost();
-      if (serial === switchSerial.current && result.state.generation >= getHostGeneration()) {
-        setHostGeneration(result.state.generation);
-        setHostConnectionAvailability(result.state.mode !== 'disconnected');
-        setState(result.state);
-      }
-      return result;
-    } catch (nextError) {
-      if (serial === switchSerial.current) {
-        setError(nextError instanceof Error ? nextError.message : String(nextError));
-      }
-      return null;
-    } finally {
-      if (serial === switchSerial.current) setSwitching(false);
-    }
-  }, [api]);
+  const switchHost = useCallback(
+    (target: HostTarget) => changeConnection(() => api.switchHost(target)),
+    [api, changeConnection],
+  );
+  const reconnect = useCallback(
+    () => changeConnection(() => api.reconnectHost()),
+    [api, changeConnection],
+  );
 
   return {
     state,

@@ -1,8 +1,13 @@
 import { useCallback, type DragEvent } from 'react';
 import type { ArrangementMutationResult, CreativeSession, TrackKind } from '@/model/domain';
-import { RIFFRA_ASSET_MIME, readAssetDrag } from '@/shared/asset-drag';
-import { RIFFRA_INSTRUMENT_MIME, readInstrumentDrag } from '@/shared/instrument-drag';
-import { RIFFRA_PLUGIN_MIME, readPluginDrag } from '@/shared/plugin-drag';
+import {
+  RIFFRA_ASSET_MIME,
+  RIFFRA_INSTRUMENT_MIME,
+  RIFFRA_PLUGIN_MIME,
+  readAssetDrag,
+  readInstrumentDrag,
+  readPluginDrag,
+} from '@/shared/browser-drag';
 import { TRACK_HEADER_WIDTH } from '@/features/arrange/model/arrange-timeline';
 import {
   placeBrowserItem,

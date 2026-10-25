@@ -6,9 +6,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ArrangementMutationResult, CreativeSession } from '@/model/domain';
 import { HostConnectionChangedError, setHostGeneration } from '@/native/invoke';
 import { toAssetId } from '@/native/contracts';
-import { RIFFRA_ASSET_MIME } from '@/shared/asset-drag';
-import { RIFFRA_INSTRUMENT_MIME } from '@/shared/instrument-drag';
-import { RIFFRA_PLUGIN_MIME } from '@/shared/plugin-drag';
+import {
+  RIFFRA_ASSET_MIME,
+  RIFFRA_INSTRUMENT_MIME,
+  RIFFRA_PLUGIN_MIME,
+} from '@/shared/browser-drag';
 import { useArrangeDrop } from './useArrangeDrop';
 
 afterEach(() => {
