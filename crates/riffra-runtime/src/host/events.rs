@@ -43,7 +43,10 @@ pub enum HostEvent {
 
 impl HostEvent {
     /// Converts a Runtime event to the Domain-free local control frame.
-    fn to_control_frame(&self) -> Result<HostEventFrame, serde_json::Error> {
+    ///
+    /// # Errors
+    /// Returns a JSON error when the event payload cannot be encoded.
+    pub fn to_control_frame(&self) -> Result<HostEventFrame, serde_json::Error> {
         let (event, payload) = match self {
             Self::CanonicalStateChanged(value) => {
                 ("canonical-state-changed", serde_json::to_value(value))

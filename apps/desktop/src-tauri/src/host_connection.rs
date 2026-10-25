@@ -414,8 +414,10 @@ impl DesktopEventRouter {
     }
 
     fn emit_host_event(&self, generation: u64, event: HostEvent) {
-        let frame = host_event_frame(event);
-        self.receive(generation, frame);
+        match event.to_control_frame() {
+            Ok(frame) => self.receive(generation, frame),
+            Err(error) => tracing::error!(%error, "Host event could not be encoded"),
+        }
     }
 
     fn emit_frame(&self, frame: HostEventFrame) {
@@ -1299,41 +1301,6 @@ fn display_runtime_state(state: AudioState) -> &'static str {
 
 fn is_telemetry_event(event: &str) -> bool {
     matches!(event, "audio-meters" | "transport-status")
-}
-
-fn host_event_frame(event: HostEvent) -> HostEventFrame {
-    match event {
-        HostEvent::CanonicalStateChanged(value) => {
-            HostEventFrame::new("canonical-state-changed", json!(value))
-        }
-        HostEvent::ProjectStateChanged(value) => {
-            HostEventFrame::new("project-state-changed", json!(value))
-        }
-        HostEvent::ProjectActivated(value) => {
-            HostEventFrame::new("project-activated", json!(value))
-        }
-        HostEvent::RuntimeStartupFinished(value) => {
-            HostEventFrame::new("runtime-startup-finished", json!(value))
-        }
-        HostEvent::RuntimeProjectionStatus(value) => {
-            HostEventFrame::new("runtime-projection-status", json!(value))
-        }
-        HostEvent::AudioStatus(value) => HostEventFrame::new("audio-status", json!(value)),
-        HostEvent::AudioMeters(value) => HostEventFrame::new("audio-meters", json!(value)),
-        HostEvent::TransportStatus(value) => HostEventFrame::new("transport-status", json!(value)),
-        HostEvent::RecordingFinalized(value) => {
-            HostEventFrame::new("recording-finalized", json!(value))
-        }
-        HostEvent::RuntimeRestarted(value) => {
-            HostEventFrame::new("runtime-restarted", json!(value))
-        }
-        HostEvent::PluginStateChanged(value) => {
-            HostEventFrame::new("plugin-state-changed", json!(value))
-        }
-        HostEvent::PluginParameterChanged(value) => {
-            HostEventFrame::new("plugin-parameter-changed", json!(value))
-        }
-    }
 }
 
 fn map_runtime_recovery_candidates(
