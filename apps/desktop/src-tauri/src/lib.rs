@@ -121,10 +121,10 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_bootstrap_state,
             dispatch_control,
-            host_connection::get_host_connection_state,
-            host_connection::list_local_hosts,
-            host_connection::switch_host,
-            host_connection::reconnect_host,
+            host_commands::get_host_connection_state,
+            host_commands::list_local_hosts,
+            host_commands::switch_host,
+            host_commands::reconnect_host,
             asset::commands::import_midi_bytes,
             update_commands::check_for_app_update,
             update_commands::install_app_update

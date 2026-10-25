@@ -23,7 +23,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
 use std::time::Duration;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter};
 use ts_rs::TS;
 
 const EVENT_BUFFER_LIMIT: usize = 512;
@@ -1302,56 +1302,6 @@ fn default_vst3_root() -> String {
     {
         "/usr/lib/vst3".into()
     }
-}
-
-#[tauri::command]
-pub(crate) fn get_host_connection_state(
-    state: State<'_, crate::AppState>,
-) -> Result<HostConnectionState, NativeCommandError> {
-    Ok(state.host_connection.state())
-}
-
-#[tauri::command]
-pub(crate) async fn list_local_hosts(
-    app: AppHandle,
-) -> Result<Vec<LocalHostInfo>, NativeCommandError> {
-    tauri::async_runtime::spawn_blocking(move || {
-        app.state::<crate::AppState>()
-            .host_connection
-            .list_local_hosts()
-    })
-    .await
-    .map_err(|error| {
-        NativeCommandError::command_failed(format!("Local Host discovery failed: {error}"))
-    })?
-    .map_err(|error| NativeCommandError::host_unavailable(error.to_string()))
-}
-
-#[tauri::command]
-pub(crate) async fn switch_host(
-    target: HostTarget,
-    app: AppHandle,
-) -> Result<HostConnectionBootstrap, NativeCommandError> {
-    let manager = Arc::clone(&app.state::<crate::AppState>().host_connection);
-    tauri::async_runtime::spawn_blocking(move || manager.switch(target))
-        .await
-        .map_err(|error| {
-            NativeCommandError::command_failed(format!("Host switch failed: {error}"))
-        })?
-        .map_err(|error| NativeCommandError::host_unavailable(error.to_string()))
-}
-
-#[tauri::command]
-pub(crate) async fn reconnect_host(
-    app: AppHandle,
-) -> Result<HostConnectionBootstrap, NativeCommandError> {
-    let manager = Arc::clone(&app.state::<crate::AppState>().host_connection);
-    tauri::async_runtime::spawn_blocking(move || manager.reconnect())
-        .await
-        .map_err(|error| {
-            NativeCommandError::command_failed(format!("Host reconnect failed: {error}"))
-        })?
-        .map_err(|error| NativeCommandError::host_unavailable(error.to_string()))
 }
 
 #[cfg(test)]
