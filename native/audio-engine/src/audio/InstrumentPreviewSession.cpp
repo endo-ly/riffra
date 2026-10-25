@@ -8,7 +8,6 @@
 
 #include "../instruments/SonalloyInstrumentRuntime.h"
 #include "InstrumentPreviewContract.h"
-#include "InstrumentPreviewTiming.h"
 
 namespace riffra {
 
