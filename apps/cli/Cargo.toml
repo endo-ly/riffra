@@ -1,6 +1,6 @@
 [package]
 name = "riffra-cli"
-version = "2026.10.24"
+version = "2026.10.26"
 description = "Headless command host for the Riffra production core"
 authors = ["Riffra contributors"]
 edition = "2024"
