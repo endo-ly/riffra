@@ -196,6 +196,19 @@ impl AudioSupervisor {
         .map(drop)
     }
 
+    pub(crate) fn close_editor_before_project_switch(
+        &self,
+        timeout: Duration,
+    ) -> NativeAudioResult<()> {
+        self.request_ack(
+            SidecarCommand::WaitForTimelineIdle {
+                timeout_ms: timeout.as_millis().min(u128::from(u64::MAX)) as u64,
+                close_editor: true,
+            },
+            timeout,
+        )
+    }
+
     pub(crate) fn stop_timeline_before_shutdown(&self) -> NativeAudioResult<()> {
         self.request_during_shutdown(SidecarCommand::StopTimeline, COMMAND_ACK_TIMEOUT)
             .map(drop)

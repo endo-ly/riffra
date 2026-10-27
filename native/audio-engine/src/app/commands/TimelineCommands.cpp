@@ -35,6 +35,9 @@ void AudioCommandDispatcher::handle(const WaitForTimelineIdleCommand& command,
                            "runtime.timeline.waitForIdle");
             return;
         }
+        context.trackPluginEditor.reset();
+        context.pluginEditorOwner = {};
+        context.trackPluginEditorDeviceId.clear();
     }
     responder.respond(TimelineIdleAckSpec{});
 }

@@ -179,9 +179,17 @@ fn activate_project_inner(
     project_id: &str,
     operation: ProjectOperation,
 ) -> Result<(ControlOutput, u64), ProtocolError> {
+    let prepared = projects::prepare(&state.project_store, project_id).map_err(command_error)?;
+
+    if !state.safe_mode {
+        state
+            .audio
+            .close_editor_before_project_switch(PROJECT_RUNTIME_TIMEOUT)
+            .map_err(|error| command_error(error.to_string()))?;
+        state.take_closing_plugin_changes(writer)?;
+    }
     let previous_canonical = writer.project().core.canonical_state();
     let previous_project_id = previous_canonical.project_id.clone();
-    let prepared = projects::prepare(&state.project_store, project_id).map_err(command_error)?;
 
     let candidate_key = if state.safe_mode {
         None
@@ -194,16 +202,6 @@ fn activate_project_inner(
             &prepared.loaded.session,
             candidate_key,
         ) {
-            return Err(project_switch_failure(
-                state,
-                &previous_project_id,
-                &previous_canonical,
-                project_id,
-                error,
-                operation,
-            ));
-        }
-        if let Err(error) = state.take_closing_plugin_changes(writer) {
             return Err(project_switch_failure(
                 state,
                 &previous_project_id,
