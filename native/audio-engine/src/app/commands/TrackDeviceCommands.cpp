@@ -236,7 +236,7 @@ void AudioCommandDispatcher::handle(const OpenPluginEditorCommand& command,
                         kTrackDeviceWatchdogTimeout, RuntimeLifecycleExecutor::TaskThread::control);
                 },
                 [this, command, sourcePluginPath](const std::optional<PluginStateSpec>& state,
-                                const juce::String& error) {
+                                                  const juce::String& error) {
                     // The closing state bypasses the best-effort state lane: once the editor is
                     // gone, a dropped or skipped update would never be captured again.
                     if (!state.has_value()) {
@@ -244,10 +244,9 @@ void AudioCommandDispatcher::handle(const OpenPluginEditorCommand& command,
                             FaultSpec{{"trackDevice", error, "track.pluginEditor.capture", {}}});
                         return;
                     }
-                    writeClosingPluginState(
-                        PluginStateChangedSpec{command.projectId, command.owner, command.deviceId,
-                                               *state, context.timelineEngine.committedRevision(),
-                                               true, sourcePluginPath});
+                    writeClosingPluginState(PluginStateChangedSpec{
+                        command.projectId, command.owner, command.deviceId, *state,
+                        context.timelineEngine.committedRevision(), true, sourcePluginPath});
                 },
                 [this, command, device](const int parameterIndex, const float value) {
                     const auto stateKey =
