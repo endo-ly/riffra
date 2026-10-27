@@ -47,6 +47,23 @@ impl AudioSupervisor {
         command: SidecarCommand,
         timeout: Duration,
     ) -> NativeAudioResult<SidecarResponse> {
+        self.request_inner(command, timeout, false)
+    }
+
+    pub(super) fn request_during_shutdown(
+        &self,
+        command: SidecarCommand,
+        timeout: Duration,
+    ) -> NativeAudioResult<SidecarResponse> {
+        self.request_inner(command, timeout, true)
+    }
+
+    fn request_inner(
+        &self,
+        command: SidecarCommand,
+        timeout: Duration,
+        shutting_down: bool,
+    ) -> NativeAudioResult<SidecarResponse> {
         let request_id = self.command_bus.next_request_id();
         let line = encode_command(request_id, &command).map_err(|error| {
             NativeAudioError::protocol(format!("Audio command could not be encoded: {error}"))
@@ -56,7 +73,13 @@ impl AudioSupervisor {
         let mut expected_generation = self.sidecar_generation();
         for _ in 0..3 {
             expected_generation = self.sidecar_generation();
-            self.wait_until_ready(expected_generation, SIDECAR_READY_TIMEOUT)?;
+            if shutting_down {
+                if !self.process.is_ready(expected_generation) {
+                    return Err(NativeAudioError::ShuttingDown);
+                }
+            } else {
+                self.wait_until_ready(expected_generation, SIDECAR_READY_TIMEOUT)?;
+            }
             let _native_command =
                 self.process
                     .command_gate
