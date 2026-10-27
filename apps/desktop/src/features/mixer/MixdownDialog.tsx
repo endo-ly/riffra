@@ -34,6 +34,7 @@ function sameMixdownSettings(left: MixdownSettings, right: MixdownSettings) {
     left.musicalEndTick === right.musicalEndTick &&
     left.tailSeconds === right.tailSeconds &&
     left.fadeOutSeconds === right.fadeOutSeconds &&
+    left.pluginWarmUpSeconds === right.pluginWarmUpSeconds &&
     left.sampleRate === right.sampleRate &&
     left.blockSize === right.blockSize &&
     sameMastering
@@ -98,6 +99,7 @@ export function MixdownDialog(props: Props) {
   );
   const [tail, setTail] = useState(canonical.tailSeconds);
   const [fade, setFade] = useState(canonical.fadeOutSeconds);
+  const [warmUp, setWarmUp] = useState(canonical.pluginWarmUpSeconds);
   const [range, setRange] = useState<RenderRange['kind']>('entireArrangement');
   const [trackId, setTrackId] = useState('');
   const [stems, setStems] = useState(false);
@@ -118,6 +120,7 @@ export function MixdownDialog(props: Props) {
     if (canonical.mastering) setTarget(canonical.mastering);
     setTail(canonical.tailSeconds);
     setFade(canonical.fadeOutSeconds);
+    setWarmUp(canonical.pluginWarmUpSeconds);
   }, [canonical]);
   const active = Boolean(job && ['queued', 'running', 'cancelling'].includes(job.state));
   const busy = saving || Boolean(active);
@@ -164,6 +167,7 @@ export function MixdownDialog(props: Props) {
         ...canonical,
         tailSeconds: tail,
         fadeOutSeconds: fade,
+        pluginWarmUpSeconds: warmUp,
         mastering: enabled ? target : null,
       };
       if (!sameMixdownSettings(settings, canonical)) {
@@ -433,6 +437,19 @@ export function MixdownDialog(props: Props) {
                 min={0}
                 value={fade}
                 onChange={(value) => setFade(value ?? NaN)}
+              />
+            </div>
+          </DialogSection>
+          <DialogSection title="Plugin preparation">
+            <div className={styles.numbers}>
+              <NumberField
+                label="Preparation time"
+                name="Plugin preparation time (seconds)"
+                unit="s"
+                min={0}
+                max={60}
+                value={warmUp}
+                onChange={(value) => setWarmUp(value ?? NaN)}
               />
             </div>
           </DialogSection>

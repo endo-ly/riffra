@@ -47,12 +47,24 @@ pub(crate) struct GraphMixBus {
     pub(crate) effects: Vec<GraphPluginDevice>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct GraphMixdown {
     pub(crate) musical_end_tick: u64,
     pub(crate) tail_seconds: f64,
     pub(crate) fade_out_seconds: f64,
+    pub(crate) plugin_warm_up_seconds: f64,
+}
+
+impl Default for GraphMixdown {
+    fn default() -> Self {
+        Self {
+            musical_end_tick: 0,
+            tail_seconds: 0.0,
+            fade_out_seconds: 0.0,
+            plugin_warm_up_seconds: 2.0,
+        }
+    }
 }
 
 pub(crate) type GraphTimebase = riffra_core::ProjectTimebase;

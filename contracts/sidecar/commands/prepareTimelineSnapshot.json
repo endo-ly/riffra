@@ -14,6 +14,7 @@
         "mixdown": {
           "fadeOutSeconds": 0.0,
           "musicalEndTick": 0,
+          "pluginWarmUpSeconds": 2.0,
           "tailSeconds": 0.0
         },
         "mixer": {

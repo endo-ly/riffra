@@ -789,14 +789,18 @@ bool decodeGraph(const juce::var& value, const juce::String& path, ExecutionGrap
         !decodeMixer(mixer, child(path, "mixer"), output.mixer, error))
         return false;
     output.metronomeSound = static_cast<MetronomeSoundSpec>(sound);
-    ContractReader mixReader(mixdown, child(path, "mixdown"),
-                             {"musicalEndTick", "tailSeconds", "fadeOutSeconds"}, error);
+    ContractReader mixReader(
+        mixdown, child(path, "mixdown"),
+        {"musicalEndTick", "tailSeconds", "fadeOutSeconds", "pluginWarmUpSeconds"}, error);
     if (!mixReader.unsignedInteger("musicalEndTick", output.musicalEndTick) ||
         !mixReader.number("tailSeconds", output.tailSeconds) ||
-        !mixReader.number("fadeOutSeconds", output.fadeOutSeconds) || !mixReader.finish())
+        !mixReader.number("fadeOutSeconds", output.fadeOutSeconds) ||
+        !mixReader.number("pluginWarmUpSeconds", output.pluginWarmUpSeconds) || !mixReader.finish())
         return false;
     if (output.tailSeconds < 0.0 || output.fadeOutSeconds < 0.0)
         return fail(error, child(path, "mixdown"), "durations must be nonnegative");
+    if (output.pluginWarmUpSeconds < 0.0 || output.pluginWarmUpSeconds > 60.0)
+        return fail(error, child(path, "mixdown.pluginWarmUpSeconds"), "must be between 0 and 60");
     if (!decodeTimebase(timebase, child(path, "timebase"), output.timebase, error) ||
         !decodeLoopRange(loopRange, child(path, "loopRange"), output.loopRange, error))
         return false;
