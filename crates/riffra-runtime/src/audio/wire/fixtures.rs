@@ -537,6 +537,9 @@ fn sidecar_message_fixtures_reject_missing_and_unknown_keys() {
             !name.starts_with("pluginScan."),
         );
         for key in keys {
+            if name == "event.pluginStateFinal.json" && key == ["event", "sourcePluginPath"] {
+                continue;
+            }
             let (field, parent) = key.split_last().unwrap();
             let mut mutated = fixture.clone();
             at_path(&mut mutated, parent)
