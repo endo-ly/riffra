@@ -16,6 +16,7 @@
       "stateData": "opaque-state",
       "bypassed": false
     },
-    "arrangementRevision": 0
+    "arrangementRevision": 0,
+    "sourcePluginPath": "Plugin.vst3"
   }
 }

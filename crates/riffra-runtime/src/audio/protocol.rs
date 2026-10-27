@@ -252,6 +252,7 @@ fn plugin_state_changed(changed: WirePluginStateChanged) -> PluginStateChanged {
         owner: changed.owner,
         device_id: changed.device_id,
         arrangement_revision: changed.arrangement_revision,
+        source_plugin_path: changed.source_plugin_path,
         parameter_values: changed.state.parameter_values,
         state_data: changed.state.state_data,
         bypassed: changed.state.bypassed,

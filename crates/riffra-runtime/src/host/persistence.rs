@@ -33,6 +33,8 @@ struct PluginStateEvent {
     state_data: Option<String>,
     bypassed: bool,
     arrangement_revision: u64,
+    #[serde(default)]
+    source_plugin_path: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -298,6 +300,28 @@ impl HostState {
             };
         }
         let canonical = writer.project().core.canonical_state();
+        if let PendingPluginChange::Final(change) = &queued.change {
+            let destination_matches = canonical
+                .session
+                .arrangement
+                .device(&change.owner, &change.device_id)
+                .ok()
+                .is_some_and(|device| {
+                    device.plugin().is_some_and(|plugin| {
+                        Some(plugin.path.as_str()) == change.source_plugin_path.as_deref()
+                    })
+                });
+            if change
+                .source_plugin_path
+                .as_deref()
+                .is_none_or(|path| path.is_empty())
+                || !destination_matches
+            {
+                tracing::warn!(project_id = %change.project_id, device_id = %change.device_id,
+                    source_plugin_path = ?change.source_plugin_path, "discarding final plugin state with invalid destination");
+                return Ok(());
+            }
+        }
         let (owner, device_id, state) = match &queued.change {
             PendingPluginChange::State(change) | PendingPluginChange::Final(change) => {
                 let state = if matches!(queued.change, PendingPluginChange::State(_))
@@ -371,6 +395,7 @@ impl HostState {
                     state_data: change.state_data.clone(),
                     bypassed: change.bypassed,
                     arrangement_revision: change.arrangement_revision,
+                    source_plugin_path: change.source_plugin_path.clone(),
                 },
             ));
         }
@@ -582,10 +607,39 @@ mod tests {
                 "arrangementRevision": arrangement_revision,
                 "parameterValues": [0.0],
                 "stateData": "cHJlc2V0LXN0YXRl",
+                "sourcePluginPath": "effect.vst3",
                 "bypassed": false,
             }),
         )
     }
+    #[test]
+    fn final_state_with_invalid_destination_is_discarded_without_confirmation() {
+        let (root, state) = plugin_host();
+        let project_id = state.project.read().canonical.project_id.clone();
+        let events = state.event_hub.subscribe().unwrap();
+        let mut pending = HashMap::new();
+        let mut order = 0;
+        for path in [Some("old.vst3"), None] {
+            let mut frame = opaque_plugin_state_change(&project_id, 0);
+            frame.event = "plugin-state-final".into();
+            frame.payload["sourcePluginPath"] = serde_json::json!(path);
+            collect_plugin_change(&mut pending, frame, &mut order);
+        }
+        flush_plugin_changes(&Arc::downgrade(&state), &mut pending, true).unwrap();
+        assert!(pending.is_empty());
+        let canonical = state.project.read().canonical.clone();
+        assert_eq!(canonical.sequence, 0);
+        assert_eq!(
+            canonical.session.arrangement.tracks[0].effects[0]
+                .plugin
+                .state_data,
+            None
+        );
+        assert!(events.try_recv().is_err());
+        drop(state);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     #[test]
     fn final_state_is_confirmed_only_after_durable_commit() {
         let (root, state) = plugin_host();
@@ -778,6 +832,7 @@ mod tests {
         state.events.emit(crate::HostEvent::PluginStateChanged(
             crate::model::PluginStateChanged {
                 arrangement_revision: 0,
+                source_plugin_path: None,
                 project_id: previous.project_id.clone(),
                 owner: riffra_core::EffectOwner::Track {
                     id: "track:1".into(),
@@ -840,6 +895,7 @@ mod tests {
             state.events.emit(crate::HostEvent::PluginStateChanged(
                 crate::model::PluginStateChanged {
                     arrangement_revision: 0,
+                    source_plugin_path: None,
                     project_id: previous.project_id.clone(),
                     owner: riffra_core::EffectOwner::Track {
                         id: "track:1".into(),

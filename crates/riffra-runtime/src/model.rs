@@ -100,6 +100,9 @@ pub struct PluginStateChanged {
     pub bypassed: bool,
     /// Arrangement revision of the graph used to capture this snapshot.
     pub arrangement_revision: u64,
+    /// Plugin path captured when the editor was opened, for final state events.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_plugin_path: Option<String>,
 }
 
 /// One parameter changed in an open native plugin editor.
