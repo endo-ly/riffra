@@ -227,6 +227,19 @@ void AudioCommandDispatcher::handle(const OpenPluginEditorCommand& command,
                         },
                         kTrackDeviceWatchdogTimeout, RuntimeLifecycleExecutor::TaskThread::control);
                 },
+                [this, command](const std::optional<PluginStateSpec>& state,
+                                const juce::String& error) {
+                    // The closing state bypasses the best-effort state lane: once the editor is
+                    // gone, a dropped or skipped update would never be captured again.
+                    if (!state.has_value()) {
+                        writeEvent(
+                            FaultSpec{{"trackDevice", error, "track.pluginEditor.capture", {}}});
+                        return;
+                    }
+                    writeEvent(PluginStateChangedSpec{command.projectId, command.owner,
+                                                      command.deviceId, *state,
+                                                      context.timelineEngine.committedRevision()});
+                },
                 [this, command, device](const int parameterIndex, const float value) {
                     const auto stateKey =
                         "track-parameter:" +
