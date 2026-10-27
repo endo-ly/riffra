@@ -139,16 +139,19 @@ TEST(PluginRackTest, RestoresPersistedPluginState) {
     process();
     const auto saved = rack->persistedState(error);
     ASSERT_TRUE(saved.has_value()) << error;
-    ASSERT_TRUE(rack->setParameter(0, 0.25f, error)) << error;
-    process();
-
     auto opaqueState = *saved;
     opaqueState.parameterValues.clear();
-    ASSERT_TRUE(rack->applyPersistedState(opaqueState, error)) << error;
-    process();
-    const auto restored = rack->parameters();
-    ASSERT_FALSE(restored.empty());
-    EXPECT_NEAR(restored[0].value, 0.75f, 0.0001f);
+
+    // The saved snapshot and its opaque VST3 state alone each restore the plugin itself.
+    for (const auto& state : {*saved, opaqueState}) {
+        ASSERT_TRUE(rack->setParameter(0, 0.25f, error)) << error;
+        process();
+        ASSERT_TRUE(rack->applyPersistedState(state, error)) << error;
+        process();
+        const auto restored = rack->parameters();
+        ASSERT_FALSE(restored.empty());
+        EXPECT_NEAR(restored[0].value, 0.75f, 0.0001f);
+    }
 }
 
 TEST(PluginRackTest, PassesMidiToInstrumentProcessor) {
