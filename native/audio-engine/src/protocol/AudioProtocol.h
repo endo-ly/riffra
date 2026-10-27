@@ -16,4 +16,7 @@ void writeControlEnvelope(const juce::var& envelope);
 /// meters and transport status are lossy telemetry.
 void writeEvent(const SidecarEventSpec& event);
 
+/// Writes an editor's final state on the ordered control lane.
+void writeClosingPluginState(const PluginStateChangedSpec& event);
+
 }  // namespace riffra

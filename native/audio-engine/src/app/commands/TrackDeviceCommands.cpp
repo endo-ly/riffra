@@ -236,9 +236,9 @@ void AudioCommandDispatcher::handle(const OpenPluginEditorCommand& command,
                             FaultSpec{{"trackDevice", error, "track.pluginEditor.capture", {}}});
                         return;
                     }
-                    writeEvent(PluginStateChangedSpec{command.projectId, command.owner,
-                                                      command.deviceId, *state,
-                                                      context.timelineEngine.committedRevision()});
+                    writeClosingPluginState(
+                        PluginStateChangedSpec{command.projectId, command.owner, command.deviceId,
+                                               *state, context.timelineEngine.committedRevision()});
                 },
                 [this, command, device](const int parameterIndex, const float value) {
                     const auto stateKey =
