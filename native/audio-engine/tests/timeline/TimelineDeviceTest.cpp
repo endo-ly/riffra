@@ -10,8 +10,74 @@
 #include "app/AudioCommandDispatcher.h"
 #include "device/AudioDeviceController.h"
 #include "midi/MidiInputService.h"
+#include "plugins/PluginEditorHost.h"
 
 namespace riffra {
+
+TEST(AudioCommandDispatcherTest, CommitAcknowledgesAndRetainsDeferredEditorUntilIdle) {
+    juce::ScopedJuceInitialiser_GUI initialiser;
+    juce::AudioFormatManager formats;
+    TimelineEngine timeline;
+    AudioRenderPipeline pipeline(timeline);
+    AudioDeviceController deviceController(pipeline);
+    MidiInputService midiInputs(pipeline.preview(), timeline);
+    RuntimeLifecycleExecutor lifecycle;
+    ProcessorTrace trace;
+    juce::String error;
+    auto owned = PluginRackTestPeer::install(std::make_unique<TestProcessor>(trace, true, true),
+                                             48'000.0, 32, error);
+    ASSERT_NE(owned, nullptr) << error;
+    std::shared_ptr<PluginRack> rack(std::move(owned));
+    std::atomic<bool> captured{false};
+    auto editor = std::make_shared<PluginEditorHost>(
+        *rack, PluginEditorHost::StateCallback{},
+        [&](const auto& state, const auto&) { captured.store(state.has_value()); },
+        PluginEditorHost::ParameterCallback{}, PluginEditorHost::ClosedCallback{}, rack);
+    ASSERT_TRUE(editor->open(error)) << error;
+    rack->beginAutomationRead();
+    auto trackEditor = editor;
+    EffectOwnerSpec editorOwner;
+    juce::String editorDeviceId = "old-device";
+    std::shared_ptr<PluginEditorHost> auditionEditor;
+    juce::AudioBuffer<float> raw, processed;
+    std::atomic<bool> operationRunning{false};
+    AudioCommandDispatcher dispatcher({formats, timeline, pipeline, deviceController, midiInputs,
+                                       lifecycle, trackEditor, editorOwner, editorDeviceId,
+                                       auditionEditor, raw, processed, operationRunning});
+    ASSERT_TRUE(timeline.loadSnapshot(makeTestSnapshot(), formats, 48'000.0, 32, error, false))
+        << error;
+
+    juce::WaitableEvent acknowledged;
+    juce::String commitKind, firstWaitKind, secondWaitKind;
+    std::thread commands([&] {
+        dispatcher.dispatch({1, CommitTimelineSnapshotCommand{}},
+                            CommandResponder(1, [&](const juce::var& reply) {
+                                commitKind = reply.getProperty("kind", {}).toString();
+                                acknowledged.signal();
+                            }));
+        if (acknowledged.wait(2000) && lifecycle.waitForIdle(std::chrono::seconds(2))) {
+            dispatcher.dispatch({2, WaitForTimelineIdleCommand{100, true}},
+                                CommandResponder(2, [&](const juce::var& reply) {
+                                    firstWaitKind = reply.getProperty("kind", {}).toString();
+                                }));
+            rack->restoreAutomation();
+            dispatcher.dispatch({3, WaitForTimelineIdleCommand{2000, true}},
+                                CommandResponder(3, [&](const juce::var& reply) {
+                                    secondWaitKind = reply.getProperty("kind", {}).toString();
+                                }));
+        }
+        juce::MessageManager::callAsync(
+            [] { juce::MessageManager::getInstance()->stopDispatchLoop(); });
+    });
+    juce::MessageManager::getInstance()->runDispatchLoop();
+    commands.join();
+
+    EXPECT_EQ(commitKind, "response");
+    EXPECT_EQ(firstWaitKind, "error");
+    EXPECT_EQ(secondWaitKind, "response");
+    EXPECT_TRUE(captured.load());
+    EXPECT_EQ(trackEditor, nullptr);
+}
 
 TEST(TimelineEngineTest, KeepsCanonicalTrackStateWhenDeviceRuntimeIsReused) {
     EXPECT_TRUE(TimelineEngineTestPeer::canonicalTrackStateSurvivesReusableDeviceCommit());

@@ -103,11 +103,6 @@ void AudioCommandDispatcher::handle(const CommitTimelineSnapshotCommand&,
             if (rejectUnlessAccepted(*pending, committed, "timeline", timelineError,
                                      "runtime.timeline.commit"))
                 return;
-            if (closingEditor != nullptr) {
-                context.trackPluginEditor.reset();
-                context.pluginEditorOwner = {};
-                context.trackPluginEditorDeviceId.clear();
-            }
             pending->respond(TimelineAckSpec{});
             if (closingEditor != nullptr) closingEditor->close();
         },
