@@ -179,15 +179,14 @@ fn activate_project_inner(
     project_id: &str,
     operation: ProjectOperation,
 ) -> Result<(ControlOutput, u64), ProtocolError> {
-    let prepared = projects::prepare(&state.project_store, project_id).map_err(command_error)?;
-
     if !state.safe_mode {
         state
             .audio
             .close_editor_before_project_switch(PROJECT_RUNTIME_TIMEOUT)
             .map_err(|error| command_error(error.to_string()))?;
-        state.take_closing_plugin_changes(writer)?;
     }
+    state.take_closing_plugin_changes(writer)?;
+    let prepared = projects::prepare(&state.project_store, project_id).map_err(command_error)?;
     let previous_canonical = writer.project().core.canonical_state();
     let previous_project_id = previous_canonical.project_id.clone();
 
@@ -404,6 +403,72 @@ mod tests {
     use serde_json::json;
     use std::path::PathBuf;
     use std::sync::Arc;
+
+    #[test]
+    fn reopening_current_project_loads_the_final_state_saved_before_preparation() {
+        let root = std::env::temp_dir().join(format!("riffra-reopen-{}", new_instance_id()));
+        let mut session = riffra_core::CreativeSession::new(1);
+        let mut track = riffra_core::Track::audio("track:1".into(), "Track".into());
+        track.effects.push(
+            riffra_core::EffectDevice::new(
+                "device:1".into(),
+                "Effect".into(),
+                "effect.vst3".into(),
+            )
+            .unwrap(),
+        );
+        session.arrangement.tracks.push(track);
+        let state = super::HostState::for_test(
+            &root,
+            session,
+            crate::AudioSupervisor::offline("test"),
+            true,
+        );
+        let worker = super::super::persistence::PluginStatePersistenceCoordinator::start(
+            Arc::downgrade(&state),
+            state.event_hub.subscribe_plugin_persistence(),
+        );
+        *state.plugin_persistence_commands.lock().unwrap() = Some(worker.commands.clone());
+        let mut writer = state.project.write();
+        let project_id = writer.project().core.project_id().to_owned();
+        state.events.emit(crate::HostEvent::PluginStateFinal(
+            crate::PluginStateChanged {
+                project_id: project_id.clone(),
+                owner: riffra_core::EffectOwner::Track {
+                    id: "track:1".into(),
+                },
+                device_id: "device:1".into(),
+                parameter_values: vec![0.5],
+                state_data: Some("c3RhdGU=".into()),
+                bypassed: false,
+                arrangement_revision: 0,
+                source_plugin_path: Some("effect.vst3".into()),
+            },
+        ));
+
+        super::activate_project_inner(
+            &state,
+            &mut writer,
+            &project_id,
+            super::ProjectOperation::Open,
+        )
+        .unwrap();
+        let plugin = &writer
+            .project()
+            .core
+            .canonical_state()
+            .session
+            .arrangement
+            .tracks[0]
+            .effects[0]
+            .plugin;
+        assert_eq!(plugin.state_data.as_deref(), Some("c3RhdGU="));
+        assert_eq!(plugin.parameter_values, [0.5]);
+        drop(writer);
+        worker.shutdown();
+        drop(state);
+        let _ = std::fs::remove_dir_all(root);
+    }
 
     fn open_safe_host(label: &str) -> (DawHost, PathBuf) {
         let data_root = std::env::temp_dir().join(format!(
