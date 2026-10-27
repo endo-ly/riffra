@@ -187,9 +187,24 @@ bool PluginEditorHost::closeOnMessageThread() {
     jassert(juce::MessageManager::getInstance()->isThisTheMessageThread());
     if (window == nullptr) return true;
     stateTimer.stop();
-    drainParameterChanges();
-    publishStateIfDirty(true);
     if (listener != nullptr) rack.removeProcessorListener(*listener);
+    drainParameterChanges();
+    if (onStateChanged && !rack.isAutomationActive()) {
+        std::optional<PluginStateSpec> previous;
+        {
+            const juce::SpinLock::ScopedLockType lock(rack.pluginLock);
+            previous = rack.staticState;
+            rack.staticStateDirty.store(true, std::memory_order_release);
+        }
+        juce::String error;
+        const auto current = rack.persistedState(error);
+        if (!current.has_value()) {
+            if (listener != nullptr) rack.addProcessorListener(*listener);
+            stateTimer.start();
+            return false;
+        }
+        if (!previous.has_value() || *previous != *current) onStateChanged();
+    }
     try {
         FaultInjection::before(FaultStage::destroy);
     } catch (...) {
