@@ -101,7 +101,7 @@ struct InstrumentTrace final {
     std::vector<int> midiSamplePositions;
     int midiMessageCount = 0;
     juce::Optional<juce::AudioPlayHead::PositionInfo> position;
-    int stoppedBlocks = 0;
+    int stoppedAllNotesOffCount = 0;
 };
 
 class TestInstrumentProcessor final : public juce::AudioProcessor {
@@ -123,10 +123,8 @@ public:
                layout.getMainOutputChannelSet() == juce::AudioChannelSet::stereo();
     }
     void processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) override {
-        if (auto* head = getPlayHead()) {
-            trace.position = head->getPosition();
-            if (trace.position && !trace.position->getIsPlaying()) ++trace.stoppedBlocks;
-        }
+        if (auto* head = getPlayHead()) trace.position = head->getPosition();
+        const auto stopped = trace.position && !trace.position->getIsPlaying();
         trace.processed = trace.prepared;
         ++trace.processBlockCount;
         for (const auto metadata : midi) {
@@ -134,6 +132,7 @@ public:
             trace.midiMessages.push_back(trace.lastMidiMessage);
             trace.midiSamplePositions.push_back(metadata.samplePosition);
             ++trace.midiMessageCount;
+            if (stopped && trace.lastMidiMessage.isAllNotesOff()) ++trace.stoppedAllNotesOffCount;
             if (trace.lastMidiMessage.isNoteOn())
                 trace.noteHeld = true;
             else if (trace.lastMidiMessage.isNoteOff() || trace.lastMidiMessage.isAllNotesOff() ||

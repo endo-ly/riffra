@@ -57,6 +57,10 @@ TEST(PluginRackTest, SendsTransportAndStoppedBlockToProcessor) {
     rack->notifyTransportStopped(position, kBlockSize);
     ASSERT_TRUE(trace.position.hasValue());
     EXPECT_FALSE(trace.position->getIsPlaying());
+    const auto processedBeforeBypass = trace.processBlockCount;
+    rack->setBypassed(true);
+    rack->notifyTransportStopped(position, kBlockSize);
+    EXPECT_EQ(trace.processBlockCount, processedBeforeBypass);
 }
 
 TEST(PluginRackTest, ReturnsDrySignalWhenBypassedOrUnloaded) {

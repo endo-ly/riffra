@@ -777,10 +777,12 @@ public:
             trace.midiSamplePositions[1] != 0 || !trace.position ||
             !trace.position->getIsPlaying() || *trace.position->getTimeInSamples() != 0)
             return false;
+        // Stopping inside the held note sends one stopped block that releases every channel.
         if (!engine.stop()) return false;
         for (int block = 0; block < 20; ++block)
             engine.mix(outputs.data(), 2, static_cast<int>(left.size()));
-        return trace.position && !trace.position->getIsPlaying() && trace.stoppedBlocks >= 1;
+        return trace.position && !trace.position->getIsPlaying() &&
+               trace.stoppedAllNotesOffCount == 16 && !trace.noteHeld;
     }
 
     static bool panicClosesInstrumentRuntime() {

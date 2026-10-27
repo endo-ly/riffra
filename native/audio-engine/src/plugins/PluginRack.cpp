@@ -593,13 +593,12 @@ void PluginRack::setTransportPosition(const PluginTransportPosition& transport) 
 
 void PluginRack::notifyTransportStopped(const PluginTransportPosition& transport,
                                         const int numSamples) noexcept {
-    if (plugin == nullptr || numSamples <= 0 || numSamples > controlBuffer.getNumSamples()) return;
-    controlBuffer.clear();
-    controlMidi.clear();
-    setTransportPosition(transport);
-    juce::AudioBuffer<float> buffer(controlBuffer.getArrayOfWritePointers(),
-                                    controlBuffer.getNumChannels(), numSamples);
-    plugin->processBlock(buffer, controlMidi);
+    jassert(!transport.playing);
+    if (numSamples <= 0 || numSamples > controlBuffer.getNumSamples()) return;
+    // The stopped block takes the regular processing path so pending panic, queued parameters,
+    // and bypass apply to it; its output stays in the control buffer instead of the mix.
+    process(nullptr, 0, nullptr, 0, controlBuffer.getArrayOfWritePointers(), 2, numSamples, nullptr,
+            {}, transport.samplePosition, false, &transport);
 }
 
 }  // namespace riffra
