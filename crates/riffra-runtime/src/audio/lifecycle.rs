@@ -171,6 +171,10 @@ impl AudioSupervisor {
         self.process.current_generation()
     }
 
+    pub(crate) fn sidecar_is_ready(&self) -> bool {
+        self.process.is_ready(self.sidecar_generation())
+    }
+
     /// Emits the latest audio status through the Host event sink.
     pub fn emit_status(&self) {
         if let Ok(mut status) = self.status.lock() {

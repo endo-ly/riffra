@@ -41,6 +41,7 @@ struct DiscardTimelineSnapshotCommand final {};
 
 struct WaitForTimelineIdleCommand final {
     std::uint64_t timeoutMs = 0;
+    bool closeEditor = false;
 };
 
 enum class TransportCommandKind { play, pause, setStarting, stop, seek };

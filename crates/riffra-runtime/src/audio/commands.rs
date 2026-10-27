@@ -179,6 +179,17 @@ impl AudioSupervisor {
         self.request_ack(
             SidecarCommand::WaitForTimelineIdle {
                 timeout_ms: timeout.as_millis().min(u128::from(u64::MAX)) as u64,
+                close_editor: false,
+            },
+            timeout,
+        )
+    }
+
+    pub(crate) fn close_editor_before_shutdown(&self, timeout: Duration) -> NativeAudioResult<()> {
+        self.request_ack(
+            SidecarCommand::WaitForTimelineIdle {
+                timeout_ms: timeout.as_millis().min(u128::from(u64::MAX)) as u64,
+                close_editor: true,
             },
             timeout,
         )

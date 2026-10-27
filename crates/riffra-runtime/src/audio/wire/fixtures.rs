@@ -79,7 +79,10 @@ fn command_samples() -> Vec<SidecarCommand> {
         },
         SidecarCommand::CommitTimelineSnapshot,
         SidecarCommand::DiscardTimelineSnapshot,
-        SidecarCommand::WaitForTimelineIdle { timeout_ms: 1_500 },
+        SidecarCommand::WaitForTimelineIdle {
+            timeout_ms: 1_500,
+            close_editor: false,
+        },
         SidecarCommand::PlayTimeline,
         SidecarCommand::PauseTimeline,
         SidecarCommand::SetTransportStarting,

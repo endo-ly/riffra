@@ -220,10 +220,11 @@ bool decodeCommand(const juce::var& value, SidecarCommandSpec& output, juce::Str
     if (type == "discardTimelineSnapshot")
         return decodeEmpty<DiscardTimelineSnapshotCommand>(value, output, error);
     if (type == "waitForTimelineIdle") {
-        auto fields = reader({"type", "timeoutMs"});
+        auto fields = reader({"type", "timeoutMs", "closeEditor"});
         WaitForTimelineIdleCommand command;
         if (!fields.string("type", ignoredType) ||
-            !fields.unsignedInteger("timeoutMs", command.timeoutMs) || !fields.finish())
+            !fields.unsignedInteger("timeoutMs", command.timeoutMs) ||
+            !fields.boolean("closeEditor", command.closeEditor) || !fields.finish())
             return false;
         if (command.timeoutMs == 0) return fail(error, field("timeoutMs"), "must be positive");
         output = command;

@@ -159,6 +159,17 @@ fn collect_plugin_change(
     match frame.event.as_str() {
         "plugin-state-final" => {
             if let Ok(change) = serde_json::from_value::<PluginStateEvent>(frame.payload) {
+                // The final snapshot includes every earlier editor parameter and opaque-state
+                // change. It must remain usable even if the native process exits afterwards.
+                pending.retain(|key, _| match key {
+                    PluginChangeKey::State(project, owner, device)
+                    | PluginChangeKey::Parameter(project, owner, device, _) => {
+                        project != &change.project_id
+                            || owner != &change.owner
+                            || device != &change.device_id
+                    }
+                    PluginChangeKey::Final(_) => true,
+                });
                 pending.insert(
                     PluginChangeKey::Final(order),
                     QueuedPluginChange {
@@ -637,7 +648,7 @@ mod tests {
     }
 
     #[test]
-    fn final_state_waits_for_earlier_failed_change_on_same_device() {
+    fn final_state_supersedes_earlier_changes_on_same_device() {
         let (root, state) = plugin_host();
         let project_id = state.project.read().canonical.project_id.clone();
         let events = state.event_hub.subscribe().unwrap();
@@ -650,10 +661,14 @@ mod tests {
         final_state.event = "plugin-state-final".into();
         collect_plugin_change(&mut pending, final_state, &mut order);
 
-        assert!(flush_plugin_changes(&Arc::downgrade(&state), &mut pending, true).is_err());
-        assert_eq!(pending.len(), 2);
-        assert!(events.try_recv().is_err());
-        assert_eq!(state.project.read().canonical.sequence, 0);
+        assert_eq!(pending.len(), 1);
+        flush_plugin_changes(&Arc::downgrade(&state), &mut pending, true).unwrap();
+        assert!(pending.is_empty());
+        assert_eq!(state.project.read().canonical.sequence, 1);
+        assert!(
+            std::iter::from_fn(|| events.try_recv().ok())
+                .any(|event| event.event == "plugin-state-saved")
+        );
         drop(state);
         let _ = std::fs::remove_dir_all(root);
     }
