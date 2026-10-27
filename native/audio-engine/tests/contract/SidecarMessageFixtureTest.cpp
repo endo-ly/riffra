@@ -182,6 +182,14 @@ std::vector<std::pair<juce::String, juce::var>> messageFixtures() {
         fixtures.emplace_back(
             "event." + juce::String(std::string(sidecarEventType(event)).c_str()) + ".json",
             encodeEvent(event));
+    fixtures.emplace_back(
+        "event.pluginStateFinal.json",
+        encodeEvent(PluginStateChangedSpec{"project-1",
+                                           {EffectOwnerKindSpec::track, "track-1"},
+                                           "device-1",
+                                           pluginState(),
+                                           0,
+                                           true}));
     fixtures.emplace_back("error.json", encodeError(1, error()));
     fixtures.emplace_back("render.offlineRenderComplete.json",
                           encodeOfflineRenderComplete({96'000, 48'000, {}}));

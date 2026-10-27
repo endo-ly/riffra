@@ -203,8 +203,20 @@ fn activate_project_inner(
                 operation,
             ));
         }
+        if let Err(error) = state.take_closing_plugin_changes(writer) {
+            return Err(project_switch_failure(
+                state,
+                &previous_project_id,
+                &previous_canonical,
+                project_id,
+                error,
+                operation,
+            ));
+        }
         Some(candidate_key)
     };
+
+    let previous_canonical = writer.project().core.canonical_state();
 
     if let Some(candidate_key) = candidate_key
         && let Err(error) = state.runtime.commit_candidate_as_canonical(candidate_key)

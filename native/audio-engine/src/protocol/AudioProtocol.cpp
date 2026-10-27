@@ -110,7 +110,9 @@ void writeControlEnvelope(const juce::var& envelope) {
 }
 
 void writeClosingPluginState(const PluginStateChangedSpec& event) {
-    outputWriter.enqueueClosingState(line(encodeEvent(event)));
+    auto closing = event;
+    closing.finalCapture = true;
+    outputWriter.enqueueClosingState(line(encodeEvent(closing)));
 }
 
 void writeEvent(const SidecarEventSpec& event) {

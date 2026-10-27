@@ -421,6 +421,12 @@ impl AudioSupervisor {
                         .emit(HostEvent::PluginStateChanged(plugin_state_changed(changed)));
                 }
             }
+            SidecarEvent::PluginStateFinal(changed) => {
+                if self.process.current_generation() == generation {
+                    self.events
+                        .emit(HostEvent::PluginStateFinal(plugin_state_changed(changed)));
+                }
+            }
             SidecarEvent::PluginParameterChanged(changed) => {
                 if self.process.current_generation() == generation {
                     self.events

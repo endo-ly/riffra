@@ -448,7 +448,7 @@ juce::var encodeEventBody(const SidecarEventSpec& event) {
             },
             [](const PluginStateChangedSpec& changed) {
                 return ObjectBuilder{}
-                    .set("type", "pluginStateChanged")
+                    .set("type", changed.finalCapture ? "pluginStateFinal" : "pluginStateChanged")
                     .set("projectId", changed.projectId)
                     .set("owner", encodeEffectOwner(changed.owner))
                     .set("deviceId", changed.deviceId)

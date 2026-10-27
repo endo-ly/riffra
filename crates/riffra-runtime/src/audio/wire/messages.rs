@@ -109,6 +109,7 @@ pub(crate) enum SidecarEvent {
     TransportStatus(WireTransportStatus),
     RecordingComplete(WireRecordingComplete),
     PluginStateChanged(WirePluginStateChanged),
+    PluginStateFinal(WirePluginStateChanged),
     PluginParameterChanged(WirePluginParameterChanged),
     /// A failure that is not tied to a request, such as a lost device.
     Fault(SidecarError),

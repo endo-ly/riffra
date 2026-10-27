@@ -37,6 +37,10 @@ pub enum HostEvent {
     RuntimeRestarted(RuntimeRestarted),
     /// Plugin state captured from an open native plugin editor.
     PluginStateChanged(PluginStateChanged),
+    /// Final editor snapshot awaiting persistence.
+    PluginStateFinal(PluginStateChanged),
+    /// Final editor snapshot persisted by the Host.
+    PluginStateSaved(PluginStateChanged),
     /// One parameter changed in an open native plugin editor.
     PluginParameterChanged(PluginParameterChanged),
 }
@@ -69,6 +73,8 @@ impl HostEvent {
             Self::PluginStateChanged(value) => {
                 ("plugin-state-changed", serde_json::to_value(value))
             }
+            Self::PluginStateFinal(value) => ("plugin-state-final", serde_json::to_value(value)),
+            Self::PluginStateSaved(value) => ("plugin-state-saved", serde_json::to_value(value)),
             Self::PluginParameterChanged(value) => {
                 ("plugin-parameter-changed", serde_json::to_value(value))
             }
@@ -377,7 +383,10 @@ impl HostEventSink for HostEventHub {
 fn is_plugin_persistence_event(event: &str) -> bool {
     matches!(
         event,
-        "runtime-restarted" | "plugin-state-changed" | "plugin-parameter-changed"
+        "runtime-restarted"
+            | "plugin-state-changed"
+            | "plugin-state-final"
+            | "plugin-parameter-changed"
     )
 }
 

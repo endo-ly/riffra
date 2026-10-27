@@ -313,6 +313,7 @@ fn event_name(event: &SidecarEvent) -> &'static str {
         SidecarEvent::TransportStatus(_) => "transportStatus",
         SidecarEvent::RecordingComplete(_) => "recordingComplete",
         SidecarEvent::PluginStateChanged(_) => "pluginStateChanged",
+        SidecarEvent::PluginStateFinal(_) => "pluginStateFinal",
         SidecarEvent::PluginParameterChanged(_) => "pluginParameterChanged",
         SidecarEvent::Fault(_) => "fault",
     }
@@ -339,13 +340,14 @@ const RESPONSES: [&str; 12] = [
     "pluginState",
     "deviceProgramChanged",
 ];
-const EVENTS: [&str; 8] = [
+const EVENTS: [&str; 9] = [
     "ready",
     "audioStatus",
     "audioMeters",
     "transportStatus",
     "recordingComplete",
     "pluginStateChanged",
+    "pluginStateFinal",
     "pluginParameterChanged",
     "fault",
 ];
