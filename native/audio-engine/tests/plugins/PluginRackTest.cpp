@@ -136,13 +136,15 @@ TEST(PluginRackTest, RestoresPersistedPluginState) {
     const auto saved = rack->persistedState(error);
     ASSERT_TRUE(saved.has_value()) << error;
     ASSERT_TRUE(rack->setParameter(0, 0.25f, error)) << error;
-
-    ASSERT_TRUE(rack->applyPersistedState(*saved, error)) << error;
     process();
-    const auto restored = rack->persistedState(error);
-    ASSERT_TRUE(restored.has_value()) << error;
-    ASSERT_FALSE(restored->parameterValues.empty());
-    EXPECT_NEAR(restored->parameterValues[0], 0.75f, 0.0001f);
+
+    auto opaqueState = *saved;
+    opaqueState.parameterValues.clear();
+    ASSERT_TRUE(rack->applyPersistedState(opaqueState, error)) << error;
+    process();
+    const auto restored = rack->parameters();
+    ASSERT_FALSE(restored.empty());
+    EXPECT_NEAR(restored[0].value, 0.75f, 0.0001f);
 }
 
 TEST(PluginRackTest, PassesMidiToInstrumentProcessor) {
