@@ -25,11 +25,14 @@ public:
     explicit PluginEditorHost(PluginRack& rack, StateCallback stateCallback = {},
                               ClosingStateCallback closingStateCallback = {},
                               ParameterCallback parameterCallback = {},
-                              ClosedCallback closedCallback = {});
+                              ClosedCallback closedCallback = {},
+                              std::shared_ptr<PluginRack> rackOwner = {});
     ~PluginEditorHost();
 
     bool open(juce::String& error);
     bool close();
+    /// Waits for the closing snapshot after the audio owner restores automation.
+    [[nodiscard]] bool waitForClosingState(int timeoutMs) const;
     /// Whether the editor window is showing. Message Thread only.
     [[nodiscard]] bool isOpen() const noexcept { return window != nullptr; }
 
@@ -55,6 +58,13 @@ private:
 
     private:
         void timerCallback() override {
+            auto keepAlive = host.shared_from_this();
+            if (host.pendingClosingState && !host.rack.isAutomationActive()) {
+                host.pendingClosingState = false;
+                host.publishClosingState();
+                if (host.window == nullptr) stop();
+                host.deferredOwner.reset();
+            }
             host.drainParameterChanges();
             host.publishStateIfDirty();
         }
@@ -62,6 +72,11 @@ private:
     };
 
     PluginRack& rack;
+    std::shared_ptr<PluginRack> rackOwner;
+    std::shared_ptr<PluginEditorHost> deferredOwner;
+    bool pendingClosingState = false;
+    mutable juce::WaitableEvent closingCompleted{true};
+    std::atomic<bool> closingSucceeded{true};
     StateCallback onStateChanged;
     ClosingStateCallback onClosingState;
     ParameterCallback onParameterChanged;

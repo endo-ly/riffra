@@ -61,13 +61,16 @@ private:
 PluginEditorHost::PluginEditorHost(PluginRack& pluginRack, StateCallback stateCallback,
                                    ClosingStateCallback closingStateCallback,
                                    ParameterCallback parameterCallback,
-                                   ClosedCallback closedCallback)
+                                   ClosedCallback closedCallback,
+                                   std::shared_ptr<PluginRack> ownedRack)
     : rack(pluginRack),
+      rackOwner(std::move(ownedRack)),
       onStateChanged(std::move(stateCallback)),
       onClosingState(std::move(closingStateCallback)),
       onParameterChanged(std::move(parameterCallback)),
       onClosed(std::move(closedCallback)),
       listener(std::make_unique<ProcessorListener>(*this)) {
+    closingCompleted.signal();
     resizeParameterQueue();
 }
 
@@ -112,6 +115,10 @@ bool PluginEditorHost::close() {
         std::_Exit(125);
     }
     return true;
+}
+
+bool PluginEditorHost::waitForClosingState(const int timeoutMs) const {
+    return closingCompleted.wait(timeoutMs) && closingSucceeded.load(std::memory_order_acquire);
 }
 
 bool PluginEditorHost::runOnMessageThread(std::function<void()> operation, juce::String& error) {
@@ -197,7 +204,15 @@ bool PluginEditorHost::closeOnMessageThread() {
         return false;
     }
     window.reset();
-    publishClosingState();
+    if (onClosingState && rack.isAutomationActive()) {
+        closingSucceeded.store(false, std::memory_order_release);
+        closingCompleted.reset();
+        pendingClosingState = true;
+        deferredOwner = shared_from_this();
+        stateTimer.start();
+    } else {
+        publishClosingState();
+    }
     return true;
 }
 
@@ -210,6 +225,8 @@ void PluginEditorHost::publishClosingState() {
     juce::String error;
     const auto state = rack.persistedState(error);
     onClosingState(state, error);
+    closingSucceeded.store(state.has_value(), std::memory_order_release);
+    closingCompleted.signal();
 }
 
 void PluginEditorHost::queueParameterChange(const int index, const float value) noexcept {

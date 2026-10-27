@@ -75,9 +75,11 @@ void AudioCommandDispatcher::handle(const CommitTimelineSnapshotCommand&,
             const auto shouldCloseEditor =
                 context.timelineEngine.hasPreparedSnapshot() &&
                 context.trackPluginEditor != nullptr &&
-                !context.timelineEngine.preparedOwnerReusesRuntimeDevices(
-                    context.pluginEditorOwner);
+                !context.timelineEngine.preparedDeviceIsReused(context.pluginEditorOwner,
+                                                               context.trackPluginEditorDeviceId);
+            std::shared_ptr<PluginEditorHost> closingEditor;
             if (shouldCloseEditor) {
+                closingEditor = context.trackPluginEditor;
                 context.trackPluginEditor->close();
                 context.trackPluginEditor.reset();
                 context.pluginEditorOwner = {};
@@ -85,6 +87,13 @@ void AudioCommandDispatcher::handle(const CommitTimelineSnapshotCommand&,
             }
             juce::String timelineError;
             const auto committed = context.timelineEngine.commitPreparedSnapshot(timelineError);
+            if (committed == RealtimeRequest::accepted && closingEditor != nullptr &&
+                !closingEditor->waitForClosingState(10'000)) {
+                context.timelineOperationRunning.store(false, std::memory_order_release);
+                pending->fail("trackDevice", "The closing plugin state could not be captured.",
+                              "runtime.timeline.commit");
+                return;
+            }
             context.timelineOperationRunning.store(false, std::memory_order_release);
             if (rejectUnlessAccepted(*pending, committed, "timeline", timelineError,
                                      "runtime.timeline.commit"))

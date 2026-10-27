@@ -23,6 +23,7 @@ struct ProcessorTrace final {
     int resetCount = 0;
     int currentProgram = 0;
     int stateCaptureCount = 0;
+    int opaqueState = 0;
     std::function<void()> onProcess;
     double sampleRate = 0.0;
     int blockSize = 0;
@@ -33,11 +34,13 @@ struct ProcessorTrace final {
 class TestProcessor final : public juce::AudioProcessor {
 public:
     explicit TestProcessor(ProcessorTrace& processorTrace,
-                           bool includeHostedAutomationParameter = false)
+                           bool includeHostedAutomationParameter = false,
+                           bool provideEditor = false)
         : AudioProcessor(BusesProperties()
                              .withInput("Input", juce::AudioChannelSet::stereo(), true)
                              .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
-          trace(processorTrace) {
+          trace(processorTrace),
+          editorAvailable(provideEditor) {
         if (includeHostedAutomationParameter)
             addParameter(new juce::AudioParameterFloat(
                 juce::ParameterID{"test.parameter", 1}, "Test Parameter",
@@ -65,8 +68,10 @@ public:
                                                buffer.getMagnitude(1, 0, buffer.getNumSamples())));
         buffer.applyGain(2.0f);
     }
-    juce::AudioProcessorEditor* createEditor() override { return nullptr; }
-    bool hasEditor() const override { return false; }
+    juce::AudioProcessorEditor* createEditor() override {
+        return editorAvailable ? new juce::GenericAudioProcessorEditor(*this) : nullptr;
+    }
+    bool hasEditor() const override { return editorAvailable; }
     const juce::String getName() const override { return "Riffra Test Processor"; }
     bool acceptsMidi() const override { return false; }
     bool producesMidi() const override { return false; }
@@ -82,11 +87,15 @@ public:
         return "Program " + juce::String(index);
     }
     void changeProgramName(int, const juce::String&) override {}
-    void getStateInformation(juce::MemoryBlock&) override { ++trace.stateCaptureCount; }
+    void getStateInformation(juce::MemoryBlock& state) override {
+        ++trace.stateCaptureCount;
+        if (trace.opaqueState != 0) state.append(&trace.opaqueState, sizeof(trace.opaqueState));
+    }
     void setStateInformation(const void*, int) override {}
 
 private:
     ProcessorTrace& trace;
+    bool editorAvailable;
 };
 
 struct InstrumentTrace final {
