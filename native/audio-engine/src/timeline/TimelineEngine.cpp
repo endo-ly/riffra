@@ -70,7 +70,7 @@ InstrumentProcessContext TimelineEngine::instrumentProcessContext(const Prepared
     const auto tick = prepared.timebase.sampleToTick(sample, prepared.outputSampleRate);
     const auto exactTick = prepared.timebase.sampleToExactTick(sample, prepared.outputSampleRate);
     const auto meter = prepared.timebase.meterAt(exactTick);
-    return {
+    InstrumentProcessContext context{
         static_cast<std::uint64_t>(sample),
         prepared.timebase.tempoAt(tick),
         exactTick / static_cast<double>(prepared.timebase.ppq),
@@ -79,6 +79,8 @@ InstrumentProcessContext TimelineEngine::instrumentProcessContext(const Prepared
         meter.denominator,
         playing,
     };
+    context.transport = prepared.transportAt(sample, playing);
+    return context;
 }
 
 bool TimelineEngine::loadSnapshot(const TimelineSnapshotSpec& snapshot,

@@ -276,6 +276,8 @@ private:
         bool seekRequestedWhileStopped = false;
         std::int64_t pendingSeekSample = 0;
         bool resetPlaybackPending = false;
+        bool pluginStopPending = false;
+        std::int64_t pluginStopSample = 0;
         std::int64_t countInRemainingSamples = 0;
         std::int64_t countInBeatSamples = 1;
         std::int64_t countInBlockStartRemainingSamples = 0;

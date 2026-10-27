@@ -193,12 +193,18 @@ void PluginChain::allNotesOff() noexcept {
     for (auto& device : devices) device.rack->allNotesOff();
 }
 
+void PluginChain::notifyTransportStopped(const PluginTransportPosition& transport,
+                                         const int numSamples) noexcept {
+    for (auto& device : devices) device.rack->notifyTransportStopped(transport, numSamples);
+}
+
 void PluginChain::process(const float* const* inputChannels, const int inputChannelCount,
                           float* const* outputChannels, const int outputChannelCount,
                           const int sampleCount, const juce::MidiBuffer* midi,
                           std::span<PluginParameterAutomation> automation,
                           const std::int64_t timelineSample, const bool playing,
-                          PluginChainAlignment* inputAlignment) noexcept {
+                          PluginChainAlignment* inputAlignment,
+                          const PluginTransportPosition* transport) noexcept {
     if (devices.empty()) {
         for (int channel = 0; channel < outputChannelCount; ++channel) {
             if (outputChannels[channel] == nullptr) continue;
@@ -243,7 +249,7 @@ void PluginChain::process(const float* const* inputChannels, const int inputChan
         }
         device.rack->process(deviceInput, deviceInputCount, auxChannels, auxChannelCount,
                              targetChannels, targetCount, sampleCount, index == 0 ? midi : nullptr,
-                             deviceAutomation, timelineSample, playing);
+                             deviceAutomation, timelineSample, playing, transport);
         currentInput = last ? nullptr : target.getArrayOfReadPointers();
         currentInputCount = targetCount;
     }

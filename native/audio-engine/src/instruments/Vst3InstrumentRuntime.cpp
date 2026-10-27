@@ -45,7 +45,7 @@ void Vst3InstrumentRuntime::process(float* const* outputChannels, const int outp
         return;
     }
     rack->process(nullptr, 0, nullptr, 0, outputChannels, outputChannelCount, numSamples, midi,
-                  context.automation, context.timelineSample, context.playing);
+                  context.automation, context.timelineSample, context.playing, &context.transport);
 }
 
 bool Vst3InstrumentRuntime::enqueueMidi(const juce::MidiMessage& message) noexcept {

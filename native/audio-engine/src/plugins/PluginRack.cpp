@@ -177,6 +177,7 @@ std::optional<PluginLoadError> PluginRack::load(const juce::String& path, const 
         };
     }
 
+    candidate->setPlayHead(&playHead);
     ProcessorLayout layout;
     if (auto configurationError =
             configureProcessor(*candidate, sampleRate, blockSize, mode, sidechainInput, layout))
@@ -460,7 +461,8 @@ void PluginRack::process(const float* const* inputChannelData, const int numInpu
                          float* const* outputChannelData, const int numOutputChannels,
                          const int numSamples, const juce::MidiBuffer* const timelineMidi,
                          std::span<PluginParameterAutomation> automation,
-                         const std::int64_t timelineSample, const bool playing) noexcept {
+                         const std::int64_t timelineSample, const bool playing,
+                         const PluginTransportPosition* transport) noexcept {
     for (int channel = 0; channel < numOutputChannels; ++channel) {
         auto* output = outputChannelData[channel];
         if (output == nullptr) continue;
@@ -565,10 +567,39 @@ void PluginRack::process(const float* const* inputChannelData, const int numInpu
         }
     }
     pendingMidi.appendTo(processMidi, numSamples);
+    if (transport != nullptr) setTransportPosition(*transport);
     active->processBlock(buffer, processMidi);
     processedBlocks.fetch_add(1, std::memory_order_relaxed);
     completedControlSequence.store(requestedControlSequence.load(std::memory_order_acquire),
                                    std::memory_order_release);
+}
+
+void PluginRack::setTransportPosition(const PluginTransportPosition& transport) noexcept {
+    auto& position = playHead.position;
+    position.setTimeInSamples(transport.samplePosition);
+    if (transport.sampleRate > 0.0)
+        position.setTimeInSeconds(transport.samplePosition / transport.sampleRate);
+    position.setPpqPosition(transport.ppqPosition);
+    position.setBpm(transport.bpm);
+    position.setPpqPositionOfLastBarStart(transport.lastBarStartPpq);
+    position.setTimeSignature(
+        juce::AudioPlayHead::TimeSignature{transport.numerator, transport.denominator});
+    position.setIsPlaying(transport.playing);
+    position.setIsRecording(transport.recording);
+    position.setIsLooping(transport.looping);
+    position.setLoopPoints(
+        juce::AudioPlayHead::LoopPoints{transport.loopStartPpq, transport.loopEndPpq});
+}
+
+void PluginRack::notifyTransportStopped(const PluginTransportPosition& transport,
+                                        const int numSamples) noexcept {
+    if (plugin == nullptr || numSamples <= 0 || numSamples > controlBuffer.getNumSamples()) return;
+    controlBuffer.clear();
+    controlMidi.clear();
+    setTransportPosition(transport);
+    juce::AudioBuffer<float> buffer(controlBuffer.getArrayOfWritePointers(),
+                                    controlBuffer.getNumChannels(), numSamples);
+    plugin->processBlock(buffer, controlMidi);
 }
 
 }  // namespace riffra

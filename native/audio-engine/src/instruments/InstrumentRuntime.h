@@ -7,6 +7,8 @@
 #include <cstdint>
 #include <span>
 
+#include "plugins/PluginTransportPosition.h"
+
 namespace riffra {
 
 class PluginRack;
@@ -26,6 +28,7 @@ struct InstrumentProcessContext final {
     std::size_t timelineEventCount = 0;
     const float* const* externalInput = nullptr;
     int externalInputChannelCount = 0;
+    PluginTransportPosition transport;
 };
 
 /// Runtime interface shared by VST3 and Riffra Sonalloy instruments.

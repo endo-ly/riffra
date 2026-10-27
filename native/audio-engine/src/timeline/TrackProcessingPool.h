@@ -37,7 +37,7 @@ public:
     ~TrackProcessingPool();
     void run(std::span<Track* const> tracks, const TrackStageJob& job) noexcept;
     void runMixer(std::span<MixerChannel* const> channels, int sampleCount, std::int64_t rangeStart,
-                  bool playing) noexcept;
+                  bool playing, const PreparedTimeline& graph) noexcept;
 
 private:
     class Worker;

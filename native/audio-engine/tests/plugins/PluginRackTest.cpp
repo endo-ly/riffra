@@ -36,6 +36,29 @@ TEST(PluginRackTest, ProcessesMonoInputToStereoOutput) {
     EXPECT_FLOAT_EQ(outputRight.back(), 0.5f);
 }
 
+TEST(PluginRackTest, SendsTransportAndStoppedBlockToProcessor) {
+    ProcessorTrace trace;
+    juce::String error;
+    auto rack = makeRack(trace, error);
+    ASSERT_NE(rack, nullptr) << error;
+    std::array<float, kBlockSize> left{}, right{};
+    const std::array<float*, 2> outputs{left.data(), right.data()};
+    PluginTransportPosition position{48'000, 48'000.0, 2.0,   90.0, 0.0, 3,
+                                     4,      true,     false, true, 0.0, 6.0};
+    rack->process(nullptr, 0, nullptr, 0, outputs.data(), 2, kBlockSize, nullptr, {},
+                  position.samplePosition, true, &position);
+    ASSERT_TRUE(trace.position.hasValue());
+    EXPECT_EQ(*trace.position->getTimeInSamples(), 48'000);
+    EXPECT_DOUBLE_EQ(*trace.position->getPpqPosition(), 2.0);
+    EXPECT_DOUBLE_EQ(*trace.position->getBpm(), 90.0);
+    EXPECT_EQ(trace.position->getTimeSignature()->numerator, 3);
+    EXPECT_TRUE(trace.position->getIsPlaying());
+    position.playing = false;
+    rack->notifyTransportStopped(position, kBlockSize);
+    ASSERT_TRUE(trace.position.hasValue());
+    EXPECT_FALSE(trace.position->getIsPlaying());
+}
+
 TEST(PluginRackTest, ReturnsDrySignalWhenBypassedOrUnloaded) {
     const auto expectDrySignal = [](PluginRack& rack) {
         std::array<float, kBlockSize> input{};

@@ -10,6 +10,7 @@
 #include <span>
 #include <vector>
 
+#include "PluginTransportPosition.h"
 #include "concurrency/BoundedMpmcQueue.h"
 #include "contract/ExecutionGraph.h"
 #include "timeline/AutomationRuntime.h"
@@ -149,8 +150,10 @@ public:
                  float* const* outputChannelData, int numOutputChannels, int numSamples,
                  const juce::MidiBuffer* timelineMidi = nullptr,
                  std::span<PluginParameterAutomation> automation = {},
-                 std::int64_t timelineSample = 0, bool playing = false) noexcept;
+                 std::int64_t timelineSample = 0, bool playing = false,
+                 const PluginTransportPosition* transport = nullptr) noexcept;
     [[nodiscard]] bool enqueueMidi(const juce::MidiMessage& message) noexcept;
+    void notifyTransportStopped(const PluginTransportPosition& transport, int numSamples) noexcept;
     void allNotesOff() noexcept;
     [[nodiscard]] bool isLoaded() const noexcept;
     [[nodiscard]] bool isInstrument() const noexcept;
@@ -226,6 +229,7 @@ private:
     void applyAutomation(std::span<PluginParameterAutomation> bindings, std::int64_t timelineSample,
                          bool playing) noexcept;
     bool processControlBlock() noexcept;
+    void setTransportPosition(const PluginTransportPosition& transport) noexcept;
     juce::AudioBuffer<float> controlBuffer;
     juce::MidiBuffer controlMidi;
     std::atomic<std::uint64_t> requestedControlSequence{0};
@@ -263,6 +267,11 @@ private:
         std::atomic<std::uint64_t> droppedEventsCount{0};
     };
 
+    class PlayHead final : public juce::AudioPlayHead {
+    public:
+        juce::Optional<PositionInfo> getPosition() const override { return position; }
+        PositionInfo position;
+    } playHead;
     juce::AudioPluginFormatManager formatManager;
     std::unique_ptr<juce::AudioProcessor> plugin;
     std::unique_ptr<ParameterQueue> parameterQueue;

@@ -27,6 +27,7 @@ struct ProcessorTrace final {
     double sampleRate = 0.0;
     int blockSize = 0;
     float inputPeak = 0.0f;
+    juce::Optional<juce::AudioPlayHead::PositionInfo> position;
 };
 
 class TestProcessor final : public juce::AudioProcessor {
@@ -55,6 +56,7 @@ public:
                layout.getMainOutputChannelSet() == juce::AudioChannelSet::stereo();
     }
     void processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer&) override {
+        if (auto* head = getPlayHead()) trace.position = head->getPosition();
         if (trace.onProcess) trace.onProcess();
         trace.processed = trace.prepared;
         ++trace.processBlockCount;
@@ -98,6 +100,8 @@ struct InstrumentTrace final {
     std::vector<juce::MidiMessage> midiMessages;
     std::vector<int> midiSamplePositions;
     int midiMessageCount = 0;
+    juce::Optional<juce::AudioPlayHead::PositionInfo> position;
+    int stoppedBlocks = 0;
 };
 
 class TestInstrumentProcessor final : public juce::AudioProcessor {
@@ -119,6 +123,10 @@ public:
                layout.getMainOutputChannelSet() == juce::AudioChannelSet::stereo();
     }
     void processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) override {
+        if (auto* head = getPlayHead()) {
+            trace.position = head->getPosition();
+            if (trace.position && !trace.position->getIsPlaying()) ++trace.stoppedBlocks;
+        }
         trace.processed = trace.prepared;
         ++trace.processBlockCount;
         for (const auto metadata : midi) {
@@ -344,6 +352,7 @@ public:
         }
 
         auto rack = std::make_unique<PluginRack>();
+        processor->setPlayHead(&rack->playHead);
         rack->updateParameterCount(*processor);
         if (!rack->allocateParameterQueue(
                 static_cast<std::size_t>(processor->getParameters().size()), error))
