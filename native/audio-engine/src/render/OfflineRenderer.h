@@ -59,6 +59,7 @@ private:
         float masterGainDb = 0.0f;
         bool normalize = false;
         bool hostsPlugins = false;
+        double pluginWarmUpSeconds = 2.0;
         std::int64_t latencySamples = 0;
         std::vector<juce::String> automationWarnings;
     };

@@ -346,6 +346,8 @@ struct PluginStateChangedSpec final {
     juce::String deviceId;
     PluginStateSpec state;
     std::uint64_t arrangementRevision = 0;
+    bool finalCapture = false;
+    juce::String sourcePluginPath;
 };
 
 struct PluginParameterChangedSpec final {

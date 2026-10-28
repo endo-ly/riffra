@@ -140,6 +140,9 @@ it.each(['measured', 'unavailable'] as const)(
     }
     render(<Harness />);
     fireEvent.change(screen.getByLabelText('Tail (seconds)'), { target: { value: '3' } });
+    fireEvent.change(screen.getByLabelText('Plugin preparation time (seconds)'), {
+      target: { value: '10' },
+    });
     if (state === 'measured') {
       fireEvent.click(screen.getByLabelText('Loudness Mastering'));
       fireEvent.change(screen.getByLabelText('Target Integrated LUFS'), {
@@ -151,6 +154,7 @@ it.each(['measured', 'unavailable'] as const)(
     }
     fireEvent.click(screen.getByRole('button', { name: 'Save and render' }));
     await waitFor(() => expect(session.settings.mixdown.tailSeconds).toBe(3));
+    expect(session.settings.mixdown.pluginWarmUpSeconds).toBe(10);
     if (state === 'measured') {
       expect(session.settings.mixdown.mastering?.integratedLufs).toBe(-16);
       expect(session.settings.mixdown.mastering?.truePeakDb).toBe(-2);

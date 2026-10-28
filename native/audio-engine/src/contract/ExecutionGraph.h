@@ -334,6 +334,7 @@ struct ExecutionGraph final {
     MixerSpec mixer;
     std::uint64_t musicalEndTick = 0;
     double tailSeconds = 0.0;
+    double pluginWarmUpSeconds = 2.0;
     double fadeOutSeconds = 0.0;
     bool operator==(const ExecutionGraph&) const = default;
 };

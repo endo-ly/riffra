@@ -109,6 +109,7 @@ pub(crate) enum SidecarEvent {
     TransportStatus(WireTransportStatus),
     RecordingComplete(WireRecordingComplete),
     PluginStateChanged(WirePluginStateChanged),
+    PluginStateFinal(WirePluginStateChanged),
     PluginParameterChanged(WirePluginParameterChanged),
     /// A failure that is not tied to a request, such as a lost device.
     Fault(SidecarError),
@@ -431,6 +432,8 @@ pub(crate) struct WirePluginStateChanged {
     pub(crate) device_id: String,
     pub(crate) state: WirePluginState,
     pub(crate) arrangement_revision: u64,
+    #[serde(default)]
+    pub(crate) source_plugin_path: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]

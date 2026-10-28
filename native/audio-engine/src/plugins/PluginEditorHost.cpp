@@ -59,13 +59,18 @@ private:
 };
 
 PluginEditorHost::PluginEditorHost(PluginRack& pluginRack, StateCallback stateCallback,
+                                   ClosingStateCallback closingStateCallback,
                                    ParameterCallback parameterCallback,
-                                   ClosedCallback closedCallback)
+                                   ClosedCallback closedCallback,
+                                   std::shared_ptr<PluginRack> ownedRack)
     : rack(pluginRack),
+      rackOwner(std::move(ownedRack)),
       onStateChanged(std::move(stateCallback)),
+      onClosingState(std::move(closingStateCallback)),
       onParameterChanged(std::move(parameterCallback)),
       onClosed(std::move(closedCallback)),
       listener(std::make_unique<ProcessorListener>(*this)) {
+    closingCompleted.signal();
     resizeParameterQueue();
 }
 
@@ -110,6 +115,10 @@ bool PluginEditorHost::close() {
         std::_Exit(125);
     }
     return true;
+}
+
+bool PluginEditorHost::waitForClosingState(const int timeoutMs) const {
+    return closingCompleted.wait(timeoutMs) && closingSucceeded.load(std::memory_order_acquire);
 }
 
 bool PluginEditorHost::runOnMessageThread(std::function<void()> operation, juce::String& error) {
@@ -187,16 +196,37 @@ bool PluginEditorHost::closeOnMessageThread() {
     jassert(juce::MessageManager::getInstance()->isThisTheMessageThread());
     if (window == nullptr) return true;
     stateTimer.stop();
-    drainParameterChanges();
-    publishStateIfDirty(true);
     if (listener != nullptr) rack.removeProcessorListener(*listener);
+    drainParameterChanges();
     try {
         FaultInjection::before(FaultStage::destroy);
     } catch (...) {
         return false;
     }
     window.reset();
+    if (onClosingState && rack.isAutomationActive()) {
+        closingSucceeded.store(false, std::memory_order_release);
+        closingCompleted.reset();
+        pendingClosingState = true;
+        deferredOwner = shared_from_this();
+        stateTimer.start();
+    } else {
+        publishClosingState();
+    }
     return true;
+}
+
+void PluginEditorHost::publishClosingState() {
+    opaqueStateDirty.store(false, std::memory_order_release);
+    if (!onClosingState || rack.isAutomationActive()) return;
+    // Plugins may commit edits while their editor is destroyed and may change their state without
+    // notifying the host, so the closing state is captured from the plugin itself.
+    rack.staticStateDirty.store(true, std::memory_order_release);
+    juce::String error;
+    const auto state = rack.persistedState(error);
+    onClosingState(state, error);
+    closingSucceeded.store(state.has_value(), std::memory_order_release);
+    closingCompleted.signal();
 }
 
 void PluginEditorHost::queueParameterChange(const int index, const float value) noexcept {
@@ -208,7 +238,6 @@ void PluginEditorHost::queueParameterChange(const int index, const float value) 
     const auto offset = static_cast<std::size_t>(index);
     parameterValues[offset].store(juce::jlimit(0.0f, 1.0f, value), std::memory_order_release);
     parameterDirty[offset].store(true, std::memory_order_release);
-    parameterStateDirty.store(true, std::memory_order_release);
 }
 
 void PluginEditorHost::markOpaqueStateDirty() noexcept {
@@ -246,16 +275,13 @@ void PluginEditorHost::resizeParameterQueue() noexcept {
     parameterCapacity = count;
 }
 
-void PluginEditorHost::publishStateIfDirty(const bool force) {
+void PluginEditorHost::publishStateIfDirty() {
     if (rack.isAutomationActive()) return;
-    const auto opaqueDirty = opaqueStateDirty.load(std::memory_order_acquire);
-    const auto parameterStateChanged = parameterStateDirty.load(std::memory_order_acquire);
-    if (!onStateChanged || (!opaqueDirty && !(force && parameterStateChanged))) return;
+    if (!onStateChanged || !opaqueStateDirty.load(std::memory_order_acquire)) return;
     const auto now = juce::Time::getMillisecondCounter();
     const auto changedAt = lastOpaqueStateChangeMs.load(std::memory_order_acquire);
-    if (!force && static_cast<std::uint32_t>(now - changedAt) < 400) return;
+    if (static_cast<std::uint32_t>(now - changedAt) < 400) return;
     opaqueStateDirty.store(false, std::memory_order_release);
-    parameterStateDirty.store(false, std::memory_order_release);
     onStateChanged();
 }
 

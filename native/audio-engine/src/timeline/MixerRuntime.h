@@ -47,11 +47,11 @@ struct MixerChannel final {
                            [](const auto* source) { return source->lowLatencyMonitoring(); });
     }
 
-    void process(const int sampleCount, const std::int64_t rangeStart,
-                 const bool playing) noexcept {
+    void process(const int sampleCount, const std::int64_t rangeStart, const bool playing,
+                 const PluginTransportPosition* transport = nullptr) noexcept {
         effects->process(input.getArrayOfReadPointers(), 2, output.getArrayOfWritePointers(), 2,
                          sampleCount, nullptr, deviceAutomation, rangeStart - inputLatency, playing,
-                         &effectAlignment);
+                         &effectAlignment, transport);
         MixAutomationCursor cursor(gainAutomation, panAutomation, rangeStart - outputLatency,
                                    sampleCount, gainDb.load(std::memory_order_acquire),
                                    pan.load(std::memory_order_acquire), unityCenterStereo, playing,

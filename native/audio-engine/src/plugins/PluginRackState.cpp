@@ -178,6 +178,7 @@ bool PluginRack::applyStateData(const juce::String& base64, juce::String& error)
         error = "VST3 state data is not valid Base64.";
         return false;
     }
+    output.flush();
     plugin->setStateInformation(state.getData(), static_cast<int>(state.getSize()));
     updateParameterCount(*plugin);
     return true;

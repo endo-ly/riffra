@@ -1,11 +1,9 @@
 #include "AudioProtocol.h"
 
 #include <condition_variable>
-#include <deque>
 #include <mutex>
 #include <string>
 #include <thread>
-#include <unordered_map>
 #include <utility>
 
 #include "OutputQueue.h"
@@ -43,20 +41,21 @@ public:
         {
             const std::lock_guard lock(mutex);
             ensureStarted();
-            if (const auto existing = stateQueue.find(key); existing != stateQueue.end()) {
-                existing->second = std::move(line);
-            } else {
-                if (stateQueue.size() >= kStateQueueLimit) return;
-                stateOrder.push_back(key);
-                stateQueue.emplace(std::move(key), std::move(line));
-            }
+            outputQueue.enqueueState(std::move(key), std::move(line));
+        }
+        wake.notify_one();
+    }
+
+    void enqueueClosingState(std::string line) {
+        {
+            const std::lock_guard lock(mutex);
+            ensureStarted();
+            outputQueue.enqueueClosingState(std::move(line));
         }
         wake.notify_one();
     }
 
 private:
-    static constexpr std::size_t kStateQueueLimit = 256;
-
     void ensureStarted() {
         if (writer.joinable()) return;
         writer = std::thread([this] { run(); });
@@ -67,20 +66,10 @@ private:
             std::string line;
             {
                 std::unique_lock lock(mutex);
-                wake.wait(lock, [this] {
-                    return stopping || !outputQueue.empty() || !stateQueue.empty();
-                });
-                if (stopping && outputQueue.empty() && stateQueue.empty()) return;
+                wake.wait(lock, [this] { return stopping || !outputQueue.empty(); });
+                if (stopping && outputQueue.empty()) return;
                 if (outputQueue.hasControl()) {
                     line = outputQueue.takeControl();
-                } else if (!stateQueue.empty()) {
-                    const auto key = std::move(stateOrder.front());
-                    stateOrder.pop_front();
-                    const auto event = stateQueue.find(key);
-                    if (event != stateQueue.end()) {
-                        line = std::move(event->second);
-                        stateQueue.erase(event);
-                    }
                 } else {
                     line = outputQueue.takeTelemetry();
                 }
@@ -93,8 +82,7 @@ private:
         {
             const std::lock_guard lock(mutex);
             stopping = true;
-            stateOrder.clear();
-            stateQueue.clear();
+            outputQueue.discardStates();
         }
         wake.notify_one();
         if (writer.joinable()) writer.join();
@@ -102,8 +90,6 @@ private:
 
     std::mutex mutex;
     std::condition_variable wake;
-    std::deque<std::string> stateOrder;
-    std::unordered_map<std::string, std::string> stateQueue;
     OutputQueue outputQueue;
     std::thread writer;
     bool stopping = false;
@@ -121,6 +107,12 @@ std::string deviceKey(const juce::String& projectId, const juce::String& deviceI
 
 void writeControlEnvelope(const juce::var& envelope) {
     outputWriter.enqueue(line(envelope), OutputKind::control);
+}
+
+void writeClosingPluginState(const PluginStateChangedSpec& event) {
+    auto closing = event;
+    closing.finalCapture = true;
+    outputWriter.enqueueClosingState(line(encodeEvent(closing)));
 }
 
 void writeEvent(const SidecarEventSpec& event) {

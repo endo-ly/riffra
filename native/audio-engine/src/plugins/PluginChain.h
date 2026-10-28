@@ -49,12 +49,14 @@ public:
     void release() noexcept;
     void clear() noexcept;
     void allNotesOff() noexcept;
+    void notifyTransportStopped(const PluginTransportPosition& transport, int numSamples) noexcept;
     void process(const float* const* inputChannels, int inputChannelCount,
                  float* const* outputChannels, int outputChannelCount, int sampleCount,
                  const juce::MidiBuffer* midi = nullptr,
                  std::span<PluginParameterAutomation> automation = {},
                  std::int64_t timelineSample = 0, bool playing = false,
-                 PluginChainAlignment* inputAlignment = nullptr) noexcept;
+                 PluginChainAlignment* inputAlignment = nullptr,
+                 const PluginTransportPosition* transport = nullptr) noexcept;
     bool setBypassed(const juce::String& deviceId, bool bypassed) noexcept;
     bool setParameter(const juce::String& deviceId, int parameterIndex, float value,
                       juce::String& error) noexcept;

@@ -129,7 +129,8 @@ bool AudioCommandDispatcher::openPluginAudition(const juce::String& path, juce::
     auto& rack = *loaded;
     audition.install(std::move(loaded), sampleRate, blockSize);
     context.auditionEditor = std::make_shared<PluginEditorHost>(
-        rack, PluginEditorHost::StateCallback{}, PluginEditorHost::ParameterCallback{}, [this] {
+        rack, PluginEditorHost::StateCallback{}, PluginEditorHost::ClosingStateCallback{},
+        PluginEditorHost::ParameterCallback{}, [this] {
             // Closing the window ends the audition; the plug-in is not kept.
             // The audition may have been reopened or replaced before this runs.
             (void)context.runtimeLifecycle.submit(

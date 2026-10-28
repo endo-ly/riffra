@@ -447,14 +447,15 @@ juce::var encodeEventBody(const SidecarEventSpec& event) {
                     .build();
             },
             [](const PluginStateChangedSpec& changed) {
-                return ObjectBuilder{}
-                    .set("type", "pluginStateChanged")
+                auto object = ObjectBuilder{};
+                object.set("type", changed.finalCapture ? "pluginStateFinal" : "pluginStateChanged")
                     .set("projectId", changed.projectId)
                     .set("owner", encodeEffectOwner(changed.owner))
                     .set("deviceId", changed.deviceId)
                     .set("state", encodePluginState(changed.state))
-                    .set("arrangementRevision", integer(changed.arrangementRevision))
-                    .build();
+                    .set("arrangementRevision", integer(changed.arrangementRevision));
+                if (changed.finalCapture) object.set("sourcePluginPath", changed.sourcePluginPath);
+                return object.build();
             },
             [](const PluginParameterChangedSpec& changed) {
                 return ObjectBuilder{}

@@ -66,9 +66,13 @@ void TrackProcessingPool::processAvailableTracks() noexcept {
         if (index >= count) return;
         if (channels.empty())
             processTrackStage(*currentTracks[index], currentJob);
-        else
-            channels[index]->process(currentJob.sampleCount, currentJob.rangeStart,
-                                     currentJob.playing);
+        else {
+            auto& channel = *channels[index];
+            const auto position = currentJob.graph->transportAt(
+                currentJob.rangeStart - channel.inputLatency, currentJob.playing);
+            channel.process(currentJob.sampleCount, currentJob.rangeStart, currentJob.playing,
+                            &position);
+        }
         completedTracks.fetch_add(1, std::memory_order_acq_rel);
     }
 }
@@ -84,13 +88,14 @@ void TrackProcessingPool::run(const std::span<Track* const> currentTracks,
 
 void TrackProcessingPool::runMixer(const std::span<MixerChannel* const> currentChannels,
                                    const int sampleCount, const std::int64_t rangeStart,
-                                   const bool playing) noexcept {
+                                   const bool playing, const PreparedTimeline& graph) noexcept {
     if (currentChannels.empty()) return;
     tracks = {};
     channels = currentChannels;
     job.sampleCount = sampleCount;
     job.rangeStart = rangeStart;
     job.playing = playing;
+    job.graph = &graph;
     execute(currentChannels.size());
 }
 
@@ -129,23 +134,28 @@ void processTrackStage(Track& track, const TrackStageJob& job) noexcept {
         if (runtime.instrumentTrack)
             TimelineEngine::processInstrumentTrack(*job.graph, track, job.sampleCount,
                                                    &runtime.midiBuffer, job.rangeStart);
-        else
+        else {
+            const auto position = job.graph->transportAt(
+                job.rangeStart - runtime.routeLatencySamples + runtime.effectLatencySamples(),
+                true);
             runtime.effects().process(
                 runtime.mixBuffer.getArrayOfReadPointers(), 2,
                 runtime.processedBuffer.getArrayOfWritePointers(), 2, job.sampleCount, nullptr,
                 runtime.deviceAutomation,
                 job.rangeStart - runtime.routeLatencySamples + runtime.effectLatencySamples(), true,
-                &runtime.effectAlignment);
+                &runtime.effectAlignment, &position);
+        }
     } else if (runtime.instrumentTrack) {
         TimelineEngine::processLiveInstrumentTrack(*job.graph, track, job.sampleCount,
                                                    job.rangeStart, job.playing);
     } else {
         if (!runtime.monitorInput || runtime.audioInputChannel < 0) return;
         runtime.processedBuffer.clear(0, job.sampleCount);
+        const auto position = job.graph->transportAt(job.rangeStart, false);
         runtime.effects().process(runtime.liveInputBuffer.getArrayOfReadPointers(), 2,
                                   runtime.processedBuffer.getArrayOfWritePointers(), 2,
                                   job.sampleCount, nullptr, runtime.deviceAutomation,
-                                  job.rangeStart, false, &runtime.effectAlignment);
+                                  job.rangeStart, false, &runtime.effectAlignment, &position);
     }
     TimelineEngine::mixTrackOutput(track, job.rangeStart, job.sampleCount, job.transportGainStart,
                                    job.transportGainStep, job.playing);

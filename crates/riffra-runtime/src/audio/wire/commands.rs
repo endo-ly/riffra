@@ -34,6 +34,7 @@ pub(crate) enum SidecarCommand {
     DiscardTimelineSnapshot,
     WaitForTimelineIdle {
         timeout_ms: u64,
+        close_editor: bool,
     },
     PlayTimeline,
     PauseTimeline,

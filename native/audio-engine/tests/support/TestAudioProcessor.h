@@ -23,20 +23,24 @@ struct ProcessorTrace final {
     int resetCount = 0;
     int currentProgram = 0;
     int stateCaptureCount = 0;
+    int opaqueState = 0;
     std::function<void()> onProcess;
     double sampleRate = 0.0;
     int blockSize = 0;
     float inputPeak = 0.0f;
+    juce::Optional<juce::AudioPlayHead::PositionInfo> position;
 };
 
 class TestProcessor final : public juce::AudioProcessor {
 public:
     explicit TestProcessor(ProcessorTrace& processorTrace,
-                           bool includeHostedAutomationParameter = false)
+                           bool includeHostedAutomationParameter = false,
+                           bool provideEditor = false)
         : AudioProcessor(BusesProperties()
                              .withInput("Input", juce::AudioChannelSet::stereo(), true)
                              .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
-          trace(processorTrace) {
+          trace(processorTrace),
+          editorAvailable(provideEditor) {
         if (includeHostedAutomationParameter)
             addParameter(new juce::AudioParameterFloat(
                 juce::ParameterID{"test.parameter", 1}, "Test Parameter",
@@ -55,6 +59,7 @@ public:
                layout.getMainOutputChannelSet() == juce::AudioChannelSet::stereo();
     }
     void processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer&) override {
+        if (auto* head = getPlayHead()) trace.position = head->getPosition();
         if (trace.onProcess) trace.onProcess();
         trace.processed = trace.prepared;
         ++trace.processBlockCount;
@@ -63,8 +68,10 @@ public:
                                                buffer.getMagnitude(1, 0, buffer.getNumSamples())));
         buffer.applyGain(2.0f);
     }
-    juce::AudioProcessorEditor* createEditor() override { return nullptr; }
-    bool hasEditor() const override { return false; }
+    juce::AudioProcessorEditor* createEditor() override {
+        return editorAvailable ? new juce::GenericAudioProcessorEditor(*this) : nullptr;
+    }
+    bool hasEditor() const override { return editorAvailable; }
     const juce::String getName() const override { return "Riffra Test Processor"; }
     bool acceptsMidi() const override { return false; }
     bool producesMidi() const override { return false; }
@@ -80,11 +87,15 @@ public:
         return "Program " + juce::String(index);
     }
     void changeProgramName(int, const juce::String&) override {}
-    void getStateInformation(juce::MemoryBlock&) override { ++trace.stateCaptureCount; }
+    void getStateInformation(juce::MemoryBlock& state) override {
+        ++trace.stateCaptureCount;
+        if (trace.opaqueState != 0) state.append(&trace.opaqueState, sizeof(trace.opaqueState));
+    }
     void setStateInformation(const void*, int) override {}
 
 private:
     ProcessorTrace& trace;
+    bool editorAvailable;
 };
 
 struct InstrumentTrace final {
@@ -98,6 +109,8 @@ struct InstrumentTrace final {
     std::vector<juce::MidiMessage> midiMessages;
     std::vector<int> midiSamplePositions;
     int midiMessageCount = 0;
+    juce::Optional<juce::AudioPlayHead::PositionInfo> position;
+    int stoppedAllNotesOffCount = 0;
 };
 
 class TestInstrumentProcessor final : public juce::AudioProcessor {
@@ -119,6 +132,8 @@ public:
                layout.getMainOutputChannelSet() == juce::AudioChannelSet::stereo();
     }
     void processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) override {
+        if (auto* head = getPlayHead()) trace.position = head->getPosition();
+        const auto stopped = trace.position && !trace.position->getIsPlaying();
         trace.processed = trace.prepared;
         ++trace.processBlockCount;
         for (const auto metadata : midi) {
@@ -126,6 +141,7 @@ public:
             trace.midiMessages.push_back(trace.lastMidiMessage);
             trace.midiSamplePositions.push_back(metadata.samplePosition);
             ++trace.midiMessageCount;
+            if (stopped && trace.lastMidiMessage.isAllNotesOff()) ++trace.stoppedAllNotesOffCount;
             if (trace.lastMidiMessage.isNoteOn())
                 trace.noteHeld = true;
             else if (trace.lastMidiMessage.isNoteOff() || trace.lastMidiMessage.isAllNotesOff() ||
@@ -344,6 +360,7 @@ public:
         }
 
         auto rack = std::make_unique<PluginRack>();
+        processor->setPlayHead(&rack->playHead);
         rack->updateParameterCount(*processor);
         if (!rack->allocateParameterQueue(
                 static_cast<std::size_t>(processor->getParameters().size()), error))

@@ -278,6 +278,35 @@ std::uint64_t TimelineEngine::committedRevision() const {
     });
 }
 
+std::shared_ptr<PluginRack> TimelineEngine::deviceHandle(const EffectOwnerSpec& owner,
+                                                         const juce::String& deviceId) const {
+    return graphRegistry.access([&](const ControlGraphRegistry::State& graphs) {
+        auto* graph = graphs.latestCommitted;
+        if (graph == nullptr) return std::shared_ptr<PluginRack>{};
+        std::shared_ptr<PluginChain> chain;
+        if (owner.kind == EffectOwnerKindSpec::master) {
+            chain = graph->mixer.masterEffects;
+        } else if (owner.kind == EffectOwnerKindSpec::bus) {
+            auto* bus = graph->mixer.findBus(owner.id);
+            if (bus != nullptr) chain = bus->effects;
+        } else if (auto* track = graph->findTrack(owner.id)) {
+            if (isInstrumentDevice(*track, deviceId)) return track->runtime->instrumentRackHandle();
+            chain = track->runtime->effectChainHandle();
+        }
+        auto* rack = chain != nullptr ? chain->findDevice(deviceId) : nullptr;
+        return rack != nullptr ? std::shared_ptr<PluginRack>(chain, rack) : nullptr;
+    });
+}
+
+bool TimelineEngine::preparedDeviceIsReused(const EffectOwnerSpec& owner,
+                                            const juce::String& deviceId) const {
+    return graphRegistry.access([&](const ControlGraphRegistry::State& graphs) {
+        if (graphs.pending == nullptr || graphs.latestCommitted == nullptr) return false;
+        auto* current = findRack(*graphs.latestCommitted, owner, deviceId);
+        return current != nullptr && current == findRack(*graphs.pending, owner, deviceId);
+    });
+}
+
 PluginRack* TimelineEngine::findDevice(const EffectOwnerSpec& deviceOwner,
                                        const juce::String& deviceId) const noexcept {
     return graphRegistry.access([&](const ControlGraphRegistry::State& graphs) -> PluginRack* {

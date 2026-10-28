@@ -42,6 +42,7 @@ export function defaultSession(): CreativeSession {
         musicalEndTick: 0,
         tailSeconds: 0,
         fadeOutSeconds: 0,
+        pluginWarmUpSeconds: 2,
         mastering: null,
         sampleRate: null,
         blockSize: null,

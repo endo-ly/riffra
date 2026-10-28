@@ -98,7 +98,7 @@ External Audioは複数のSource TrackからInstrumentへ音声を渡す。複�
 - Busを削除するには、主出力先として参照するTrackと、宛先として参照するSendを先に解除する
 - Track削除時はそのTrackのSendも削除する。Track複製時は主出力先とSend設定を引き継ぎ、Device・SendのIDは新しく割り当てる
 
-Mixdown設定は楽曲終端Tick、秒単位のTailとFade、任意のLoudness Mastering目標、比較用のSample Rate・Block Sizeを保持する。Entire Arrangementの終端は楽曲終端設定と現在のClip終端の大きい方にTailを加え、最終MixへFadeを1回適用する。Mastering目標は音量のIntegrated LUFSと判定基準のTrue Peak、参考量のLoudness Rangeであり、調整はMix全体への一定のゲインで行う。
+Mixdown設定は楽曲終端Tick、秒単位のTailとFade、プラグインの準備時間、任意のLoudness Mastering目標、比較用のSample Rate・Block Sizeを保持する。プラグインの準備時間は0〜60秒で、既定値は2秒である。Entire Arrangementの終端は楽曲終端設定と現在のClip終端の大きい方にTailを加え、最終MixへFadeを1回適用する。Mastering目標は音量のIntegrated LUFSと判定基準のTrue Peak、参考量のLoudness Rangeであり、調整はMix全体への一定のゲインで行う。
 
 ### 3.4 オートメーション
 

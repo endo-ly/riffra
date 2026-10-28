@@ -101,6 +101,10 @@ public:
     [[nodiscard]] InstrumentRuntime* instrument() noexcept {
         return instrumentBlock->runtime.get();
     }
+    [[nodiscard]] std::shared_ptr<PluginRack> instrumentRackHandle() noexcept {
+        auto* rack = instrument() != nullptr ? instrument()->vst3Rack() : nullptr;
+        return rack != nullptr ? std::shared_ptr<PluginRack>(instrumentBlock, rack) : nullptr;
+    }
     [[nodiscard]] const InstrumentRuntime* instrument() const noexcept {
         return instrumentBlock->runtime.get();
     }

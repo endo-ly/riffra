@@ -188,14 +188,22 @@ void AudioCommandDispatcher::handle(const OpenPluginEditorCommand& command,
 
     const auto submitted = context.runtimeLifecycle.submitWithQueueDeadline(
         [this, command, pending] {
-            auto* device = context.timelineEngine.findDevice(command.owner, command.deviceId);
+            auto deviceOwner = context.timelineEngine.deviceHandle(command.owner, command.deviceId);
+            auto* device = deviceOwner.get();
             if (device == nullptr) {
                 pending->fail("trackDevice", "Track Device was not found.",
                               "track.pluginEditor.open");
                 return;
             }
+            const auto sourcePluginPath = device->status().path;
             if (context.trackPluginEditor != nullptr) {
                 context.trackPluginEditor->close();
+                if (!context.trackPluginEditor->waitForClosingState(0)) {
+                    pending->fail("trackDevice",
+                                  "Stop automation read before opening another plugin editor.",
+                                  "track.pluginEditor.open");
+                    return;
+                }
                 context.trackPluginEditor.reset();
             }
             context.pluginEditorOwner = command.owner;
@@ -227,6 +235,19 @@ void AudioCommandDispatcher::handle(const OpenPluginEditorCommand& command,
                         },
                         kTrackDeviceWatchdogTimeout, RuntimeLifecycleExecutor::TaskThread::control);
                 },
+                [this, command, sourcePluginPath](const std::optional<PluginStateSpec>& state,
+                                                  const juce::String& error) {
+                    // The closing state bypasses the best-effort state lane: once the editor is
+                    // gone, a dropped or skipped update would never be captured again.
+                    if (!state.has_value()) {
+                        writeEvent(
+                            FaultSpec{{"trackDevice", error, "track.pluginEditor.capture", {}}});
+                        return;
+                    }
+                    writeClosingPluginState(PluginStateChangedSpec{
+                        command.projectId, command.owner, command.deviceId, *state,
+                        context.timelineEngine.committedRevision(), true, sourcePluginPath});
+                },
                 [this, command, device](const int parameterIndex, const float value) {
                     const auto stateKey =
                         "track-parameter:" +
@@ -245,7 +266,8 @@ void AudioCommandDispatcher::handle(const OpenPluginEditorCommand& command,
                                 static_cast<std::uint32_t>(parameterIndex), value});
                         },
                         kTrackDeviceWatchdogTimeout);
-                });
+                },
+                PluginEditorHost::ClosedCallback{}, std::move(deviceOwner));
             juce::String editorError;
             bool opened = false;
             try {

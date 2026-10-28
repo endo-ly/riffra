@@ -139,15 +139,35 @@ impl CreativeSession {
 }
 
 /// Project-wide offline render conditions and master mix envelope.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MixdownSettings {
     pub musical_end_tick: u64,
     pub tail_seconds: f64,
     pub fade_out_seconds: f64,
+    #[serde(default = "default_plugin_warm_up_seconds")]
+    pub plugin_warm_up_seconds: f64,
     pub mastering: Option<LoudnessMastering>,
     pub sample_rate: Option<u32>,
     pub block_size: Option<u32>,
+}
+
+fn default_plugin_warm_up_seconds() -> f64 {
+    2.0
+}
+
+impl Default for MixdownSettings {
+    fn default() -> Self {
+        Self {
+            musical_end_tick: 0,
+            tail_seconds: 0.0,
+            fade_out_seconds: 0.0,
+            plugin_warm_up_seconds: default_plugin_warm_up_seconds(),
+            mastering: None,
+            sample_rate: None,
+            block_size: None,
+        }
+    }
 }
 
 /// Integrated loudness, peak ceiling, and optional loudness-range targets.
@@ -165,6 +185,8 @@ impl MixdownSettings {
             || self.tail_seconds < 0.0
             || !self.fade_out_seconds.is_finite()
             || self.fade_out_seconds < 0.0
+            || !self.plugin_warm_up_seconds.is_finite()
+            || !(0.0..=60.0).contains(&self.plugin_warm_up_seconds)
             || self.sample_rate == Some(0)
             || self.block_size == Some(0)
         {
@@ -188,6 +210,22 @@ impl MixdownSettings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plugin_warm_up_defaults_and_validates() {
+        let mut json = serde_json::to_value(MixdownSettings::default()).unwrap();
+        json.as_object_mut().unwrap().remove("pluginWarmUpSeconds");
+        let mut settings: MixdownSettings = serde_json::from_value(json).unwrap();
+        assert_eq!(settings.plugin_warm_up_seconds, 2.0);
+        for value in [0.0, 60.0] {
+            settings.plugin_warm_up_seconds = value;
+            assert!(settings.validate().is_ok());
+        }
+        for value in [-1.0, 60.1, f64::NAN, f64::INFINITY] {
+            settings.plugin_warm_up_seconds = value;
+            assert!(settings.validate().is_err());
+        }
+    }
 
     #[test]
     fn settings_normalization_limits_unicode_notes_and_master_gain() {

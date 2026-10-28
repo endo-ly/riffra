@@ -79,7 +79,10 @@ fn command_samples() -> Vec<SidecarCommand> {
         },
         SidecarCommand::CommitTimelineSnapshot,
         SidecarCommand::DiscardTimelineSnapshot,
-        SidecarCommand::WaitForTimelineIdle { timeout_ms: 1_500 },
+        SidecarCommand::WaitForTimelineIdle {
+            timeout_ms: 1_500,
+            close_editor: false,
+        },
         SidecarCommand::PlayTimeline,
         SidecarCommand::PauseTimeline,
         SidecarCommand::SetTransportStarting,
@@ -313,6 +316,7 @@ fn event_name(event: &SidecarEvent) -> &'static str {
         SidecarEvent::TransportStatus(_) => "transportStatus",
         SidecarEvent::RecordingComplete(_) => "recordingComplete",
         SidecarEvent::PluginStateChanged(_) => "pluginStateChanged",
+        SidecarEvent::PluginStateFinal(_) => "pluginStateFinal",
         SidecarEvent::PluginParameterChanged(_) => "pluginParameterChanged",
         SidecarEvent::Fault(_) => "fault",
     }
@@ -339,13 +343,14 @@ const RESPONSES: [&str; 12] = [
     "pluginState",
     "deviceProgramChanged",
 ];
-const EVENTS: [&str; 8] = [
+const EVENTS: [&str; 9] = [
     "ready",
     "audioStatus",
     "audioMeters",
     "transportStatus",
     "recordingComplete",
     "pluginStateChanged",
+    "pluginStateFinal",
     "pluginParameterChanged",
     "fault",
 ];
@@ -532,6 +537,9 @@ fn sidecar_message_fixtures_reject_missing_and_unknown_keys() {
             !name.starts_with("pluginScan."),
         );
         for key in keys {
+            if name == "event.pluginStateFinal.json" && key == ["event", "sourcePluginPath"] {
+                continue;
+            }
             let (field, parent) = key.split_last().unwrap();
             let mut mutated = fixture.clone();
             at_path(&mut mutated, parent)

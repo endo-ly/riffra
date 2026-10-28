@@ -102,6 +102,27 @@ struct PreparedTimeline final {
     std::int64_t mixEndSample = 0;
     std::int64_t fadeOutSamples = 0;
     std::vector<std::int64_t> timebaseChangeSamples;
+    bool recording = false;
+
+    [[nodiscard]] PluginTransportPosition transportAt(std::int64_t sample,
+                                                      bool playing) const noexcept {
+        sample = std::max<std::int64_t>(0, sample);
+        const auto tick = timebase.sampleToExactTick(sample, outputSampleRate);
+        const auto meter = timebase.meterAt(tick);
+        const auto ppq = static_cast<double>(timebase.ppq);
+        return {sample,
+                outputSampleRate,
+                tick / ppq,
+                timebase.tempoAt(static_cast<std::uint64_t>(tick)),
+                meter.barStartTick / ppq,
+                meter.numerator,
+                meter.denominator,
+                playing,
+                playing && recording,
+                loopEnabled,
+                timebase.sampleToExactTick(loopStartSample, outputSampleRate) / ppq,
+                timebase.sampleToExactTick(loopEndSample, outputSampleRate) / ppq};
+    }
 
     void beginAutomationRead() noexcept {
         for (auto& track : tracks)

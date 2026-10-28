@@ -42,6 +42,17 @@ TEST(SidecarContractTest, DecodesEveryCommandFixture) {
     }
 }
 
+TEST(SidecarContractTest, DecodesEditorClosureOnTimelineIdle) {
+    auto fixture = commandFixture("waitForTimelineIdle");
+    setValue(fixture, {"command", "closeEditor"}, true);
+    SidecarRequestSpec request;
+    juce::String error;
+    ASSERT_TRUE(decodeSidecarRequest(fixture, request, error)) << error;
+    const auto* command = std::get_if<WaitForTimelineIdleCommand>(&request.command);
+    ASSERT_NE(command, nullptr);
+    EXPECT_TRUE(command->closeEditor);
+}
+
 TEST(SidecarContractTest, RejectsRepresentativeMalformedCommands) {
     const auto expectRejected = [](const char* mutation, const juce::var& value) {
         juce::String error;

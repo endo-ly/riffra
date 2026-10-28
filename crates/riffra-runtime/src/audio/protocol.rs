@@ -252,6 +252,7 @@ fn plugin_state_changed(changed: WirePluginStateChanged) -> PluginStateChanged {
         owner: changed.owner,
         device_id: changed.device_id,
         arrangement_revision: changed.arrangement_revision,
+        source_plugin_path: changed.source_plugin_path,
         parameter_values: changed.state.parameter_values,
         state_data: changed.state.state_data,
         bypassed: changed.state.bypassed,
@@ -419,6 +420,12 @@ impl AudioSupervisor {
                 if self.process.current_generation() == generation {
                     self.events
                         .emit(HostEvent::PluginStateChanged(plugin_state_changed(changed)));
+                }
+            }
+            SidecarEvent::PluginStateFinal(changed) => {
+                if self.process.current_generation() == generation {
+                    self.events
+                        .emit(HostEvent::PluginStateFinal(plugin_state_changed(changed)));
                 }
             }
             SidecarEvent::PluginParameterChanged(changed) => {

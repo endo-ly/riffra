@@ -2,7 +2,7 @@ use super::HostState;
 use super::events::HostEventSubscription;
 use crate::execution::GraphPluginState;
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 
@@ -33,6 +33,8 @@ struct PluginStateEvent {
     state_data: Option<String>,
     bypassed: bool,
     arrangement_revision: u64,
+    #[serde(default)]
+    source_plugin_path: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -48,6 +50,7 @@ struct PluginParameterEvent {
 #[derive(Clone, Debug)]
 enum PendingPluginChange {
     State(PluginStateEvent),
+    Final(PluginStateEvent),
     Parameter(PluginParameterEvent),
 }
 
@@ -62,6 +65,7 @@ pub(super) struct QueuedPluginChange {
 enum PluginChangeKey {
     State(String, riffra_core::EffectOwner, String),
     Parameter(String, riffra_core::EffectOwner, String, i32),
+    Final(u64),
 }
 
 impl PluginStatePersistenceCoordinator {
@@ -108,7 +112,11 @@ impl PluginStatePersistenceCoordinator {
                         }
                         match subscription.recv_timeout(std::time::Duration::from_millis(24)) {
                             Ok(frame) => {
-                                collect_plugin_change(&mut pending, frame, &mut next_order)
+                                let final_state = frame.event == "plugin-state-final";
+                                collect_plugin_change(&mut pending, frame, &mut next_order);
+                                if final_state {
+                                    let _ = flush_plugin_changes(&state, &mut pending, false);
+                                }
                             }
                             Err(mpsc::RecvTimeoutError::Timeout) => {
                                 let _ = flush_plugin_changes(&state, &mut pending, false);
@@ -145,12 +153,35 @@ fn collect_plugin_change(
     next_order: &mut u64,
 ) {
     if frame.event == "runtime-restarted" {
-        pending.clear();
+        pending.retain(|key, _| matches!(key, PluginChangeKey::Final(_)));
         return;
     }
     let order = *next_order;
     *next_order = (*next_order).saturating_add(1);
     match frame.event.as_str() {
+        "plugin-state-final" => {
+            if let Ok(change) = serde_json::from_value::<PluginStateEvent>(frame.payload) {
+                // The final snapshot includes every earlier editor parameter and opaque-state
+                // change. It must remain usable even if the native process exits afterwards.
+                pending.retain(|key, _| match key {
+                    PluginChangeKey::State(project, owner, device)
+                    | PluginChangeKey::Parameter(project, owner, device, _) => {
+                        project != &change.project_id
+                            || owner != &change.owner
+                            || device != &change.device_id
+                    }
+                    PluginChangeKey::Final(_) => true,
+                });
+                pending.insert(
+                    PluginChangeKey::Final(order),
+                    QueuedPluginChange {
+                        order,
+                        project_id: change.project_id.clone(),
+                        change: PendingPluginChange::Final(change),
+                    },
+                );
+            }
+        }
         "plugin-state-changed" => {
             if let Ok(change) = serde_json::from_value::<PluginStateEvent>(frame.payload) {
                 pending.insert(
@@ -193,6 +224,21 @@ impl HostState {
         &self,
         writer: &mut super::open_project::ProjectWriter<'_>,
     ) -> Result<(), riffra_control::ProtocolError> {
+        self.take_pending_plugin_changes_inner(writer, true)
+    }
+
+    pub(super) fn take_closing_plugin_changes(
+        &self,
+        writer: &mut super::open_project::ProjectWriter<'_>,
+    ) -> Result<(), riffra_control::ProtocolError> {
+        self.take_pending_plugin_changes_inner(writer, false)
+    }
+
+    fn take_pending_plugin_changes_inner(
+        &self,
+        writer: &mut super::open_project::ProjectWriter<'_>,
+        project_runtime: bool,
+    ) -> Result<(), riffra_control::ProtocolError> {
         let commands = self
             .plugin_persistence_commands
             .lock()
@@ -214,7 +260,7 @@ impl HostState {
             let mut orders = Vec::new();
             let mut failure = None;
             for change in changes {
-                match self.apply_plugin_change(writer, &change) {
+                match self.apply_plugin_change(writer, &change, project_runtime) {
                     Ok(()) => orders.push(change.order),
                     Err(error) => {
                         failure = Some(error);
@@ -244,14 +290,42 @@ impl HostState {
         &self,
         writer: &mut super::open_project::ProjectWriter<'_>,
         queued: &QueuedPluginChange,
+        project_runtime: bool,
     ) -> Result<(), String> {
         if queued.project_id != writer.project().core.project_id() {
-            return Ok(());
+            return if matches!(queued.change, PendingPluginChange::Final(_)) {
+                Err("final plugin state belongs to a different project".into())
+            } else {
+                Ok(())
+            };
         }
         let canonical = writer.project().core.canonical_state();
+        if let PendingPluginChange::Final(change) = &queued.change {
+            let destination_matches = canonical
+                .session
+                .arrangement
+                .device(&change.owner, &change.device_id)
+                .ok()
+                .is_some_and(|device| {
+                    device.plugin().is_some_and(|plugin| {
+                        Some(plugin.path.as_str()) == change.source_plugin_path.as_deref()
+                    })
+                });
+            if change
+                .source_plugin_path
+                .as_deref()
+                .is_none_or(|path| path.is_empty())
+                || !destination_matches
+            {
+                tracing::warn!(project_id = %change.project_id, device_id = %change.device_id,
+                    source_plugin_path = ?change.source_plugin_path, "discarding final plugin state with invalid destination");
+                return Ok(());
+            }
+        }
         let (owner, device_id, state) = match &queued.change {
-            PendingPluginChange::State(change) => {
-                let state = if change.arrangement_revision != canonical.session.arrangement.revision
+            PendingPluginChange::State(change) | PendingPluginChange::Final(change) => {
+                let state = if matches!(queued.change, PendingPluginChange::State(_))
+                    && change.arrangement_revision != canonical.session.arrangement.revision
                 {
                     self.audio
                         .get_plugin_state(&change.owner, &change.device_id)
@@ -285,6 +359,7 @@ impl HostState {
             }
         };
         if canonical_plugin_state_matches(&canonical, &owner, &device_id, &state) {
+            self.confirm_final_plugin_state(queued);
             return Ok(());
         }
         let committed = writer
@@ -298,8 +373,32 @@ impl HostState {
                 )
             })
             .map_err(|error| error.to_string())?;
-        self.publish_commit(committed);
+        if project_runtime {
+            self.publish_commit(committed);
+        } else {
+            self.events.emit(crate::HostEvent::CanonicalStateChanged(
+                committed.snapshot.canonical.clone(),
+            ));
+        }
+        self.confirm_final_plugin_state(queued);
         Ok(())
+    }
+
+    fn confirm_final_plugin_state(&self, queued: &QueuedPluginChange) {
+        if let PendingPluginChange::Final(change) = &queued.change {
+            self.events.emit(crate::HostEvent::PluginStateSaved(
+                crate::PluginStateChanged {
+                    project_id: change.project_id.clone(),
+                    owner: change.owner.clone(),
+                    device_id: change.device_id.clone(),
+                    parameter_values: change.parameter_values.clone(),
+                    state_data: change.state_data.clone(),
+                    bypassed: change.bypassed,
+                    arrangement_revision: change.arrangement_revision,
+                    source_plugin_path: change.source_plugin_path.clone(),
+                },
+            ));
+        }
     }
 }
 
@@ -348,9 +447,27 @@ fn flush_plugin_changes(
     let mut changes = pending.drain().collect::<Vec<_>>();
     changes.sort_by_key(|(_, queued)| queued.order);
     let mut failure = None;
+    let mut failed_devices = HashSet::new();
     for (key, queued) in changes {
-        if let Err(error) = state.apply_plugin_change(&mut writer, &queued) {
+        let device = match &queued.change {
+            PendingPluginChange::State(change) | PendingPluginChange::Final(change) => (
+                change.project_id.clone(),
+                change.owner.clone(),
+                change.device_id.clone(),
+            ),
+            PendingPluginChange::Parameter(change) => (
+                change.project_id.clone(),
+                change.owner.clone(),
+                change.device_id.clone(),
+            ),
+        };
+        if failed_devices.contains(&device) {
+            pending.insert(key, queued);
+            continue;
+        }
+        if let Err(error) = state.apply_plugin_change(&mut writer, &queued, true) {
             tracing::warn!(%error, "Host plugin state persistence failed");
+            failed_devices.insert(device);
             pending.insert(key, queued);
             failure.get_or_insert(error);
         }
@@ -490,9 +607,124 @@ mod tests {
                 "arrangementRevision": arrangement_revision,
                 "parameterValues": [0.0],
                 "stateData": "cHJlc2V0LXN0YXRl",
+                "sourcePluginPath": "effect.vst3",
                 "bypassed": false,
             }),
         )
+    }
+    #[test]
+    fn final_state_with_invalid_destination_is_discarded_without_confirmation() {
+        let (root, state) = plugin_host();
+        let project_id = state.project.read().canonical.project_id.clone();
+        let events = state.event_hub.subscribe().unwrap();
+        let mut pending = HashMap::new();
+        let mut order = 0;
+        for path in [Some("old.vst3"), None] {
+            let mut frame = opaque_plugin_state_change(&project_id, 0);
+            frame.event = "plugin-state-final".into();
+            frame.payload["sourcePluginPath"] = serde_json::json!(path);
+            collect_plugin_change(&mut pending, frame, &mut order);
+        }
+        flush_plugin_changes(&Arc::downgrade(&state), &mut pending, true).unwrap();
+        assert!(pending.is_empty());
+        let canonical = state.project.read().canonical.clone();
+        assert_eq!(canonical.sequence, 0);
+        assert_eq!(
+            canonical.session.arrangement.tracks[0].effects[0]
+                .plugin
+                .state_data,
+            None
+        );
+        assert!(events.try_recv().is_err());
+        drop(state);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn final_state_is_confirmed_only_after_durable_commit() {
+        let (root, state) = plugin_host();
+        let project_id = state.project.read().canonical.project_id.clone();
+        let events = state.event_hub.subscribe().unwrap();
+        let mut frame = opaque_plugin_state_change(&project_id, 0);
+        frame.event = "plugin-state-final".into();
+        let mut pending = HashMap::new();
+        collect_plugin_change(&mut pending, frame, &mut 0);
+        let writer = state.project.write();
+        let storage = writer.project().storage.clone();
+
+        flush_plugin_changes(&Arc::downgrade(&state), &mut pending, false).unwrap();
+        assert_eq!(pending.len(), 1);
+        assert!(events.try_recv().is_err());
+        drop(writer);
+        flush_plugin_changes(&Arc::downgrade(&state), &mut pending, true).unwrap();
+
+        assert!(pending.is_empty());
+        let saved = storage.load_existing().unwrap();
+        assert_eq!(
+            saved.session.arrangement.tracks[0].effects[0]
+                .plugin
+                .state_data
+                .as_deref(),
+            Some("cHJlc2V0LXN0YXRl")
+        );
+        let mut confirmed = false;
+        while let Ok(event) = events.try_recv() {
+            confirmed |= event.event == "plugin-state-saved";
+        }
+        assert!(confirmed);
+        drop(state);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn final_state_survives_restart_and_is_not_confirmed_for_another_project() {
+        let (root, state) = plugin_host();
+        let events = state.event_hub.subscribe().unwrap();
+        let mut frame = opaque_plugin_state_change("other-project", 0);
+        frame.event = "plugin-state-final".into();
+        let mut pending = HashMap::new();
+        let mut order = 0;
+        collect_plugin_change(&mut pending, frame, &mut order);
+        collect_plugin_change(
+            &mut pending,
+            riffra_control::HostEventFrame::new(
+                "runtime-restarted",
+                serde_json::json!({"generation": 2}),
+            ),
+            &mut order,
+        );
+
+        assert!(flush_plugin_changes(&Arc::downgrade(&state), &mut pending, true).is_err());
+        assert_eq!(pending.len(), 1);
+        assert!(events.try_recv().is_err());
+        drop(state);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn final_state_supersedes_earlier_changes_on_same_device() {
+        let (root, state) = plugin_host();
+        let project_id = state.project.read().canonical.project_id.clone();
+        let events = state.event_hub.subscribe().unwrap();
+        let mut pending = HashMap::new();
+        let mut order = 0;
+        let mut earlier = plugin_state_change(&project_id, 0.25);
+        earlier.payload["arrangementRevision"] = serde_json::json!(1);
+        collect_plugin_change(&mut pending, earlier, &mut order);
+        let mut final_state = opaque_plugin_state_change(&project_id, 0);
+        final_state.event = "plugin-state-final".into();
+        collect_plugin_change(&mut pending, final_state, &mut order);
+
+        assert_eq!(pending.len(), 1);
+        flush_plugin_changes(&Arc::downgrade(&state), &mut pending, true).unwrap();
+        assert!(pending.is_empty());
+        assert_eq!(state.project.read().canonical.sequence, 1);
+        assert!(
+            std::iter::from_fn(|| events.try_recv().ok())
+                .any(|event| event.event == "plugin-state-saved")
+        );
+        drop(state);
+        let _ = std::fs::remove_dir_all(root);
     }
     #[test]
     fn persists_opaque_program_state_and_skips_an_identical_snapshot() {
@@ -507,7 +739,9 @@ mod tests {
         let queued = pending.into_values().next().unwrap();
         let mut writer = state.project.write();
 
-        state.apply_plugin_change(&mut writer, &queued).unwrap();
+        state
+            .apply_plugin_change(&mut writer, &queued, true)
+            .unwrap();
         let saved = writer.project().core.canonical_state();
         assert_eq!(saved.sequence, 1);
         assert_eq!(
@@ -525,7 +759,9 @@ mod tests {
             &mut 1,
         );
         let duplicate = pending.into_values().next().unwrap();
-        state.apply_plugin_change(&mut writer, &duplicate).unwrap();
+        state
+            .apply_plugin_change(&mut writer, &duplicate, true)
+            .unwrap();
         assert_eq!(
             writer.project().core.canonical_state().sequence,
             saved.sequence
@@ -596,6 +832,7 @@ mod tests {
         state.events.emit(crate::HostEvent::PluginStateChanged(
             crate::model::PluginStateChanged {
                 arrangement_revision: 0,
+                source_plugin_path: None,
                 project_id: previous.project_id.clone(),
                 owner: riffra_core::EffectOwner::Track {
                     id: "track:1".into(),
@@ -658,6 +895,7 @@ mod tests {
             state.events.emit(crate::HostEvent::PluginStateChanged(
                 crate::model::PluginStateChanged {
                     arrangement_revision: 0,
+                    source_plugin_path: None,
                     project_id: previous.project_id.clone(),
                     owner: riffra_core::EffectOwner::Track {
                         id: "track:1".into(),

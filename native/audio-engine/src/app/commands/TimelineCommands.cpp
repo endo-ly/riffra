@@ -1,4 +1,6 @@
+#include <algorithm>
 #include <chrono>
+#include <climits>
 #include <memory>
 
 #include "../AudioCommandDispatcher.h"
@@ -14,12 +16,28 @@ constexpr auto kTimelineVstLifecycleTimeout = std::chrono::seconds(45);
 
 void AudioCommandDispatcher::handle(const WaitForTimelineIdleCommand& command,
                                     CommandResponder responder) {
+    const auto deadline = std::chrono::steady_clock::now() +
+                          std::chrono::milliseconds(static_cast<std::int64_t>(command.timeoutMs));
     if (!context.runtimeLifecycle.waitForIdle(
             std::chrono::milliseconds(static_cast<std::int64_t>(command.timeoutMs)))) {
         responder.fail("runtimeLifecycle",
                        "The VST lifecycle executor did not become idle in time.",
                        "runtime.timeline.waitForIdle");
         return;
+    }
+    if (command.closeEditor && context.trackPluginEditor != nullptr) {
+        context.trackPluginEditor->close();
+        const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+            deadline - std::chrono::steady_clock::now());
+        if (!context.trackPluginEditor->waitForClosingState(
+                static_cast<int>(std::clamp<std::int64_t>(remaining.count(), 0, INT_MAX)))) {
+            responder.fail("trackDevice", "The closing plugin state could not be captured.",
+                           "runtime.timeline.waitForIdle");
+            return;
+        }
+        context.trackPluginEditor.reset();
+        context.pluginEditorOwner = {};
+        context.trackPluginEditorDeviceId.clear();
     }
     responder.respond(TimelineIdleAckSpec{});
 }
@@ -75,14 +93,10 @@ void AudioCommandDispatcher::handle(const CommitTimelineSnapshotCommand&,
             const auto shouldCloseEditor =
                 context.timelineEngine.hasPreparedSnapshot() &&
                 context.trackPluginEditor != nullptr &&
-                !context.timelineEngine.preparedOwnerReusesRuntimeDevices(
-                    context.pluginEditorOwner);
-            if (shouldCloseEditor) {
-                context.trackPluginEditor->close();
-                context.trackPluginEditor.reset();
-                context.pluginEditorOwner = {};
-                context.trackPluginEditorDeviceId.clear();
-            }
+                !context.timelineEngine.preparedDeviceIsReused(context.pluginEditorOwner,
+                                                               context.trackPluginEditorDeviceId);
+            std::shared_ptr<PluginEditorHost> closingEditor;
+            if (shouldCloseEditor) closingEditor = context.trackPluginEditor;
             juce::String timelineError;
             const auto committed = context.timelineEngine.commitPreparedSnapshot(timelineError);
             context.timelineOperationRunning.store(false, std::memory_order_release);
@@ -90,6 +104,7 @@ void AudioCommandDispatcher::handle(const CommitTimelineSnapshotCommand&,
                                      "runtime.timeline.commit"))
                 return;
             pending->respond(TimelineAckSpec{});
+            if (closingEditor != nullptr) closingEditor->close();
         },
         kTimelineVstLifecycleTimeout);
     if (!submitted) {

@@ -65,6 +65,7 @@ struct TimelineTimebase final {
         double bar = 0.0;
         std::uint8_t numerator = 4;
         std::uint8_t denominator = 4;
+        double barStartTick = 0.0;
     };
 
     [[nodiscard]] MeterPosition meterAt(const double tick) const noexcept {
@@ -83,7 +84,8 @@ struct TimelineTimebase final {
         }
         const auto barTicks =
             static_cast<double>(ppq) * 4.0 * signature.numerator / signature.denominator;
-        return {bar + (tick - startTick) / barTicks, signature.numerator, signature.denominator};
+        return {bar + (tick - startTick) / barTicks, signature.numerator, signature.denominator,
+                startTick + std::floor((tick - startTick) / barTicks) * barTicks};
     }
 };
 

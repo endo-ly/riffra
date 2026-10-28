@@ -380,12 +380,14 @@ void TimelineEngine::processInstrumentTrack(const PreparedTimeline& prepared, Tr
     } else {
         runtime.mixBuffer.clear(0, sampleCount);
     }
+    const auto effectPosition = prepared.transportAt(
+        rangeStart - runtime.routeLatencySamples + runtime.effectLatencySamples(), true);
     runtime.effects().process(
         runtime.mixBuffer.getArrayOfReadPointers(), 2,
         runtime.processedBuffer.getArrayOfWritePointers(), 2, sampleCount, nullptr,
         runtime.deviceAutomation,
         rangeStart - runtime.routeLatencySamples + runtime.effectLatencySamples(), true,
-        &runtime.effectAlignment);
+        &runtime.effectAlignment, &effectPosition);
 }
 
 void TimelineEngine::processLiveInstrumentTrack(const PreparedTimeline& prepared, Track& track,
@@ -412,13 +414,14 @@ void TimelineEngine::processLiveInstrumentTrack(const PreparedTimeline& prepared
     runtime.effects().process(runtime.liveInputBuffer.getArrayOfReadPointers(), 2,
                               runtime.processedBuffer.getArrayOfWritePointers(), 2, sampleCount,
                               nullptr, runtime.deviceAutomation, rangeStart, playing,
-                              &runtime.effectAlignment);
+                              &runtime.effectAlignment, &context.transport);
     runtime.markLiveMidiProcessed(sampleCount);
 }
 
 void TimelineEngine::warmUpPluginDevices(const int sampleCount) noexcept {
     auto* graph = realtime.graph;
     if (graph == nullptr) return;
+    const auto position = graph->transportAt(0, false);
     clearSidechainInputs(*graph);
     for (auto& trackPtr : graph->tracks) {
         auto& runtime = *trackPtr->runtime;
@@ -429,17 +432,17 @@ void TimelineEngine::warmUpPluginDevices(const int sampleCount) noexcept {
                                           instrumentProcessContext(*graph, 0, false));
         runtime.effects().process(runtime.liveInputBuffer.getArrayOfReadPointers(), 2,
                                   runtime.processedBuffer.getArrayOfWritePointers(), 2, sampleCount,
-                                  nullptr, {}, 0, false, &runtime.effectAlignment);
+                                  nullptr, {}, 0, false, &runtime.effectAlignment, &position);
     }
     for (auto& bus : graph->mixer.buses) {
         bus->input.clear(0, sampleCount);
-        bus->process(sampleCount, 0, false);
+        bus->process(sampleCount, 0, false, &position);
     }
     graph->mixer.masterInput.clear(0, sampleCount);
     graph->mixer.masterEffects->process(graph->mixer.masterInput.getArrayOfReadPointers(), 2,
                                         graph->mixer.masterOutput.getArrayOfWritePointers(), 2,
                                         sampleCount, nullptr, {}, 0, false,
-                                        &graph->mixer.masterEffectAlignment);
+                                        &graph->mixer.masterEffectAlignment, &position);
 }
 
 void TimelineEngine::mixTrackOutput(Track& track, const std::int64_t rangeStart,
@@ -541,12 +544,13 @@ void TimelineEngine::mixProductionOutput(PreparedTimeline& prepared, float* cons
     mixer.masterInput.clear(0, sampleCount);
     for (auto& bus : mixer.buses) bus->input.clear(0, sampleCount);
     for (auto& route : mixer.trackRoutes) route->mix(sampleCount, rangeStart, playing);
-    pool->runMixer(mixer.parallelChannels, sampleCount, rangeStart, playing);
+    pool->runMixer(mixer.parallelChannels, sampleCount, rangeStart, playing, prepared);
     for (auto& route : mixer.busRoutes) route->mix(sampleCount, rangeStart, playing);
+    const auto position = prepared.transportAt(rangeStart - mixer.masterInputLatency, playing);
     mixer.masterEffects->process(
         mixer.masterInput.getArrayOfReadPointers(), 2, mixer.masterOutput.getArrayOfWritePointers(),
         2, sampleCount, nullptr, mixer.masterDeviceAutomation,
-        rangeStart - mixer.masterInputLatency, playing, &mixer.masterEffectAlignment);
+        rangeStart - mixer.masterInputLatency, playing, &mixer.masterEffectAlignment, &position);
     for (int channel = 0; channel < std::min(2, channelCount); ++channel) {
         if (outputChannels[channel] != nullptr)
             juce::FloatVectorOperations::add(outputChannels[channel] + destinationStart,
@@ -592,6 +596,10 @@ void TimelineEngine::resetRecordingTrackState(PreparedTimeline& prepared) noexce
 
 void TimelineEngine::beginTransportFade(const bool fadeIn, const double sampleRate) noexcept {
     if (offlineMode) {
+        if (!fadeIn && realtime.transport != TransportState::playing) {
+            realtime.pluginStopPending = true;
+            realtime.pluginStopSample = realtime.timelineSample;
+        }
         realtime.transportGain = fadeIn ? 1.0f : 0.0f;
         realtime.transportFadeStep = 0.0f;
         realtime.transportFadeRemaining = 0;
@@ -646,6 +654,10 @@ void TimelineEngine::finishTransportFade(PreparedTimeline& prepared) noexcept {
     realtime.transportGain = 0.0f;
     realtime.transportFadeStep = 0.0f;
     realtime.transportFadeRemaining = 0;
+    if (realtime.transport != TransportState::playing) {
+        realtime.pluginStopPending = true;
+        realtime.pluginStopSample = realtime.timelineSample;
+    }
     if (realtime.transport == TransportState::paused) {
         realtime.renderTransportState = RenderTransportState::paused;
         return;
@@ -680,6 +692,19 @@ void TimelineEngine::mixActiveGraph(const float* const* inputChannels, const int
     realtime.lastMixPlaybackOffset = blockPlaybackOffset;
     auto* active = realtime.graph;
     if (active == nullptr) return;
+    active->recording = realtime.recordingPhase == RecordingPhase::recording;
+    if (std::exchange(realtime.pluginStopPending, false)) {
+        const auto count = std::min(sampleCount, active->preparedBlockSize);
+        const auto position = active->transportAt(realtime.pluginStopSample, false);
+        for (auto& track : active->tracks) {
+            auto& runtime = *track->runtime;
+            if (runtime.instrument() != nullptr && runtime.instrument()->vst3Rack() != nullptr)
+                runtime.instrument()->vst3Rack()->notifyTransportStopped(position, count);
+            runtime.effects().notifyTransportStopped(position, count);
+        }
+        for (auto& bus : active->mixer.buses) bus->effects->notifyTransportStopped(position, count);
+        active->mixer.masterEffects->notifyTransportStopped(position, count);
+    }
     realtime.metronomeTransportSegmentCount = 0;
     if (std::exchange(realtime.resetPlaybackPending, false)) {
         clearPlaybackTrackState(*active);

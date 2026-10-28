@@ -772,9 +772,17 @@ public:
         const std::array<float*, 2> outputs{left.data(), right.data()};
         engine.mix(outputs.data(), 2, static_cast<int>(left.size()));
 
-        // Assert
-        return trace.midiSamplePositions.size() >= 2 && trace.midiSamplePositions[0] == 0 &&
-               trace.midiSamplePositions[1] == 0;
+        // Assert playback context and MIDI refer to the same block.
+        if (trace.midiSamplePositions.size() < 2 || trace.midiSamplePositions[0] != 0 ||
+            trace.midiSamplePositions[1] != 0 || !trace.position ||
+            !trace.position->getIsPlaying() || *trace.position->getTimeInSamples() != 0)
+            return false;
+        // Stopping inside the held note sends one stopped block that releases every channel.
+        if (!engine.stop()) return false;
+        for (int block = 0; block < 20; ++block)
+            engine.mix(outputs.data(), 2, static_cast<int>(left.size()));
+        return trace.position && !trace.position->getIsPlaying() &&
+               trace.stoppedAllNotesOffCount == 16 && !trace.noteHeld;
     }
 
     static bool panicClosesInstrumentRuntime() {

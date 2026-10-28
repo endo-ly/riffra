@@ -88,12 +88,11 @@ bool hostsPlugins(const ExecutionGraph& graph) noexcept {
 // Plugins such as disk-streaming samplers keep loading their content after instantiation and
 // report no readiness to the host; they only become audible after being processed for a while
 // with the message thread dispatching. The interval covers such loading with margin.
-constexpr auto kPluginWarmUp = std::chrono::seconds(2);
-
-void warmUpPlugins(TimelineEngine& engine, const double sampleRate, const int blockSize) {
+void warmUpPlugins(TimelineEngine& engine, const double sampleRate, const int blockSize,
+                   const double seconds) {
     const auto blockDuration = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
         std::chrono::duration<double>(blockSize / sampleRate));
-    const auto deadline = std::chrono::steady_clock::now() + kPluginWarmUp;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::duration<double>(seconds);
     for (auto next = std::chrono::steady_clock::now(); next < deadline; next += blockDuration) {
         engine.warmUpPluginDevices(blockSize);
         std::this_thread::sleep_until(next + blockDuration);
@@ -190,6 +189,7 @@ std::unique_ptr<OfflineRenderer> OfflineRenderer::prepare(const OfflineRenderReq
                     static_cast<float>(request.graph.masterGainDb),
                     request.normalize,
                     hostsPlugins(request.graph),
+                    request.graph.pluginWarmUpSeconds,
                     latencySamples,
                     automationWarnings};
     return std::unique_ptr<OfflineRenderer>(
@@ -199,7 +199,7 @@ std::unique_ptr<OfflineRenderer> OfflineRenderer::prepare(const OfflineRenderReq
 bool OfflineRenderer::render(juce::AudioFormatManager& formats, Result& result,
                              juce::String& error) {
     if (plan.hostsPlugins) {
-        warmUpPlugins(*engine, plan.sampleRate, plan.blockSize);
+        warmUpPlugins(*engine, plan.sampleRate, plan.blockSize, plan.pluginWarmUpSeconds);
         // The warm-up advanced the plugins' processing state; rendering starts from reset state.
         if (!juce::MessageManager::callSync([this] { engine->resetPluginDevices(); })) {
             error = "Offline Render could not reset the warmed-up plugins.";

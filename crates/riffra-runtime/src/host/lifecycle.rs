@@ -169,15 +169,29 @@ impl DawHost {
     /// Performs the explicit shutdown sequence for the Host.
     pub fn shutdown(&self) {
         self.state.lifecycle.request_shutdown();
-        // Cancel native waits before draining operations that may be waiting on them.
-        self.state.audio.force_shutdown();
+        self.state.audio.cancel_waits_for_shutdown();
         self.state.lifecycle.close();
-        self.state.event_hub.close();
+        if !self.state.safe_mode
+            && self.state.audio.sidecar_is_ready()
+            && let Err(error) = self
+                .state
+                .audio
+                .stop_timeline_before_shutdown()
+                .and_then(|()| {
+                    self.state
+                        .audio
+                        .close_editor_before_shutdown(std::time::Duration::from_secs(30))
+                })
+        {
+            tracing::warn!(%error, "plugin editor state could not be captured before shutdown");
+        }
+        self.state.audio.force_shutdown();
         if let Ok(mut persistence) = self.plugin_persistence.lock()
             && let Some(persistence) = persistence.take()
         {
             persistence.shutdown();
         }
+        self.state.event_hub.close();
         if let Ok(mut control) = self.control.lock()
             && let Some(control) = control.take()
         {

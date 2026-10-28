@@ -171,6 +171,11 @@ impl AudioSupervisor {
         self.process.current_generation()
     }
 
+    pub(crate) fn sidecar_is_ready(&self) -> bool {
+        let generation = self.sidecar_generation();
+        generation != 0 && self.process.is_ready(generation)
+    }
+
     /// Emits the latest audio status through the Host event sink.
     pub fn emit_status(&self) {
         if let Ok(mut status) = self.status.lock() {
@@ -541,10 +546,7 @@ impl AudioSupervisor {
     /// Runtime ports. Shutdown therefore must not be tied to `Drop`: releasing
     /// any one of those clones must not stop a sidecar still owned by the app.
     pub fn force_shutdown(&self) {
-        self.process.shutting_down.store(true, Ordering::Release);
-        self.process.readiness.1.notify_all();
-        self.fail_recording_completion(NativeAudioError::ShuttingDown);
-        fail_pending_requests(&self.command_bus.pending, NativeAudioError::ShuttingDown);
+        self.cancel_waits_for_shutdown();
         let _native_command = self.process.command_gate.lock().ok();
         if let Ok(mut slot) = self.process.child.lock()
             && let Some(child) = slot.take()
@@ -553,6 +555,13 @@ impl AudioSupervisor {
                 .mark_planned_termination(self.sidecar_generation());
             let _ = child.kill();
         }
+    }
+
+    pub(crate) fn cancel_waits_for_shutdown(&self) {
+        self.process.shutting_down.store(true, Ordering::Release);
+        self.process.readiness.1.notify_all();
+        self.fail_recording_completion(NativeAudioError::ShuttingDown);
+        fail_pending_requests(&self.command_bus.pending, NativeAudioError::ShuttingDown);
     }
 
     pub fn restart_sidecar_for_runtime(

@@ -2,8 +2,10 @@
 
 #include <array>
 #include <cmath>
+#include <thread>
 
 #include "../support/TestAudioProcessor.h"
+#include "plugins/PluginEditorHost.h"
 
 namespace riffra {
 namespace {
@@ -17,6 +19,60 @@ std::unique_ptr<PluginRack> makeRack(ProcessorTrace& trace, juce::String& error)
 }
 
 }  // namespace
+
+TEST(PluginEditorHostTest, DefersClosingCaptureUntilAutomationRestoresStaticValues) {
+    juce::ScopedJuceInitialiser_GUI initialiser;
+    ProcessorTrace trace;
+    juce::String error;
+    auto owned = PluginRackTestPeer::install(std::make_unique<TestProcessor>(trace, true, true),
+                                             kSampleRate, kBlockSize, error);
+    ASSERT_NE(owned, nullptr) << error;
+    std::shared_ptr<PluginRack> rack(std::move(owned));
+    const auto initial = rack->persistedState(error);
+    ASSERT_TRUE(initial.has_value()) << error;
+    ASSERT_TRUE(rack->applyPersistedState(*initial, error)) << error;
+    auto parameters = rack->parameters();
+    AutomationRuntime lane;
+    lane.setPoints({{0, 0.9f}}, true);
+    AutomationBindingFailure failure = AutomationBindingFailure::invalidParameter;
+    auto binding =
+        rack->bindAutomation(*parameters[0].parameterId, lane, *initial, false, failure, error);
+    ASSERT_TRUE(binding.has_value()) << error;
+    std::array<PluginParameterAutomation, 1> bindings{std::move(*binding)};
+    std::array<float, kBlockSize> left{}, right{};
+    const std::array<float*, 2> outputs{left.data(), right.data()};
+    std::optional<PluginStateSpec> captured;
+    auto editor = std::make_shared<PluginEditorHost>(
+        *rack, PluginEditorHost::StateCallback{},
+        [&](const auto& state, const auto&) { captured = state; },
+        PluginEditorHost::ParameterCallback{}, PluginEditorHost::ClosedCallback{}, rack);
+    ASSERT_TRUE(editor->open(error)) << error;
+    rack->process(nullptr, 0, nullptr, 0, outputs.data(), 2, kBlockSize, nullptr, bindings, 0,
+                  true);
+    ASSERT_TRUE(rack->isAutomationActive());
+    trace.opaqueState = 42;
+
+    ASSERT_TRUE(editor->close());
+    editor.reset();
+    EXPECT_FALSE(captured.has_value());
+    std::weak_ptr<PluginRack> retained = rack;
+    rack.reset();
+    auto pendingRack = retained.lock();
+    ASSERT_NE(pendingRack, nullptr);
+    pendingRack->restoreAutomation();
+    pendingRack.reset();
+    for (int attempt = 0; attempt < 100 && !captured.has_value(); ++attempt) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        juce::Timer::callPendingTimersSynchronously();
+    }
+
+    ASSERT_TRUE(captured.has_value());
+    ASSERT_EQ(captured->parameterValues.size(), 1u);
+    EXPECT_FLOAT_EQ(captured->parameterValues[0], initial->parameterValues[0]);
+    ASSERT_TRUE(captured->stateData.has_value());
+    EXPECT_EQ(*captured->stateData, juce::Base64::toBase64(&trace.opaqueState, sizeof(int)));
+    EXPECT_TRUE(retained.expired());
+}
 
 TEST(PluginRackTest, ProcessesMonoInputToStereoOutput) {
     ProcessorTrace trace;
@@ -34,6 +90,33 @@ TEST(PluginRackTest, ProcessesMonoInputToStereoOutput) {
 
     EXPECT_FLOAT_EQ(outputLeft.front(), 0.5f);
     EXPECT_FLOAT_EQ(outputRight.back(), 0.5f);
+}
+
+TEST(PluginRackTest, SendsTransportAndStoppedBlockToProcessor) {
+    ProcessorTrace trace;
+    juce::String error;
+    auto rack = makeRack(trace, error);
+    ASSERT_NE(rack, nullptr) << error;
+    std::array<float, kBlockSize> left{}, right{};
+    const std::array<float*, 2> outputs{left.data(), right.data()};
+    PluginTransportPosition position{48'000, 48'000.0, 2.0,   90.0, 0.0, 3,
+                                     4,      true,     false, true, 0.0, 6.0};
+    rack->process(nullptr, 0, nullptr, 0, outputs.data(), 2, kBlockSize, nullptr, {},
+                  position.samplePosition, true, &position);
+    ASSERT_TRUE(trace.position.hasValue());
+    EXPECT_EQ(*trace.position->getTimeInSamples(), 48'000);
+    EXPECT_DOUBLE_EQ(*trace.position->getPpqPosition(), 2.0);
+    EXPECT_DOUBLE_EQ(*trace.position->getBpm(), 90.0);
+    EXPECT_EQ(trace.position->getTimeSignature()->numerator, 3);
+    EXPECT_TRUE(trace.position->getIsPlaying());
+    position.playing = false;
+    rack->notifyTransportStopped(position, kBlockSize);
+    ASSERT_TRUE(trace.position.hasValue());
+    EXPECT_FALSE(trace.position->getIsPlaying());
+    const auto processedBeforeBypass = trace.processBlockCount;
+    rack->setBypassed(true);
+    rack->notifyTransportStopped(position, kBlockSize);
+    EXPECT_EQ(trace.processBlockCount, processedBeforeBypass);
 }
 
 TEST(PluginRackTest, ReturnsDrySignalWhenBypassedOrUnloaded) {
@@ -112,14 +195,19 @@ TEST(PluginRackTest, RestoresPersistedPluginState) {
     process();
     const auto saved = rack->persistedState(error);
     ASSERT_TRUE(saved.has_value()) << error;
-    ASSERT_TRUE(rack->setParameter(0, 0.25f, error)) << error;
+    auto opaqueState = *saved;
+    opaqueState.parameterValues.clear();
 
-    ASSERT_TRUE(rack->applyPersistedState(*saved, error)) << error;
-    process();
-    const auto restored = rack->persistedState(error);
-    ASSERT_TRUE(restored.has_value()) << error;
-    ASSERT_FALSE(restored->parameterValues.empty());
-    EXPECT_NEAR(restored->parameterValues[0], 0.75f, 0.0001f);
+    // The saved snapshot and its opaque VST3 state alone each restore the plugin itself.
+    for (const auto& state : {*saved, opaqueState}) {
+        ASSERT_TRUE(rack->setParameter(0, 0.25f, error)) << error;
+        process();
+        ASSERT_TRUE(rack->applyPersistedState(state, error)) << error;
+        process();
+        const auto restored = rack->parameters();
+        ASSERT_FALSE(restored.empty());
+        EXPECT_NEAR(restored[0].value, 0.75f, 0.0001f);
+    }
 }
 
 TEST(PluginRackTest, PassesMidiToInstrumentProcessor) {

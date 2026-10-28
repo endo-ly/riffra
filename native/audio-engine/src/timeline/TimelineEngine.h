@@ -112,6 +112,8 @@ public:
     RealtimeRequest commitPreparedSnapshot(juce::String& error);
     void discardPreparedSnapshot() noexcept;
     [[nodiscard]] bool preparedOwnerReusesRuntimeDevices(const EffectOwnerSpec& deviceOwner) const;
+    [[nodiscard]] bool preparedDeviceIsReused(const EffectOwnerSpec& owner,
+                                              const juce::String& deviceId) const;
     [[nodiscard]] bool hasPreparedSnapshot() const;
     /// Destroys the graphs the audio thread has retired. Only the thread that
     /// constructed the engine destroys graphs; other callers reclaim nothing.
@@ -200,6 +202,8 @@ public:
         juce::String& error) const;
     /// Revision of the latest committed Arrangement Graph.
     [[nodiscard]] std::uint64_t committedRevision() const;
+    [[nodiscard]] std::shared_ptr<PluginRack> deviceHandle(const EffectOwnerSpec& owner,
+                                                           const juce::String& deviceId) const;
     [[nodiscard]] PluginRack* findDevice(const EffectOwnerSpec& deviceOwner,
                                          const juce::String& deviceId) const noexcept;
     [[nodiscard]] std::optional<PluginStateSpec> devicePersistedState(
@@ -276,6 +280,8 @@ private:
         bool seekRequestedWhileStopped = false;
         std::int64_t pendingSeekSample = 0;
         bool resetPlaybackPending = false;
+        bool pluginStopPending = false;
+        std::int64_t pluginStopSample = 0;
         std::int64_t countInRemainingSamples = 0;
         std::int64_t countInBeatSamples = 1;
         std::int64_t countInBlockStartRemainingSamples = 0;

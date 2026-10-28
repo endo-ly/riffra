@@ -23,7 +23,7 @@ set(request_template [=[
   "request": {
     "graph": {
       "timebase": {"ppq": 960, "tempoChanges": [{"tick": 0, "bpm": 120.0}], "timeSignatureChanges": [{"tick": 0, "numerator": 4, "denominator": 4}]},
-      "mixdown": {"musicalEndTick": 0, "tailSeconds": 0.0, "fadeOutSeconds": 0.0},
+      "mixdown": {"musicalEndTick": 0, "tailSeconds": 0.0, "fadeOutSeconds": 0.0, "pluginWarmUpSeconds": 2.0},
       "loopRange": {"enabled": false, "startTick": 0, "endTick": 0},
       "punchRange": null,
       "metronomeEnabled": false,
