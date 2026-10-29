@@ -1,14 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
-import type {
-  BootstrapState,
-  CanonicalState,
-  MissingDependency,
-  RecordingAsset,
-} from '@/model/domain';
-import type { MissingDependencyApi, TransportApi } from '@/native/native-api';
+import type { BootstrapState, MissingDependency, RecordingAsset } from '@/model/domain';
+
+import type { MissingDependencyApi } from '@/native/api/missing';
+import type { TransportApi } from '@/native/api/transport';
 import { logNativeError } from '@/native/invoke';
-import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
-import { toast } from '@/shared/toasts';
+import type { SessionCommit } from '@/shared/session/commit';
 type MissingDependenciesApi = Pick<
   MissingDependencyApi,
   | 'getMissingDependencies'
@@ -20,18 +16,18 @@ type MissingDependenciesApi = Pick<
 interface UseMissingDependenciesOptions {
   api: MissingDependenciesApi;
   boot: BootstrapState | null;
-  hostGeneration?: number;
+  hostGeneration: number;
   projectId?: string | null;
-  applyCanonicalState: (canonical: CanonicalState) => boolean;
+  commit: SessionCommit;
   rescanPlugins: () => Promise<boolean>;
 }
 /** Owns project-open missing dependency state and repair actions. */
 export function useMissingDependencies({
   api,
   boot,
-  hostGeneration = 0,
+  hostGeneration,
   projectId = null,
-  applyCanonicalState,
+  commit,
   rescanPlugins,
 }: UseMissingDependenciesOptions) {
   const {
@@ -73,45 +69,24 @@ export function useMissingDependencies({
   const relinkMissing = useCallback(
     async (item: MissingDependency, newPath: string) => {
       if (!item.assetId) return;
-      try {
-        const next = await relinkMissingDependency(item.assetId, newPath);
-        applyArrangementMutation(next, applyCanonicalState, (message) =>
-          toast(message, { kind: 'error' }),
-        );
-        await reloadMissingDependencies();
-      } catch (error) {
-        logNativeError('relinkMissingDependency')(error);
-      }
+      if (await commit(relinkMissingDependency(item.assetId, newPath)))
+        await reloadMissingDependencies().catch(logNativeError('getMissingDependencies'));
     },
-    [applyCanonicalState, relinkMissingDependency, reloadMissingDependencies],
+    [commit, relinkMissingDependency, reloadMissingDependencies],
   );
   const disableMissingPluginDevice = useCallback(
     async (deviceId: string) => {
-      try {
-        const next = await disableMissingPlugin(deviceId);
-        applyArrangementMutation(next, applyCanonicalState, (message) =>
-          toast(message, { kind: 'error' }),
-        );
-        await reloadMissingDependencies();
-      } catch (error) {
-        logNativeError('disableMissingPlugin')(error);
-      }
+      if (await commit(disableMissingPlugin(deviceId)))
+        await reloadMissingDependencies().catch(logNativeError('getMissingDependencies'));
     },
-    [applyCanonicalState, disableMissingPlugin, reloadMissingDependencies],
+    [commit, disableMissingPlugin, reloadMissingDependencies],
   );
   const replaceMissingPluginDevice = useCallback(
     async (deviceId: string, newPath: string) => {
-      try {
-        const next = await replaceMissingTrackPlugin(deviceId, newPath);
-        applyArrangementMutation(next, applyCanonicalState, (message) =>
-          toast(message, { kind: 'error' }),
-        );
-        await reloadMissingDependencies();
-      } catch (error) {
-        logNativeError('replaceMissingTrackPlugin')(error);
-      }
+      if (await commit(replaceMissingTrackPlugin(deviceId, newPath)))
+        await reloadMissingDependencies().catch(logNativeError('getMissingDependencies'));
     },
-    [applyCanonicalState, reloadMissingDependencies, replaceMissingTrackPlugin],
+    [commit, replaceMissingTrackPlugin, reloadMissingDependencies],
   );
   const rescanMissingPlugins = useCallback(async () => {
     try {

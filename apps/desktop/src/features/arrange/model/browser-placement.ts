@@ -1,5 +1,5 @@
 import type { ArrangementMutationResult, AssetId, TrackKind } from '@/model/domain';
-import type { ArrangeApi } from '@/native/native-api';
+import type { NativeApi } from '@/native/native-api';
 
 /** Something the Browser can put into the Arrangement. */
 export type BrowserPlacement =
@@ -82,7 +82,7 @@ export function describePlacementAction(
 }
 
 type PlacementApi = Pick<
-  ArrangeApi,
+  NativeApi,
   | 'addTrack'
   | 'applyInstrument'
   | 'setTrackVst3Instrument'
@@ -93,7 +93,7 @@ type PlacementApi = Pick<
 
 /** Applies one mutation and resolves its result, or null when nothing was applied. */
 type PlacementRunner = (
-  operation: Promise<ArrangementMutationResult | null>,
+  operation: Promise<ArrangementMutationResult>,
 ) => Promise<ArrangementMutationResult | null>;
 
 /**
@@ -123,7 +123,7 @@ function loadOnTrack(
   placement: BrowserPlacement,
   trackId: string | undefined,
   startTick: number | undefined,
-): Promise<ArrangementMutationResult | null> {
+): Promise<ArrangementMutationResult> {
   switch (placement.kind) {
     case 'instrument':
       return api.applyInstrument(requireTrack(trackId), placement.instrumentId);

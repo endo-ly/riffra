@@ -1,9 +1,10 @@
+import type { MidiNoteInput } from '@/model/generated';
 import { errorText } from '@/shared/errors';
 import { musicalGridTicks, snapToBar } from '@/shared/session/timebase';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, MutableRefObject } from 'react';
 import type {
-  CreativeSession,
+  ArrangementMutationResult,
   InstrumentMidiInspection,
   MidiClip,
   MidiNote,
@@ -40,17 +41,9 @@ import { MidiEditorRuler } from './MidiEditorRuler';
 import { MidiVelocityLane } from './MidiVelocityLane';
 import styles from './MidiEditorPanel.module.css';
 
-type MidiEditResult = void | PromiseLike<CreativeSession | null>;
+type MidiEditResult = void | PromiseLike<ArrangementMutationResult | null>;
 type MidiEditorTool = 'pointer' | 'draw';
 type NoteDragMode = 'move' | 'resizeStart' | 'resizeEnd';
-interface MidiNoteInput {
-  pitch: number;
-  startTick: number;
-  durationTicks: number;
-  velocity: number;
-  channel: number;
-}
-
 /**
  * A note from another clip shown behind the active clip as a timing and
  * pitch reference. `startTick` is already rebased to the active clip's
@@ -78,11 +71,14 @@ interface MidiEditorPanelProps {
   /** Color of the track that owns the clip; notes are drawn in it. */
   trackColor: string | null;
   timebase: ProjectTimebase;
-  onUpdateNote?: (clipId: string, note: MidiNote) => void | PromiseLike<CreativeSession | null>;
+  onUpdateNote?: (
+    clipId: string,
+    note: MidiNote,
+  ) => void | PromiseLike<ArrangementMutationResult | null>;
   onUpdateNotes?: (
     clipId: string,
     updates: { noteId: string; patch: Partial<MidiNote> }[],
-  ) => void | PromiseLike<CreativeSession | null>;
+  ) => void | PromiseLike<ArrangementMutationResult | null>;
   onRemoveNotes: (clipId: string, noteIds: string[]) => MidiEditResult;
   onAddNote?: (
     clipId: string,
@@ -556,13 +552,8 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
   /** Selects the notes an edit adds to the clip once the edit lands. */
   const selectAddedNotes = (operation: MidiEditResult): MidiEditResult => {
     if (!clip || operation === undefined) return;
-    const beforeIds = new Set(clip.notes.map((note) => note.id));
     void Promise.resolve(operation).then((next) => {
-      const nextClip = next?.arrangement.midiClips.find((candidate) => candidate.id === clip.id);
-      if (!nextClip) return;
-      setSelectedNoteIds(
-        nextClip.notes.filter((note) => !beforeIds.has(note.id)).map((note) => note.id),
-      );
+      if (next) setSelectedNoteIds(next.createdEntityIds.midiNotes ?? []);
     });
     return operation;
   };

@@ -1,13 +1,13 @@
+import type { EditorCommit } from './useArrangeEditor';
 import { useCallback } from 'react';
 import type {
   AudioAnalysis,
   AudioClip,
-  ArrangementMutationResult,
   CreativeSession,
   MidiClip,
   TrackKind,
 } from '@/model/domain';
-import type { ArrangeApi } from '@/native/native-api';
+import { useSessionContext } from '@/shared/session/session-context';
 import {
   clipDurationTicks,
   midiClipDurationTicks,
@@ -29,34 +29,15 @@ import {
   usePointerGesture,
 } from './clipMoveGesture';
 
-type ArrangeCommit = (
-  operation: Promise<ArrangementMutationResult | null>,
-) => Promise<CreativeSession | null>;
-
-type ClipCommands = Pick<
-  ArrangeApi,
-  | 'moveAudioClips'
-  | 'moveMidiClips'
-  | 'pasteTimelineClips'
-  | 'removeTimelineClips'
-  | 'splitAudioClip'
-  | 'splitMidiClip'
-  | 'trimAudioClip'
-  | 'trimMidiClip'
-  | 'updateAudioClip'
-  | 'updateMidiClip'
->;
-
 interface ClipInteractionOptions {
   session: CreativeSession;
   selectedClipIds: string[];
   setSelectedClipIds: (ids: string[]) => void;
-  commands: ClipCommands;
   tool: ArrangeTool;
   pixelsPerTick: number;
   analyses: Record<string, AudioAnalysis | null>;
   snapTick: (tick: number, temporaryOff?: boolean) => number;
-  commit: ArrangeCommit;
+  commit: EditorCommit;
   setMessage: (message: string) => void;
   setSnapGuide: (tick: number | null) => void;
   onSplitToolUsed?: () => void;
@@ -67,7 +48,6 @@ export function useClipInteractions(options: ClipInteractionOptions) {
     session,
     selectedClipIds,
     setSelectedClipIds,
-    commands,
     tool,
     pixelsPerTick,
     analyses,
@@ -78,6 +58,7 @@ export function useClipInteractions(options: ClipInteractionOptions) {
     onSplitToolUsed,
   } = options;
   const { arrangement } = session;
+  const { api: commands } = useSessionContext();
   const { timebase } = arrangement;
   const startGesture = usePointerGesture();
   const trackAcceptsKind = useCallback(
@@ -96,7 +77,8 @@ export function useClipInteractions(options: ClipInteractionOptions) {
       const next = await commit(commands.splitAudioClip(clip.id, target));
       if (next) {
         setSelectedClipIds([
-          next.arrangement.audioClips.find((item) => item.startTick === target)?.id ?? clip.id,
+          next.canonical.session.arrangement.audioClips.find((item) => item.startTick === target)
+            ?.id ?? clip.id,
         ]);
       }
     },
