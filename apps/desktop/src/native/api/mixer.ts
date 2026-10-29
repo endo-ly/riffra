@@ -6,7 +6,7 @@ import type {
   SendPatch,
   SendPosition,
   SidechainSendPatch,
-} from '@/model/domain';
+} from '@/model/generated';
 import { dispatchControl } from '../invoke';
 
 export interface MixerApi {

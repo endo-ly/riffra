@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import type { HistoryState } from '@/model/domain';
+import type { HistoryState } from '@/model/generated';
 import type { ProjectApi } from '@/native/api/project';
 import type { SessionCommit } from '@/shared/session/commit';
 

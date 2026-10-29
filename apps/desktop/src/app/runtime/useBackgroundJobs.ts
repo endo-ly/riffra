@@ -1,6 +1,6 @@
 import { errorText } from '@/shared/errors';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { BackgroundJobStatus, JobState } from '@/model/domain';
+import type { BackgroundJobStatus, JobState } from '@/model/generated';
 
 import type { JobApi } from '@/native/api/jobs';
 import { logNativeError } from '@/native/invoke';

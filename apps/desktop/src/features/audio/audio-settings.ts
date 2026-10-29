@@ -6,7 +6,7 @@ import type {
   AudioDriverInfo,
   AudioStatus,
   DeviceChannels,
-} from '@/model/domain';
+} from '@/model/generated';
 
 export interface RequestedAudioSettings {
   driver: string;

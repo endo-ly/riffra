@@ -465,4 +465,4 @@ DesktopのTauri command境界とLive HostのControl Serverの機能分担は次�
 - `previewChannelMix` と `previewMasterGainDb` はRuntime-onlyの一時プレビューであり、CanonicalStateを返すMutationではない。確定操作はそれぞれ `updateTrack` / `updateMixBus` と `setMasterGainDb` を使い、結果は正準状態と投影結果を含む `ArrangementMutationResult` を返す
 - 音声系methodは `AudioStatus` を返し、状態遷移と再試行はAudio設定Featureに集約する
 - 失敗は `NativeCommandError` の `code` と `details` で分岐する。Nativeの `kind` / `operation` は `details` 内の `nativeAudio` 情報から参照する
-- テストでは `native-api-fake.ts` を注入し、呼び出し記録・設定済み応答と失敗・イベント発火だけを扱う。制作規則・履歴・validationはCoreのテストが担う
+- テストでは `test/support/fake-native-api.ts` を注入し、呼び出し記録・設定済み応答と失敗・イベント発火だけを扱う。制作規則・履歴・validationはCoreのテストが担う

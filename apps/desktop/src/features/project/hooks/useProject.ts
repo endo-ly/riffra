@@ -1,8 +1,8 @@
 import { errorText } from '@/shared/errors';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { RefObject } from 'react';
-import type { ProjectStore } from '@/app/runtime/project-store';
-import type { BootstrapState, ProjectActivationResult, ProjectState } from '@/model/domain';
+import type { ProjectStore } from '@/features/project/model/project-store';
+import type { BootstrapState, ProjectActivationResult, ProjectState } from '@/model/generated';
 import type { ProjectApi } from '@/native/api/project';
 import {
   openProjectPackage,

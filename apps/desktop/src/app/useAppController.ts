@@ -3,7 +3,7 @@ import { isEditableTypingTarget } from '@/shared/input';
 import { logNativeError } from '@/native/invoke';
 import { defaultNativeApi } from '@/native/api';
 import type { NativeApi } from '@/native/native-api';
-import type { PluginEntry } from '@/model/domain';
+import type { PluginEntry } from '@/model/generated';
 import { useAppRuntime } from '@/app/runtime/useAppRuntime';
 import { useHostConnection } from '@/app/runtime/useHostConnection';
 import { useStartupRuntimeRestore } from '@/app/runtime/useStartupRuntimeRestore';
@@ -14,11 +14,11 @@ import { useTransportController } from '@/features/transport/hooks/useTransportC
 import { useArrangementTransport } from '@/features/transport/hooks/useArrangementTransport';
 import { useLibrary } from '@/features/library/hooks/useLibrary';
 import { useInbox } from '@/features/library/hooks/useInbox';
-import { useInstrumentLibrary } from '@/features/instruments/hooks/useInstrumentLibrary';
+import { useInstrumentLibrary } from '@/features/library/hooks/useInstrumentLibrary';
 import { useAudioSettings } from '@/features/audio/hooks/useAudioSettings';
 import { useMissingDependencies } from '@/features/project/hooks/useMissingDependencies';
 import { useRecording } from '@/features/recording/hooks/useRecording';
-import { usePluginCatalog } from '@/features/plugins/hooks/usePluginCatalog';
+import { usePluginCatalog } from '@/features/library/hooks/usePluginCatalog';
 import { toast } from '@/shared/toasts';
 
 export function useAppController(api: NativeApi = defaultNativeApi) {

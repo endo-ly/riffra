@@ -1,4 +1,4 @@
-import type { ArrangementMutationResult, SidechainSend } from '@/model/domain';
+import type { ArrangementMutationResult, SidechainSend } from '@/model/generated';
 import { useSessionContext } from '@/shared/session/session-context';
 import { SendRow } from './SendRow';
 

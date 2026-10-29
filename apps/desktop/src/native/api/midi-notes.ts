@@ -1,4 +1,4 @@
-import type { ArrangementMutationResult } from '@/model/domain';
+import type { ArrangementMutationResult } from '@/model/generated';
 import type { MidiNoteInput, MidiNotePatch, MidiNoteUpdate } from '@/model/generated';
 import { dispatchControl } from '../invoke';
 

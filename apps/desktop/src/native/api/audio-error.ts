@@ -1,4 +1,4 @@
-import type { AudioStatus } from '@/model/domain';
+import type { AudioStatus } from '@/model/generated';
 import { errorText } from '@/shared/errors';
 import { HostConnectionChangedError, dispatchControl } from '../invoke';
 

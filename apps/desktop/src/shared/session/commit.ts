@@ -1,4 +1,4 @@
-import type { ArrangementMutationResult, CanonicalState } from '@/model/domain';
+import type { ArrangementMutationResult, CanonicalState } from '@/model/generated';
 import { HostConnectionChangedError } from '@/native/invoke';
 import { errorText } from '@/shared/errors';
 import { toast } from '@/shared/toasts';

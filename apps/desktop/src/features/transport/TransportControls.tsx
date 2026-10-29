@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
-import type { CreativeSession, MetronomeSound } from '@/model/domain';
+import type { CreativeSession, MetronomeSound } from '@/model/generated';
 import clsx from 'clsx';
-import { formatClock, formatMusicalPosition } from '@/features/arrange/model/arrange-timeline';
+import { formatClock, formatMusicalPosition } from '@/model/time-format';
 import { TransportIcon } from './TransportIcon';
 import type { SessionSettingsPatch } from '@/model/generated';
 import { useSessionContext } from '@/shared/session/session-context';
-import { tickToMusicalPosition } from '@/shared/session/musical-position';
+import { tickToMusicalPosition } from '@/model/time-format';
 import { ContextMenu } from '@/shared/ui/ContextMenu';
 import styles from './TransportControls.module.css';
 

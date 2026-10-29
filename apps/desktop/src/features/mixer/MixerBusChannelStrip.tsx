@@ -1,5 +1,5 @@
-import type { MixBusPatch } from '@/model/domain';
-import type { MixBus } from '@/model/domain';
+import type { MixBusPatch } from '@/model/generated';
+import type { MixBus } from '@/model/generated';
 import { formatGainDb, formatPan } from '@/shared/audio/mix-format';
 import { useSessionContext } from '@/shared/session/session-context';
 import { ChannelMixSlider } from './ChannelMixSlider';

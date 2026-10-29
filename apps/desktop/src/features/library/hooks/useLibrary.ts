@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { AudioStatus, LibraryAsset } from '@/model/domain';
-import { toAssetId } from '@/native/contracts';
+import type { AudioStatus, LibraryAsset } from '@/model/generated';
+import { toAssetId } from '@/model/asset-id';
 import type { AudioApi } from '@/native/api/audio';
 import type { LibraryApi } from '@/native/api/library';
 import { openMidiFile } from '@/native/dialog';

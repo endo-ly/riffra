@@ -6,9 +6,9 @@ import type {
   CreativeSession,
   ProjectActivationResult,
   ProjectState,
-} from '@/model/domain';
+} from '@/model/generated';
 import { startingAudioStatus } from '@/shared/audio/audio-defaults';
-import type { AudioMeterFrame } from '@/model/domain';
+import type { AudioMeterFrame } from '@/model/generated';
 import {
   markAudioMetersUnavailable,
   publishAudioMeterSummary,
@@ -31,7 +31,7 @@ import {
   clearRecovery,
   keepRecoveredSession,
   type ProjectStore,
-} from './project-store';
+} from '../../features/project/model/project-store';
 
 type AppRuntimeApi = BootstrapApi &
   ProjectApi &

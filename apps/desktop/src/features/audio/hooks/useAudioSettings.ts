@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
-import type { AudioDeviceProbe, AudioDriverConfig, AudioStatus } from '@/model/domain';
+import type { AudioDeviceProbe, AudioDriverConfig, AudioStatus } from '@/model/generated';
 import { reconcileAudioSettings } from '@/features/audio/audio-settings';
 import { audioCommandSucceeded, isEmergencyMuteActive } from '@/shared/audio/audio-safety';
 import type { AudioApi } from '@/native/api/audio';

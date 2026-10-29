@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import type { ArrangementMutationResult, SendPosition } from '@/model/domain';
+import type { ArrangementMutationResult, SendPosition } from '@/model/generated';
 import { Icon } from '@/shared/ui/primitives';
 import controls from '@/shared/ui/controls.module.css';
 import { LevelSlider } from './LevelSlider';

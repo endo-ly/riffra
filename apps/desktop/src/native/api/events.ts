@@ -29,7 +29,7 @@ import type {
   RuntimeProjectionStatus,
   RuntimeRestarted,
   TransportStatus,
-} from '@/model/domain';
+} from '@/model/generated';
 import { listen } from '@tauri-apps/api/event';
 
 function subscribe<T>(eventName: string, callback: (payload: T) => void): () => void {

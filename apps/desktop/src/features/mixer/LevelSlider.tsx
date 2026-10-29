@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
-import type { ArrangementMutationResult } from '@/model/domain';
+import type { ArrangementMutationResult } from '@/model/generated';
 import { formatGainDb } from '@/shared/audio/mix-format';
 import controls from '@/shared/ui/controls.module.css';
 

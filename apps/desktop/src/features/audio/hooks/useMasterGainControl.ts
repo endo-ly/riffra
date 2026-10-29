@@ -1,6 +1,6 @@
 import { useSessionContext } from '@/shared/session/session-context';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { CreativeSession } from '@/model/domain';
+import type { CreativeSession } from '@/model/generated';
 
 interface PendingCommit {
   interactionId: number;

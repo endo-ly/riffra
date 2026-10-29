@@ -3,7 +3,7 @@ import type {
   HostConnectionState,
   HostTarget,
   LocalHostInfo,
-} from '@/model/domain';
+} from '@/model/generated';
 import { listen } from '@tauri-apps/api/event';
 import { adoptHostConnection, HostConnectionChangedError, invoke } from '../invoke';
 export interface HostConnectionBootstrap {

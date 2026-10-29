@@ -1,4 +1,4 @@
-import type { AssetId, LibraryAsset, RecordingAsset } from '@/model/domain';
+import type { AssetId, LibraryAsset, RecordingAsset } from '@/model/generated';
 import { dispatchControl, invokeHost } from '../invoke';
 
 export interface LibraryApi {

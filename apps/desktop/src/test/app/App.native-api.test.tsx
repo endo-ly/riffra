@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import App from '@/app/App';
 import { useRuntimeRestartNotification } from '@/app/runtime/useRuntimeRestartNotification';
 import { useAppUpdater } from '@/app/runtime/useAppUpdater';
-import { FakeNativeApi, fakeAudioStatus } from '@/native/native-api-fake';
+import { FakeNativeApi, fakeAudioStatus } from '@/test/support/fake-native-api';
 import { defaultSession } from '@/native/browser-defaults';
 import { ToastStack } from '@/shared/ui/ToastStack';
 

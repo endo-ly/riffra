@@ -1,7 +1,7 @@
 import { errorText } from '@/shared/errors';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
-import type { AudioStatus, CanonicalState, RecordingAsset } from '@/model/domain';
+import type { AudioStatus, CanonicalState, RecordingAsset } from '@/model/generated';
 import { logNativeError } from '@/native/invoke';
 
 import type { LibraryApi } from '@/native/api/library';

@@ -1,5 +1,5 @@
 import { useMasterGainControl } from '@/features/audio/hooks/useMasterGainControl';
-import type { CreativeSession } from '@/model/domain';
+import type { CreativeSession } from '@/model/generated';
 import { useAudioMeters } from '@/shared/audio/audio-meters';
 import { formatGainDb } from '@/shared/audio/mix-format';
 import { Icon } from '@/shared/ui/primitives';

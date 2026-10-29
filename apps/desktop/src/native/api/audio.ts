@@ -11,7 +11,7 @@ import type {
   AudioDriverConfig,
   AudioStatus,
   DeviceChannels,
-} from '@/model/domain';
+} from '@/model/generated';
 
 import { dispatchControl } from '../invoke';
 import { audioCommandError } from './audio-error';

@@ -1,4 +1,4 @@
-import type { InstrumentCollection, InstrumentLibraryItem } from '@/model/domain';
+import type { InstrumentCollection, InstrumentLibraryItem } from '@/model/generated';
 import { dispatchControl } from '../invoke';
 
 export interface InstrumentLibraryApi {

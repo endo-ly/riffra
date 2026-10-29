@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { BootstrapState, MissingDependency, RecordingAsset } from '@/model/domain';
+import type { BootstrapState, MissingDependency, RecordingAsset } from '@/model/generated';
 
 import type { MissingDependencyApi } from '@/native/api/missing';
 import type { TransportApi } from '@/native/api/transport';

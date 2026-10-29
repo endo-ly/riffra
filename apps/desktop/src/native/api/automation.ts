@@ -3,7 +3,7 @@ import type {
   AutomationInterpolation,
   AutomationPoint,
   AutomationTarget,
-} from '@/model/domain';
+} from '@/model/generated';
 import { dispatchControl } from '../invoke';
 
 export interface AutomationApi {

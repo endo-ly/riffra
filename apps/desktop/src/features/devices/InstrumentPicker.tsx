@@ -1,0 +1,152 @@
+import { errorText } from '@/shared/errors';
+import { useEffect, useMemo, useState } from 'react';
+import type { InstrumentLibraryItem, PluginEntry } from '@/model/generated';
+
+import { useSessionContext } from '@/shared/session/session-context';
+import { matchesInstrumentQuery } from '@/model/instrument-search';
+import styles from './Picker.module.css';
+
+type QuickPickerInstrument = Pick<InstrumentLibraryItem, 'id' | 'name' | 'description' | 'origin'>;
+
+interface InstrumentPickerProps {
+  instruments: QuickPickerInstrument[];
+  plugins?: PluginEntry[];
+  onSelectInstrument: (instrumentId: string) => void;
+  onSelectVst3: (plugin: PluginEntry) => void;
+  onClose: () => void;
+}
+
+export function InstrumentPicker(props: InstrumentPickerProps) {
+  const { api } = useSessionContext();
+  const { onClose } = props;
+  const [scannedPlugins, setScannedPlugins] = useState<PluginEntry[]>([]);
+  const [loading, setLoading] = useState(!props.plugins);
+  const [error, setError] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
+
+  useEffect(() => {
+    if (props.plugins) {
+      setScannedPlugins([]);
+      setLoading(false);
+      setError(null);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    api
+      .scanVst3Folder()
+      .then((report) => {
+        if (cancelled) return;
+        setScannedPlugins(report.plugins);
+        setError(null);
+      })
+      .catch((reason) => {
+        if (cancelled) return;
+        setError(errorText(reason));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [api, props.plugins]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [onClose]);
+
+  const plugins = props.plugins ?? scannedPlugins;
+  const trimmedQuery = query.trim().toLowerCase();
+  const filteredInstruments = useMemo(
+    () =>
+      props.instruments.filter((instrument) => matchesInstrumentQuery(instrument, trimmedQuery)),
+    [props.instruments, trimmedQuery],
+  );
+  const filteredPlugins = useMemo(
+    () =>
+      plugins.filter(
+        (plugin) =>
+          plugin.role === 'instrument' &&
+          (!trimmedQuery ||
+            plugin.name.toLowerCase().includes(trimmedQuery) ||
+            (plugin.vendor ?? '').toLowerCase().includes(trimmedQuery)),
+      ),
+    [plugins, trimmedQuery],
+  );
+
+  return (
+    <div
+      className={styles.pluginPickerOverlay}
+      onClick={(event) => {
+        if (event.target === event.currentTarget) props.onClose();
+      }}
+    >
+      <div
+        className={styles.pluginPicker}
+        role="dialog"
+        aria-label="Choose Instrument"
+        aria-modal="true"
+      >
+        <header>
+          <strong>Choose Instrument</strong>
+          <button type="button" className={styles.pluginPickerCancel} onClick={props.onClose}>
+            Cancel
+          </button>
+        </header>
+        <input
+          autoFocus
+          type="text"
+          placeholder="Search instruments and plugins..."
+          value={query}
+          onChange={(event) => setQuery(event.currentTarget.value)}
+        />
+        <div className={styles.pluginPickerList}>
+          <strong>Instruments</strong>
+          {filteredInstruments.map((instrument) => (
+            <button
+              key={instrument.id}
+              type="button"
+              className={styles.pluginPickerItem}
+              aria-label={`${instrument.name}${instrument.description ? ` — ${instrument.description}` : ''}`}
+              onClick={() => props.onSelectInstrument(instrument.id)}
+            >
+              <span>{instrument.name}</span>
+              {instrument.description && <small>{instrument.description}</small>}
+            </button>
+          ))}
+          {!filteredInstruments.length && (
+            <p className={styles.pluginPickerEmpty}>No instruments match your search.</p>
+          )}
+
+          <strong>External Instruments</strong>
+          {loading && <p className={styles.pluginPickerEmpty}>Scanning VST3 instruments...</p>}
+          {error && <p className={styles.pluginPickerError}>{error}</p>}
+          {!loading && !error && !filteredPlugins.length && (
+            <p className={styles.pluginPickerEmpty}>
+              {trimmedQuery
+                ? 'No external instruments match your search.'
+                : 'No VST3 instruments found.'}
+            </p>
+          )}
+          {filteredPlugins.map((plugin) => (
+            <button
+              key={plugin.id}
+              type="button"
+              className={styles.pluginPickerItem}
+              aria-label={`${plugin.name} — ${plugin.vendor ?? 'Unknown vendor'}`}
+              onClick={() => props.onSelectVst3(plugin)}
+            >
+              <span>{plugin.name}</span>
+              <small>{plugin.vendor ?? 'Unknown vendor'}</small>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}

@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ProjectTimebase } from '@/model/domain';
-import type { TransportStatus } from '@/model/domain';
+import type { ProjectTimebase } from '@/model/generated';
+import type { TransportStatus } from '@/model/generated';
 import type { AudioApi } from '@/native/api/audio';
 import type { NativeEventApi } from '@/native/api/events';
-import { secondsToTicks, ticksToSeconds } from '@/shared/session/timebase';
+import { secondsToTicks, ticksToSeconds } from '@/model/timebase';
 /** Arrangement Transport state shared by the Global Control Bar and the Arrange editors. */
 export type ArrangementTransport = ReturnType<typeof useArrangementTransport>;
 
@@ -96,7 +96,7 @@ export function useArrangementTransport(
       );
       // The playhead itself is animated by a tiny DOM-only component. The
       // editor needs a React snapshot only for the toolbar clock and editing
-      // actions; rebuilding every ArrangeTrack on every animation frame made
+      // actions; rebuilding every TimelineTrack on every animation frame made
       // playback consume the WebView's entire event loop.
       displayTickRef.current = tick;
       if (now - lastUiUpdate >= 250) {

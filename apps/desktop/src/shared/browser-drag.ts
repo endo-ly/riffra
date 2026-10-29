@@ -1,4 +1,4 @@
-import type { AssetId, PluginRole } from '@/model/domain';
+import type { AssetId, PluginRole } from '@/model/generated';
 
 export const RIFFRA_ASSET_MIME = 'application/x-riffra-asset';
 export const RIFFRA_INSTRUMENT_MIME = 'application/x-riffra-instrument';

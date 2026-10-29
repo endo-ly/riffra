@@ -23,8 +23,8 @@ export default {
       files: [
         'apps/desktop/src/styles/tokens.css',
         'apps/desktop/src/app/BrandTokens.module.css',
-        'apps/desktop/src/features/arrange/PianoKeyTokens.module.css',
-        'apps/desktop/src/features/arrange/TimelineTokens.module.css',
+        'apps/desktop/src/shared/ui/PianoKeyTokens.module.css',
+        'apps/desktop/src/shared/ui/TimelineTokens.module.css',
       ],
       rules: { 'color-no-hex': null, 'color-named': null },
     },
@@ -35,9 +35,10 @@ export default {
        * raw values never compete across panels.
        */
       files: [
-        'apps/desktop/src/features/arrange/WorkspaceArrange.module.css',
-        'apps/desktop/src/features/arrange/midi-editor/MidiEditorPanel.module.css',
-        'apps/desktop/src/features/arrange/play-surface/MusicalTypingKeyboard.module.css',
+        'apps/desktop/src/app/workspace/EditorWorkspace.module.css',
+        'apps/desktop/src/features/timeline/Timeline.module.css',
+        'apps/desktop/src/features/midi-editor/MidiEditorPanel.module.css',
+        'apps/desktop/src/features/live-input/MusicalTypingKeyboard.module.css',
       ],
       rules: {
         'declaration-property-value-allowed-list': { 'font-size': fontSizeScale },

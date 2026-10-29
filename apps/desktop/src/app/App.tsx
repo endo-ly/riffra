@@ -11,10 +11,10 @@ import {
 } from 'react';
 import { defaultNativeApi } from '@/native/api';
 import { useAppController } from '@/app/useAppController';
-import { useArrangeShell } from '@/features/arrange/hooks/useArrangeShell';
-import { WorkspaceArrange } from '@/features/arrange/WorkspaceArrange';
-import { PropertiesPanel } from '@/features/arrange/inspector/PropertiesPanel';
-import { BrowserPanel } from '@/features/browser/BrowserPanel';
+import { useWorkspaceController } from '@/app/workspace/useWorkspaceController';
+import { EditorWorkspace } from '@/app/workspace/EditorWorkspace';
+import { PropertiesPanel } from '@/features/inspector/PropertiesPanel';
+import { BrowserPanel } from '@/features/library/BrowserPanel';
 import { MissingDependencies } from '@/features/project/MissingDependencies';
 import { ResizeHandle } from '@/shared/ui/ResizeHandle';
 import { AudioSettingsDialog } from '@/features/audio/AudioSettingsDialog';
@@ -154,7 +154,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     toggleRecording,
     browser,
   } = useAppController(api);
-  const arrange = useArrangeShell(
+  const arrange = useWorkspaceController(
     api,
     session,
     commit,
@@ -530,8 +530,8 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
                   audio={audio}
                   recordingCommandPending={recordingCommandPending}
                   session={session}
-                  arrangeSelection={arrange.selection}
-                  setArrangeSelection={arrange.setSelection}
+                  editorSelection={arrange.selection}
+                  setEditorSelection={arrange.setSelection}
                   onRecordAnotherTake={(recordingSessionId) =>
                     void startRecordingNow(recordingSessionId)
                   }
@@ -554,7 +554,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
               inert={projectSwitching}
               disabled={!hostConnected || projectSwitching}
             >
-              <WorkspaceArrange
+              <EditorWorkspace
                 hostConnected={hostConnected}
                 lower={arrange.lower}
                 onDisableMissingPlugin={disableMissingPluginDevice}

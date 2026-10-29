@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react';
-import type { CreativeSession, TransportStatus } from '@/model/domain';
+import type { CreativeSession, TransportStatus } from '@/model/generated';
 import { logNativeError } from '@/native/invoke';
 
 import type { TransportApi } from '@/native/api/transport';

@@ -1,4 +1,4 @@
-import type { CreativeSession } from '@/model/domain';
+import type { CreativeSession } from '@/model/generated';
 import { useAudioMeters } from '@/shared/audio/audio-meters';
 import { Meter } from '@/shared/ui/primitives';
 import { useMasterGainControl } from './hooks/useMasterGainControl';
