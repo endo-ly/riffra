@@ -19,7 +19,7 @@ import {
   type TrackSize,
 } from '@/features/arrange/model/arrange-timeline';
 import { isBrowserItemDrag } from '@/features/arrange/hooks/useArrangeDrop';
-import { resolveTrackColor } from '../model/track-colors';
+import { resolveTrackColor } from '@/model/track-color';
 import { formatGainDb, formatPan } from '@/shared/audio/mix-format';
 import { Icon } from '@/shared/ui/primitives';
 import controls from '@/shared/ui/controls.module.css';

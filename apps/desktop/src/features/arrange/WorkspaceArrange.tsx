@@ -13,14 +13,14 @@ import { ArrangeRuler } from './timeline/ArrangeRuler';
 import { ArrangeToolbar } from './timeline/ArrangeToolbar';
 import { ArrangeTrack } from './timeline/ArrangeTrack';
 import { AutomationLaneEditor } from './timeline/AutomationLaneEditor';
-import { automationOwner } from './model/automation-targets';
+import { automationOwner } from '@/model/automation';
 import type { MidiGhostNote } from './midi-editor/MidiEditorPanel';
 import { resolveDeviceTarget } from './devices/device-target';
 import { DevicesPanel } from './devices/DevicesPanel';
 import { ArrangeLowerArea } from './ArrangeLowerArea';
 import { ArrangeOverlays, type ArrangeConfirmRequest } from './ArrangeOverlays';
 import { ArrangeMidiEditor } from './ArrangeMidiEditor';
-import { resolveTrackColor } from './model/track-colors';
+import { resolveTrackColor } from '@/model/track-color';
 import { ArrangePlayhead } from './components/ArrangePlayhead';
 import { PlaySurface } from './play-surface/PlaySurface';
 import { midiNoteName } from '@/shared/midi';
@@ -39,7 +39,8 @@ import {
 } from '@/features/arrange/model/arrange-timeline';
 import { HostConnectionChangedError } from '@/native/invoke';
 import { isEditableTypingTarget } from '@/shared/input';
-import { useArrangeEditor, type ArrangeSelection } from '@/features/arrange/hooks/useArrangeEditor';
+import { useArrangeEditor } from '@/features/arrange/hooks/useArrangeEditor';
+import { ownerSelection, selectionOwner, type ArrangeSelection } from './model/selection';
 import { useArrangeStatusToast } from '@/features/arrange/hooks/useArrangeStatusToast';
 import type { useArrangeLowerAreaController } from '@/features/arrange/hooks/useArrangeLowerAreaController';
 import { useArrangeRulerController } from '@/features/arrange/hooks/useArrangeRulerController';
@@ -202,13 +203,8 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   const selectedClipIds = props.selection.kind === 'clips' ? props.selection.clipIds : [];
   const selectedTrackId = props.selection.kind === 'track' ? props.selection.trackId : null;
   const deviceTarget = useMemo(() => {
-    const selection = props.selection;
-    if (selection.kind === 'master') return resolveDeviceTarget(arrangement, { kind: 'master' });
-    if (selection.kind === 'bus')
-      return resolveDeviceTarget(arrangement, { kind: 'bus', id: selection.busId });
-    if (selection.kind === 'track')
-      return resolveDeviceTarget(arrangement, { kind: 'track', id: selection.trackId });
-    return null;
+    const owner = selectionOwner(props.selection);
+    return owner ? resolveDeviceTarget(arrangement, owner) : null;
   }, [arrangement, props.selection]);
 
   const focusedTrackId = props.focusedTrackId;
@@ -874,23 +870,9 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
             session={props.session}
             selectedTrackId={selectedTrackId}
             selectedOwner={deviceTarget?.owner ?? null}
-            onSelectOwner={(owner) =>
-              props.setSelection(
-                owner.kind === 'master'
-                  ? { kind: 'master' }
-                  : owner.kind === 'bus'
-                    ? { kind: 'bus', busId: owner.id }
-                    : { kind: 'track', trackId: owner.id },
-              )
-            }
+            onSelectOwner={(owner) => props.setSelection(ownerSelection(owner))}
             onOpenOwnerDevices={(owner) => {
-              props.setSelection(
-                owner.kind === 'master'
-                  ? { kind: 'master' }
-                  : owner.kind === 'bus'
-                    ? { kind: 'bus', busId: owner.id }
-                    : { kind: 'track', trackId: owner.id },
-              );
+              props.setSelection(ownerSelection(owner));
               lower.openDevices();
             }}
             missingDeviceIds={missingDeviceIds}

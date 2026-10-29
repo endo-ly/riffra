@@ -11,7 +11,7 @@ import type {
 } from '@/model/generated';
 import { useSessionContext } from '@/shared/session/session-context';
 import { Toolbar } from '@/shared/ui/Toolbar';
-import { resolveTrackColor } from '../model/track-colors';
+import { resolveTrackColor } from '@/model/track-color';
 import { DeviceParameterEditor } from './DeviceParameterEditor';
 import { DeviceChain } from './DeviceChain';
 import { InstrumentMidiSettingsEditor } from './InstrumentMidiSettingsEditor';

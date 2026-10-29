@@ -3,7 +3,7 @@ import { TestSessionProvider } from '@/test/session-provider';
 
 import type { AudioClip, MidiClip } from '@/model/generated';
 import { canonicalState, defaultSession } from '@/native/browser-defaults';
-import { toAssetId } from '@/native/contracts';
+import { toAssetId } from '@/model/asset-id';
 import { FakeNativeApi, fakeAudioStatus } from '@/native/native-api-fake';
 import '@testing-library/jest-dom/vitest';
 import { cleanup, render, screen } from '@testing-library/react';

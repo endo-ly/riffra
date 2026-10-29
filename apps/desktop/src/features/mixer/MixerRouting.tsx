@@ -1,5 +1,5 @@
-import { sidechainTargetName } from '@/features/arrange/model/automation-targets';
-import { resolveTrackColor } from '@/features/arrange/model/track-colors';
+import { sidechainTargetName } from '@/model/automation';
+import { resolveTrackColor } from '@/model/track-color';
 import type {
   Arrangement,
   ArrangementMutationResult,

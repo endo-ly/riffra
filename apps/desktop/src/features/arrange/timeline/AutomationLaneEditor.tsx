@@ -13,7 +13,7 @@ import {
   automationOptions,
   automationOwner,
   automationTargetKey,
-} from '../model/automation-targets';
+} from '@/model/automation';
 import { AutomationLaneView } from './AutomationLaneView';
 
 interface Props {

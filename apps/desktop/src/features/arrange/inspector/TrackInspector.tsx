@@ -9,7 +9,7 @@ import { useSessionContext } from '@/shared/session/session-context';
 import { Icon } from '@/shared/ui/primitives';
 import clsx from 'clsx';
 import { useCallback, useEffect, useState, type CSSProperties } from 'react';
-import { resolveTrackColor, TRACK_COLOR_PALETTE } from '../model/track-colors';
+import { resolveTrackColor, TRACK_COLOR_PALETTE } from '@/model/track-color';
 import styles from './Inspector.module.css';
 import { MixValueField } from './MixValueField';
 

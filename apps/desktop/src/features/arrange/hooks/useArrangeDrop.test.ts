@@ -9,7 +9,7 @@ import type { DragEvent } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import type { ArrangementMutationResult } from '@/model/generated';
 import { HostConnectionChangedError } from '@/native/invoke';
-import { toAssetId } from '@/native/contracts';
+import { toAssetId } from '@/model/asset-id';
 import {
   RIFFRA_ASSET_MIME,
   RIFFRA_INSTRUMENT_MIME,

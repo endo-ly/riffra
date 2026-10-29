@@ -1,4 +1,4 @@
-import type { ArrangeSelection } from '@/features/arrange/hooks/useArrangeEditor';
+import type { ArrangeSelection } from '@/features/arrange/model/selection';
 import type {
   ArrangementMutationResult,
   AudioTakeVariant,

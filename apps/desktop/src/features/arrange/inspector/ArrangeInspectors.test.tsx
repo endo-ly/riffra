@@ -2,10 +2,10 @@ import { TestSessionProvider } from '@/test/session-provider';
 import type { ReactElement, ReactNode } from 'react';
 // @vitest-environment jsdom
 
-import type { ArrangeSelection } from '@/features/arrange/hooks/useArrangeEditor';
+import type { ArrangeSelection } from '@/features/arrange/model/selection';
 import type { CreativeSession } from '@/model/generated';
 import { canonicalState, defaultSession } from '@/native/browser-defaults';
-import { toAssetId } from '@/native/contracts';
+import { toAssetId } from '@/model/asset-id';
 import { FakeNativeApi, fakeAudioStatus } from '@/native/native-api-fake';
 import '@testing-library/jest-dom/vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';

@@ -3,7 +3,7 @@ import type { CreativeSession } from '@/model/generated';
 import type { NativeApi } from '@/native/native-api';
 import { HostConnectionChangedError, logNativeError } from '@/native/invoke';
 import { useArrangeLowerAreaController } from './useArrangeLowerAreaController';
-import type { ArrangeSelection } from './useArrangeEditor';
+import type { ArrangeSelection } from '../model/selection';
 import type { SessionCommit } from '@/shared/session/commit';
 import { toast } from '@/shared/toasts';
 import {

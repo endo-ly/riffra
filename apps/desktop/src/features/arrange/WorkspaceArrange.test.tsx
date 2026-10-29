@@ -19,12 +19,12 @@ import {
   type Track,
 } from '@/model/generated';
 import { canonicalState, defaultSession } from '@/native/browser-defaults';
-import { toAssetId } from '@/native/contracts';
+import { toAssetId } from '@/model/asset-id';
 import type { TransportStatus } from '@/model/generated';
 import { FakeNativeApi } from '@/native/native-api-fake';
-import type { ArrangeSelection } from '@/features/arrange/hooks/useArrangeEditor';
+import type { ArrangeSelection } from '@/features/arrange/model/selection';
 import { TRACK_HEADER_WIDTH } from '@/features/arrange/model/arrange-timeline';
-import { TRACK_COLOR_PALETTE } from '@/features/arrange/model/track-colors';
+import { TRACK_COLOR_PALETTE } from '@/model/track-color';
 import { ToastStack } from '@/shared/ui/ToastStack';
 
 const noopRetryRuntimeProjection = async (): Promise<void> => undefined;

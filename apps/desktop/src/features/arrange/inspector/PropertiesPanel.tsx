@@ -1,4 +1,4 @@
-import type { ArrangeSelection } from '@/features/arrange/hooks/useArrangeEditor';
+import type { ArrangeSelection } from '@/features/arrange/model/selection';
 import { clipDurationTicks } from '@/features/arrange/model/arrange-timeline';
 import type { AudioStatus, CreativeSession } from '@/model/generated';
 import { tickToMusicalPosition } from '@/model/time-format';

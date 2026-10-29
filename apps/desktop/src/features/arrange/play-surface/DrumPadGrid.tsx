@@ -1,6 +1,6 @@
 import { useRef, type CSSProperties } from 'react';
 import { DRUM_PADS, type DrumCategory } from '@/features/arrange/play-surface/drum-map';
-import { TRACK_COLOR_PALETTE } from '@/features/arrange/model/track-colors';
+import { TRACK_COLOR_PALETTE } from '@/model/track-color';
 import styles from './DrumPadGrid.module.css';
 
 /** Pads glow in a category color drawn from the shared track palette. */

@@ -11,8 +11,8 @@ import controls from '@/shared/ui/controls.module.css';
 import { useSessionContext } from '@/shared/session/session-context';
 import { useDeviceDetails } from './useDeviceDetails';
 import { DeviceSidechainEditor } from './DeviceSidechainEditor';
-import { automationValueAt } from '@/features/arrange/model/automation-value';
-import { useAutomationValueDisplay } from '@/features/arrange/model/useAutomationValueDisplay';
+import { automationValueAt } from '@/model/automation';
+import { useAutomationValueDisplay } from '@/shared/useAutomationValueDisplay';
 import styles from './Devices.module.css';
 
 interface DeviceParameterEditorProps {

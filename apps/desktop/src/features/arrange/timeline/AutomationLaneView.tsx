@@ -7,10 +7,9 @@ import type {
   AutomationTarget,
   ProjectTimebase,
 } from '@/model/generated';
-import { automationTargetKey, type AutomationOption } from '../model/automation-targets';
+import { automationTargetKey, automationValueAt, type AutomationOption } from '@/model/automation';
 import { isEditableTypingTarget } from '@/shared/input';
-import { automationValueAt } from '@/features/arrange/model/automation-value';
-import { useAutomationValueDisplay } from '@/features/arrange/model/useAutomationValueDisplay';
+import { useAutomationValueDisplay } from '@/shared/useAutomationValueDisplay';
 import styles from '../WorkspaceArrange.module.css';
 
 const HEIGHT = 128;

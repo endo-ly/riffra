@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { toAssetId } from '@/native/contracts';
+import { toAssetId } from '@/model/asset-id';
 import { resolvePlacementTarget, type BrowserPlacement } from './browser-placement';
 
 const instrument: BrowserPlacement = { kind: 'instrument', instrumentId: 'bass', name: 'Bass' };

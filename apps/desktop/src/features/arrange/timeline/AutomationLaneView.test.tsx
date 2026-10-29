@@ -5,8 +5,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { useState } from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { AutomationLane } from '@/model/generated';
-import { automationValueAt } from '../model/automation-value';
-import type { AutomationOption } from '../model/automation-targets';
+import { automationValueAt, type AutomationOption } from '@/model/automation';
 import { AutomationLaneView } from './AutomationLaneView';
 
 afterEach(() => {

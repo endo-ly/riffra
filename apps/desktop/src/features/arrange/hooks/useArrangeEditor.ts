@@ -1,6 +1,7 @@
 import { snapToBar } from '@/model/timebase';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AudioAnalysis, CreativeSession } from '@/model/generated';
+import type { ArrangeSelection } from '../model/selection';
 import {
   timelineObjectEndTick,
   snapGridTicks,
@@ -12,13 +13,6 @@ import { useClipInteractions } from './useClipInteractions';
 import { useSessionContext } from '@/shared/session/session-context';
 import type { SessionCommit } from '@/shared/session/commit';
 export type EditorCommit = SessionCommit;
-
-export type ArrangeSelection =
-  | { kind: 'none' }
-  | { kind: 'track'; trackId: string }
-  | { kind: 'clips'; clipIds: string[] }
-  | { kind: 'bus'; busId: string }
-  | { kind: 'master' };
 
 interface UseArrangeEditorOptions {
   session: CreativeSession;

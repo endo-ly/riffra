@@ -7,7 +7,7 @@ import type { ContextMenuItem } from '@/shared/ui/ContextMenu';
 import { Icon } from '@/shared/ui/primitives';
 import clsx from 'clsx';
 import { useEffect, useState, type CSSProperties } from 'react';
-import { resolveTrackColorById } from '../model/track-colors';
+import { resolveTrackColorById } from '@/model/track-color';
 import { ClipToggles } from './ClipToggles';
 import styles from './Inspector.module.css';
 import { InspectorMenu } from './InspectorMenu';

@@ -1,4 +1,4 @@
-import { resolveTrackColor } from '@/features/arrange/model/track-colors';
+import { resolveTrackColor } from '@/model/track-color';
 import type { AutomationLane, Track } from '@/model/generated';
 import { formatGainDb, formatPan } from '@/shared/audio/mix-format';
 import { useSessionContext } from '@/shared/session/session-context';

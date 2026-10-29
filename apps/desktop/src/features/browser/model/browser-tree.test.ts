@@ -5,7 +5,7 @@ import type {
   PluginEntry,
   RecordingAsset,
 } from '@/model/generated';
-import { toAssetId } from '@/native/contracts';
+import { toAssetId } from '@/model/asset-id';
 import {
   browserItemSummary,
   buildBrowserTree,
