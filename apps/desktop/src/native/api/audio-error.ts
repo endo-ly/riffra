@@ -1,5 +1,5 @@
-import { errorText } from '@/shared/errors';
 import type { AudioStatus } from '@/model/domain';
+import { errorText } from '@/shared/errors';
 import { HostConnectionChangedError, dispatchControl } from '../invoke';
 
 export async function audioCommandError(

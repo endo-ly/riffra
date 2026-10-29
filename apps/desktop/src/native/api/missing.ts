@@ -1,24 +1,38 @@
 import type { ArrangementMutationResult, AssetId, MissingDependency } from '@/model/domain';
 import { dispatchControl } from '../invoke';
 
-export async function getMissingDependencies(): Promise<MissingDependency[]> {
+export interface MissingDependencyApi {
+  getMissingDependencies(): Promise<MissingDependency[]>;
+  relinkMissingDependency(assetId: AssetId, newPath: string): Promise<ArrangementMutationResult>;
+  disableMissingPlugin(deviceId: string): Promise<ArrangementMutationResult>;
+  replaceMissingTrackPlugin(deviceId: string, newPath: string): Promise<ArrangementMutationResult>;
+}
+
+async function getMissingDependencies(): Promise<MissingDependency[]> {
   return dispatchControl({ command: 'missing.list', params: {} });
 }
 
-export async function relinkMissingDependency(
+async function relinkMissingDependency(
   assetId: AssetId,
   newPath: string,
 ): Promise<ArrangementMutationResult> {
   return dispatchControl({ command: 'missing.relink', params: { assetId, newPath } });
 }
 
-export async function disableMissingPlugin(deviceId: string): Promise<ArrangementMutationResult> {
+async function disableMissingPlugin(deviceId: string): Promise<ArrangementMutationResult> {
   return dispatchControl({ command: 'missing.disable-plugin', params: { deviceId } });
 }
 
-export async function replaceMissingTrackPlugin(
+async function replaceMissingTrackPlugin(
   deviceId: string,
   newPath: string,
 ): Promise<ArrangementMutationResult> {
   return dispatchControl({ command: 'missing.replace-plugin', params: { deviceId, newPath } });
 }
+
+export const missingDependencyApi: MissingDependencyApi = {
+  getMissingDependencies,
+  relinkMissingDependency,
+  disableMissingPlugin,
+  replaceMissingTrackPlugin,
+};

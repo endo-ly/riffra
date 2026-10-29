@@ -1,6 +1,14 @@
-import type { AudioAnalysis, AssetId } from '@/model/domain';
+import type { AssetId, AudioAnalysis } from '@/model/domain';
 import { dispatchControl } from '../invoke';
 
-export async function analyzeAsset(assetId: AssetId): Promise<AudioAnalysis | null> {
+export interface AnalysisApi {
+  analyzeAsset(assetId: AssetId): Promise<AudioAnalysis>;
+}
+
+async function analyzeAsset(assetId: AssetId): Promise<AudioAnalysis> {
   return dispatchControl({ command: 'analysis.start', params: { assetId, path: null } });
 }
+
+export const analysisApi: AnalysisApi = {
+  analyzeAsset,
+};

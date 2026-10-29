@@ -1,78 +1,85 @@
 import type {
   ArrangementMutationResult,
-  AssetId,
-  HistoryState,
-  MetronomeSound,
   ProjectActivationResult,
-  ProjectState,
   ProjectExport,
+  ProjectState,
 } from '@/model/domain';
-import { dispatchControl, invokeHost } from '../invoke';
+import type { SessionSettingsPatch } from '@/model/generated';
+import { dispatchControl } from '../invoke';
 
-export async function undoSession(): Promise<ArrangementMutationResult> {
+export interface ProjectApi {
+  undoSession(): Promise<ArrangementMutationResult>;
+  redoSession(): Promise<ArrangementMutationResult>;
+  restoreRecoveryGeneration(fileName: string): Promise<ArrangementMutationResult>;
+  exportProject(path: string): Promise<ProjectExport>;
+  listProjects(): Promise<ProjectState>;
+  createProject(name?: string): Promise<ProjectActivationResult>;
+  openProject(projectId: string): Promise<ProjectActivationResult>;
+  renameProject(name: string): Promise<ProjectState>;
+  importProject(path: string): Promise<ProjectActivationResult>;
+  updateSessionSettings(patch: SessionSettingsPatch): Promise<ArrangementMutationResult>;
+  importScore(path: string, bindings: Record<string, string>): Promise<ProjectActivationResult>;
+}
+
+async function undoSession(): Promise<ArrangementMutationResult> {
   return dispatchControl({ command: 'undo', params: {} });
 }
 
-export async function redoSession(): Promise<ArrangementMutationResult> {
+async function redoSession(): Promise<ArrangementMutationResult> {
   return dispatchControl({ command: 'redo', params: {} });
 }
 
-export async function getHistoryState(): Promise<HistoryState> {
-  return dispatchControl({ command: 'history.get', params: {} });
-}
-
-export async function restoreRecoveryGeneration(
-  fileName: string,
-): Promise<ArrangementMutationResult | null> {
+async function restoreRecoveryGeneration(fileName: string): Promise<ArrangementMutationResult> {
   return dispatchControl({ command: 'project.restore-generation', params: { fileName } });
 }
 
-export async function exportProject(path: string): Promise<ProjectExport | null> {
+async function exportProject(path: string): Promise<ProjectExport> {
   return dispatchControl({ command: 'project.export', params: { output: path } });
 }
 
-export async function listProjects(): Promise<ProjectState> {
+async function listProjects(): Promise<ProjectState> {
   return dispatchControl({ command: 'project.list', params: {} });
 }
 
-export async function createProject(name?: string): Promise<ProjectActivationResult> {
+async function createProject(name?: string): Promise<ProjectActivationResult> {
   return dispatchControl({ command: 'project.create', params: { name: name ?? null } });
 }
 
-export async function openProject(projectId: string): Promise<ProjectActivationResult> {
+async function openProject(projectId: string): Promise<ProjectActivationResult> {
   return dispatchControl({ command: 'project.open', params: { projectId } });
 }
 
-export async function renameProject(name: string): Promise<ProjectState> {
+async function renameProject(name: string): Promise<ProjectState> {
   return dispatchControl({ command: 'project.rename', params: { name } });
 }
 
-export async function importProject(path: string): Promise<ProjectActivationResult | null> {
+async function importProject(path: string): Promise<ProjectActivationResult> {
   return dispatchControl({ command: 'project.import', params: { path } });
 }
 
-export async function importMidiFile(path: string, name?: string): Promise<AssetId | null> {
-  return dispatchControl({ command: 'asset.import-midi', params: { path, name: name ?? null } });
-}
-
-export async function importMidiBytes(name: string, bytes: number[]): Promise<AssetId | null> {
-  return invokeHost<AssetId | null>('import_midi_bytes', { name, bytes });
-}
-
-export async function updateSessionSettings(patch: {
-  projectName?: string | null;
-  loopEnabled?: boolean;
-  countInBeats?: number;
-  metronomeEnabled?: boolean;
-  metronomeSound?: MetronomeSound;
-  note?: string;
-}): Promise<ArrangementMutationResult> {
+async function updateSessionSettings(
+  patch: SessionSettingsPatch,
+): Promise<ArrangementMutationResult> {
   return dispatchControl({ command: 'session.settings.update', params: patch });
 }
 
-export async function importScore(
+async function importScore(
   path: string,
   bindings: Record<string, string>,
-): Promise<ProjectActivationResult | null> {
+): Promise<ProjectActivationResult> {
   return dispatchControl({ command: 'project.import-score', params: { path, bindings } });
 }
+
+export const projectApi: ProjectApi = {
+  undoSession,
+  redoSession,
+  restoreRecoveryGeneration,
+  exportProject,
+  listProjects,
+  createProject,
+  openProject,
+  renameProject,
+  importProject,
+  updateSessionSettings,
+  importScore,
+};

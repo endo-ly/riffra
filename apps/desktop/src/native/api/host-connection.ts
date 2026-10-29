@@ -1,11 +1,30 @@
-import { listen } from '@tauri-apps/api/event';
-import type { HostConnectionState, HostTarget, LocalHostInfo } from '@/model/domain';
-import { adoptHostConnection, invoke } from '../invoke';
 import type {
-  HostConnectionBootstrap,
-  HostConnectionChangedEvent,
-  HostConnectionApi,
-} from '../native-api';
+  BootstrapState,
+  HostConnectionState,
+  HostTarget,
+  LocalHostInfo,
+} from '@/model/domain';
+import { listen } from '@tauri-apps/api/event';
+import { adoptHostConnection, invoke } from '../invoke';
+export interface HostConnectionBootstrap {
+  state: HostConnectionState;
+  bootstrap: BootstrapState;
+}
+
+export interface HostConnectionChangedEvent {
+  state: HostConnectionState;
+  bootstrap: BootstrapState | null;
+}
+
+export interface HostConnectionApi {
+  getHostConnectionState(): Promise<HostConnectionState>;
+  listLocalHosts(): Promise<LocalHostInfo[]>;
+  switchHost(target: HostTarget): Promise<HostConnectionBootstrap>;
+  reconnectHost(): Promise<HostConnectionBootstrap>;
+  onHostConnectionChanged(
+    callback: (event: HostConnectionChangedEvent) => void,
+  ): Promise<() => void>;
+}
 
 export const hostConnectionApi: HostConnectionApi = {
   async getHostConnectionState(): Promise<HostConnectionState> {
@@ -39,11 +58,3 @@ export const hostConnectionApi: HostConnectionApi = {
     });
   },
 };
-
-export const {
-  getHostConnectionState,
-  listLocalHosts,
-  switchHost,
-  reconnectHost,
-  onHostConnectionChanged,
-} = hostConnectionApi;

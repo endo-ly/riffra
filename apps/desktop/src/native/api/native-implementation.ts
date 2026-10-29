@@ -1,36 +1,50 @@
 import type { NativeApi } from '../native-api';
-import * as analysisApi from './analysis';
-import * as arrangeApi from './arrange';
-import * as audioApi from './audio';
-import * as bootstrapApi from './bootstrap';
-import * as devicesApi from './devices';
+import { analysisApi } from './analysis';
+import { audioApi } from './audio';
+import { automationApi } from './automation';
+import { bootstrapApi } from './bootstrap';
+import { clipsApi } from './clips';
+import { deviceApi } from './devices';
 import { eventApi } from './events';
-import * as jobsApi from './jobs';
 import { hostConnectionApi } from './host-connection';
-import * as libraryApi from './library';
-import * as missingApi from './missing';
-import * as projectApi from './project';
-import * as recordingApi from './recording';
-import * as renderApi from './render';
-import * as transportApi from './transport';
-import * as updaterApi from './updater';
+import { instrumentLibraryApi } from './instruments';
+import { jobsApi } from './jobs';
+import { libraryApi } from './library';
+import { midiNoteApi } from './midi-notes';
+import { missingDependencyApi } from './missing';
+import { mixerApi } from './mixer';
+import { projectApi } from './project';
+import { recordingApi } from './recording';
+import { renderApi } from './render';
+import { takesApi } from './takes';
+import { timelineApi } from './timeline';
+import { tracksApi } from './tracks';
+import { transportApi } from './transport';
+import { updaterApi } from './updater';
 
 export function createNativeApi(): NativeApi {
   return {
-    ...bootstrapApi,
-    ...projectApi,
-    ...jobsApi,
-    ...hostConnectionApi,
+    ...clipsApi,
+    ...tracksApi,
+    ...timelineApi,
+    ...midiNoteApi,
+    ...takesApi,
+    ...automationApi,
+    ...mixerApi,
+    ...deviceApi,
     ...libraryApi,
-    ...analysisApi,
-    ...renderApi,
+    ...instrumentLibraryApi,
+    ...projectApi,
     ...audioApi,
+    ...bootstrapApi,
+    ...analysisApi,
+    ...jobsApi,
+    ...missingDependencyApi,
     ...recordingApi,
-    ...arrangeApi,
-    ...devicesApi,
+    ...renderApi,
     ...transportApi,
-    ...missingApi,
     ...updaterApi,
     ...eventApi,
+    ...hostConnectionApi,
   };
 }

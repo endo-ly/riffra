@@ -1,6 +1,7 @@
-import type { NativeApi, NativeEventApi } from '../native-api';
 import { canonicalState, defaultProjectState, defaultSession } from '../browser-defaults';
 import { NativeCommandError } from '../invoke';
+import type { NativeApi } from '../native-api';
+import type { NativeEventApi } from '@/native/api/events';
 import { createNativeApi } from './native-implementation';
 
 const hostConnection = {
@@ -26,7 +27,6 @@ type BrowserPreviewReads = Pick<
   | 'listRecordings'
   | 'searchLibrary'
   | 'getMissingDependencies'
-  | 'getHistoryState'
   | keyof NativeEventApi
 >;
 
@@ -56,7 +56,6 @@ const reads: BrowserPreviewReads = {
   listRecordings: async () => [],
   searchLibrary: async () => [],
   getMissingDependencies: async () => [],
-  getHistoryState: async () => ({ canUndo: false, canRedo: false }),
   onAudioStatus: noop,
   onAudioMeters: noop,
   onCanonicalStateChanged: noop,

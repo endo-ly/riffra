@@ -54,7 +54,7 @@ export class NativeCommandError extends Error {
   }
 }
 
-async function invokeNative<T>(command: string, args: Record<string, unknown>): Promise<T> {
+export async function invoke<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
   try {
     return await tauriInvoke<T>(command, args);
   } catch (error) {
@@ -85,10 +85,6 @@ export function adoptHostConnection(state: HostConnectionState): boolean {
  * is owned by the Rust Core and Runtime Reconciler; this module only
  * coalesces high-frequency UI updates through invokeLatestHost below.
  */
-export function invoke<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
-  return invokeNative<T>(command, args);
-}
-
 /** Invokes a command and rejects a response that crossed a Host switch. */
 export async function invokeHost<T>(
   command: string,
@@ -99,7 +95,7 @@ export async function invokeHost<T>(
   }
   const generation = currentHostGeneration;
   try {
-    const value = await invokeNative<T>(command, args);
+    const value = await invoke<T>(command, args);
     if (generation !== currentHostGeneration) throw new HostConnectionChangedError();
     return value;
   } catch (error) {
