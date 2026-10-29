@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { CreativeSession } from '@/model/domain';
+import type { CreativeSession } from '@/model/generated';
 import type { NativeApi } from '@/native/native-api';
 import { HostConnectionChangedError, logNativeError } from '@/native/invoke';
 import { useArrangeLowerAreaController } from './useArrangeLowerAreaController';

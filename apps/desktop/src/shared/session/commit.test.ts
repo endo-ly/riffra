@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { ArrangementMutationResult } from '@/model/domain';
+import type { ArrangementMutationResult } from '@/model/generated';
 import { canonicalState, defaultSession } from '@/native/browser-defaults';
 import { HostConnectionChangedError } from '@/native/invoke';
 import { createSessionCommit } from './commit';

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { InstrumentLibraryItem } from '@/model/domain';
+import type { InstrumentLibraryItem } from '@/model/generated';
 import { matchesInstrumentQuery } from './instrument-library';
 
 const bass: InstrumentLibraryItem = {

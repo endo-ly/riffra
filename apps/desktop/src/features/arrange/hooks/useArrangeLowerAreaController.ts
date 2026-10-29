@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { MidiClip } from '@/model/domain';
+import type { MidiClip } from '@/model/generated';
 
 type ArrangeDetailView = 'midiEditor' | 'devices';
 /** Views toggled over the detail views; closing one returns to the detail view below it. */

@@ -7,7 +7,7 @@ import type {
   PluginEntry,
   RuntimeProjectionStatus,
   TrackKind,
-} from '@/model/domain';
+} from '@/model/generated';
 import { useSessionContext } from '@/shared/session/session-context';
 import { ArrangeRuler } from './timeline/ArrangeRuler';
 import { ArrangeToolbar } from './timeline/ArrangeToolbar';

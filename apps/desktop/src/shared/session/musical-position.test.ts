@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ProjectTimebase } from '@/model/domain';
+import type { ProjectTimebase } from '@/model/generated';
 import { tickToMusicalPosition } from './musical-position';
 
 const threeFour: ProjectTimebase = {

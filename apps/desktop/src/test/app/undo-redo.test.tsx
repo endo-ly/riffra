@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { FakeNativeApi } from '@/native/native-api-fake';
 import App from '@/app/App';
 import { canonicalState, defaultSession } from '@/native/browser-defaults';
-import type { CreativeSession, ProjectState } from '@/model/domain';
+import type { CreativeSession, ProjectState } from '@/model/generated';
 
 afterEach(cleanup);
 

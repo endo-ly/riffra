@@ -1,4 +1,4 @@
-import type { AudioStatus } from '@/model/domain';
+import type { AudioStatus } from '@/model/generated';
 
 /**
  * Audio safety state transitions. These encode the product invariants that keep

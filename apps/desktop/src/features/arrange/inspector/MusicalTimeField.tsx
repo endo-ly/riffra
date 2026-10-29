@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import type { ProjectTimebase } from '@/model/domain';
+import type { ProjectTimebase } from '@/model/generated';
 import {
   formatMusicalLength,
   formatMusicalPosition,

@@ -1,6 +1,6 @@
 import { musicalGridTicks, tickToBarBeat } from '@/shared/session/timebase';
 import type { Ref } from 'react';
-import type { ProjectTimebase } from '@/model/domain';
+import type { ProjectTimebase } from '@/model/generated';
 import { formatMusicalPosition } from '@/features/arrange/model/arrange-timeline';
 import styles from './MidiEditorPanel.module.css';
 

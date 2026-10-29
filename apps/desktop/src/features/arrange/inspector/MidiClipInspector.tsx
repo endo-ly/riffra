@@ -1,8 +1,8 @@
-import type { ArrangementMutationResult, CreativeSession } from '@/model/domain';
+import type { ArrangementMutationResult, CreativeSession } from '@/model/generated';
 import { useSessionContext } from '@/shared/session/session-context';
 import { Icon } from '@/shared/ui/primitives';
 import { useEffect, useState, type CSSProperties } from 'react';
-import type { MidiClipPatch } from '@/model/domain';
+import type { MidiClipPatch } from '@/model/generated';
 import { resolveTrackColorById } from '../model/track-colors';
 import { ClipToggles } from './ClipToggles';
 import styles from './Inspector.module.css';

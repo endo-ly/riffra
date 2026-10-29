@@ -1,4 +1,4 @@
-import type { Arrangement, EffectDevice, EffectOwner, Track } from '@/model/domain';
+import type { Arrangement, EffectDevice, EffectOwner, Track } from '@/model/generated';
 
 /** Presentation target for the shared device chain. */
 export interface DeviceTarget {

@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { useInbox } from './useInbox';
 import { toAssetId } from '@/native/contracts';
 import { FakeNativeApi, fakeAudioStatus } from '@/native/native-api-fake';
-import type { RecordingAsset } from '@/model/domain';
+import type { RecordingAsset } from '@/model/generated';
 
 function recording(id: string, name: string): RecordingAsset {
   return {

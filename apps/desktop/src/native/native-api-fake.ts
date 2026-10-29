@@ -19,7 +19,7 @@ import type {
   RecordingFinalized,
   RuntimeStartupFinished,
   TransportStatus,
-} from '@/model/domain';
+} from '@/model/generated';
 import { defaultSession } from './browser-defaults';
 import type { NativeApi } from './native-api';
 import type { HostConnectionBootstrap } from '@/native/api/host-connection';

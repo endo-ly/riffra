@@ -6,7 +6,7 @@ import type {
   CreativeSession,
   DeviceParameterInfo,
   EffectOwner,
-} from '@/model/domain';
+} from '@/model/generated';
 import { useSessionContext } from '@/shared/session/session-context';
 import {
   automationDevices,

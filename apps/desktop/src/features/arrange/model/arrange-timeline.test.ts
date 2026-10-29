@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { AudioClip, MidiClip } from '@/model/domain';
+import type { AudioClip, MidiClip } from '@/model/generated';
 import {
   buildTrackTimeline,
   countOffGridNotes,

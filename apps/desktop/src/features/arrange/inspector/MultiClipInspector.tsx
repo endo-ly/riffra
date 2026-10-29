@@ -1,5 +1,5 @@
 import { timelineObjectEndTick } from '@/features/arrange/model/arrange-timeline';
-import type { ArrangementMutationResult, CreativeSession } from '@/model/domain';
+import type { ArrangementMutationResult, CreativeSession } from '@/model/generated';
 import { useSessionContext } from '@/shared/session/session-context';
 import { Icon } from '@/shared/ui/primitives';
 import clsx from 'clsx';

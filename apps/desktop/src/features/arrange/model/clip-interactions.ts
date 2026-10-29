@@ -1,4 +1,4 @@
-import type { AudioClip, FrameRange, MidiClip, ProjectTimebase } from '@/model/domain';
+import type { AudioClip, FrameRange, MidiClip, ProjectTimebase } from '@/model/generated';
 import {
   clipDurationTicks,
   framesToTicks,

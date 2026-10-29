@@ -6,7 +6,7 @@ import type {
   CreativeSession,
   MidiClip,
   TrackKind,
-} from '@/model/domain';
+} from '@/model/generated';
 import { useSessionContext } from '@/shared/session/session-context';
 import {
   clipDurationTicks,

@@ -1,6 +1,6 @@
 import { useSessionContext } from '@/shared/session/session-context';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { Track, MixBus } from '@/model/domain';
+import type { Track, MixBus } from '@/model/generated';
 type MixParameter = 'gainDb' | 'pan';
 const mixParameters: readonly MixParameter[] = ['gainDb', 'pan'];
 interface PendingCommit {

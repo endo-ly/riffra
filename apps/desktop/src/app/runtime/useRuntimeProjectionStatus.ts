@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { RuntimeProjectionStatus } from '@/model/domain';
+import type { RuntimeProjectionStatus } from '@/model/generated';
 
 import type { NativeEventApi } from '@/native/api/events';
 import type { TransportApi } from '@/native/api/transport';

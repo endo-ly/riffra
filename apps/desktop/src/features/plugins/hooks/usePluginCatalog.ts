@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { BackgroundJobStatus, BootstrapState, PluginEntry, ScanReport } from '@/model/domain';
+import type {
+  BackgroundJobStatus,
+  BootstrapState,
+  PluginEntry,
+  ScanReport,
+} from '@/model/generated';
 
 import type { JobApi } from '@/native/api/jobs';
 import { showToast } from '@/shared/toasts';

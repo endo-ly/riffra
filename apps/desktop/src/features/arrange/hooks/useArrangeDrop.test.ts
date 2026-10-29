@@ -1,13 +1,13 @@
 import { createElement, type ReactNode } from 'react';
 import { TestSessionProvider } from '@/test/session-provider';
 import { FakeNativeApi } from '@/native/native-api-fake';
-import type { AssetId } from '@/model/domain';
+import type { AssetId } from '@/model/generated';
 // @vitest-environment jsdom
 
 import { act, renderHook, waitFor } from '@testing-library/react';
 import type { DragEvent } from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import type { ArrangementMutationResult } from '@/model/domain';
+import type { ArrangementMutationResult } from '@/model/generated';
 import { HostConnectionChangedError } from '@/native/invoke';
 import { toAssetId } from '@/native/contracts';
 import {

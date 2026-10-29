@@ -4,7 +4,7 @@ import '@testing-library/jest-dom/vitest';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import type { AudioStatus, CreativeSession } from '@/model/domain';
+import type { AudioStatus, CreativeSession } from '@/model/generated';
 import { canonicalState, defaultSession } from '@/native/browser-defaults';
 import { FakeNativeApi, fakeAudioStatus } from '@/native/native-api-fake';
 import { useRecording } from './useRecording';

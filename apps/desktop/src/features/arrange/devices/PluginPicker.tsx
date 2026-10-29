@@ -1,6 +1,6 @@
 import { errorText } from '@/shared/errors';
 import { useEffect, useMemo, useState } from 'react';
-import type { PluginEntry, PluginRole } from '@/model/domain';
+import type { PluginEntry, PluginRole } from '@/model/generated';
 
 import { useSessionContext } from '@/shared/session/session-context';
 import styles from '../WorkspaceArrangeOverlay.module.css';

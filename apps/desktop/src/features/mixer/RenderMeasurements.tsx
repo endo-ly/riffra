@@ -1,4 +1,4 @@
-import type { AudioMeasurements } from '@/model/domain';
+import type { AudioMeasurements } from '@/model/generated';
 import styles from './Mixdown.module.css';
 
 interface RenderMeasurementsProps {

@@ -7,7 +7,7 @@ import {
   type MutableRefObject,
   type PointerEvent,
 } from 'react';
-import type { CreativeSession, Marker } from '@/model/domain';
+import type { CreativeSession, Marker } from '@/model/generated';
 import { useSessionContext } from '@/shared/session/session-context';
 import { HostConnectionChangedError } from '@/native/invoke';
 import { tickToMusicalPosition } from '@/shared/session/musical-position';

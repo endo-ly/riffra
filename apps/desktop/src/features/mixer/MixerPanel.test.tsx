@@ -1,6 +1,6 @@
 import { TestSessionProvider } from '@/test/session-provider';
 // @vitest-environment jsdom
-import type { CreativeSession, EffectOwner, MixBus } from '@/model/domain';
+import type { CreativeSession, EffectOwner, MixBus } from '@/model/generated';
 import { canonicalState, defaultSession } from '@/native/browser-defaults';
 import { FakeNativeApi } from '@/native/native-api-fake';
 import '@testing-library/jest-dom/vitest';

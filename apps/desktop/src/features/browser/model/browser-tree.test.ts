@@ -4,7 +4,7 @@ import type {
   LibraryAsset,
   PluginEntry,
   RecordingAsset,
-} from '@/model/domain';
+} from '@/model/generated';
 import { toAssetId } from '@/native/contracts';
 import {
   browserItemSummary,

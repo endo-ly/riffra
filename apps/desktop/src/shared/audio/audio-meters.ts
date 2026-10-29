@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import type { AudioMeterFrame } from '@/model/domain';
+import type { AudioMeterFrame } from '@/model/generated';
 
 export interface AudioMeters extends AudioMeterFrame {
   available: boolean;

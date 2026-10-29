@@ -1,4 +1,4 @@
-import type { AudioStatus } from '@/model/domain';
+import type { AudioStatus } from '@/model/generated';
 
 /**
  * The AudioStatus the React layer holds before the native runtime reports a

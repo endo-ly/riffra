@@ -4,7 +4,7 @@ import type {
   AudioTakeVariant,
   CreativeSession,
   RecordingTakeRecord,
-} from '@/model/domain';
+} from '@/model/generated';
 import { errorText } from '@/shared/errors';
 import { useSessionContext } from '@/shared/session/session-context';
 import { Icon } from '@/shared/ui/primitives';

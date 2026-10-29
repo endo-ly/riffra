@@ -4,7 +4,7 @@ import type {
   LoudnessMastering,
   MixdownSettings,
   RenderRange,
-} from '@/model/domain';
+} from '@/model/generated';
 import { chooseRenderStemDirectory, saveRenderWav } from '@/native/dialog';
 import { errorText } from '@/shared/errors';
 import { useSessionContext } from '@/shared/session/session-context';

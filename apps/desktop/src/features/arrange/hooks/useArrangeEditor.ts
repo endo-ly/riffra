@@ -1,6 +1,6 @@
 import { snapToBar } from '@/shared/session/timebase';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { AudioAnalysis, CreativeSession } from '@/model/domain';
+import type { AudioAnalysis, CreativeSession } from '@/model/generated';
 import {
   timelineObjectEndTick,
   snapGridTicks,

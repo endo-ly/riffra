@@ -1,4 +1,4 @@
-import type { RenderHistoryEntry } from '@/model/domain';
+import type { RenderHistoryEntry } from '@/model/generated';
 import { chooseRenderStemDirectory, saveRenderWav } from '@/native/dialog';
 import { errorText } from '@/shared/errors';
 import { useSessionContext } from '@/shared/session/session-context';

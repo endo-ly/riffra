@@ -1,4 +1,4 @@
-import type { MidiClip } from '@/model/domain';
+import type { MidiClip } from '@/model/generated';
 import styles from '../WorkspaceArrange.module.css';
 
 interface MidiClipViewProps {

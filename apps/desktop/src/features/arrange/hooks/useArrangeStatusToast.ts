@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import type { RuntimeProjectionStatus } from '@/model/domain';
+import type { RuntimeProjectionStatus } from '@/model/generated';
 import { clearToast, showToast } from '@/shared/toasts';
 
 interface UseArrangeStatusToastOptions {

@@ -8,7 +8,7 @@ import type {
   InstrumentLibraryItem,
   InstrumentMidiInspection,
   PluginEntry,
-} from '@/model/domain';
+} from '@/model/generated';
 import { useSessionContext } from '@/shared/session/session-context';
 import { Toolbar } from '@/shared/ui/Toolbar';
 import { resolveTrackColor } from '../model/track-colors';

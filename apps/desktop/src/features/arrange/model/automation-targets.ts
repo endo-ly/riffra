@@ -4,7 +4,7 @@ import type {
   CreativeSession,
   DeviceParameterInfo,
   EffectOwner,
-} from '@/model/domain';
+} from '@/model/generated';
 
 export interface AutomationOption {
   target: AutomationTarget;

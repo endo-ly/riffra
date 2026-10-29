@@ -1,4 +1,4 @@
-import type { ArrangementMutationResult, MidiInputRoute, TrackKind } from '@/model/domain';
+import type { ArrangementMutationResult, MidiInputRoute, TrackKind } from '@/model/generated';
 import type { TrackUpdateParams } from '@/model/generated';
 import { dispatchControl, dispatchLatestControl } from '../invoke';
 

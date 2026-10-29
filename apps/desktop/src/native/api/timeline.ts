@@ -1,4 +1,8 @@
-import type { ArrangementMutationResult, MusicalPosition, ProjectTimebase } from '@/model/domain';
+import type {
+  ArrangementMutationResult,
+  MusicalPosition,
+  ProjectTimebase,
+} from '@/model/generated';
 import type { MarkerUpdateParams } from '@/model/generated';
 import { dispatchControl } from '../invoke';
 

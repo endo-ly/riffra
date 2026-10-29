@@ -8,7 +8,7 @@ import {
   type MouseEvent,
   type ReactNode,
 } from 'react';
-import type { LibraryAsset, PluginEntry, RecordingAsset, Track } from '@/model/domain';
+import type { LibraryAsset, PluginEntry, RecordingAsset, Track } from '@/model/generated';
 import type { InboxController } from '@/features/library/hooks/useInbox';
 import type { useInstrumentLibrary } from '@/features/instruments/hooks/useInstrumentLibrary';
 import {

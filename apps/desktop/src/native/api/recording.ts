@@ -1,4 +1,4 @@
-import type { AudioStatus, RecordingStopResult } from '@/model/domain';
+import type { AudioStatus, RecordingStopResult } from '@/model/generated';
 import { dispatchControl } from '../invoke';
 import { audioCommandError } from './audio-error';
 

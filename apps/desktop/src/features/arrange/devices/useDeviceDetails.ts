@@ -6,7 +6,7 @@ import type {
   EffectOwner,
   DeviceParameterInfo,
   PluginPresetInfo,
-} from '@/model/domain';
+} from '@/model/generated';
 import { HostConnectionChangedError } from '@/native/invoke';
 import { useSessionContext } from '@/shared/session/session-context';
 

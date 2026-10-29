@@ -1,7 +1,7 @@
 import { createContext, useContext } from 'react';
 import type { ReactNode } from 'react';
 import type { NativeApi } from '@/native/native-api';
-import type { CanonicalState } from '@/model/domain';
+import type { CanonicalState } from '@/model/generated';
 import type { SessionCommit } from './commit';
 
 interface SessionContextValue {

@@ -7,7 +7,7 @@ import type {
   ProjectActivationResult,
   ProjectState,
   ProjectSummary,
-} from '@/model/domain';
+} from '@/model/generated';
 
 import type { HostConnectionBootstrap } from '@/native/api/host-connection';
 import { openHostDataRoot } from '@/native/dialog';

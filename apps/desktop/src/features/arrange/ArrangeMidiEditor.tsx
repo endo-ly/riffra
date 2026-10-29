@@ -1,6 +1,6 @@
 import type { EditorCommit } from './hooks/useArrangeEditor';
 import { useEffect, useState, type MutableRefObject } from 'react';
-import type { MidiClip, ProjectTimebase, InstrumentMidiInspection } from '@/model/domain';
+import type { MidiClip, ProjectTimebase, InstrumentMidiInspection } from '@/model/generated';
 import { useSessionContext } from '@/shared/session/session-context';
 import { MidiEditorPanel, type MidiGhostNote } from './midi-editor/MidiEditorPanel';
 

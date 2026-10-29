@@ -1,6 +1,6 @@
 import { errorText } from '@/shared/errors';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { AudioStatus, InstrumentCollection, InstrumentLibraryItem } from '@/model/domain';
+import type { AudioStatus, InstrumentCollection, InstrumentLibraryItem } from '@/model/generated';
 import type { AudioApi } from '@/native/api/audio';
 import type { InstrumentLibraryApi } from '@/native/api/instruments';
 import type { NativeEventApi } from '@/native/api/events';

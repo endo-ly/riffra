@@ -1,4 +1,4 @@
-import type { RuntimeProjectionStatus } from '@/model/domain';
+import type { RuntimeProjectionStatus } from '@/model/generated';
 import { dispatchControl } from '../invoke';
 
 export interface TransportApi {

@@ -3,7 +3,7 @@ import type {
   ProjectTimebase,
   TimelineLoopRange,
   TimelinePunchRange,
-} from '@/model/domain';
+} from '@/model/generated';
 import {
   formatClock,
   timelineGridDensity,

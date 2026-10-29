@@ -1,5 +1,5 @@
 import { ticksToSeconds } from '@/shared/session/timebase';
-import type { AutomationInterpolation, AutomationPoint, ProjectTimebase } from '@/model/domain';
+import type { AutomationInterpolation, AutomationPoint, ProjectTimebase } from '@/model/generated';
 
 export function automationValueAt(
   points: readonly AutomationPoint[],

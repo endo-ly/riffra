@@ -1,4 +1,4 @@
-import type { AudioClip, MidiClip, ProjectTimebase } from '@/model/domain';
+import type { AudioClip, MidiClip, ProjectTimebase } from '@/model/generated';
 import {
   barBeatToTick,
   secondsToTicks,

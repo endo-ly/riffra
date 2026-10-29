@@ -3,7 +3,7 @@ import { isEditableTypingTarget } from '@/shared/input';
 import { logNativeError } from '@/native/invoke';
 import { defaultNativeApi } from '@/native/api';
 import type { NativeApi } from '@/native/native-api';
-import type { PluginEntry } from '@/model/domain';
+import type { PluginEntry } from '@/model/generated';
 import { useAppRuntime } from '@/app/runtime/useAppRuntime';
 import { useHostConnection } from '@/app/runtime/useHostConnection';
 import { useStartupRuntimeRestore } from '@/app/runtime/useStartupRuntimeRestore';

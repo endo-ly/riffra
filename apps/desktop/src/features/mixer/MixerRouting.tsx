@@ -5,7 +5,7 @@ import type {
   ArrangementMutationResult,
   AutomationTarget,
   Track,
-} from '@/model/domain';
+} from '@/model/generated';
 import { useSessionContext } from '@/shared/session/session-context';
 import controls from '@/shared/ui/controls.module.css';
 import { DialogRow, DialogSection, MixerDialog } from './MixerDialog';

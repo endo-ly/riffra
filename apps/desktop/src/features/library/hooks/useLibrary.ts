@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { AudioStatus, LibraryAsset } from '@/model/domain';
+import type { AudioStatus, LibraryAsset } from '@/model/generated';
 import { toAssetId } from '@/native/contracts';
 import type { AudioApi } from '@/native/api/audio';
 import type { LibraryApi } from '@/native/api/library';

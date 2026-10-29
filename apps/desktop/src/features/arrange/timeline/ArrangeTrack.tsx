@@ -7,7 +7,7 @@ import type {
   MonitoringState,
   ProjectTimebase,
   Track,
-} from '@/model/domain';
+} from '@/model/generated';
 import { useSessionContext } from '@/shared/session/session-context';
 import { AudioClipView } from './AudioClipView';
 import { MidiClipView } from './MidiClipView';

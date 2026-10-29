@@ -1,4 +1,4 @@
-import type { ArrangementMutationResult, AudioStatus, AudioTakeVariant } from '@/model/domain';
+import type { ArrangementMutationResult, AudioStatus, AudioTakeVariant } from '@/model/generated';
 import { dispatchControl } from '../invoke';
 
 export interface TakeApi {

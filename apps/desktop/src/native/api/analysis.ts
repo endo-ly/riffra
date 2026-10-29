@@ -1,4 +1,4 @@
-import type { AssetId, AudioAnalysis } from '@/model/domain';
+import type { AssetId, AudioAnalysis } from '@/model/generated';
 import { dispatchControl } from '../invoke';
 
 export interface AnalysisApi {

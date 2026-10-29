@@ -12,7 +12,7 @@ import type {
   DeviceParameterInfo,
   InstrumentLibraryItem,
   Track,
-} from '@/model/domain';
+} from '@/model/generated';
 import { canonicalState, defaultSession } from '@/native/browser-defaults';
 import { FakeNativeApi } from '@/native/native-api-fake';
 import { resolveDeviceTarget } from './device-target';

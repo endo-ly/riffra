@@ -5,7 +5,7 @@ import type {
   AutomationLane,
   DeviceParameterInfo,
   EffectOwner,
-} from '@/model/domain';
+} from '@/model/generated';
 import { Icon } from '@/shared/ui/primitives';
 import controls from '@/shared/ui/controls.module.css';
 import { useSessionContext } from '@/shared/session/session-context';

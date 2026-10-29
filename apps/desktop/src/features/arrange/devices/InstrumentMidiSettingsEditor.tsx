@@ -4,7 +4,7 @@ import type {
   InstrumentMidiWarning,
   InstrumentRecommendedRange,
   PlayableNotes,
-} from '@/model/domain';
+} from '@/model/generated';
 import { midiNoteName } from '@/features/arrange/play-surface/musical-typing';
 import { Icon } from '@/shared/ui/primitives';
 import controls from '@/shared/ui/controls.module.css';

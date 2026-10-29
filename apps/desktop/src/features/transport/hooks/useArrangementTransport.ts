@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ProjectTimebase } from '@/model/domain';
-import type { TransportStatus } from '@/model/domain';
+import type { ProjectTimebase } from '@/model/generated';
+import type { TransportStatus } from '@/model/generated';
 import type { AudioApi } from '@/native/api/audio';
 import type { NativeEventApi } from '@/native/api/events';
 import { secondsToTicks, ticksToSeconds } from '@/shared/session/timebase';

@@ -3,7 +3,7 @@ import type {
   ArrangementMutationResult,
   DeviceSidechainCapability,
   EffectOwner,
-} from '@/model/domain';
+} from '@/model/generated';
 import { useSessionContext } from '@/shared/session/session-context';
 import { SidechainSendControls } from '@/features/mixer/SidechainSendControls';
 import controls from '@/shared/ui/controls.module.css';

@@ -8,7 +8,7 @@ import type {
   LocalHostInfo,
   ProjectActivationResult,
   ProjectState,
-} from '@/model/domain';
+} from '@/model/generated';
 
 import type { HostConnectionBootstrap } from '@/native/api/host-connection';
 import { AudioMonitor } from '@/features/audio/AudioMonitor';

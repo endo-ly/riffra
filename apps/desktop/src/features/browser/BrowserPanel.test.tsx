@@ -12,7 +12,7 @@ import type {
   PluginEntry,
   RecordingAsset,
   Track,
-} from '@/model/domain';
+} from '@/model/generated';
 import { RIFFRA_PLUGIN_MIME } from '@/shared/browser-drag';
 
 const bass: InstrumentLibraryItem = {

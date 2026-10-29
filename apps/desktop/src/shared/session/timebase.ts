@@ -1,4 +1,4 @@
-import type { ProjectTimebase } from '@/model/domain';
+import type { ProjectTimebase } from '@/model/generated';
 
 /** Integrates the canonical tempo segments before converting to samples. */
 export function ticksToSeconds(tick: number, timebase: ProjectTimebase): number {

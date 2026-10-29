@@ -1,5 +1,9 @@
 import { Fragment, useState } from 'react';
-import type { ArrangementMutationResult, InstrumentLibraryItem, PluginEntry } from '@/model/domain';
+import type {
+  ArrangementMutationResult,
+  InstrumentLibraryItem,
+  PluginEntry,
+} from '@/model/generated';
 import { Icon } from '@/shared/ui/primitives';
 import controls from '@/shared/ui/controls.module.css';
 import { useSessionContext } from '@/shared/session/session-context';

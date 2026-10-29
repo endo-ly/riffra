@@ -5,7 +5,7 @@ import type {
   LibraryAsset,
   PluginEntry,
   RecordingAsset,
-} from '@/model/domain';
+} from '@/model/generated';
 import type { BrowserPlacement } from '@/features/arrange/model/browser-placement';
 import { matchesInstrumentQuery } from '@/features/instruments/model/instrument-library';
 

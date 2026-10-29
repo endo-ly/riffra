@@ -2,7 +2,7 @@
 
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { AudioMeterFrame } from '@/model/domain';
+import type { AudioMeterFrame } from '@/model/generated';
 import {
   markAudioMetersUnavailable,
   publishAudioMeters,

@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react';
-import type { AudioStatus } from '@/model/domain';
+import type { AudioStatus } from '@/model/generated';
 import { drumPadByNote } from './drum-map';
 import {
   MUSICAL_TYPING_MAX_OCTAVE,

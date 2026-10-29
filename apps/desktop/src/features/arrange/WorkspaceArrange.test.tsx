@@ -17,10 +17,10 @@ import {
   type MidiEvent,
   type RuntimeProjectionStatus,
   type Track,
-} from '@/model/domain';
+} from '@/model/generated';
 import { canonicalState, defaultSession } from '@/native/browser-defaults';
 import { toAssetId } from '@/native/contracts';
-import type { TransportStatus } from '@/model/domain';
+import type { TransportStatus } from '@/model/generated';
 import { FakeNativeApi } from '@/native/native-api-fake';
 import type { ArrangeSelection } from '@/features/arrange/hooks/useArrangeEditor';
 import { TRACK_HEADER_WIDTH } from '@/features/arrange/model/arrange-timeline';

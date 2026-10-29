@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { CreativeSession, MetronomeSound } from '@/model/domain';
+import type { CreativeSession, MetronomeSound } from '@/model/generated';
 import clsx from 'clsx';
 import { formatClock, formatMusicalPosition } from '@/features/arrange/model/arrange-timeline';
 import { TransportIcon } from './TransportIcon';

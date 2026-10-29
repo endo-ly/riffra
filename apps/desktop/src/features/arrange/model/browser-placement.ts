@@ -1,4 +1,4 @@
-import type { ArrangementMutationResult, AssetId, TrackKind } from '@/model/domain';
+import type { ArrangementMutationResult, AssetId, TrackKind } from '@/model/generated';
 import type { NativeApi } from '@/native/native-api';
 
 /** Something the Browser can put into the Arrangement. */

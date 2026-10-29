@@ -9,7 +9,7 @@ import type {
   MidiClip,
   MidiNote,
   ProjectTimebase,
-} from '@/model/domain';
+} from '@/model/generated';
 import { ticksToSeconds } from '@/shared/session/timebase';
 import {
   SNAP_GRID_OPTIONS,

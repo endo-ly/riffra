@@ -6,7 +6,7 @@ import type {
   FrameRange,
   MidiClipMove,
   MidiClipPatch,
-} from '@/model/domain';
+} from '@/model/generated';
 import { dispatchControl } from '../invoke';
 
 export interface ClipApi {

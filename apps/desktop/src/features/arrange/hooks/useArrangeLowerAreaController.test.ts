@@ -2,7 +2,7 @@
 
 import { act, renderHook } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import type { MidiClip } from '@/model/domain';
+import type { MidiClip } from '@/model/generated';
 import { useArrangeLowerAreaController } from './useArrangeLowerAreaController';
 
 const clip: MidiClip = {

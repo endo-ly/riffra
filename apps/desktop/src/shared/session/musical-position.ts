@@ -1,4 +1,4 @@
-import type { MusicalPosition, ProjectTimebase } from '@/model/domain';
+import type { MusicalPosition, ProjectTimebase } from '@/model/generated';
 import { tickToBarBeat } from './timebase';
 
 function greatestCommonDivisor(left: number, right: number): number {

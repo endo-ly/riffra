@@ -1,4 +1,4 @@
-import type { AudioAnalysis, AudioClip, ProjectTimebase } from '@/model/domain';
+import type { AudioAnalysis, AudioClip, ProjectTimebase } from '@/model/generated';
 import { AudioWaveform } from './AudioWaveform';
 import { clipDurationTicks } from '@/features/arrange/model/arrange-timeline';
 import styles from '../WorkspaceArrange.module.css';

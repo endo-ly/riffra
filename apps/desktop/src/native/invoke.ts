@@ -1,6 +1,6 @@
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 import type { ControlCommand, ControlCommandResults } from '@/model/generated';
-import type { HostConnectionState } from '@/model/domain';
+import type { HostConnectionState } from '@/model/generated';
 
 let currentHostGeneration = 0;
 let hostConnected = true;

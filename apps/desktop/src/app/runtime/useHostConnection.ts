@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { NativeApi } from '@/native/native-api';
 import type { HostConnectionBootstrap } from '@/native/api/host-connection';
 import type { HostConnectionChangedEvent } from '@/native/api/host-connection';
-import type { HostConnectionState, HostTarget, LocalHostInfo } from '@/model/domain';
+import type { HostConnectionState, HostTarget, LocalHostInfo } from '@/model/generated';
 
 const disconnectedState: HostConnectionState = {
   mode: 'disconnected',

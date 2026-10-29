@@ -3,7 +3,7 @@ import type {
   ProjectActivationResult,
   ProjectExport,
   ProjectState,
-} from '@/model/domain';
+} from '@/model/generated';
 import type { SessionSettingsPatch } from '@/model/generated';
 import { dispatchControl } from '../invoke';
 

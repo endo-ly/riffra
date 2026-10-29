@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { AudioDeviceProbe, AudioStatus } from '@/model/domain';
+import type { AudioDeviceProbe, AudioStatus } from '@/model/generated';
 import {
   chooseInitialDriverRoute,
   createAudioSettingsDraft,

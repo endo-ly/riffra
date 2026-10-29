@@ -1,6 +1,6 @@
 import { errorText } from '@/shared/errors';
 import { useEffect, useMemo, useState } from 'react';
-import type { InstrumentLibraryItem, PluginEntry } from '@/model/domain';
+import type { InstrumentLibraryItem, PluginEntry } from '@/model/generated';
 
 import { useSessionContext } from '@/shared/session/session-context';
 import { matchesInstrumentQuery } from '@/features/instruments/model/instrument-library';

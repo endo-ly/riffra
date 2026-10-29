@@ -4,7 +4,7 @@ import type {
   CreativeSession,
   EffectOwner,
   MixBusKind,
-} from '@/model/domain';
+} from '@/model/generated';
 import { useSessionContext } from '@/shared/session/session-context';
 import controls from '@/shared/ui/controls.module.css';
 import { useState } from 'react';

@@ -3,7 +3,7 @@ import type {
   AudioStatus,
   CreativeSession,
   Track,
-} from '@/model/domain';
+} from '@/model/generated';
 import { formatGainDb, formatPan } from '@/shared/audio/mix-format';
 import { useSessionContext } from '@/shared/session/session-context';
 import { Icon } from '@/shared/ui/primitives';

@@ -1,4 +1,4 @@
-import type { ArrangementMutationResult, AssetId, MissingDependency } from '@/model/domain';
+import type { ArrangementMutationResult, AssetId, MissingDependency } from '@/model/generated';
 import { dispatchControl } from '../invoke';
 
 export interface MissingDependencyApi {

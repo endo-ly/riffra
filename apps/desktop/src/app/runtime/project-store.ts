@@ -3,7 +3,7 @@ import type {
   CanonicalState,
   ProjectActivationResult,
   ProjectState,
-} from '@/model/domain';
+} from '@/model/generated';
 
 export interface ProjectStore {
   boot: BootstrapState | null;

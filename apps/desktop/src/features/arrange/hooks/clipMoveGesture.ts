@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react';
-import type { TrackKind } from '@/model/domain';
+import type { TrackKind } from '@/model/generated';
 import {
   buildClipMovesFromDelta,
   trackIdAtPointer,

@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import type { AudioAnalysis, AudioClip } from '@/model/domain';
+import type { AudioAnalysis, AudioClip } from '@/model/generated';
 import styles from '../WorkspaceArrange.module.css';
 
 export function AudioWaveform({

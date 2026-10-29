@@ -1,6 +1,6 @@
 import type { EditorCommit } from './useArrangeEditor';
 import { useCallback, type DragEvent } from 'react';
-import type { TrackKind } from '@/model/domain';
+import type { TrackKind } from '@/model/generated';
 import {
   RIFFRA_ASSET_MIME,
   RIFFRA_INSTRUMENT_MIME,

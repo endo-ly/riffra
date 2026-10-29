@@ -6,7 +6,7 @@ import type {
   InstrumentMidiInspection,
   InstrumentMidiSettings,
   PluginPresetInfo,
-} from '@/model/domain';
+} from '@/model/generated';
 import { dispatchControl } from '../invoke';
 
 export interface DeviceApi {

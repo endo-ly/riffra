@@ -6,7 +6,7 @@ import type {
   AutomationPoint,
   AutomationTarget,
   ProjectTimebase,
-} from '@/model/domain';
+} from '@/model/generated';
 import { automationTargetKey, type AutomationOption } from '../model/automation-targets';
 import { isEditableTypingTarget } from '@/shared/input';
 import { automationValueAt } from '@/features/arrange/model/automation-value';

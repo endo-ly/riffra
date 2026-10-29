@@ -7,7 +7,7 @@ import type {
   RenderHistoryEntry,
   RenderOptions,
   RenderStemsParams,
-} from '@/model/domain';
+} from '@/model/generated';
 import { dispatchControl } from '../invoke';
 
 export interface RenderApi {

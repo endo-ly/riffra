@@ -11,7 +11,7 @@ import type {
   AudioDriverConfig,
   AudioStatus,
   DeviceChannels,
-} from '@/model/domain';
+} from '@/model/generated';
 
 const probe: AudioDeviceProbe = {
   drivers: [

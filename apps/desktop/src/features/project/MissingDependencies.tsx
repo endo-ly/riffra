@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import clsx from 'clsx';
-import type { MissingDependency } from '@/model/domain';
+import type { MissingDependency } from '@/model/generated';
 import { Icon } from '@/shared/ui/primitives';
 import surface from '@/shared/ui/Surface.module.css';
 import styles from './MissingDependencies.module.css';

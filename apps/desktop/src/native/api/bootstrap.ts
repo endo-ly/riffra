@@ -1,4 +1,4 @@
-import type { BootstrapState, RuntimeStartupFinished } from '@/model/domain';
+import type { BootstrapState, RuntimeStartupFinished } from '@/model/generated';
 import { listen } from '@tauri-apps/api/event';
 import { adoptHostConnection, invokeHost } from '../invoke';
 

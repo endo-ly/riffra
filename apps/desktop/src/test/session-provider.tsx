@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useRef } from 'react';
 import type { ReactNode } from 'react';
-import type { CanonicalState } from '@/model/domain';
+import type { CanonicalState } from '@/model/generated';
 import type { NativeApi } from '@/native/native-api';
 import { createSessionCommit } from '@/shared/session/commit';
 import { SessionProvider } from '@/shared/session/session-context';

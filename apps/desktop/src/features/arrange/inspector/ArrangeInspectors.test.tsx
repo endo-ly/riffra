@@ -3,7 +3,7 @@ import type { ReactElement, ReactNode } from 'react';
 // @vitest-environment jsdom
 
 import type { ArrangeSelection } from '@/features/arrange/hooks/useArrangeEditor';
-import type { CreativeSession } from '@/model/domain';
+import type { CreativeSession } from '@/model/generated';
 import { canonicalState, defaultSession } from '@/native/browser-defaults';
 import { toAssetId } from '@/native/contracts';
 import { FakeNativeApi, fakeAudioStatus } from '@/native/native-api-fake';

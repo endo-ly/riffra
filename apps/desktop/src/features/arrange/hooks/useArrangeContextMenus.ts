@@ -1,4 +1,4 @@
-import type { ArrangementMutationResult } from '@/model/domain';
+import type { ArrangementMutationResult } from '@/model/generated';
 import type {
   AudioClip,
   CreativeSession,
@@ -6,7 +6,7 @@ import type {
   MidiClip,
   ProjectTimebase,
   TrackKind,
-} from '@/model/domain';
+} from '@/model/generated';
 import { useSessionContext } from '@/shared/session/session-context';
 import type { ContextMenuItem } from '@/shared/ui/ContextMenu';
 import { toast } from '@/shared/toasts';
