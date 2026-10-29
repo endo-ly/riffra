@@ -31,7 +31,7 @@ import {
   clearRecovery,
   keepRecoveredSession,
   type ProjectStore,
-} from './project-store';
+} from '../../features/project/model/project-store';
 
 type AppRuntimeApi = BootstrapApi &
   ProjectApi &

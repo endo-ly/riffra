@@ -1,0 +1,411 @@
+import type { EditorCommit } from './useTimelineEditor';
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type MutableRefObject,
+  type PointerEvent,
+} from 'react';
+import type { CreativeSession, Marker } from '@/model/generated';
+import { useSessionContext } from '@/shared/session/session-context';
+import { HostConnectionChangedError } from '@/native/invoke';
+import { tickToMusicalPosition } from '@/model/time-format';
+import { isEditableTypingTarget } from '@/shared/input';
+
+type RangeKind = 'loop' | 'punch';
+
+interface TimeSelection {
+  startTick: number;
+  endTick: number;
+}
+
+interface LoopPreview {
+  enabled: boolean;
+  startTick: number;
+  endTick: number;
+}
+
+interface PunchPreview {
+  startTick: number;
+  endTick: number;
+}
+
+interface TimelineRulerControllerOptions {
+  arrangement: CreativeSession['arrangement'];
+  commit: EditorCommit;
+  snapTick: (raw: number, temporaryOff?: boolean) => number;
+  pixelsPerTick: number;
+  displayTickRef: MutableRefObject<number>;
+  selectedClipCount: number;
+  seekLocally: (tick: number) => void;
+  setMessage: (message: string) => void;
+}
+
+export function useTimelineRulerController({
+  arrangement,
+  commit,
+  snapTick,
+  pixelsPerTick,
+  displayTickRef,
+  selectedClipCount,
+  seekLocally,
+  setMessage,
+}: TimelineRulerControllerOptions) {
+  const { api } = useSessionContext();
+  const [selectedMarkerId, setSelectedMarkerId] = useState<string | null>(null);
+  const [selectedRange, setSelectedRange] = useState<RangeKind | null>(null);
+  const [markerRename, setMarkerRename] = useState<{ markerId: string; name: string } | null>(null);
+  const [timeSelection, setTimeSelection] = useState<TimeSelection | null>(null);
+  const [loopPreview, setLoopPreview] = useState<LoopPreview | null>(null);
+  const [punchPreview, setPunchPreview] = useState<PunchPreview | null>(null);
+  const gestureCleanupRef = useRef<(() => void) | null>(null);
+
+  const clearRulerSelection = useCallback(() => {
+    setTimeSelection(null);
+    setSelectedMarkerId(null);
+    setSelectedRange(null);
+  }, []);
+
+  const selectRange = useCallback((range: RangeKind) => {
+    setSelectedRange(range);
+    setSelectedMarkerId(null);
+  }, []);
+
+  const position = useCallback(
+    (tick: number) => tickToMusicalPosition(tick, arrangement.timebase),
+    [arrangement.timebase],
+  );
+
+  const clearSelectedRange = useCallback(() => setSelectedRange(null), []);
+  const clearTimeSelection = useCallback(() => setTimeSelection(null), []);
+  const clearMarkerRename = useCallback(() => setMarkerRename(null), []);
+
+  const selectMarker = useCallback((markerId: string | null) => {
+    setSelectedMarkerId(markerId);
+    setSelectedRange(null);
+  }, []);
+
+  const clearRange = useCallback(
+    (range: RangeKind) => {
+      const operation =
+        range === 'loop'
+          ? api.updateTimelineLoopRange(
+              false,
+              position(arrangement.loopRange.startTick),
+              position(arrangement.loopRange.endTick),
+            )
+          : api.updateTimelinePunchRange(
+              false,
+              position(arrangement.punchRange?.startTick ?? 0),
+              position(arrangement.punchRange?.endTick ?? 0),
+            );
+      void commit(operation);
+    },
+    [api, arrangement.loopRange, arrangement.punchRange, commit, position],
+  );
+
+  const addMarkerAt = useCallback(
+    (tick: number) => {
+      const existing = new Set(arrangement.markers.map((marker) => marker.id));
+      void commit(
+        api.addMarker(position(snapTick(tick)), `Marker ${arrangement.markers.length + 1}`),
+      ).then((next) => {
+        if (!next) return;
+        const created = next.canonical.session.arrangement.markers.find(
+          (marker) => !existing.has(marker.id),
+        );
+        if (created) setSelectedMarkerId(created.id);
+      });
+    },
+    [api, arrangement.markers, commit, position, snapTick],
+  );
+
+  const moveMarker = useCallback(
+    (marker: Marker, tick: number) => {
+      void commit(api.updateMarker(marker.id, { position: position(snapTick(tick)) }));
+    },
+    [api, commit, position, snapTick],
+  );
+
+  const renameMarker = useCallback((marker: Marker) => {
+    setMarkerRename({ markerId: marker.id, name: marker.name });
+  }, []);
+
+  const removeMarker = useCallback(
+    (marker: Marker) => {
+      void commit(api.removeMarker(marker.id)).then((next) => {
+        if (next && selectedMarkerId === marker.id) setSelectedMarkerId(null);
+      });
+    },
+    [api, commit, selectedMarkerId],
+  );
+
+  const updateMarkerRename = useCallback((name: string) => {
+    setMarkerRename((current) => (current ? { ...current, name } : current));
+  }, []);
+
+  const saveMarkerRename = useCallback(() => {
+    if (!markerRename) return;
+    const marker = arrangement.markers.find((item) => item.id === markerRename.markerId);
+    const next = markerRename.name.trim();
+    setMarkerRename(null);
+    if (marker && next && next !== marker.name)
+      void commit(api.updateMarker(marker.id, { name: next }));
+  }, [api, arrangement.markers, commit, markerRename]);
+
+  const setLoopToSelection = useCallback(() => {
+    if (!timeSelection) return;
+    void commit(
+      api.updateTimelineLoopRange(
+        true,
+        position(timeSelection.startTick),
+        position(timeSelection.endTick),
+      ),
+    );
+  }, [api, commit, position, timeSelection]);
+
+  const setPunchToSelection = useCallback(() => {
+    if (!timeSelection) return;
+    void commit(
+      api.updateTimelinePunchRange(
+        true,
+        position(timeSelection.startTick),
+        position(timeSelection.endTick),
+      ),
+    );
+  }, [api, commit, position, timeSelection]);
+
+  const seekFromRuler = useCallback(
+    (event: PointerEvent<HTMLDivElement>) => {
+      if (
+        (event.target as HTMLElement).closest(
+          '[data-marker-id], [data-range-band], [data-range-handle]',
+        )
+      )
+        return;
+      setSelectedRange(null);
+      const bounds = event.currentTarget.getBoundingClientRect();
+      const originTick = snapTick((event.clientX - bounds.left) / pixelsPerTick, event.altKey);
+      const originX = event.clientX;
+      let seeking = true;
+      seekLocally(originTick);
+      void api.seekTimeline(originTick).catch((error) => {
+        if (error instanceof HostConnectionChangedError) return;
+        setMessage(String(error));
+      });
+      const handle = (move: globalThis.PointerEvent) => {
+        const tick = snapTick((move.clientX - bounds.left) / pixelsPerTick, move.altKey);
+        if (seeking && Math.abs(move.clientX - originX) > 4) {
+          seeking = false;
+          setTimeSelection({
+            startTick: Math.min(originTick, tick),
+            endTick: Math.max(originTick, tick),
+          });
+          return;
+        }
+        if (seeking) {
+          seekLocally(tick);
+          void api.seekTimeline(tick).catch((error) => {
+            if (error instanceof HostConnectionChangedError) return;
+            setMessage(String(error));
+          });
+        } else {
+          setTimeSelection((current) =>
+            current
+              ? { startTick: Math.min(originTick, tick), endTick: Math.max(originTick, tick) }
+              : null,
+          );
+        }
+      };
+      const finish = () => {
+        gestureCleanupRef.current?.();
+        if (seeking) setTimeSelection(null);
+      };
+      const cancel = () => {
+        gestureCleanupRef.current?.();
+        setTimeSelection(null);
+      };
+      const cleanup = () => {
+        window.removeEventListener('pointermove', handle);
+        window.removeEventListener('pointerup', finish);
+        window.removeEventListener('pointercancel', cancel);
+        if (gestureCleanupRef.current === cleanup) gestureCleanupRef.current = null;
+      };
+      gestureCleanupRef.current?.();
+      gestureCleanupRef.current = cleanup;
+      window.addEventListener('pointermove', handle);
+      window.addEventListener('pointerup', finish);
+      window.addEventListener('pointercancel', cancel);
+    },
+    [api, pixelsPerTick, seekLocally, setMessage, snapTick],
+  );
+
+  const dragRangeHandle = useCallback(
+    (event: PointerEvent<HTMLSpanElement>, kind: RangeKind, boundary: 'start' | 'end') => {
+      event.stopPropagation();
+      event.preventDefault();
+      const range = kind === 'loop' ? arrangement.loopRange : arrangement.punchRange;
+      if (!range) return;
+      const originX = event.clientX;
+      const origin = boundary === 'start' ? range.startTick : range.endTick;
+      const computeNext = (clientX: number, altKey: boolean) =>
+        snapTick(origin + (clientX - originX) / pixelsPerTick, altKey);
+      const clearPreview = () => {
+        if (kind === 'loop') setLoopPreview(null);
+        else setPunchPreview(null);
+      };
+      const applyPreview = (clientX: number, altKey: boolean) => {
+        const next = computeNext(clientX, altKey);
+        const startTick = boundary === 'start' ? next : range.startTick;
+        const endTick = boundary === 'end' ? next : range.endTick;
+        if (kind === 'loop')
+          setLoopPreview({ enabled: arrangement.loopRange.enabled, startTick, endTick });
+        else setPunchPreview({ startTick, endTick });
+      };
+      const move = (pointer: globalThis.PointerEvent) =>
+        applyPreview(pointer.clientX, pointer.altKey);
+      const finish = (pointer: globalThis.PointerEvent) => {
+        gestureCleanupRef.current?.();
+        const next = computeNext(pointer.clientX, pointer.altKey);
+        if (next === origin) {
+          clearPreview();
+          return;
+        }
+        const startTick = boundary === 'start' ? next : range.startTick;
+        const endTick = boundary === 'end' ? next : range.endTick;
+        const operation =
+          kind === 'loop'
+            ? api.updateTimelineLoopRange(
+                arrangement.loopRange.enabled,
+                position(startTick),
+                position(endTick),
+              )
+            : api.updateTimelinePunchRange(true, position(startTick), position(endTick));
+        void commit(operation).finally(clearPreview);
+      };
+      const cancel = () => {
+        gestureCleanupRef.current?.();
+        clearPreview();
+      };
+      const cleanup = () => {
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', finish);
+        window.removeEventListener('pointercancel', cancel);
+        if (gestureCleanupRef.current === cleanup) gestureCleanupRef.current = null;
+      };
+      gestureCleanupRef.current?.();
+      gestureCleanupRef.current = cleanup;
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', finish);
+      window.addEventListener('pointercancel', cancel);
+      applyPreview(event.clientX, event.altKey);
+    },
+    [api, arrangement.loopRange, arrangement.punchRange, commit, pixelsPerTick, position, snapTick],
+  );
+
+  const dragLoopHandle = useCallback(
+    (event: PointerEvent<HTMLSpanElement>, boundary: 'start' | 'end') =>
+      dragRangeHandle(event, 'loop', boundary),
+    [dragRangeHandle],
+  );
+
+  const dragPunchHandle = useCallback(
+    (event: PointerEvent<HTMLSpanElement>, boundary: 'start' | 'end') =>
+      dragRangeHandle(event, 'punch', boundary),
+    [dragRangeHandle],
+  );
+
+  const handleKeyboard = useCallback(
+    (event: KeyboardEvent) => {
+      if (event.defaultPrevented || isEditableTypingTarget(event.target)) return false;
+      if (event.key === 'Escape') {
+        clearRulerSelection();
+        return true;
+      }
+      if (event.key === 'Delete' && selectedRange && selectedClipCount === 0) {
+        const rangeIsActive =
+          selectedRange === 'loop'
+            ? arrangement.loopRange.enabled
+            : Boolean(arrangement.punchRange);
+        if (!rangeIsActive) {
+          setSelectedRange(null);
+          return true;
+        }
+        event.preventDefault();
+        clearRange(selectedRange);
+        setSelectedRange(null);
+        return true;
+      }
+      if (event.key === 'Delete' && selectedMarkerId && selectedClipCount === 0) {
+        const marker = arrangement.markers.find((item) => item.id === selectedMarkerId);
+        if (!marker) return false;
+        event.preventDefault();
+        removeMarker(marker);
+        return true;
+      }
+      if (event.key.toLowerCase() === 'm' && !event.ctrlKey && !event.altKey && !event.metaKey) {
+        event.preventDefault();
+        addMarkerAt(displayTickRef.current);
+        return true;
+      }
+      return false;
+    },
+    [
+      addMarkerAt,
+      arrangement.loopRange.enabled,
+      arrangement.markers,
+      arrangement.punchRange,
+      clearRange,
+      clearRulerSelection,
+      displayTickRef,
+      removeMarker,
+      selectedClipCount,
+      selectedMarkerId,
+      selectedRange,
+    ],
+  );
+
+  useEffect(() => {
+    if (!timeSelection) return;
+    const onClick = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      if (target.closest('[data-time-selection-chip]')) return;
+      if (target.closest('[data-arrange-ruler]')) return;
+      if (target.closest('[data-midi-empty-lane]') && !target.closest('[data-clip-id]')) return;
+      setTimeSelection(null);
+    };
+    document.addEventListener('click', onClick);
+    return () => document.removeEventListener('click', onClick);
+  }, [timeSelection]);
+
+  useEffect(() => () => gestureCleanupRef.current?.(), []);
+
+  return {
+    selectedMarkerId,
+    selectedRange,
+    markerRename,
+    timeSelection,
+    loopPreview,
+    punchPreview,
+    clearRulerSelection,
+    selectRange,
+    clearSelectedRange,
+    clearTimeSelection,
+    selectMarker,
+    clearRange,
+    addMarkerAt,
+    moveMarker,
+    renameMarker,
+    removeMarker,
+    updateMarkerRename,
+    saveMarkerRename,
+    cancelMarkerRename: clearMarkerRename,
+    setLoopToSelection,
+    setPunchToSelection,
+    seekFromRuler,
+    dragLoopHandle,
+    dragPunchHandle,
+    handleKeyboard,
+  };
+}

@@ -96,7 +96,7 @@ export function useArrangementTransport(
       );
       // The playhead itself is animated by a tiny DOM-only component. The
       // editor needs a React snapshot only for the toolbar clock and editing
-      // actions; rebuilding every ArrangeTrack on every animation frame made
+      // actions; rebuilding every TimelineTrack on every animation frame made
       // playback consume the WebView's entire event loop.
       displayTickRef.current = tick;
       if (now - lastUiUpdate >= 250) {
