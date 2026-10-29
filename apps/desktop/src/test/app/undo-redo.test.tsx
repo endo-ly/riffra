@@ -73,14 +73,6 @@ describe('Undo/Redo (PRJ-003)', () => {
           fake.emitProjectStateChanged(projectState('My Project'));
           return mutationResult(renamed, 3);
         },
-        getHistoryState: () => {
-          const lastOperation = [...fake.calls]
-            .reverse()
-            .find((call) => ['renameProject', 'undoSession', 'redoSession'].includes(call));
-          if (lastOperation === 'undoSession') return { canUndo: false, canRedo: true };
-          if (lastOperation) return { canUndo: true, canRedo: false };
-          return { canUndo: false, canRedo: false };
-        },
       },
     });
     renderApp(fake);

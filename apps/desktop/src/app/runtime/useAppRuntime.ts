@@ -1,8 +1,7 @@
 import { errorText } from '@/shared/errors';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   AudioStatus,
-  BootstrapState,
   CanonicalState,
   CreativeSession,
   ProjectActivationResult,
@@ -17,18 +16,25 @@ import {
   resetAudioMeters,
 } from '@/shared/audio/audio-meters';
 import { logNativeError } from '@/native/invoke';
-import type {
-  AudioApi,
-  BootstrapApi,
-  NativeEventApi,
-  ProjectApi,
-  ProjectSettingsApi,
-} from '@/native/native-api';
+import type { AudioApi } from '@/native/api/audio';
+import type { ProjectApi } from '@/native/api/project';
+import type { BootstrapApi } from '@/native/api/bootstrap';
+import type { NativeEventApi } from '@/native/api/events';
 import { useProject } from '@/features/project/hooks/useProject';
+import { createSessionCommit } from '@/shared/session/commit';
+import { useSessionHistory } from './useSessionHistory';
+import {
+  acceptBootstrap,
+  acceptCanonical,
+  acceptActivation,
+  replaceProjectList,
+  clearRecovery,
+  keepRecoveredSession,
+  type ProjectStore,
+} from './project-store';
 
 type AppRuntimeApi = BootstrapApi &
   ProjectApi &
-  ProjectSettingsApi &
   Pick<AudioApi, 'getAudioStatus'> &
   Pick<
     NativeEventApi,
@@ -41,7 +47,43 @@ type AppRuntimeApi = BootstrapApi &
 
 /** Owns the desktop bootstrap, canonical session, and native runtime streams. */
 export function useAppRuntime(api: AppRuntimeApi, hostGeneration: number) {
-  const [boot, setBoot] = useState<BootstrapState | null>(null);
+  const [store, setStore] = useState<ProjectStore>({ boot: null, lastActivation: null });
+  const storeRef = useRef(store);
+  const sessionRef = useRef<CreativeSession | null>(null);
+  const updateStore = useCallback((next: ProjectStore | null) => {
+    if (!next) return false;
+    storeRef.current = next;
+    sessionRef.current = next.boot?.canonical.session ?? null;
+    setStore(next);
+    return true;
+  }, []);
+  const boot = store.boot;
+  const session = boot?.canonical.session ?? null;
+  const historyState = boot?.canonical.history ?? { canUndo: false, canRedo: false };
+  const projectState = boot?.projectState ?? null;
+  const applyCanonicalState = useCallback(
+    (canonical: CanonicalState): void => {
+      updateStore(acceptCanonical(storeRef.current, canonical));
+    },
+    [updateStore],
+  );
+  const applyProjectActivation = useCallback(
+    (activation: ProjectActivationResult) =>
+      updateStore(acceptActivation(storeRef.current, activation)),
+    [updateStore],
+  );
+  const replaceList = useCallback(
+    (state: ProjectState) => {
+      updateStore(replaceProjectList(storeRef.current, state));
+    },
+    [updateStore],
+  );
+  const clearProjectRecovery = useCallback(() => {
+    updateStore(clearRecovery(storeRef.current));
+  }, [updateStore]);
+  const keepRecovery = useCallback(() => {
+    updateStore(keepRecoveredSession(storeRef.current));
+  }, [updateStore]);
   const [audio, setAudio] = useState<AudioStatus>(startingAudioStatus());
   const [runtimeStarted, setRuntimeStarted] = useState(false);
   const [runtimeStartupFinished, setRuntimeStartupFinished] = useState(false);
@@ -49,13 +91,21 @@ export function useAppRuntime(api: AppRuntimeApi, hostGeneration: number) {
   const [bootstrapLoading, setBootstrapLoading] = useState(false);
   const runtimeStartupEventReceived = useRef(false);
   const bootstrapPromise = useRef<Promise<void> | null>(null);
-  const sessionRef = useRef<CreativeSession | null>(null);
-  const sessionHook = useProject(api, { boot, setBoot, hostGeneration });
-  const { applyCanonicalState, applyProjectActivation, mergeBootstrapState } = sessionHook;
-  const activeProjectId = sessionHook.projectState?.activeProjectId ?? null;
+  const commit = useMemo(() => createSessionCommit(applyCanonicalState), [applyCanonicalState]);
+  const sessionHook = useProject(api, {
+    boot,
+    storeRef,
+    commit,
+    applyProjectActivation,
+    replaceList,
+    clearProjectRecovery,
+    keepRecovery,
+    hostGeneration,
+  });
+  const history = useSessionHistory(api, historyState, sessionHook.projectSwitching, commit);
+  const activeProjectId = projectState?.activeProjectId ?? null;
   const activeProjectIdRef = useRef<string | null>(activeProjectId);
   activeProjectIdRef.current = activeProjectId;
-  sessionRef.current = sessionHook.session;
   const runBootstrap = useCallback((): Promise<void> => {
     const pending = bootstrapPromise.current;
     if (pending) return pending;
@@ -65,10 +115,8 @@ export function useAppRuntime(api: AppRuntimeApi, hostGeneration: number) {
     const operation = Promise.resolve()
       .then(() => api.bootstrap())
       .then((state) => {
-        const mergedState = mergeBootstrapState(state);
+        updateStore(acceptBootstrap(storeRef.current, state));
         activeProjectIdRef.current = state.projectState.activeProjectId;
-        setBoot(mergedState);
-        applyCanonicalState(mergedState.canonical);
         if (!runtimeStartupEventReceived.current) {
           setRuntimeStarted(state.runtimeStarted);
           setRuntimeStartupFinished(state.runtimeStartupFinished);
@@ -84,16 +132,16 @@ export function useAppRuntime(api: AppRuntimeApi, hostGeneration: number) {
       });
     bootstrapPromise.current = operation;
     return operation;
-  }, [api, applyCanonicalState, mergeBootstrapState]);
+  }, [api, updateStore]);
   useEffect(() => {
     resetAudioMeters();
-  }, [activeProjectId, hostGeneration, sessionHook.session?.sessionId]);
+  }, [activeProjectId, hostGeneration, session?.sessionId]);
 
   useEffect(() => {
     let disposed = false;
     bootstrapPromise.current = null;
     runtimeStartupEventReceived.current = false;
-    setBoot(null);
+    updateStore({ boot: null, lastActivation: null });
     setAudio(startingAudioStatus());
     setRuntimeStarted(false);
     setRuntimeStartupFinished(false);
@@ -109,17 +157,7 @@ export function useAppRuntime(api: AppRuntimeApi, hostGeneration: number) {
     );
     const unlistenProjectStateChanged = api.onProjectStateChanged((projectState: ProjectState) => {
       if (disposed) return;
-      setBoot((current) =>
-        current
-          ? {
-              ...current,
-              projectState: {
-                ...projectState,
-                activeProjectId: current.projectState.activeProjectId,
-              },
-            }
-          : current,
-      );
+      replaceList(projectState);
     });
     const unlistenProjectActivated = api.onProjectActivated(
       (activation: ProjectActivationResult) => {
@@ -198,7 +236,15 @@ export function useAppRuntime(api: AppRuntimeApi, hostGeneration: number) {
       unlistenProjectActivated();
       unlistenMeters();
     };
-  }, [api, applyCanonicalState, applyProjectActivation, hostGeneration, runBootstrap]);
+  }, [
+    api,
+    applyCanonicalState,
+    applyProjectActivation,
+    hostGeneration,
+    replaceList,
+    runBootstrap,
+    updateStore,
+  ]);
 
   const retryBootstrap = useCallback(() => {
     if (hostGeneration <= 0) return Promise.resolve();
@@ -207,6 +253,13 @@ export function useAppRuntime(api: AppRuntimeApi, hostGeneration: number) {
 
   return {
     ...sessionHook,
+    ...history,
+    session,
+    historyState,
+    projectState,
+    commit,
+    applyCanonicalState,
+    applyProjectActivation,
     boot,
     audio,
     setAudio,

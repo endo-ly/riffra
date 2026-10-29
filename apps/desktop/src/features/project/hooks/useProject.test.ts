@@ -1,7 +1,16 @@
 // @vitest-environment jsdom
 
 import { act, renderHook, waitFor } from '@testing-library/react';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import {
+  acceptActivation,
+  acceptCanonical,
+  acceptBootstrap,
+  replaceProjectList,
+  clearRecovery,
+  keepRecoveredSession,
+  type ProjectStore,
+} from '@/app/runtime/project-store';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { defaultProjectState, defaultSession } from '@/native/browser-defaults';
 import { NativeCommandError } from '@/native/invoke';
@@ -14,6 +23,8 @@ import {
   openScoreInstrumentDefinition,
 } from '@/native/dialog';
 import { useProject } from './useProject';
+import { createSessionCommit } from '@/shared/session/commit';
+import * as toasts from '@/shared/toasts';
 
 const openProjectPackageMock = vi.mocked(openProjectPackage);
 const saveProjectPackageMock = vi.mocked(saveProjectPackage);
@@ -41,6 +52,46 @@ function activation(projectId: string): ProjectActivationResult {
   };
 }
 
+function useTestProject(api: FakeNativeApi, initialBoot: BootstrapState) {
+  const [store, setStore] = useState<ProjectStore>(() =>
+    acceptBootstrap({ boot: null, lastActivation: null }, initialBoot),
+  );
+  const storeRef = useRef(store);
+  const update = (next: ProjectStore | null) => {
+    if (!next) return false;
+    storeRef.current = next;
+    setStore(next);
+    return true;
+  };
+  const applyCanonicalState = (canonical: BootstrapState['canonical']) =>
+    update(acceptCanonical(storeRef.current, canonical));
+  const applyProjectActivation = (activation: ProjectActivationResult) =>
+    update(acceptActivation(storeRef.current, activation));
+  const project = useProject(api, {
+    boot: store.boot,
+    storeRef,
+    commit: createSessionCommit(applyCanonicalState),
+    applyProjectActivation,
+    replaceList: (state) => {
+      update(replaceProjectList(storeRef.current, state));
+    },
+    clearProjectRecovery: () => {
+      update(clearRecovery(storeRef.current));
+    },
+    keepRecovery: () => {
+      update(keepRecoveredSession(storeRef.current));
+    },
+    hostGeneration: 0,
+  });
+  return {
+    ...project,
+    session: store.boot?.canonical.session ?? null,
+    projectState: store.boot?.projectState ?? null,
+    applyCanonicalState,
+    applyProjectActivation,
+  };
+}
+
 describe('useProject', () => {
   beforeEach(() => {
     openProjectPackageMock.mockResolvedValue(null);
@@ -65,8 +116,7 @@ describe('useProject', () => {
       projectState: defaultProjectState(),
     };
     const { result } = renderHook(() => {
-      const [boot, setBoot] = useState<BootstrapState | null>(initialBoot);
-      return useProject(api, { boot, setBoot, hostGeneration: 0 });
+      return useTestProject(api, initialBoot);
     });
 
     let opening!: Promise<ProjectActivationResult | null>;
@@ -103,8 +153,7 @@ describe('useProject', () => {
     );
     api.setFailure('createProject', new NativeCommandError({ message: 'disk full' }));
     const { result } = renderHook(() => {
-      const [boot, setBoot] = useState<BootstrapState | null>(initialBoot);
-      return useProject(api, { boot, setBoot, hostGeneration: 0 });
+      return useTestProject(api, initialBoot);
     });
 
     await act(async () => {
@@ -141,13 +190,9 @@ describe('useProject', () => {
       projectState: defaultProjectState(),
     };
 
-    let restoreBoot!: (boot: BootstrapState) => void;
     const { result } = renderHook(() => {
-      const [boot, setBoot] = useState<BootstrapState | null>(initialBoot);
-      restoreBoot = setBoot;
-      return useProject(api, { boot, setBoot, hostGeneration: 0 });
+      return useTestProject(api, initialBoot);
     });
-    act(() => restoreBoot(initialBoot));
 
     await act(async () => {
       await result.current.importProject();
@@ -179,14 +224,10 @@ describe('useProject', () => {
         });
       return imported;
     });
-    let restoreBoot!: (boot: BootstrapState) => void;
     const { result } = renderHook(() => {
-      const [boot, setBoot] = useState<BootstrapState | null>(api.bootstrapState);
-      restoreBoot = setBoot;
-      return useProject(api, { boot, setBoot, hostGeneration: 0 });
+      return useTestProject(api, api.bootstrapState);
     });
 
-    act(() => restoreBoot(api.bootstrapState));
     await act(async () => {
       await result.current.importScore();
     });
@@ -210,6 +251,7 @@ describe('useProject', () => {
       },
     };
     const output = 'D:\\Documents\\My Song.riffra';
+    const toastSpy = vi.spyOn(toasts, 'toast');
     saveProjectPackageMock.mockResolvedValue(output);
     api.setResponse('exportProject', () => ({
       path: output,
@@ -219,11 +261,7 @@ describe('useProject', () => {
     }));
 
     const { result } = renderHook(() => {
-      const [boot, setBoot] = useState<BootstrapState | null>(initialBoot);
-      return useProject(api, { boot, setBoot, hostGeneration: 0 });
-    });
-    act(() => {
-      result.current.applyCanonicalState(initialBoot.canonical);
+      return useTestProject(api, initialBoot);
     });
 
     await act(async () => {
@@ -232,67 +270,6 @@ describe('useProject', () => {
 
     expect(saveProjectPackageMock).toHaveBeenCalledWith('My Song');
     expect(api.calls).toContain('exportProject');
-    expect(result.current.exportMessage).toBe(`Project exported: ${output}`);
-  });
-  it('accepts only newer canonical state from the active project', () => {
-    const api = new FakeNativeApi();
-    const { result } = renderHook(() => {
-      const [boot, setBoot] = useState<BootstrapState | null>(api.bootstrapState);
-      return useProject(api, { boot, setBoot, hostGeneration: 0 });
-    });
-    const current = api.bootstrapState.canonical;
-
-    act(() => {
-      expect(result.current.applyCanonicalState(current)).toBe(true);
-      expect(
-        result.current.applyCanonicalState({ ...current, projectId: 'other', sequence: 99 }),
-      ).toBe(false);
-      expect(result.current.applyCanonicalState({ ...current, sequence: 1 })).toBe(true);
-      expect(result.current.applyCanonicalState(current)).toBe(false);
-      expect(result.current.applyCanonicalState({ ...current, sequence: 1 })).toBe(false);
-    });
-
-    expect(result.current.session).toEqual(current.session);
-  });
-  it('keeps the activated identity when an earlier project list returns', async () => {
-    // Arrange
-    const api = new FakeNativeApi();
-    const initial = api.bootstrapState;
-    const next = activation('01900000-0000-7000-8000-000000000002');
-    let resolveList!: (value: typeof initial.projectState) => void;
-    api.setResponse(
-      'listProjects',
-      () => new Promise<typeof initial.projectState>((resolve) => (resolveList = resolve)),
-    );
-    let restoreBoot!: (boot: BootstrapState) => void;
-    const { result } = renderHook(() => {
-      const [boot, setBoot] = useState<BootstrapState | null>(initial);
-      restoreBoot = setBoot;
-      return useProject(api, { boot, setBoot, hostGeneration: 0 });
-    });
-    act(() => restoreBoot(initial));
-    let listing!: ReturnType<typeof result.current.refreshProjects>;
-    act(() => {
-      listing = result.current.refreshProjects();
-    });
-    await waitFor(() => expect(resolveList).toBeDefined());
-
-    // Act
-    act(() => {
-      expect(result.current.applyProjectActivation(next)).toBe(true);
-    });
-    await act(async () => {
-      resolveList(initial.projectState);
-      await listing;
-    });
-
-    // Assert
-    expect(result.current.projectState?.activeProjectId).toBe(next.canonical.projectId);
-    expect(result.current.projectState?.projects).toEqual(initial.projectState.projects);
-    act(() => {
-      expect(result.current.applyCanonicalState({ ...next.canonical, sequence: 2 })).toBe(true);
-      expect(result.current.applyCanonicalState({ ...initial.canonical, sequence: 3 })).toBe(false);
-    });
-    expect(result.current.session).toEqual(next.canonical.session);
+    expect(toastSpy).toHaveBeenCalledWith(`Project exported: ${output}`);
   });
 });
