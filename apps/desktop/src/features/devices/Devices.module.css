@@ -216,7 +216,7 @@
 
 /* Bypass lights in the warning color while the device is out of the signal. */
 .bypass {
-  composes: smallButton from '../../../shared/ui/controls.module.css';
+  composes: smallButton from '../../shared/ui/controls.module.css';
 }
 
 .bypass[aria-pressed='true'] {
@@ -430,7 +430,7 @@
 
 /* A number and its unit inside one well. */
 .unitWell {
-  composes: well from '../../../shared/ui/controls.module.css';
+  composes: well from '../../shared/ui/controls.module.css';
   width: 96px;
   display: flex;
   align-items: center;
