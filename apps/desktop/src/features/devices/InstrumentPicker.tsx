@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { InstrumentLibraryItem, PluginEntry } from '@/model/generated';
 
 import { useSessionContext } from '@/shared/session/session-context';
-import { matchesInstrumentQuery } from '@/features/instruments/model/instrument-library';
+import { matchesInstrumentQuery } from '@/model/instrument-search';
 import styles from './Picker.module.css';
 
 type QuickPickerInstrument = Pick<InstrumentLibraryItem, 'id' | 'name' | 'description' | 'origin'>;

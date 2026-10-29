@@ -14,11 +14,11 @@ import { useTransportController } from '@/features/transport/hooks/useTransportC
 import { useArrangementTransport } from '@/features/transport/hooks/useArrangementTransport';
 import { useLibrary } from '@/features/library/hooks/useLibrary';
 import { useInbox } from '@/features/library/hooks/useInbox';
-import { useInstrumentLibrary } from '@/features/instruments/hooks/useInstrumentLibrary';
+import { useInstrumentLibrary } from '@/features/library/hooks/useInstrumentLibrary';
 import { useAudioSettings } from '@/features/audio/hooks/useAudioSettings';
 import { useMissingDependencies } from '@/features/project/hooks/useMissingDependencies';
 import { useRecording } from '@/features/recording/hooks/useRecording';
-import { usePluginCatalog } from '@/features/plugins/hooks/usePluginCatalog';
+import { usePluginCatalog } from '@/features/library/hooks/usePluginCatalog';
 import { toast } from '@/shared/toasts';
 
 export function useAppController(api: NativeApi = defaultNativeApi) {

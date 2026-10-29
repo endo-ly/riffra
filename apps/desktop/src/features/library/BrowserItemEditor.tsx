@@ -1,7 +1,7 @@
 import { useRef, useState, type KeyboardEvent } from 'react';
 import type { LibraryAsset, RecordingAsset } from '@/model/generated';
 import type { InboxController } from '@/features/library/hooks/useInbox';
-import type { useInstrumentLibrary } from '@/features/instruments/hooks/useInstrumentLibrary';
+import type { useInstrumentLibrary } from '@/features/library/hooks/useInstrumentLibrary';
 import { browserItemName, type BrowserItem } from './model/browser-tree';
 import styles from './BrowserPanel.module.css';
 

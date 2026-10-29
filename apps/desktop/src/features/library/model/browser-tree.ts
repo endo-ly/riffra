@@ -7,7 +7,7 @@ import type {
   RecordingAsset,
 } from '@/model/generated';
 import type { BrowserPlacement } from '@/shared/browser-placement';
-import { matchesInstrumentQuery } from '@/features/instruments/model/instrument-library';
+import { matchesInstrumentQuery } from '@/model/instrument-search';
 
 export type BrowserItem =
   | { kind: 'instrument'; key: string; instrument: InstrumentLibraryItem }

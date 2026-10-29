@@ -10,7 +10,7 @@ import {
 } from 'react';
 import type { LibraryAsset, PluginEntry, RecordingAsset, Track } from '@/model/generated';
 import type { InboxController } from '@/features/library/hooks/useInbox';
-import type { useInstrumentLibrary } from '@/features/instruments/hooks/useInstrumentLibrary';
+import type { useInstrumentLibrary } from '@/features/library/hooks/useInstrumentLibrary';
 import {
   describePlacementAction,
   resolvePlacementTarget,
