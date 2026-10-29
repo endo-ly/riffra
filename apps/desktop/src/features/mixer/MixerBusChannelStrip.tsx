@@ -1,3 +1,4 @@
+import { errorText } from '@/shared/errors';
 import type { CanonicalState, MixBus } from '@/model/domain';
 import type { ArrangeWorkspaceApi } from '@/features/arrange/arrange-api';
 import { ChannelMixSlider } from './ChannelMixSlider';
@@ -30,7 +31,7 @@ export function MixerBusChannelStrip(props: Props) {
       if (props.applyCanonicalState(result.canonical) && result.projection.state === 'failed')
         props.onError(result.projection.message);
     } catch (error) {
-      props.onError(error instanceof Error ? error.message : String(error));
+      props.onError(errorText(error));
     }
   };
   const missing = bus.effects.some(

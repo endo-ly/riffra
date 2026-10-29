@@ -1,3 +1,4 @@
+import { errorText } from '@/shared/errors';
 import { useCallback, useEffect, useState } from 'react';
 import type { LibraryAsset, RecordingAsset } from '@/model/domain';
 import { audioCommandSucceeded } from '@/shared/audio/audio-safety';
@@ -45,7 +46,7 @@ export function useInbox(
         setSelectedId(nextId);
         setMessage(`Renamed to ${name}.`);
       } catch (cause) {
-        setError(cause instanceof Error ? cause.message : String(cause));
+        setError(errorText(cause));
         throw cause;
       }
     },
@@ -61,7 +62,7 @@ export function useInbox(
         await reload();
         setMessage('Recording deleted.');
       } catch (cause) {
-        setError(cause instanceof Error ? cause.message : String(cause));
+        setError(errorText(cause));
         throw cause;
       }
     },
@@ -79,7 +80,7 @@ export function useInbox(
         await reload();
         setMessage('Recording archived.');
       } catch (cause) {
-        setError(cause instanceof Error ? cause.message : String(cause));
+        setError(errorText(cause));
         throw cause;
       }
     },
@@ -97,7 +98,7 @@ export function useInbox(
         await reload();
         setMessage('Recording promoted to the library.');
       } catch (cause) {
-        setError(cause instanceof Error ? cause.message : String(cause));
+        setError(errorText(cause));
         throw cause;
       }
     },
@@ -114,7 +115,7 @@ export function useInbox(
         setMessage('Recording tag saved.');
         return updated;
       } catch (cause) {
-        setError(cause instanceof Error ? cause.message : String(cause));
+        setError(errorText(cause));
         throw cause;
       }
     },
@@ -133,7 +134,7 @@ export function useInbox(
         }
         setMessage(`Preview started: ${recording.name}.`);
       } catch (cause) {
-        setError(cause instanceof Error ? cause.message : String(cause));
+        setError(errorText(cause));
         throw cause;
       }
     },
@@ -152,7 +153,7 @@ export function useInbox(
           : `${groups.length} duplicate group${groups.length === 1 ? '' : 's'} found (${count} recordings).`,
       );
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(errorText(cause));
       throw cause;
     }
   }, [api]);

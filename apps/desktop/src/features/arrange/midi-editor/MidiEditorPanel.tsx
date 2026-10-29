@@ -1,3 +1,4 @@
+import { errorText } from '@/shared/errors';
 import { musicalGridTicks, snapToBar } from '@/shared/session/timebase';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, MutableRefObject } from 'react';
@@ -774,7 +775,7 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
         }
       },
       (error) => {
-        const detail = error instanceof Error ? error.message : String(error);
+        const detail = errorText(error);
         toast(`Quantize failed: ${detail}`, { kind: 'error' });
       },
     );

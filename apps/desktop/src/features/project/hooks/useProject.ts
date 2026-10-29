@@ -1,3 +1,4 @@
+import { errorText } from '@/shared/errors';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import type {
@@ -137,9 +138,7 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UsePro
       if ((canonicalStateRef.current?.sequence ?? -1) !== sequenceAtRequest) return;
       setHistoryState(nextHistory);
     } catch (error) {
-      setAutosaveError(
-        `History state could not be read: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      setAutosaveError(`History state could not be read: ${errorText(error)}`);
     }
   }, [getHistoryState]);
   const undo = useCallback(async () => {
@@ -154,7 +153,7 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UsePro
       await refreshHistory();
       if (!projectionFailed) setAutosaveError(null);
     } catch (error) {
-      setAutosaveError(`Undo failed: ${error instanceof Error ? error.message : String(error)}`);
+      setAutosaveError(`Undo failed: ${errorText(error)}`);
     }
   }, [applyCanonicalState, historyState.canUndo, refreshHistory, undoSession]);
   const redo = useCallback(async () => {
@@ -169,7 +168,7 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UsePro
       await refreshHistory();
       if (!projectionFailed) setAutosaveError(null);
     } catch (error) {
-      setAutosaveError(`Redo failed: ${error instanceof Error ? error.message : String(error)}`);
+      setAutosaveError(`Redo failed: ${errorText(error)}`);
     }
   }, [applyCanonicalState, historyState.canRedo, redoSession, refreshHistory]);
   useEffect(() => {
@@ -199,7 +198,7 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UsePro
         const message =
           error instanceof NativeCommandError && error.isProjectSwitchFailure
             ? error.message
-            : `${label} failed: ${error instanceof Error ? error.message : String(error)}`;
+            : `${label} failed: ${errorText(error)}`;
         setProjectError(message);
         return null;
       } finally {
@@ -222,9 +221,7 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UsePro
       );
       return next;
     } catch (error) {
-      setProjectError(
-        `Project list refresh failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      setProjectError(`Project list refresh failed: ${errorText(error)}`);
       return null;
     }
   }, [listProjects, setBoot]);
@@ -251,9 +248,7 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UsePro
         );
         return next;
       } catch (error) {
-        setProjectError(
-          `Project rename failed: ${error instanceof Error ? error.message : String(error)}`,
-        );
+        setProjectError(`Project rename failed: ${errorText(error)}`);
         return null;
       }
     },
@@ -277,9 +272,7 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UsePro
           : 'Export failed; the current session remains safe.',
       );
     } catch (error) {
-      setExportMessage(
-        `Export failed; the current session remains safe: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      setExportMessage(`Export failed; the current session remains safe: ${errorText(error)}`);
     }
   }, [exportProjectApi, session?.projectName]);
   const importProject = useCallback(async () => {
@@ -306,9 +299,7 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UsePro
         `Imported Project: ${imported.projectState.projects.find((project) => project.projectId === imported.projectState.activeProjectId)?.name ?? imported.projectState.activeProjectId}`,
       );
     } catch (error) {
-      setExportMessage(
-        `Import failed; the current session remains safe: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      setExportMessage(`Import failed; the current session remains safe: ${errorText(error)}`);
     }
   }, [importProjectApi, performProjectOperation]);
   const importScore = useCallback(async () => {
@@ -376,7 +367,7 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UsePro
         );
       } catch (error) {
         setExportMessage(
-          `Recovery generation could not be restored; the current session remains safe: ${error instanceof Error ? error.message : String(error)}`,
+          `Recovery generation could not be restored; the current session remains safe: ${errorText(error)}`,
         );
       }
     },

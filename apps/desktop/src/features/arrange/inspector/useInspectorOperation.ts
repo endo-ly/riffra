@@ -1,3 +1,4 @@
+import { errorText } from '@/shared/errors';
 import { useCallback, useState } from 'react';
 
 export function useInspectorOperation() {
@@ -9,7 +10,7 @@ export function useInspectorOperation() {
         apply?.(value);
       })
       .catch((error: unknown) => {
-        setOperationMessage(error instanceof Error ? error.message : String(error));
+        setOperationMessage(errorText(error));
       });
   }, []);
   return { operationMessage, runOperation, setOperationMessage };

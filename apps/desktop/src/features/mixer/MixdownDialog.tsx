@@ -1,3 +1,4 @@
+import { errorText } from '@/shared/errors';
 import { useEffect, useId, useRef, useState } from 'react';
 import type {
   BackgroundJobStatus,
@@ -130,7 +131,7 @@ export function MixdownDialog(props: Props) {
       const path = stems ? await chooseRenderStemDirectory() : await saveRenderWav('riffra-render');
       if (path) setOutputPath(path);
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : String(failure));
+      setError(errorText(failure));
     }
   };
   useEffect(() => {
@@ -147,7 +148,7 @@ export function MixdownDialog(props: Props) {
           timer = window.setTimeout(() => void poll(), 200);
       } catch (failure) {
         if (!cancelled) {
-          setError(failure instanceof Error ? failure.message : String(failure));
+          setError(errorText(failure));
           setJob(null);
         }
       }
@@ -194,7 +195,7 @@ export function MixdownDialog(props: Props) {
         if (alive.current) setJob(queued);
       }
     } catch (failure) {
-      if (alive.current) setError(failure instanceof Error ? failure.message : String(failure));
+      if (alive.current) setError(errorText(failure));
     } finally {
       if (alive.current) setSaving(false);
     }
@@ -205,7 +206,7 @@ export function MixdownDialog(props: Props) {
       const result = await props.api.cancelBackgroundJob(jobId);
       if (alive.current) setJob(result);
     } catch (failure) {
-      if (alive.current) setError(failure instanceof Error ? failure.message : String(failure));
+      if (alive.current) setError(errorText(failure));
     }
   };
   const result =

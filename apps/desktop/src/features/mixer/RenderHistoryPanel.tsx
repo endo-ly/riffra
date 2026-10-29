@@ -1,3 +1,4 @@
+import { errorText } from '@/shared/errors';
 import { useCallback, useEffect, useState } from 'react';
 import type { RenderHistoryEntry } from '@/model/domain';
 import type { ArrangeWorkspaceApi } from '@/features/arrange/arrange-api';
@@ -67,7 +68,7 @@ export function RenderHistoryPanel({ api, refreshToken }: Props) {
     try {
       setRenders(await api.listRenders());
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : String(failure));
+      setError(errorText(failure));
     } finally {
       setLoading(false);
     }
@@ -92,7 +93,7 @@ export function RenderHistoryPanel({ api, refreshToken }: Props) {
         `Exported ${result.fileCount} file${result.fileCount === 1 ? '' : 's'} to ${result.outputPath}`,
       );
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : String(failure));
+      setError(errorText(failure));
     } finally {
       setBusyRenderId(null);
     }
@@ -110,7 +111,7 @@ export function RenderHistoryPanel({ api, refreshToken }: Props) {
       );
       await refresh();
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : String(failure));
+      setError(errorText(failure));
     } finally {
       setBusyRenderId(null);
     }

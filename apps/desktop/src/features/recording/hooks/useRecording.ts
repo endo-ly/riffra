@@ -1,3 +1,4 @@
+import { errorText } from '@/shared/errors';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import type { AudioStatus, CanonicalState, RecordingAsset } from '@/model/domain';
@@ -72,7 +73,7 @@ export function useRecording(api: RecordingFeatureApi, options: UseRecordingOpti
         return true;
       } catch (error) {
         logNativeError(errorLabel)(error);
-        onCommandFailure(error instanceof Error ? error.message : String(error));
+        onCommandFailure(errorText(error));
         return false;
       } finally {
         {

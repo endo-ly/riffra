@@ -1,3 +1,4 @@
+import { errorText } from '@/shared/errors';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   HostConnectionBootstrap,
@@ -53,7 +54,7 @@ export function useHostConnection(
       return next;
     } catch (nextError) {
       if (serial === refreshSerial.current) {
-        setError(nextError instanceof Error ? nextError.message : String(nextError));
+        setError(errorText(nextError));
       }
       return null;
     }
@@ -78,7 +79,7 @@ export function useHostConnection(
           })
           .catch((nextError) => {
             if (serial === refreshSerial.current) {
-              setError(nextError instanceof Error ? nextError.message : String(nextError));
+              setError(errorText(nextError));
             }
           });
       })
@@ -88,11 +89,11 @@ export function useHostConnection(
       })
       .catch((nextError) => {
         if (!disposed) {
-          setError(nextError instanceof Error ? nextError.message : String(nextError));
+          setError(errorText(nextError));
         }
       });
     void refresh().catch((nextError) => {
-      if (!disposed) setError(nextError instanceof Error ? nextError.message : String(nextError));
+      if (!disposed) setError(errorText(nextError));
     });
     return () => {
       disposed = true;
@@ -118,7 +119,7 @@ export function useHostConnection(
         return result;
       } catch (nextError) {
         if (serial === switchSerial.current) {
-          setError(nextError instanceof Error ? nextError.message : String(nextError));
+          setError(errorText(nextError));
         }
         return null;
       } finally {

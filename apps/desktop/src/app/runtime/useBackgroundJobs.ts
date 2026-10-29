@@ -1,3 +1,4 @@
+import { errorText } from '@/shared/errors';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { BackgroundJobStatus, JobState } from '@/model/domain';
 import type { JobApi } from '@/native/native-api';
@@ -44,7 +45,7 @@ export function useBackgroundJobs(
       try {
         started = await start();
       } catch (error) {
-        onFailed(error instanceof Error ? error.message : String(error));
+        onFailed(errorText(error));
         return false;
       }
       activeJobId.current = started.id;
@@ -72,7 +73,7 @@ export function useBackgroundJobs(
         onCompleted(latest.result);
         return true;
       } catch (error) {
-        onFailed(error instanceof Error ? error.message : String(error));
+        onFailed(errorText(error));
         return false;
       } finally {
         if (activeJobId.current === started.id) {

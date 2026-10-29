@@ -1,3 +1,4 @@
+import { errorText } from '@/shared/errors';
 import { useEffect, useRef, useState } from 'react';
 import type {
   AudioDeviceProbe,
@@ -147,7 +148,7 @@ export function AudioSettingsDialog({
       })
       .catch((reason) => {
         if (!cancelled)
-          setError(errorMessage(reason, 'Device channel details could not be loaded.'));
+          setError(errorText(reason) || 'Device channel details could not be loaded.');
       })
       .finally(() => {
         inFlightDeviceKeys.current.delete(deviceKey);
@@ -221,7 +222,7 @@ export function AudioSettingsDialog({
       setAvailableProbe(effectiveProbe);
       setDraft((current) => normalizeAudioSettingsDraft(current, effectiveProbe));
     } catch (reason) {
-      setError(errorMessage(reason, 'Audio device refresh failed.'));
+      setError(errorText(reason) || 'Audio device refresh failed.');
     } finally {
       setRefreshing(false);
     }
@@ -234,7 +235,7 @@ export function AudioSettingsDialog({
       const nextAudio = await onRecover();
       if (!audioCommandSucceeded(nextAudio)) setError(nextAudio.message);
     } catch (reason) {
-      setError(errorMessage(reason, 'Audio recovery failed.'));
+      setError(errorText(reason) || 'Audio recovery failed.');
     } finally {
       setRecovering(false);
     }
@@ -251,7 +252,7 @@ export function AudioSettingsDialog({
       if (audioCommandSucceeded(nextAudio)) onClose();
       else setError(nextAudio.message);
     } catch (reason) {
-      setError(errorMessage(reason, 'Audio settings could not be applied.'));
+      setError(errorText(reason) || 'Audio settings could not be applied.');
     } finally {
       setApplying(false);
     }
@@ -525,10 +526,6 @@ function sameDraft(left: AudioDriverConfig, right: AudioDriverConfig): boolean {
     left.sampleRate === right.sampleRate &&
     left.bufferSize === right.bufferSize
   );
-}
-
-function errorMessage(reason: unknown, fallback: string): string {
-  return reason instanceof Error ? reason.message : typeof reason === 'string' ? reason : fallback;
 }
 
 function statusLabel(state: AudioStatus['state']): string {

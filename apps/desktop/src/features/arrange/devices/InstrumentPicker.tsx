@@ -1,3 +1,4 @@
+import { errorText } from '@/shared/errors';
 import { useEffect, useMemo, useState } from 'react';
 import type { InstrumentLibraryItem, PluginEntry } from '@/model/domain';
 import type { JobApi } from '@/native/native-api';
@@ -45,7 +46,7 @@ export function InstrumentPicker(props: InstrumentPickerProps) {
       })
       .catch((reason) => {
         if (cancelled) return;
-        setError(reason instanceof Error ? reason.message : String(reason));
+        setError(errorText(reason));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);

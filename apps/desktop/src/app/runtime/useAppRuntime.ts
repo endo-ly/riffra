@@ -1,3 +1,4 @@
+import { errorText } from '@/shared/errors';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   AudioStatus,
@@ -75,7 +76,7 @@ export function useAppRuntime(api: AppRuntimeApi, hostGeneration: number) {
       })
       .catch((error: unknown) => {
         logNativeError('bootstrap')(error);
-        setBootstrapError(error instanceof Error ? error.message : String(error));
+        setBootstrapError(errorText(error));
       })
       .finally(() => {
         setBootstrapLoading(false);

@@ -1,3 +1,4 @@
+import { errorText } from '@/shared/errors';
 import { useCallback, useState } from 'react';
 import type { ArrangementMutationResult, CanonicalState } from '@/model/domain';
 import { HostConnectionChangedError } from '@/native/invoke';
@@ -23,7 +24,7 @@ export function useArrangeCommands({ applyCanonicalState }: ArrangeCommandOption
         return next.canonical.session;
       } catch (error) {
         if (error instanceof HostConnectionChangedError) return null;
-        const detail = error instanceof Error ? error.message : String(error);
+        const detail = errorText(error);
         setMessage(detail);
         return null;
       }

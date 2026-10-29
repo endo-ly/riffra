@@ -1,3 +1,4 @@
+import { errorText } from '@/shared/errors';
 import { formatGainDb, formatPan } from '@/shared/audio/mix-format';
 import { useState, type CSSProperties } from 'react';
 import type { AutomationLane, CanonicalState, Track } from '@/model/domain';
@@ -54,7 +55,7 @@ export function MixerTrackChannelStrip(props: MixerTrackChannelStripProps) {
       if (!props.applyCanonicalState(result.canonical)) return;
       if (result.projection.state === 'failed') props.onError?.(result.projection.message);
     } catch (error) {
-      props.onError?.(error instanceof Error ? error.message : String(error));
+      props.onError?.(errorText(error));
     } finally {
       setPendingSwitch(null);
     }

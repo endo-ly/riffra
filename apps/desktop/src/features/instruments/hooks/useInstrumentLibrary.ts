@@ -1,3 +1,4 @@
+import { errorText } from '@/shared/errors';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AudioStatus, InstrumentCollection, InstrumentLibraryItem } from '@/model/domain';
 import type { AudioApi, InstrumentLibraryApi, NativeEventApi } from '@/native/native-api';
@@ -57,7 +58,7 @@ export function useInstrumentLibrary(
       setCategories(nextCategories);
       setCollections(nextCollections);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(errorText(cause));
       logNativeError('listInstrumentLibrary')(cause);
     } finally {
       setLoading(false);
@@ -68,7 +69,7 @@ export function useInstrumentLibrary(
       const next = await listInstrumentCollections();
       setCollections(next);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(errorText(cause));
       logNativeError('listInstrumentCollections')(cause);
     }
   }, [listInstrumentCollections]);
@@ -108,7 +109,7 @@ export function useInstrumentLibrary(
         const next = await operation();
         replaceItem(next);
       } catch (cause) {
-        setError(cause instanceof Error ? cause.message : String(cause));
+        setError(errorText(cause));
         logNativeError(label)(cause);
       }
     },
@@ -147,7 +148,7 @@ export function useInstrumentLibrary(
         await reloadCollections();
         return created;
       } catch (cause) {
-        setError(cause instanceof Error ? cause.message : String(cause));
+        setError(errorText(cause));
         logNativeError('createInstrumentCollection')(cause);
         return null;
       }
@@ -161,7 +162,7 @@ export function useInstrumentLibrary(
         await renameInstrumentCollection(id, name);
         await reloadCollections();
       } catch (cause) {
-        setError(cause instanceof Error ? cause.message : String(cause));
+        setError(errorText(cause));
         logNativeError('renameInstrumentCollection')(cause);
       }
     },
@@ -184,7 +185,7 @@ export function useInstrumentLibrary(
         );
         await reloadCollections();
       } catch (cause) {
-        setError(cause instanceof Error ? cause.message : String(cause));
+        setError(errorText(cause));
         logNativeError('deleteInstrumentCollection')(cause);
       }
     },
@@ -244,7 +245,7 @@ export function useInstrumentLibrary(
       } catch (cause) {
         if (isCurrentRequest()) {
           if (!nativeInstrumentPreviewing.current) setPreviewingId(null);
-          setError(cause instanceof Error ? cause.message : String(cause));
+          setError(errorText(cause));
           logNativeError('previewInstrument')(cause);
         }
       } finally {

@@ -1,3 +1,4 @@
+import { errorText } from '@/shared/errors';
 import { useEffect, useMemo, useState } from 'react';
 import type { PluginEntry, PluginRole } from '@/model/domain';
 import type { JobApi } from '@/native/native-api';
@@ -42,7 +43,7 @@ export function PluginPicker(props: PluginPickerProps) {
       })
       .catch((err) => {
         if (cancelled) return;
-        setError(err instanceof Error ? err.message : String(err));
+        setError(errorText(err));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);

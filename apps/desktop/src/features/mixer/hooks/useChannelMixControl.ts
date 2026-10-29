@@ -1,3 +1,4 @@
+import { errorText } from '@/shared/errors';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ArrangementMutationResult, CanonicalState, Track, MixBus } from '@/model/domain';
 import type { ArrangeApi, AudioApi } from '@/native/native-api';
@@ -190,7 +191,7 @@ export function useChannelMixControl({
       } catch (error) {
         if (disposed.current) return;
         restoreCanonicalRuntime(parameter);
-        onError?.(error instanceof Error ? error.message : String(error));
+        onError?.(errorText(error));
       } finally {
         const pending = pendingCommit.current[parameter];
         if (pending?.interactionId === currentInteractionId && pending.value === value)

@@ -1,3 +1,4 @@
+import { errorText } from '@/shared/errors';
 import { useMemo, useState } from 'react';
 import clsx from 'clsx';
 import type { ArrangementMutationResult, CanonicalState, CreativeSession } from '@/model/domain';
@@ -46,7 +47,7 @@ export function MultiClipInspector(props: MultiClipInspectorProps) {
         onSuccess?.();
       })
       .catch((error: unknown) => {
-        setMessage(error instanceof Error ? error.message : String(error));
+        setMessage(errorText(error));
       });
   };
 

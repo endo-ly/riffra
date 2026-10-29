@@ -1,3 +1,4 @@
+import { errorText } from '@/shared/errors';
 import { useEffect, useState, type CSSProperties } from 'react';
 import type {
   Arrangement,
@@ -82,7 +83,7 @@ export function DevicesPanel(props: DevicesPanelProps) {
         if (!cancelled) setMidiInspection(inspection);
       })
       .catch((failure: unknown) => {
-        if (!cancelled) setError(failure instanceof Error ? failure.message : String(failure));
+        if (!cancelled) setError(errorText(failure));
       });
     return () => {
       cancelled = true;
@@ -91,9 +92,7 @@ export function DevicesPanel(props: DevicesPanelProps) {
 
   const runOperation = (operation: Promise<unknown>) => {
     setError(null);
-    void operation.catch((failure: unknown) =>
-      setError(failure instanceof Error ? failure.message : String(failure)),
-    );
+    void operation.catch((failure: unknown) => setError(errorText(failure)));
   };
   const commit = (operation: Promise<ArrangementMutationResult>) =>
     runOperation(

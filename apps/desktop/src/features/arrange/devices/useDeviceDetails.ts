@@ -1,3 +1,4 @@
+import { errorText } from '@/shared/errors';
 import { useEffect, useRef, useState } from 'react';
 import type {
   ArrangementMutationResult,
@@ -51,7 +52,7 @@ export function useDeviceDetails(
       })
       .catch((failure: unknown) => {
         if (sequence.current !== request || failure instanceof HostConnectionChangedError) return;
-        setError(failure instanceof Error ? failure.message : String(failure));
+        setError(errorText(failure));
         setDetails(null);
       })
       .finally(() => {
@@ -75,7 +76,7 @@ export function useDeviceDetails(
       return true;
     } catch (failure) {
       if (sequence.current === request && !(failure instanceof HostConnectionChangedError))
-        setError(failure instanceof Error ? failure.message : String(failure));
+        setError(errorText(failure));
       return false;
     } finally {
       // The component is keyed by Project / Track / Device. A metadata refresh
@@ -89,7 +90,7 @@ export function useDeviceDetails(
       await api.openPluginEditor(owner, deviceId);
     } catch (failure) {
       if (sequence.current === request && !(failure instanceof HostConnectionChangedError))
-        setError(failure instanceof Error ? failure.message : String(failure));
+        setError(errorText(failure));
     }
   };
   return { details, loading, error, saving, mutate, openEditor };

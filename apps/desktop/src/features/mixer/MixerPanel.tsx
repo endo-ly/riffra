@@ -1,3 +1,4 @@
+import { errorText } from '@/shared/errors';
 import type {
   CanonicalState,
   AutomationTarget,
@@ -47,7 +48,7 @@ export function MixerPanel(props: MixerPanelProps) {
         if (props.applyCanonicalState(result.canonical) && result.projection.state === 'failed')
           setError(result.projection.message);
       })
-      .catch((failure) => setError(failure instanceof Error ? failure.message : String(failure)));
+      .catch((failure) => setError(errorText(failure)));
   };
   const addBus = async () => {
     if (busy || !newName.trim()) return;
@@ -60,7 +61,7 @@ export function MixerPanel(props: MixerPanelProps) {
         if (result.projection.state === 'failed') setError(result.projection.message);
       }
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : String(failure));
+      setError(errorText(failure));
     } finally {
       setBusy(false);
     }
