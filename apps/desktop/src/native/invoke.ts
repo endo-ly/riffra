@@ -1,5 +1,6 @@
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 import type { ControlCommand, ControlCommandResults } from '@/model/generated';
+import type { HostConnectionState } from '@/model/domain';
 
 let currentHostGeneration = 0;
 let hostConnected = true;
@@ -72,16 +73,11 @@ export class HostConnectionChangedError extends Error {
   }
 }
 
-export function setHostGeneration(generation: number): void {
-  currentHostGeneration = generation;
-}
-
-export function setHostConnectionAvailability(connected: boolean): void {
-  hostConnected = connected;
-}
-
-export function getHostGeneration(): number {
-  return currentHostGeneration;
+export function adoptHostConnection(state: HostConnectionState): boolean {
+  if (state.generation < currentHostGeneration) return false;
+  currentHostGeneration = state.generation;
+  hostConnected = state.mode !== 'disconnected';
+  return true;
 }
 
 /**

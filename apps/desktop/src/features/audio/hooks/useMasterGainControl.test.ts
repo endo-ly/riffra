@@ -1,18 +1,12 @@
 // @vitest-environment jsdom
 
 import { act, renderHook, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { ArrangementMutationResult, CanonicalState } from '@/model/domain';
 import { canonicalState, defaultSession } from '@/native/browser-defaults';
-import { setHostConnectionAvailability, setHostGeneration } from '@/native/invoke';
 import { useMasterGainControl } from './useMasterGainControl';
 
 describe('useMasterGainControl', () => {
-  beforeEach(() => {
-    setHostGeneration(0);
-    setHostConnectionAvailability(true);
-  });
-
   it('does not let a stale canonical response roll back the newer master value', async () => {
     const initialSession = defaultSession();
     const latestSession = structuredClone(initialSession);

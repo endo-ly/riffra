@@ -4,11 +4,7 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { defaultProjectState, defaultSession } from '@/native/browser-defaults';
-import {
-  NativeCommandError,
-  setHostConnectionAvailability,
-  setHostGeneration,
-} from '@/native/invoke';
+import { NativeCommandError } from '@/native/invoke';
 import { FakeNativeApi } from '@/native/native-api-fake';
 import type { BootstrapState, ProjectActivationResult } from '@/model/domain';
 import {
@@ -47,8 +43,6 @@ function activation(projectId: string): ProjectActivationResult {
 
 describe('useProject', () => {
   beforeEach(() => {
-    setHostGeneration(0);
-    setHostConnectionAvailability(true);
     openProjectPackageMock.mockResolvedValue(null);
     saveProjectPackageMock.mockResolvedValue(null);
   });

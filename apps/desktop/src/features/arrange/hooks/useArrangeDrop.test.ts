@@ -2,9 +2,9 @@
 
 import { act, renderHook, waitFor } from '@testing-library/react';
 import type { DragEvent } from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { ArrangementMutationResult, CreativeSession } from '@/model/domain';
-import { HostConnectionChangedError, setHostGeneration } from '@/native/invoke';
+import { HostConnectionChangedError } from '@/native/invoke';
 import { toAssetId } from '@/native/contracts';
 import {
   RIFFRA_ASSET_MIME,
@@ -12,10 +12,6 @@ import {
   RIFFRA_PLUGIN_MIME,
 } from '@/shared/browser-drag';
 import { useArrangeDrop } from './useArrangeDrop';
-
-afterEach(() => {
-  setHostGeneration(0);
-});
 
 function mutation(createdEntityIds: Record<string, string[]> = {}): ArrangementMutationResult {
   return { createdEntityIds } as ArrangementMutationResult;
@@ -145,7 +141,6 @@ describe('useArrangeDrop', () => {
       result.current.handleDrop(event, 'track:instrument', 'instrument');
     });
     await waitFor(() => expect(api.importMidiBytes).toHaveBeenCalled());
-    setHostGeneration(1);
     rejectImport?.(new HostConnectionChangedError());
 
     // Assert

@@ -6,11 +6,6 @@ import type {
   NativeApi,
 } from '@/native/native-api';
 import type { HostConnectionState, HostTarget, LocalHostInfo } from '@/model/domain';
-import {
-  getHostGeneration,
-  setHostConnectionAvailability,
-  setHostGeneration,
-} from '@/native/invoke';
 
 const disconnectedState: HostConnectionState = {
   mode: 'disconnected',
@@ -43,10 +38,7 @@ export function useHostConnection(
     try {
       const next = await api.getHostConnectionState();
       if (serial !== refreshSerial.current) return next;
-      if (next.generation < getHostGeneration()) return next;
-      setHostGeneration(next.generation);
-      setHostConnectionAvailability(next.mode !== 'disconnected');
-      setState(next);
+      setState((current) => (next.generation < current.generation ? current : next));
       const nextHosts = await api.listLocalHosts();
       if (serial !== refreshSerial.current) return next;
       setHosts(nextHosts);
@@ -66,11 +58,10 @@ export function useHostConnection(
     void api
       .onHostConnectionChanged((event: HostConnectionChangedEvent) => {
         if (disposed) return;
-        if (event.state.generation < getHostGeneration()) return;
         const serial = ++refreshSerial.current;
-        setHostGeneration(event.state.generation);
-        setHostConnectionAvailability(event.state.mode !== 'disconnected');
-        setState(event.state);
+        setState((current) =>
+          event.state.generation < current.generation ? current : event.state,
+        );
         setError(event.state.mode === 'disconnected' ? event.state.reason : null);
         void api
           .listLocalHosts()
@@ -111,10 +102,10 @@ export function useHostConnection(
       setError(null);
       try {
         const result = await operation();
-        if (serial === switchSerial.current && result.state.generation >= getHostGeneration()) {
-          setHostGeneration(result.state.generation);
-          setHostConnectionAvailability(result.state.mode !== 'disconnected');
-          setState(result.state);
+        if (serial === switchSerial.current) {
+          setState((current) =>
+            result.state.generation < current.generation ? current : result.state,
+          );
         }
         return result;
       } catch (nextError) {

@@ -14,19 +14,29 @@ import {
   dispatchLatestControl,
   invoke,
   invokeHost,
-  setHostConnectionAvailability,
-  setHostGeneration,
+  adoptHostConnection,
 } from '@/native/invoke';
 
 const mute = (muted: boolean) =>
   ({ command: 'track.update', params: { trackId: 'track:1', muted } }) as const;
 
+let generation = 0;
+function advanceHost() {
+  adoptHostConnection({
+    mode: 'embedded',
+    generation: ++generation,
+    dataRoot: null,
+    instanceId: null,
+    pid: null,
+    reason: null,
+  });
+}
+
 describe('native invoke bridge', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     tauriInvoke.mockReset();
-    setHostGeneration(0);
-    setHostConnectionAvailability(true);
+    advanceHost();
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
       value: {},
@@ -90,7 +100,7 @@ describe('native invoke bridge', () => {
       const pending = invokeHost('dispatch_control', mute(true));
       const rejection = expect(pending).rejects.toBeInstanceOf(HostConnectionChangedError);
 
-      setHostGeneration(1);
+      advanceHost();
       settle();
 
       await rejection;
@@ -101,7 +111,7 @@ describe('native invoke bridge', () => {
   it('does not send a coalesced update to a newer Host generation', async () => {
     const pending = dispatchLatestControl(mute(true), 'track:mute');
     const rejection = expect(pending).rejects.toBeInstanceOf(HostConnectionChangedError);
-    setHostGeneration(1);
+    advanceHost();
 
     await vi.advanceTimersByTimeAsync(20);
 

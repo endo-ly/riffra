@@ -1,13 +1,7 @@
 import { listen } from '@tauri-apps/api/event';
 import type { BootstrapState, RecoveryCandidate, RuntimeStartupFinished } from '@/model/domain';
 import { canonicalState, defaultProjectState, defaultSession } from '../browser-defaults';
-import {
-  getHostGeneration,
-  invokeHostOrFallback,
-  isNativeRuntime,
-  setHostConnectionAvailability,
-  setHostGeneration,
-} from '../invoke';
+import { adoptHostConnection, invokeHostOrFallback, isNativeRuntime } from '../invoke';
 import { defaultVst3Root } from './constants';
 
 export async function bootstrap(): Promise<BootstrapState> {
@@ -36,10 +30,7 @@ export async function bootstrap(): Promise<BootstrapState> {
       },
     },
   );
-  if (state.hostConnection.generation >= getHostGeneration()) {
-    setHostGeneration(state.hostConnection.generation);
-    setHostConnectionAvailability(state.hostConnection.mode !== 'disconnected');
-  }
+  adoptHostConnection(state.hostConnection);
   return state;
 }
 

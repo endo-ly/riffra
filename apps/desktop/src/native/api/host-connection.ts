@@ -1,12 +1,6 @@
 import { listen } from '@tauri-apps/api/event';
 import type { HostConnectionState, HostTarget, LocalHostInfo } from '@/model/domain';
-import {
-  getHostGeneration,
-  isNativeRuntime,
-  invoke,
-  setHostConnectionAvailability,
-  setHostGeneration,
-} from '../invoke';
+import { adoptHostConnection, isNativeRuntime, invoke } from '../invoke';
 import type {
   HostConnectionBootstrap,
   HostConnectionChangedEvent,
@@ -24,8 +18,11 @@ const browserHostState: HostConnectionState = {
 
 export const hostConnectionApi: HostConnectionApi = {
   async getHostConnectionState(): Promise<HostConnectionState> {
-    if (!isNativeRuntime()) return browserHostState;
-    return invoke<HostConnectionState>('get_host_connection_state');
+    const state = isNativeRuntime()
+      ? await invoke<HostConnectionState>('get_host_connection_state')
+      : browserHostState;
+    adoptHostConnection(state);
+    return state;
   },
 
   async listLocalHosts(): Promise<LocalHostInfo[]> {
@@ -35,12 +32,16 @@ export const hostConnectionApi: HostConnectionApi = {
 
   async switchHost(target: HostTarget): Promise<HostConnectionBootstrap> {
     if (!isNativeRuntime()) throw new Error('Host switching requires the Desktop runtime');
-    return invoke<HostConnectionBootstrap>('switch_host', { target });
+    const result = await invoke<HostConnectionBootstrap>('switch_host', { target });
+    adoptHostConnection(result.state);
+    return result;
   },
 
   async reconnectHost(): Promise<HostConnectionBootstrap> {
     if (!isNativeRuntime()) throw new Error('Host reconnect requires the Desktop runtime');
-    return invoke<HostConnectionBootstrap>('reconnect_host');
+    const result = await invoke<HostConnectionBootstrap>('reconnect_host');
+    adoptHostConnection(result.state);
+    return result;
   },
 
   async onHostConnectionChanged(
@@ -48,9 +49,7 @@ export const hostConnectionApi: HostConnectionApi = {
   ): Promise<() => void> {
     if (!isNativeRuntime()) return () => undefined;
     return listen<HostConnectionChangedEvent>('host-connection-changed', ({ payload }) => {
-      if (payload.state.generation < getHostGeneration()) return;
-      setHostGeneration(payload.state.generation);
-      setHostConnectionAvailability(payload.state.mode !== 'disconnected');
+      if (!adoptHostConnection(payload.state)) return;
       callback(payload);
     });
   },
