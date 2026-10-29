@@ -1,14 +1,15 @@
 import { errorText } from '@/shared/errors';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { BackgroundJobStatus, JobState } from '@/model/domain';
-import type { JobApi } from '@/native/native-api';
+
+import type { JobApi } from '@/native/api/jobs';
 import { logNativeError } from '@/native/invoke';
 
 const terminalJobStates: readonly JobState[] = ['completed', 'failed', 'cancelled'];
 
 export function useBackgroundJobs(
   api: Pick<JobApi, 'getBackgroundJob' | 'cancelBackgroundJob'>,
-  hostGeneration = 0,
+  hostGeneration: number,
 ) {
   const [backgroundJob, setBackgroundJob] = useState<BackgroundJobStatus | null>(null);
   const activeJobId = useRef<string | null>(null);

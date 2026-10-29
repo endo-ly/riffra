@@ -1,17 +1,14 @@
-import { formatGainDb } from '@/shared/audio/mix-format';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import type { CanonicalState, CreativeSession } from '@/model/domain';
-import type { ArrangeWorkspaceApi } from '@/features/arrange/arrange-api';
-import { useAudioMeters } from '@/shared/audio/audio-meters';
-import { Icon } from '@/shared/ui/primitives';
-import { MixerMeter } from './MixerMeter';
 import { useMasterGainControl } from '@/features/audio/hooks/useMasterGainControl';
+import type { CreativeSession } from '@/model/domain';
+import { useAudioMeters } from '@/shared/audio/audio-meters';
+import { formatGainDb } from '@/shared/audio/mix-format';
+import { Icon } from '@/shared/ui/primitives';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import styles from './Mixer.module.css';
+import { MixerMeter } from './MixerMeter';
 
 interface MixerMasterChannelStripProps {
   session: CreativeSession;
-  api: Pick<ArrangeWorkspaceApi, 'previewMasterGainDb' | 'setMasterGainDb'>;
-  applyCanonicalState: (canonical: CanonicalState) => boolean;
   onOpenDevices: () => void;
   onOpenAutomation: () => void;
   onOpenMixdown: () => void;
@@ -45,8 +42,6 @@ export function MixerMasterChannelStrip(props: MixerMasterChannelStripProps) {
   }, [meters.available, meters.hardClipSamples]);
   const master = useMasterGainControl({
     session: props.session,
-    applyCanonicalState: props.applyCanonicalState,
-    api: props.api,
     disabled: props.disabled,
   });
   const commit = useCallback(

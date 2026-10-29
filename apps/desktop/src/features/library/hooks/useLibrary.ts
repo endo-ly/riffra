@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { AudioStatus, LibraryAsset } from '@/model/domain';
 import { toAssetId } from '@/native/contracts';
-import type { AudioApi, LibraryApi, ProjectApi } from '@/native/native-api';
+import type { AudioApi } from '@/native/api/audio';
+import type { LibraryApi } from '@/native/api/library';
 import { openMidiFile } from '@/native/dialog';
 import { logNativeError } from '@/native/invoke';
 
@@ -9,17 +10,17 @@ interface UseLibraryOptions {
   setAudio: (audio: AudioStatus) => void;
   query: string;
   onSearchRequested: (query: string) => void;
-  hostGeneration?: number;
+  hostGeneration: number;
   projectId?: string | null;
 }
 
 export function useLibrary(
-  api: LibraryApi & AudioApi & Pick<ProjectApi, 'importMidiFile'>,
+  api: LibraryApi & AudioApi,
   {
     setAudio,
     query: requestedQuery,
     onSearchRequested,
-    hostGeneration = 0,
+    hostGeneration,
     projectId = null,
   }: UseLibraryOptions,
 ) {
@@ -35,7 +36,6 @@ export function useLibrary(
     async (asset: LibraryAsset, tag: string | null, note: string | null) => {
       try {
         const updated = await updateAssetMetadata(asset.id, tag, note);
-        if (!updated) return;
         setLibraryResults((current) =>
           current.map((asset) => (asset.id === updated.id ? updated : asset)),
         );
@@ -80,8 +80,8 @@ export function useLibrary(
         .pop()
         ?.replace(/\.(mid|midi)$/i, '') ?? 'midi';
     try {
-      const assetId = await api.importMidiFile(selected);
-      if (assetId) onSearchRequested(stem);
+      await api.importMidiFile(selected);
+      onSearchRequested(stem);
     } catch (error) {
       logNativeError('importMidiFile')(error);
     }

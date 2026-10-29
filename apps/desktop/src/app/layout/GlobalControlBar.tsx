@@ -1,7 +1,6 @@
 import clsx from 'clsx';
 import type {
   AudioStatus,
-  CanonicalState,
   CreativeSession,
   HistoryState,
   HostConnectionState,
@@ -10,11 +9,10 @@ import type {
   ProjectActivationResult,
   ProjectState,
 } from '@/model/domain';
-import type { HostConnectionBootstrap } from '@/native/native-api';
+
+import type { HostConnectionBootstrap } from '@/native/api/host-connection';
 import { AudioMonitor } from '@/features/audio/AudioMonitor';
-import type { AudioMonitorApi } from '@/features/audio/audio-api';
 import { TransportControls } from '@/features/transport/TransportControls';
-import type { TransportControlsApi } from '@/features/transport/transport-api';
 import { Icon } from '@/shared/ui/primitives';
 import { ProjectHostSelector } from './ProjectHostSelector';
 import styles from './GlobalControlBar.module.css';
@@ -34,7 +32,6 @@ interface GlobalControlBarProps {
   onOpenCommand: () => void;
   onOpenAudioSettings: () => void;
   audioSettingsOpen: boolean;
-  applyCanonicalState: (canonical: CanonicalState) => boolean;
   transportPlaying: boolean;
   transportStarting: boolean;
   transportPaused: boolean;
@@ -45,8 +42,6 @@ interface GlobalControlBarProps {
   onGoToStart: () => void;
   recordingCommandPending: boolean;
   onToggleRecording: () => void;
-  transportControlsApi: TransportControlsApi;
-  audioMonitorApi: AudioMonitorApi;
   hostConnectionState: HostConnectionState;
   localHosts: LocalHostInfo[];
   hostSwitching: boolean;
@@ -132,7 +127,6 @@ export function GlobalControlBar(props: GlobalControlBarProps) {
       >
         <TransportControls
           session={props.session}
-          applyCanonicalState={props.applyCanonicalState}
           recordingActive={props.audio.recording.active || props.audio.recording.processing}
           transportPlaying={props.transportPlaying}
           transportStarting={props.transportStarting}
@@ -144,7 +138,6 @@ export function GlobalControlBar(props: GlobalControlBarProps) {
           recordingCommandPending={props.recordingCommandPending}
           onToggleRecording={props.onToggleRecording}
           positionTick={props.playheadTick}
-          api={props.transportControlsApi}
         />
       </fieldset>
 
@@ -153,12 +146,7 @@ export function GlobalControlBar(props: GlobalControlBarProps) {
         disabled={!props.hostConnected}
       >
         <div className={styles.audioControlGroup} aria-disabled={props.projectSwitching}>
-          <AudioMonitor
-            session={props.session}
-            applyCanonicalState={props.applyCanonicalState}
-            api={props.audioMonitorApi}
-            disabled={props.projectSwitching}
-          />
+          <AudioMonitor session={props.session} disabled={props.projectSwitching} />
           <button
             type="button"
             className={styles.commandTrigger}

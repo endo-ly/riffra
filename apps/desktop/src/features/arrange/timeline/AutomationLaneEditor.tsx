@@ -7,7 +7,7 @@ import type {
   DeviceParameterInfo,
   EffectOwner,
 } from '@/model/domain';
-import type { ArrangeWorkspaceApi } from '../arrange-api';
+import { useSessionContext } from '@/shared/session/session-context';
 import {
   automationDevices,
   automationOptions,
@@ -19,7 +19,6 @@ import { AutomationLaneView } from './AutomationLaneView';
 interface Props {
   session: CreativeSession;
   target: AutomationTarget;
-  api: ArrangeWorkspaceApi;
   warnings: readonly string[];
   timelineWidth: number;
   pixelsPerTick: number;
@@ -42,6 +41,7 @@ interface Props {
 }
 
 export function AutomationLaneEditor(props: Props) {
+  const { api } = useSessionContext();
   const ownerCandidate = automationOwner(props.session.arrangement, props.target);
   const ownerKind = ownerCandidate?.kind ?? null;
   const ownerId = ownerCandidate && 'id' in ownerCandidate ? ownerCandidate.id : null;
@@ -62,7 +62,7 @@ export function AutomationLaneEditor(props: Props) {
       JSON.parse(deviceKey) as [string, { disabledPlaceholder: boolean }][]
     ).filter(([, plugin]) => !plugin.disabledPlaceholder);
     void Promise.allSettled(
-      available.map(async ([id]) => [id, await props.api.listDeviceParameters(owner, id)] as const),
+      available.map(async ([id]) => [id, await api.listDeviceParameters(owner, id)] as const),
     ).then((results) => {
       if (disposed) return;
       const entries: [string, DeviceParameterInfo[]][] = [];
@@ -76,7 +76,7 @@ export function AutomationLaneEditor(props: Props) {
     return () => {
       disposed = true;
     };
-  }, [owner, deviceKey, props.session.sessionId, props.api]);
+  }, [owner, deviceKey, props.session.sessionId, api]);
   const deviceId = props.target.kind === 'deviceParameter' ? props.target.deviceId : undefined;
   const parameterId =
     props.target.kind === 'deviceParameter' ? props.target.parameterId : undefined;
@@ -89,9 +89,9 @@ export function AutomationLaneEditor(props: Props) {
     (value: number) => {
       if (!owner || !deviceId || parameterIndex === undefined)
         return Promise.resolve(value.toFixed(3));
-      return props.api.formatDeviceParameterValue(owner, deviceId, parameterIndex, value);
+      return api.formatDeviceParameterValue(owner, deviceId, parameterIndex, value);
     },
-    [props.api, owner, deviceId, parameterIndex],
+    [api, owner, deviceId, parameterIndex],
   );
   if (!owner) return null;
   const options = automationOptions(props.session, owner, parameters);

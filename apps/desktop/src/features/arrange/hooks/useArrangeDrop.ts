@@ -1,5 +1,6 @@
+import type { EditorCommit } from './useArrangeEditor';
 import { useCallback, type DragEvent } from 'react';
-import type { ArrangementMutationResult, CreativeSession, TrackKind } from '@/model/domain';
+import type { TrackKind } from '@/model/domain';
 import {
   RIFFRA_ASSET_MIME,
   RIFFRA_INSTRUMENT_MIME,
@@ -14,25 +15,12 @@ import {
   resolvePlacementTarget,
   type BrowserPlacement,
 } from '@/features/arrange/model/browser-placement';
-import type { ArrangeWorkspaceApi } from '../arrange-api';
+import { useSessionContext } from '@/shared/session/session-context';
 
-type ArrangeCommit = (
-  operation: Promise<ArrangementMutationResult | null>,
-) => Promise<CreativeSession | null>;
 type ArrangeSnapTick = (raw: number, temporaryOff?: boolean) => number;
 
 interface UseArrangeDropOptions {
-  api: Pick<
-    ArrangeWorkspaceApi,
-    | 'importMidiBytes'
-    | 'addAudioClipToArrangement'
-    | 'addMidiClipToArrangement'
-    | 'addTrack'
-    | 'applyInstrument'
-    | 'setTrackVst3Instrument'
-    | 'addEffect'
-  >;
-  commit: ArrangeCommit;
+  commit: EditorCommit;
   pixelsPerTick: number;
   snapTick: ArrangeSnapTick;
   setMessage: (message: string) => void;
@@ -76,12 +64,12 @@ function readBrowserDrag(dataTransfer: DataTransfer): BrowserPlacement | string 
 
 /** Coordinates Browser item and OS MIDI-file drops in the Arrange workspace. */
 export function useArrangeDrop({
-  api,
   commit,
   pixelsPerTick,
   snapTick,
   setMessage,
 }: UseArrangeDropOptions) {
+  const { api } = useSessionContext();
   const handleBrowserDrop = useCallback(
     async (event: DragEvent, trackId?: string, trackKind?: TrackKind): Promise<void> => {
       const placement = readBrowserDrag(event.dataTransfer);
@@ -105,17 +93,7 @@ export function useArrangeDrop({
         (event.clientX - bounds.left - TRACK_HEADER_WIDTH) / pixelsPerTick,
         event.altKey,
       );
-      await placeBrowserItem(
-        api,
-        async (operation) => {
-          const result = await operation;
-          await commit(Promise.resolve(result));
-          return result;
-        },
-        placement,
-        target,
-        tick,
-      );
+      await placeBrowserItem(api, commit, placement, target, tick);
     },
     [api, commit, pixelsPerTick, setMessage, snapTick],
   );
@@ -134,7 +112,6 @@ export function useArrangeDrop({
             stem,
             Array.from(new Uint8Array(await file.arrayBuffer())),
           );
-          if (!assetId) continue;
           await commit(api.addMidiClipToArrangement(assetId, stem, undefined, trackId));
         } catch {
           /* import or placement failure surfaces through the library notice path */

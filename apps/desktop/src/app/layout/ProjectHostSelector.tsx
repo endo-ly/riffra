@@ -8,7 +8,8 @@ import type {
   ProjectState,
   ProjectSummary,
 } from '@/model/domain';
-import type { HostConnectionBootstrap } from '@/native/native-api';
+
+import type { HostConnectionBootstrap } from '@/native/api/host-connection';
 import { openHostDataRoot } from '@/native/dialog';
 import controls from '@/shared/ui/controls.module.css';
 import { Icon } from '@/shared/ui/primitives';

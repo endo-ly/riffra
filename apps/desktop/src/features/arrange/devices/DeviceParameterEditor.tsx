@@ -3,13 +3,12 @@ import type {
   Arrangement,
   ArrangementMutationResult,
   AutomationLane,
-  CanonicalState,
   DeviceParameterInfo,
   EffectOwner,
 } from '@/model/domain';
 import { Icon } from '@/shared/ui/primitives';
 import controls from '@/shared/ui/controls.module.css';
-import type { ArrangeWorkspaceApi } from '../arrange-api';
+import { useSessionContext } from '@/shared/session/session-context';
 import { useDeviceDetails } from './useDeviceDetails';
 import { DeviceSidechainEditor } from './DeviceSidechainEditor';
 import { automationValueAt } from '@/features/arrange/model/automation-value';
@@ -17,7 +16,6 @@ import { useAutomationValueDisplay } from '@/features/arrange/model/useAutomatio
 import styles from './Devices.module.css';
 
 interface DeviceParameterEditorProps {
-  api: ArrangeWorkspaceApi;
   owner: EffectOwner;
   deviceId: string;
   stateData?: string;
@@ -26,7 +24,6 @@ interface DeviceParameterEditorProps {
   automationReadActive: boolean;
   currentTick: number;
   onOpenAutomation: (parameter: DeviceParameterInfo) => void;
-  applyCanonicalState: (state: CanonicalState) => boolean;
   arrangement: Arrangement;
   isInstrument: boolean;
   commit: (operation: Promise<ArrangementMutationResult>) => void;
@@ -35,7 +32,6 @@ interface DeviceParameterEditorProps {
 
 function ParameterControl({
   parameter,
-  api,
   owner,
   deviceId,
   canonicalValue,
@@ -46,7 +42,6 @@ function ParameterControl({
   automationValue,
 }: {
   parameter: DeviceParameterInfo;
-  api: ArrangeWorkspaceApi;
   owner: EffectOwner;
   deviceId: string;
   canonicalValue: number;
@@ -56,6 +51,7 @@ function ParameterControl({
   onOpenAutomation: () => void;
   automationValue?: number;
 }) {
+  const { api } = useSessionContext();
   const [draft, setDraft] = useState(parameter.value);
   const ownerKind = owner.kind;
   const ownerId = 'id' in owner ? owner.id : null;
@@ -193,13 +189,12 @@ function ParameterControl({
 }
 
 export function DeviceParameterEditor(props: DeviceParameterEditorProps) {
+  const { api } = useSessionContext();
   const { details, loading, error, saving, mutate, openEditor } = useDeviceDetails(
-    props.api,
     props.owner,
     props.deviceId,
     props.parameterValues,
     props.stateData,
-    props.applyCanonicalState,
   );
   return (
     <section
@@ -234,9 +229,7 @@ export function DeviceParameterEditor(props: DeviceParameterEditorProps) {
                   disabled={loading || saving || props.automationReadActive}
                   onChange={(event) => {
                     const index = Number(event.currentTarget.value);
-                    void mutate(() =>
-                      props.api.setPluginPreset(props.owner, props.deviceId, index),
-                    );
+                    void mutate(() => api.setPluginPreset(props.owner, props.deviceId, index));
                   }}
                 >
                   <option value="" disabled>
@@ -268,7 +261,6 @@ export function DeviceParameterEditor(props: DeviceParameterEditorProps) {
             deviceId={props.deviceId}
             capabilities={details.inspection.capabilities.sidechain}
             isInstrument={props.isInstrument}
-            api={props.api}
             commit={props.commit}
             onOpenAutomation={props.onOpenSidechainAutomation}
           />
@@ -295,7 +287,6 @@ export function DeviceParameterEditor(props: DeviceParameterEditorProps) {
                   return (
                     <ParameterControl
                       key={parameter.index}
-                      api={props.api}
                       owner={props.owner}
                       deviceId={props.deviceId}
                       automated={Boolean(lane)}
@@ -306,7 +297,7 @@ export function DeviceParameterEditor(props: DeviceParameterEditorProps) {
                       disabled={loading || saving || props.automationReadActive}
                       onCommit={(value) =>
                         mutate(() =>
-                          props.api.setDeviceParameter(
+                          api.setDeviceParameter(
                             props.owner,
                             props.deviceId,
                             parameter.index,

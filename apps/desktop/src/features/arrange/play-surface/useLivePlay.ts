@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { Track } from '@/model/domain';
-import type { AudioApi } from '@/native/native-api';
+import { useSessionContext } from '@/shared/session/session-context';
 import { HostConnectionChangedError, logNativeError } from '@/native/invoke';
 import {
   MUSICAL_TYPING_DEFAULT_OCTAVE,
@@ -52,7 +52,6 @@ interface UseLivePlayOptions {
   missingDeviceIds: string[];
   /** Whether the on-screen Play Surface is shown. */
   surfaceOpen: boolean;
-  api: Pick<AudioApi, 'sendMidiToTrack' | 'setLiveMidiTarget'>;
 }
 
 /**
@@ -66,8 +65,8 @@ export function useLivePlay({
   hostConnected,
   missingDeviceIds,
   surfaceOpen,
-  api,
 }: UseLivePlayOptions) {
+  const { api } = useSessionContext();
   const [computerKeyboard, setComputerKeyboard] = useState(false);
   const [settingsByTrack, setSettingsByTrack] = useState<Record<string, LivePlaySettings>>({});
   const [message, setMessage] = useState<string | null>(null);

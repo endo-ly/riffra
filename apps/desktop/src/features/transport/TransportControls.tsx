@@ -1,12 +1,11 @@
 import { useEffect, useState } from 'react';
-import type { CanonicalState, CreativeSession, MetronomeSound } from '@/model/domain';
+import type { CreativeSession, MetronomeSound } from '@/model/domain';
 import clsx from 'clsx';
 import { formatClock, formatMusicalPosition } from '@/features/arrange/model/arrange-timeline';
 import { TransportIcon } from './TransportIcon';
-import type { TransportControlsApi } from './transport-api';
-import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
+import type { SessionSettingsPatch } from '@/model/generated';
+import { useSessionContext } from '@/shared/session/session-context';
 import { tickToMusicalPosition } from '@/shared/session/musical-position';
-import { toast } from '@/shared/toasts';
 import { ContextMenu } from '@/shared/ui/ContextMenu';
 import styles from './TransportControls.module.css';
 
@@ -18,7 +17,6 @@ const METRONOME_SOUNDS: { sound: MetronomeSound; label: string }[] = [
 
 interface TransportControlsProps {
   session: CreativeSession;
-  applyCanonicalState: (canonical: CanonicalState) => boolean;
   recordingActive: boolean;
   transportPlaying: boolean;
   transportStarting?: boolean;
@@ -31,13 +29,11 @@ interface TransportControlsProps {
   onToggleRecording: () => void;
   /** Arrangement Transport playhead shown as the current position. */
   positionTick: number;
-  api: TransportControlsApi;
 }
 
 export function TransportControls(props: TransportControlsProps) {
   const {
     session,
-    applyCanonicalState,
     recordingActive,
     transportPlaying,
     transportStarting = false,
@@ -49,8 +45,8 @@ export function TransportControls(props: TransportControlsProps) {
     recordingCommandPending,
     onToggleRecording,
     positionTick,
-    api,
   } = props;
+  const { api, commit } = useSessionContext();
   const initialBpm = session.arrangement.timebase.tempoChanges[0].bpm;
   const initialNumerator = session.arrangement.timebase.timeSignatureChanges[0].numerator;
   const initialDenominator = session.arrangement.timebase.timeSignatureChanges[0].denominator;
@@ -62,15 +58,8 @@ export function TransportControls(props: TransportControlsProps) {
     setSignatureDraft(`${initialNumerator}/${initialDenominator}`);
   }, [initialBpm, initialNumerator, initialDenominator]);
 
-  const updateSettings = (patch: Parameters<TransportControlsApi['updateSessionSettings']>[0]) =>
-    void api
-      .updateSessionSettings(patch)
-      .then((result) =>
-        applyArrangementMutation(result, applyCanonicalState, (message) =>
-          toast(message, { kind: 'error' }),
-        ),
-      )
-      .catch(() => undefined);
+  const updateSettings = (patch: SessionSettingsPatch) =>
+    void commit(api.updateSessionSettings(patch));
 
   const commitTimebase = (nextSignature = signatureDraft) => {
     const bpm = Number(tempoDraft);
@@ -96,26 +85,22 @@ export function TransportControls(props: TransportControlsProps) {
       denominator === current.timeSignatureChanges[0].denominator
     )
       return;
-    void api
-      .updateArrangementTimebase({
+    void commit(
+      api.updateArrangementTimebase({
         ...current,
         tempoChanges: [{ tick: 0, bpm }, ...current.tempoChanges.slice(1)],
         timeSignatureChanges: [
           { tick: 0, numerator, denominator },
           ...current.timeSignatureChanges.slice(1),
         ],
-      })
-      .then((result) =>
-        applyArrangementMutation(result, applyCanonicalState, (message) =>
-          toast(message, { kind: 'error' }),
-        ),
-      )
-      .catch(() => {
-        setTempoDraft(String(current.tempoChanges[0].bpm));
-        setSignatureDraft(
-          `${current.timeSignatureChanges[0].numerator}/${current.timeSignatureChanges[0].denominator}`,
-        );
-      });
+      }),
+    ).then((result) => {
+      if (result) return;
+      setTempoDraft(String(current.tempoChanges[0].bpm));
+      setSignatureDraft(
+        `${current.timeSignatureChanges[0].numerator}/${current.timeSignatureChanges[0].denominator}`,
+      );
+    });
   };
 
   const recordingControlLabel = recordingCommandPending
@@ -221,21 +206,16 @@ export function TransportControls(props: TransportControlsProps) {
                 4 *
                 session.arrangement.timebase.timeSignatureChanges[0].numerator) /
               session.arrangement.timebase.timeSignatureChanges[0].denominator;
-            void api
-              .updateTimelineLoopRange(
+            void commit(
+              api.updateTimelineLoopRange(
                 !range.enabled,
                 tickToMusicalPosition(range.startTick, timebase),
                 tickToMusicalPosition(
                   range.endTick > range.startTick ? range.endTick : barTicks * 4,
                   timebase,
                 ),
-              )
-              .then((result) =>
-                applyArrangementMutation(result, applyCanonicalState, (message) =>
-                  toast(message, { kind: 'error' }),
-                ),
-              )
-              .catch(() => undefined);
+              ),
+            );
           }}
         >
           <TransportIcon name="loop" />

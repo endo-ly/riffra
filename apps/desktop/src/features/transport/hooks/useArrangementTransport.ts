@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ProjectTimebase } from '@/model/domain';
 import type { TransportStatus } from '@/model/domain';
-import type { AudioApi, NativeEventApi } from '@/native/native-api';
+import type { AudioApi } from '@/native/api/audio';
+import type { NativeEventApi } from '@/native/api/events';
 import { secondsToTicks, ticksToSeconds } from '@/shared/session/timebase';
 /** Arrangement Transport state shared by the Global Control Bar and the Arrange editors. */
 export type ArrangementTransport = ReturnType<typeof useArrangementTransport>;
@@ -14,7 +15,7 @@ export type ArrangementTransport = ReturnType<typeof useArrangementTransport>;
 export function useArrangementTransport(
   api: Pick<NativeEventApi, 'onTransportStatus'> & Pick<AudioApi, 'getAudioStatus'>,
   timebase: ProjectTimebase | null,
-  hostGeneration = 0,
+  hostGeneration: number,
   projectId: string | null = null,
 ) {
   const [transport, setTransport] = useState<TransportStatus | null>(null);

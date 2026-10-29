@@ -1,12 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import type { AudioAnalysis, AudioClip } from '@/model/domain';
-import type { AnalysisApi } from '@/native/native-api';
 
-export function useWaveformAnalyses(
-  api: Pick<AnalysisApi, 'analyzeAsset'>,
-  clips: AudioClip[],
-  hostGeneration = 0,
-) {
+import { useSessionContext } from '@/shared/session/session-context';
+
+export function useWaveformAnalyses(clips: AudioClip[]) {
+  const { api, hostGeneration } = useSessionContext();
   const [analyses, setAnalyses] = useState<Record<string, AudioAnalysis | null>>({});
   const requestedRef = useRef<Set<string>>(new Set());
   useEffect(() => {

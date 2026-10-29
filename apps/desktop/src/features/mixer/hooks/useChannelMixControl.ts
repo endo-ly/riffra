@@ -1,9 +1,6 @@
-import { errorText } from '@/shared/errors';
+import { useSessionContext } from '@/shared/session/session-context';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { ArrangementMutationResult, CanonicalState, Track, MixBus } from '@/model/domain';
-import type { ArrangeApi, AudioApi } from '@/native/native-api';
-type ChannelMixApi = Pick<ArrangeApi, 'updateTrack' | 'updateMixBus'> &
-  Pick<AudioApi, 'previewChannelMix'>;
+import type { Track, MixBus } from '@/model/domain';
 type MixParameter = 'gainDb' | 'pan';
 const mixParameters: readonly MixParameter[] = ['gainDb', 'pan'];
 interface PendingCommit {
@@ -13,8 +10,6 @@ interface PendingCommit {
 interface UseChannelMixControlOptions {
   sessionId: string;
   channel: Track | MixBus;
-  api: ChannelMixApi;
-  applyCanonicalState: (canonical: CanonicalState) => boolean;
   onError?: (message: string) => void;
   disabled?: boolean;
 }
@@ -22,11 +17,10 @@ interface UseChannelMixControlOptions {
 export function useChannelMixControl({
   sessionId,
   channel,
-  api,
-  applyCanonicalState,
   onError,
   disabled = false,
 }: UseChannelMixControlOptions) {
+  const { api, commit: sessionCommit } = useSessionContext();
   const [gainDb, setGainDb] = useState(channel.gainDb);
   const [pan, setPan] = useState(channel.pan);
   const canonical = useRef({ gainDb: channel.gainDb, pan: channel.pan });
@@ -168,12 +162,17 @@ export function useChannelMixControl({
         await previewChain.current.catch(() => undefined);
         if (disposed.current) return;
         if (value === canonical.current[parameter]) return;
-        const result: ArrangementMutationResult = await (channel.kind === 'group' ||
-        channel.kind === 'return'
-          ? api.updateMixBus(channel.id, patch)
-          : api.updateTrack(channel.id, patch));
+        const result = await sessionCommit(
+          channel.kind === 'group' || channel.kind === 'return'
+            ? api.updateMixBus(channel.id, patch)
+            : api.updateTrack(channel.id, patch),
+          { onError },
+        );
         if (disposed.current) return;
-        if (!applyCanonicalState(result.canonical)) return;
+        if (!result) {
+          restoreCanonicalRuntime(parameter);
+          return;
+        }
         const committed = (
           channel.kind === 'group' || channel.kind === 'return'
             ? result.canonical.session.arrangement.mixer.buses
@@ -186,12 +185,7 @@ export function useChannelMixControl({
         }
         if (result.projection.state === 'failed') {
           restoreCanonicalRuntime(parameter);
-          onError?.(result.projection.message);
         }
-      } catch (error) {
-        if (disposed.current) return;
-        restoreCanonicalRuntime(parameter);
-        onError?.(errorText(error));
       } finally {
         const pending = pendingCommit.current[parameter];
         if (pending?.interactionId === currentInteractionId && pending.value === value)
@@ -200,7 +194,7 @@ export function useChannelMixControl({
     },
     [
       api,
-      applyCanonicalState,
+      sessionCommit,
       clearPreviewTimer,
       disabled,
       invalidatePreview,

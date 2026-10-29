@@ -108,6 +108,22 @@ describe('native invoke bridge', () => {
     },
   );
 
+  it('ignores stale connection states without changing availability', async () => {
+    const stale = {
+      mode: 'disconnected' as const,
+      generation: generation - 1,
+      dataRoot: null,
+      instanceId: null,
+      pid: null,
+      reason: 'stale',
+    };
+    expect(adoptHostConnection(stale)).toBe(false);
+    tauriInvoke.mockResolvedValue('ok');
+    await expect(invokeHost('dispatch_control')).resolves.toBe('ok');
+    expect(adoptHostConnection({ ...stale, generation })).toBe(true);
+    await expect(invokeHost('dispatch_control')).rejects.toBeInstanceOf(HostConnectionChangedError);
+  });
+
   it('does not send a coalesced update to a newer Host generation', async () => {
     const pending = dispatchLatestControl(mute(true), 'track:mute');
     const rejection = expect(pending).rejects.toBeInstanceOf(HostConnectionChangedError);

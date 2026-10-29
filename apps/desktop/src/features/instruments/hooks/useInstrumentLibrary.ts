@@ -1,12 +1,14 @@
 import { errorText } from '@/shared/errors';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AudioStatus, InstrumentCollection, InstrumentLibraryItem } from '@/model/domain';
-import type { AudioApi, InstrumentLibraryApi, NativeEventApi } from '@/native/native-api';
+import type { AudioApi } from '@/native/api/audio';
+import type { InstrumentLibraryApi } from '@/native/api/instruments';
+import type { NativeEventApi } from '@/native/api/events';
 import { logNativeError } from '@/native/invoke';
 import { audioCommandSucceeded } from '@/shared/audio/audio-safety';
 
 interface UseInstrumentLibraryOptions {
-  hostGeneration?: number;
+  hostGeneration: number;
   safeMode?: boolean;
   setAudio: (audio: AudioStatus) => void;
 }
@@ -18,7 +20,7 @@ type InstrumentLibraryFeatureApi = InstrumentLibraryApi &
 /** Owns the shared instrument Browser state and its persisted preferences. */
 export function useInstrumentLibrary(
   api: InstrumentLibraryFeatureApi,
-  { hostGeneration = 0, safeMode = false, setAudio }: UseInstrumentLibraryOptions,
+  { hostGeneration, safeMode = false, setAudio }: UseInstrumentLibraryOptions,
 ) {
   const {
     listInstruments,

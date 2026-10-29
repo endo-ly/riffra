@@ -3,15 +3,13 @@ import { useEffect, useState, type CSSProperties } from 'react';
 import type {
   Arrangement,
   ArrangementMutationResult,
-  CanonicalState,
   AutomationLane,
   AutomationTarget,
   InstrumentLibraryItem,
   InstrumentMidiInspection,
   PluginEntry,
 } from '@/model/domain';
-import type { ArrangeWorkspaceApi } from '../arrange-api';
-import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
+import { useSessionContext } from '@/shared/session/session-context';
 import { Toolbar } from '@/shared/ui/Toolbar';
 import { resolveTrackColor } from '../model/track-colors';
 import { DeviceParameterEditor } from './DeviceParameterEditor';
@@ -29,8 +27,6 @@ interface DevicesPanelProps {
   currentTick: number;
   onOpenAutomation: (target: AutomationTarget) => void;
   target: DeviceTarget | null;
-  api: ArrangeWorkspaceApi;
-  applyCanonicalState: (canonical: CanonicalState) => boolean;
   instruments: InstrumentLibraryItem[];
   plugins: PluginEntry[];
   missingDeviceIds: string[];
@@ -40,6 +36,7 @@ interface DevicesPanelProps {
 }
 
 export function DevicesPanel(props: DevicesPanelProps) {
+  const { api, commit: sessionCommit } = useSessionContext();
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [midiInspection, setMidiInspection] = useState<InstrumentMidiInspection | null>(null);
@@ -77,7 +74,7 @@ export function DevicesPanel(props: DevicesPanelProps) {
       return;
     }
     let cancelled = false;
-    void props.api
+    void api
       .getInstrumentMidiSettings(track.id)
       .then((inspection) => {
         if (!cancelled) setMidiInspection(inspection);
@@ -88,18 +85,16 @@ export function DevicesPanel(props: DevicesPanelProps) {
     return () => {
       cancelled = true;
     };
-  }, [props.api, props.arrangement.revision, track?.id, track?.kind]);
+  }, [api, props.arrangement.revision, track?.id, track?.kind]);
 
   const runOperation = (operation: Promise<unknown>) => {
     setError(null);
     void operation.catch((failure: unknown) => setError(errorText(failure)));
   };
-  const commit = (operation: Promise<ArrangementMutationResult>) =>
-    runOperation(
-      operation.then((result) => {
-        applyArrangementMutation(result, props.applyCanonicalState, setError);
-      }),
-    );
+  const commit = (operation: Promise<ArrangementMutationResult>) => {
+    setError(null);
+    void sessionCommit(operation, { onError: setError });
+  };
   const color = track ? resolveTrackColor(track, props.arrangement.tracks.indexOf(track)) : null;
   const effectCount = target?.effects.length ?? 0;
   const deviceSummary = target
@@ -137,7 +132,6 @@ export function DevicesPanel(props: DevicesPanelProps) {
             {device && plugin && !unavailable ? (
               <DeviceParameterEditor
                 key={`${props.projectId}:${JSON.stringify(target.owner)}:${device.id}:${plugin.path}`}
-                api={props.api}
                 automationLanes={props.automationLanes}
                 automationReadActive={
                   props.playing &&
@@ -159,7 +153,6 @@ export function DevicesPanel(props: DevicesPanelProps) {
                 deviceId={device.id}
                 stateData={plugin.stateData}
                 parameterValues={plugin.parameterValues}
-                applyCanonicalState={props.applyCanonicalState}
                 arrangement={props.arrangement}
                 isInstrument={track?.instrument?.id === device.id}
                 commit={commit}
@@ -179,9 +172,7 @@ export function DevicesPanel(props: DevicesPanelProps) {
                 settings={track.instrument.midi}
                 recommendedRange={instrumentLibraryItem?.recommendedRange ?? null}
                 warnings={midiInspection?.trackId === track.id ? midiInspection.warnings : []}
-                onSave={(settings) =>
-                  commit(props.api.setInstrumentMidiSettings(track.id, settings))
-                }
+                onSave={(settings) => commit(api.setInstrumentMidiSettings(track.id, settings))}
               />
             )}
           </div>

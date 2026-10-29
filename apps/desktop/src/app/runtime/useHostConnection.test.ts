@@ -4,7 +4,8 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import type { LocalHostInfo } from '@/model/domain';
 import { FakeNativeApi } from '@/native/native-api-fake';
-import type { HostConnectionBootstrap } from '@/native/native-api';
+
+import type { HostConnectionBootstrap } from '@/native/api/host-connection';
 import { useHostConnection } from './useHostConnection';
 
 const hostA: LocalHostInfo = {

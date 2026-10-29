@@ -1,15 +1,14 @@
+import type { EditorCommit } from '../hooks/useArrangeEditor';
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import type {
   AudioAnalysis,
   AudioClip,
-  ArrangementMutationResult,
-  CreativeSession,
   MidiClip,
   MonitoringState,
   ProjectTimebase,
   Track,
 } from '@/model/domain';
-import type { ArrangeApi } from '@/native/native-api';
+import { useSessionContext } from '@/shared/session/session-context';
 import { AudioClipView } from './AudioClipView';
 import { MidiClipView } from './MidiClipView';
 import {
@@ -41,10 +40,7 @@ interface ArrangeTrackProps {
   timelineWidth: number;
   pixelsPerTick: number;
   trackSize: TrackSize;
-  api: ArrangeApi;
-  onCommit: (
-    operation: Promise<ArrangementMutationResult | null>,
-  ) => Promise<CreativeSession | null>;
+  onCommit: EditorCommit;
   onDrop: (event: React.DragEvent, trackId: string, trackKind: Track['kind']) => void;
   onContextMenu?: (event: React.MouseEvent, trackId: string, tick: number) => void;
   onMove: (event: React.PointerEvent<HTMLButtonElement>, clip: AudioClip) => void;
@@ -82,6 +78,7 @@ interface PendingTrackValues {
 }
 
 export function ArrangeTrack(props: ArrangeTrackProps) {
+  const { api } = useSessionContext();
   const detailsRef = useRef<HTMLDetailsElement>(null);
   const [dragOver, setDragOver] = useState(false);
   const [renaming, setRenaming] = useState(false);
@@ -112,7 +109,7 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
           : field === 'armed'
             ? { armed: value as boolean }
             : { monitoring: value as MonitoringState };
-    void props.onCommit(props.api.updateTrack(props.track.id, patch)).then(() => {
+    void props.onCommit(api.updateTrack(props.track.id, patch)).then(() => {
       setPendingTrackValues((current) => {
         if (current[field] !== value) return current;
         const next = { ...current };
@@ -384,7 +381,7 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
               defaultValue={props.track.gainDb}
               onPointerUp={(event) =>
                 void props.onCommit(
-                  props.api.updateTrack(props.track.id, {
+                  api.updateTrack(props.track.id, {
                     gainDb: Number(event.currentTarget.value),
                   }),
                 )
@@ -407,7 +404,7 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
               defaultValue={props.track.pan}
               onPointerUp={(event) =>
                 void props.onCommit(
-                  props.api.updateTrack(props.track.id, {
+                  api.updateTrack(props.track.id, {
                     pan: Number(event.currentTarget.value),
                   }),
                 )

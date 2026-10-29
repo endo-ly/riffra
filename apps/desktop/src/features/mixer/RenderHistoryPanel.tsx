@@ -1,17 +1,16 @@
-import { errorText } from '@/shared/errors';
-import { useCallback, useEffect, useState } from 'react';
 import type { RenderHistoryEntry } from '@/model/domain';
-import type { ArrangeWorkspaceApi } from '@/features/arrange/arrange-api';
 import { chooseRenderStemDirectory, saveRenderWav } from '@/native/dialog';
+import { errorText } from '@/shared/errors';
+import { useSessionContext } from '@/shared/session/session-context';
 import { ConfirmDialog } from '@/shared/ui/ConfirmDialog';
-import { Icon } from '@/shared/ui/primitives';
 import controls from '@/shared/ui/controls.module.css';
+import { Icon } from '@/shared/ui/primitives';
+import { useCallback, useEffect, useState } from 'react';
+import styles from './Mixdown.module.css';
 import { DialogSection } from './MixerDialog';
 import { RenderMeasurements } from './RenderMeasurements';
-import styles from './Mixdown.module.css';
 
 interface Props {
-  api: Pick<ArrangeWorkspaceApi, 'listRenders' | 'exportRender' | 'cleanRender'>;
   refreshToken: string;
 }
 
@@ -53,7 +52,8 @@ function deleteRenderMessage(render: RenderHistoryEntry) {
   return `Render ID: ${render.renderId}. Project: ${render.projectId ?? 'unknown'}. WAV files: ${fileNames} (${existingFiles} present). Registered Assets to remove: ${assetIds}. The Render history entry will also be deleted. This cannot be undone.`;
 }
 
-export function RenderHistoryPanel({ api, refreshToken }: Props) {
+export function RenderHistoryPanel({ refreshToken }: Props) {
+  const { api } = useSessionContext();
   const [renders, setRenders] = useState<RenderHistoryEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [expandedRenderId, setExpandedRenderId] = useState<string | null>(null);

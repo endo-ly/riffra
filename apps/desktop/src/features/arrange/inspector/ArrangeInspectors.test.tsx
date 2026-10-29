@@ -1,5 +1,12 @@
+import { TestSessionProvider } from '@/test/session-provider';
+import type { ReactElement, ReactNode } from 'react';
 // @vitest-environment jsdom
 
+import type { ArrangeSelection } from '@/features/arrange/hooks/useArrangeEditor';
+import type { CreativeSession } from '@/model/domain';
+import { canonicalState, defaultSession } from '@/native/browser-defaults';
+import { toAssetId } from '@/native/contracts';
+import { FakeNativeApi, fakeAudioStatus } from '@/native/native-api-fake';
 import '@testing-library/jest-dom/vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
@@ -8,11 +15,6 @@ import { ArrangeClipInspector } from './ArrangeClipInspector';
 import { MidiClipInspector } from './MidiClipInspector';
 import { TakeInspector } from './TakeInspector';
 import { TrackInspector } from './TrackInspector';
-import type { ArrangeSelection } from '@/features/arrange/hooks/useArrangeEditor';
-import type { CreativeSession } from '@/model/domain';
-import { canonicalState, defaultSession } from '@/native/browser-defaults';
-import { toAssetId } from '@/native/contracts';
-import { FakeNativeApi, fakeAudioStatus } from '@/native/native-api-fake';
 
 afterEach(cleanup);
 
@@ -95,6 +97,14 @@ function recordingSession(): CreativeSession {
   return session;
 }
 
+function renderWithSession(api: FakeNativeApi, element: ReactElement) {
+  return render(element, {
+    wrapper: ({ children }: { children: ReactNode }) => (
+      <TestSessionProvider api={api}>{children}</TestSessionProvider>
+    ),
+  });
+}
+
 describe('Arrange Inspectors', () => {
   it('surfaces Track operation failures in the Inspector status', async () => {
     const session = defaultSession();
@@ -117,14 +127,13 @@ describe('Arrange Inspectors', () => {
     const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
     api.setTrackMidiInput = vi.fn().mockRejectedValue(new Error('MIDI route failed'));
 
-    render(
+    renderWithSession(
+      api,
       <TrackInspector
         track={track}
         session={session}
-        applyCanonicalState={() => true}
         audio={fakeAudioStatus()}
         onOpenDevices={() => undefined}
-        api={api}
       />,
     );
 
@@ -148,16 +157,25 @@ describe('Arrange Inspectors', () => {
       loopEnabled: false,
     });
     const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
-    api.updateMidiClip = vi.fn().mockResolvedValue(null);
-    api.updateAudioClip = vi.fn().mockResolvedValue(null);
+    api.updateMidiClip = vi.fn().mockResolvedValue({
+      canonical: canonicalState(session),
+      createdEntityIds: {},
+      projection: { state: 'notRequired' },
+    });
+    api.updateAudioClip = vi.fn().mockResolvedValue({
+      canonical: canonicalState(session),
+      createdEntityIds: {},
+      projection: { state: 'notRequired' },
+    });
     const clipProps = {
       session,
-      applyCanonicalState: () => true,
       selectedClipIds: ['midi:1'] as string[],
       setSelectedClipIds: () => undefined,
-      api,
     };
-    const audioView = render(<ArrangeClipInspector {...clipProps} selectedClipIds={['clip:a']} />);
+    const audioView = renderWithSession(
+      api,
+      <ArrangeClipInspector {...clipProps} selectedClipIds={['clip:a']} />,
+    );
     const start = screen.getByLabelText('Start');
 
     // Act: move the Audio Clip by bars.
@@ -204,16 +222,23 @@ describe('Arrange Inspectors', () => {
       loopEnabled: true,
     });
     const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
-    api.updateMidiClip = vi.fn().mockResolvedValue(null);
-    api.removeTimelineClips = vi.fn().mockResolvedValue(null);
+    api.updateMidiClip = vi.fn().mockResolvedValue({
+      canonical: canonicalState(session),
+      createdEntityIds: {},
+      projection: { state: 'notRequired' },
+    });
+    api.removeTimelineClips = vi.fn().mockResolvedValue({
+      canonical: canonicalState(session),
+      createdEntityIds: {},
+      projection: { state: 'notRequired' },
+    });
     const setSelectedClipIds = vi.fn();
-    render(
+    renderWithSession(
+      api,
       <MidiClipInspector
         session={session}
-        applyCanonicalState={() => true}
         selectedClipIds={['midi:1']}
         setSelectedClipIds={setSelectedClipIds}
-        api={api}
       />,
     );
 
@@ -229,20 +254,27 @@ describe('Arrange Inspectors', () => {
     expect(api.removeTimelineClips).toHaveBeenCalledWith([], ['midi:1']);
     await waitFor(() => expect(setSelectedClipIds).toHaveBeenCalledWith([]));
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+
+    vi.mocked(api.updateMidiClip).mockRejectedValueOnce(new Error('MIDI edit failed'));
+    fireEvent.click(screen.getByRole('button', { name: 'Mute clip' }));
+    expect(await screen.findByText('MIDI edit failed')).toBeInTheDocument();
   });
 
   it('commits Clip gain from the keyboard and typed values, and discards a cancelled edit', () => {
     // Arrange
     const session = recordingSession();
     const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
-    api.updateAudioClip = vi.fn().mockResolvedValue(null);
-    render(
+    api.updateAudioClip = vi.fn().mockResolvedValue({
+      canonical: canonicalState(session),
+      createdEntityIds: {},
+      projection: { state: 'notRequired' },
+    });
+    renderWithSession(
+      api,
       <ArrangeClipInspector
         session={session}
-        applyCanonicalState={() => true}
         selectedClipIds={['clip:a']}
         setSelectedClipIds={() => undefined}
-        api={api}
       />,
     );
     const slider = screen.getByLabelText('Clip gain');
@@ -291,23 +323,23 @@ describe('Arrange Inspectors', () => {
       const [session, setSession] = useState(initial);
       return (
         <>
-          <ArrangeClipInspector
-            session={session}
-            applyCanonicalState={(canonical) => {
-              setSession(canonical.session);
-              return true;
-            }}
-            selectedClipIds={['clip:a']}
-            setSelectedClipIds={() => undefined}
+          <TestSessionProvider
             api={api}
-          />
+            applyCanonicalState={(canonical) => setSession(canonical.session)}
+          >
+            <ArrangeClipInspector
+              session={session}
+              selectedClipIds={['clip:a']}
+              setSelectedClipIds={() => undefined}
+            />
+          </TestSessionProvider>
           <output data-testid="variants">
             {session.arrangement.audioClips.map((clip) => clip.takeVariant).join(',')}
           </output>
         </>
       );
     }
-    render(<Harness />);
+    renderWithSession(api, <Harness />);
 
     fireEvent.click(
       within(screen.getByRole('group', { name: 'Clip recording source' })).getByRole('button', {
@@ -322,15 +354,14 @@ describe('Arrange Inspectors', () => {
     const session = recordingSession();
     const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
     const selection: ArrangeSelection = { kind: 'clips', clipIds: ['clip:a'] };
-    render(
+    renderWithSession(
+      api,
       <TakeInspector
         session={session}
         selection={selection}
-        applyCanonicalState={() => true}
         recordingActive={false}
         recordingCommandPending={false}
         onRecordAnotherTake={() => undefined}
-        api={api}
       />,
     );
 
@@ -382,15 +413,14 @@ describe('Arrange Inspectors', () => {
     });
     const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
     const onRecordAnotherTake = vi.fn();
-    render(
+    renderWithSession(
+      api,
       <TakeInspector
         session={session}
         selection={{ kind: 'track', trackId: 'track:audio' }}
-        applyCanonicalState={() => true}
         recordingActive={false}
         recordingCommandPending={false}
         onRecordAnotherTake={onRecordAnotherTake}
-        api={api}
       />,
     );
 
@@ -462,15 +492,15 @@ describe('Arrange Inspectors', () => {
       ],
     });
 
-    render(
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
+    renderWithSession(
+      api,
       <TakeInspector
         session={session}
         selection={{ kind: 'clips', clipIds: ['clip:midi-take'] }}
-        applyCanonicalState={() => true}
         recordingActive={false}
         recordingCommandPending={false}
         onRecordAnotherTake={() => undefined}
-        api={new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } })}
       />,
     );
 

@@ -1,10 +1,8 @@
 import { errorText } from '@/shared/errors';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type {
-  HostConnectionBootstrap,
-  HostConnectionChangedEvent,
-  NativeApi,
-} from '@/native/native-api';
+import type { NativeApi } from '@/native/native-api';
+import type { HostConnectionBootstrap } from '@/native/api/host-connection';
+import type { HostConnectionChangedEvent } from '@/native/api/host-connection';
 import type { HostConnectionState, HostTarget, LocalHostInfo } from '@/model/domain';
 
 const disconnectedState: HostConnectionState = {

@@ -1,23 +1,22 @@
-import { useEffect, useState, type CSSProperties } from 'react';
-import type { ArrangementMutationResult, CanonicalState, CreativeSession } from '@/model/domain';
-import type { ArrangeInspectorApi } from '../arrange-api';
+import type { ArrangementMutationResult, CreativeSession } from '@/model/domain';
+import { useSessionContext } from '@/shared/session/session-context';
 import { Icon } from '@/shared/ui/primitives';
+import { useEffect, useState, type CSSProperties } from 'react';
+import type { MidiClipPatch } from '@/model/domain';
 import { resolveTrackColorById } from '../model/track-colors';
 import { ClipToggles } from './ClipToggles';
+import styles from './Inspector.module.css';
 import { InspectorMenu } from './InspectorMenu';
 import { MusicalTimeField } from './MusicalTimeField';
-import styles from './Inspector.module.css';
-import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
 
 interface MidiClipInspectorProps {
   session: CreativeSession;
-  applyCanonicalState: (canonical: CanonicalState) => boolean;
   selectedClipIds: string[];
   setSelectedClipIds: (ids: string[]) => void;
-  api: ArrangeInspectorApi;
 }
 
 export function MidiClipInspector(props: MidiClipInspectorProps) {
+  const { api, commit: sessionCommit } = useSessionContext();
   const selected = props.session.arrangement.midiClips.filter((clip) =>
     props.selectedClipIds.includes(clip.id),
   );
@@ -29,9 +28,9 @@ export function MidiClipInspector(props: MidiClipInspectorProps) {
     setName(clip?.name ?? '');
   }, [clip?.id, clip?.name]);
 
-  const commit = async (operation: Promise<ArrangementMutationResult | null>) => {
-    const next = await operation;
-    if (next) applyArrangementMutation(next, props.applyCanonicalState, setMessage);
+  const commit = (operation: Promise<ArrangementMutationResult>) => {
+    setMessage(null);
+    return sessionCommit(operation, { onError: setMessage });
   };
 
   const [quantizeGrid, setQuantizeGrid] = useState(
@@ -42,13 +41,12 @@ export function MidiClipInspector(props: MidiClipInspectorProps) {
     return null;
   }
 
-  const patch = (fields: Parameters<ArrangeInspectorApi['updateMidiClip']>[1]) =>
-    void commit(props.api.updateMidiClip(clip.id, fields));
+  const patch = (fields: MidiClipPatch) => void commit(api.updateMidiClip(clip.id, fields));
   const noteIds = clip.notes.map((note) => note.id);
   const hasNotes = noteIds.length > 0;
   // Empty ids tell the core to transform every note in the clip.
   const transform = (transpose: number, velocity: number) =>
-    void commit(props.api.transformMidiNotes(clip.id, [], transpose, velocity));
+    void commit(api.transformMidiNotes(clip.id, [], transpose, velocity));
   const tracks = props.session.arrangement.tracks;
   const trackName = tracks.find((track) => track.id === clip.trackId)?.name;
   return (
@@ -85,14 +83,14 @@ export function MidiClipInspector(props: MidiClipInspectorProps) {
             items={[
               {
                 label: 'Duplicate',
-                onClick: () => void commit(props.api.duplicateMidiClip(clip.id)),
+                onClick: () => void commit(api.duplicateMidiClip(clip.id)),
               },
               { separator: true },
               {
                 label: 'Delete',
                 danger: true,
                 onClick: () =>
-                  void commit(props.api.removeTimelineClips([], [clip.id])).then(() =>
+                  void commit(api.removeTimelineClips([], [clip.id])).then(() =>
                     props.setSelectedClipIds([]),
                   ),
               },
@@ -207,7 +205,7 @@ export function MidiClipInspector(props: MidiClipInspectorProps) {
                 type="button"
                 disabled={!hasNotes}
                 onClick={() =>
-                  void commit(props.api.quantizeMidiNotes(clip.id, noteIds, Number(quantizeGrid)))
+                  void commit(api.quantizeMidiNotes(clip.id, noteIds, Number(quantizeGrid)))
                 }
               >
                 Apply

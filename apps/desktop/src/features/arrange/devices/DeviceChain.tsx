@@ -2,7 +2,7 @@ import { Fragment, useState } from 'react';
 import type { ArrangementMutationResult, InstrumentLibraryItem, PluginEntry } from '@/model/domain';
 import { Icon } from '@/shared/ui/primitives';
 import controls from '@/shared/ui/controls.module.css';
-import type { ArrangeWorkspaceApi } from '../arrange-api';
+import { useSessionContext } from '@/shared/session/session-context';
 import { InstrumentPicker } from './InstrumentPicker';
 import { PluginPicker } from './PluginPicker';
 import type { DeviceTarget } from './device-target';
@@ -10,7 +10,6 @@ import styles from './Devices.module.css';
 
 interface DeviceChainProps {
   target: DeviceTarget;
-  api: ArrangeWorkspaceApi;
   instruments: InstrumentLibraryItem[];
   plugins: PluginEntry[];
   missingDeviceIds: string[];
@@ -33,7 +32,8 @@ function FlowArrow() {
 }
 
 export function DeviceChain(props: DeviceChainProps) {
-  const { target, api } = props;
+  const { target } = props;
+  const { api } = useSessionContext();
   const { track, owner, effects } = target;
   const [picker, setPicker] = useState<'instrument' | 'effect' | null>(null);
   const [replaceTarget, setReplaceTarget] = useState<{
@@ -62,7 +62,6 @@ export function DeviceChain(props: DeviceChainProps) {
     <>
       {picker === 'instrument' && track && (
         <InstrumentPicker
-          api={api}
           instruments={props.instruments}
           plugins={props.plugins}
           onSelectInstrument={(id) => {
@@ -78,7 +77,6 @@ export function DeviceChain(props: DeviceChainProps) {
       )}
       {(picker === 'effect' || replaceTarget) && (
         <PluginPicker
-          api={api}
           plugins={props.plugins}
           role={replaceTarget?.role ?? 'effect'}
           title={replaceTarget ? 'Replace Plugin' : 'Add Effect'}

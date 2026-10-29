@@ -1,8 +1,7 @@
+import { useSessionContext } from '@/shared/session/session-context';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { ArrangementMutationResult, CanonicalState, CreativeSession } from '@/model/domain';
-import type { AudioApi } from '@/native/native-api';
+import type { CreativeSession } from '@/model/domain';
 
-export type MasterGainControlApi = Pick<AudioApi, 'previewMasterGainDb' | 'setMasterGainDb'>;
 interface PendingCommit {
   interactionId: number;
   value: number;
@@ -10,18 +9,12 @@ interface PendingCommit {
 
 interface UseMasterGainControlOptions {
   session: CreativeSession;
-  applyCanonicalState: (canonical: CanonicalState) => boolean;
-  api: MasterGainControlApi;
   disabled?: boolean;
 }
 
 /** Shares the generation-safe preview/commit lifecycle for every Master fader. */
-export function useMasterGainControl({
-  session,
-  applyCanonicalState,
-  api,
-  disabled = false,
-}: UseMasterGainControlOptions) {
+export function useMasterGainControl({ session, disabled = false }: UseMasterGainControlOptions) {
+  const { api, commit: sessionCommit } = useSessionContext();
   const [draftDb, setDraftDb] = useState(session.settings.masterDb);
   const editing = useRef(false);
   const previewTimer = useRef<number | null>(null);
@@ -106,22 +99,23 @@ export function useMasterGainControl({
       }
       try {
         if (gainDb === lastCommittedDb.current) return;
-        const result: ArrangementMutationResult = await api.setMasterGainDb(gainDb);
+        const result = await sessionCommit(api.setMasterGainDb(gainDb));
         if (disposed.current) return;
-        if (!applyCanonicalState(result.canonical)) return;
-        lastCommittedDb.current = result.canonical.session.settings.masterDb;
-        canonicalDb.current = result.canonical.session.settings.masterDb;
+        if (result) {
+          lastCommittedDb.current = result.canonical.session.settings.masterDb;
+          canonicalDb.current = result.canonical.session.settings.masterDb;
+        }
+        if (!result || result.projection.state === 'failed') {
+          setDraftDb(canonicalDb.current);
+          previewChain.current = previewChain.current
+            .catch(() => undefined)
+            .then(() => {
+              if (!disposed.current) return api.previewMasterGainDb(canonicalDb.current);
+            })
+            .catch(() => undefined);
+          return;
+        }
         setDraftDb(result.canonical.session.settings.masterDb);
-      } catch {
-        if (disposed.current) return;
-        setDraftDb(canonicalDb.current);
-        previewChain.current = previewChain.current
-          .catch(() => undefined)
-          .then(() => {
-            if (disposed.current) return;
-            return api.previewMasterGainDb(canonicalDb.current);
-          })
-          .catch(() => undefined);
       } finally {
         if (
           pendingCommit.current?.interactionId === currentInteractionId &&
@@ -130,7 +124,7 @@ export function useMasterGainControl({
           pendingCommit.current = null;
       }
     },
-    [api, applyCanonicalState, disabled],
+    [api, sessionCommit, disabled],
   );
 
   const beginEditing = useCallback(() => {

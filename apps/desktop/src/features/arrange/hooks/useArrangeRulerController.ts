@@ -1,3 +1,4 @@
+import type { EditorCommit } from './useArrangeEditor';
 import {
   useCallback,
   useEffect,
@@ -6,22 +7,13 @@ import {
   type MutableRefObject,
   type PointerEvent,
 } from 'react';
-import type { ArrangementMutationResult, CreativeSession, Marker } from '@/model/domain';
-import type { ArrangeApi, TransportApi } from '@/native/native-api';
+import type { CreativeSession, Marker } from '@/model/domain';
+import { useSessionContext } from '@/shared/session/session-context';
 import { HostConnectionChangedError } from '@/native/invoke';
 import { tickToMusicalPosition } from '@/shared/session/musical-position';
 import { isEditableTypingTarget } from '@/shared/input';
 
 type RangeKind = 'loop' | 'punch';
-type ArrangeRulerApi = Pick<
-  ArrangeApi,
-  | 'addMarker'
-  | 'updateMarker'
-  | 'removeMarker'
-  | 'updateTimelineLoopRange'
-  | 'updateTimelinePunchRange'
-> &
-  Pick<TransportApi, 'seekTimeline'>;
 
 interface TimeSelection {
   startTick: number;
@@ -41,8 +33,7 @@ interface PunchPreview {
 
 interface ArrangeRulerControllerOptions {
   arrangement: CreativeSession['arrangement'];
-  api: ArrangeRulerApi;
-  commit: (operation: Promise<ArrangementMutationResult | null>) => Promise<CreativeSession | null>;
+  commit: EditorCommit;
   snapTick: (raw: number, temporaryOff?: boolean) => number;
   pixelsPerTick: number;
   displayTickRef: MutableRefObject<number>;
@@ -53,7 +44,6 @@ interface ArrangeRulerControllerOptions {
 
 export function useArrangeRulerController({
   arrangement,
-  api,
   commit,
   snapTick,
   pixelsPerTick,
@@ -62,6 +52,7 @@ export function useArrangeRulerController({
   seekLocally,
   setMessage,
 }: ArrangeRulerControllerOptions) {
+  const { api } = useSessionContext();
   const [selectedMarkerId, setSelectedMarkerId] = useState<string | null>(null);
   const [selectedRange, setSelectedRange] = useState<RangeKind | null>(null);
   const [markerRename, setMarkerRename] = useState<{ markerId: string; name: string } | null>(null);
@@ -121,7 +112,9 @@ export function useArrangeRulerController({
         api.addMarker(position(snapTick(tick)), `Marker ${arrangement.markers.length + 1}`),
       ).then((next) => {
         if (!next) return;
-        const created = next.arrangement.markers.find((marker) => !existing.has(marker.id));
+        const created = next.canonical.session.arrangement.markers.find(
+          (marker) => !existing.has(marker.id),
+        );
         if (created) setSelectedMarkerId(created.id);
       });
     },

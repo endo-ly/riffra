@@ -1,23 +1,20 @@
-import { errorText } from '@/shared/errors';
-import { useMemo, useState } from 'react';
-import clsx from 'clsx';
-import type { ArrangementMutationResult, CanonicalState, CreativeSession } from '@/model/domain';
-import type { ArrangeInspectorApi } from '../arrange-api';
 import { timelineObjectEndTick } from '@/features/arrange/model/arrange-timeline';
+import type { ArrangementMutationResult, CreativeSession } from '@/model/domain';
+import { useSessionContext } from '@/shared/session/session-context';
 import { Icon } from '@/shared/ui/primitives';
+import clsx from 'clsx';
+import { useMemo, useState } from 'react';
 import styles from './Inspector.module.css';
-import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
 
 interface MultiClipInspectorProps {
   session: CreativeSession;
-  applyCanonicalState: (canonical: CanonicalState) => boolean;
   selectedAudioClipIds: string[];
   selectedMidiClipIds: string[];
   setSelectedClipIds: (ids: string[]) => void;
-  api: ArrangeInspectorApi;
 }
 
 export function MultiClipInspector(props: MultiClipInspectorProps) {
+  const { api, commit: sessionCommit } = useSessionContext();
   const [message, setMessage] = useState<string | null>(null);
   const audioClips = useMemo(
     () =>
@@ -35,20 +32,11 @@ export function MultiClipInspector(props: MultiClipInspectorProps) {
   );
   const selectedClips = [...audioClips, ...midiClips];
 
-  const run = (operation: Promise<ArrangementMutationResult | null>, onSuccess?: () => void) => {
+  const run = (operation: Promise<ArrangementMutationResult>, onSuccess?: () => void) => {
     setMessage(null);
-    void operation
-      .then((next) => {
-        if (!next) {
-          setMessage('The edit was not applied.');
-          return;
-        }
-        applyArrangementMutation(next, props.applyCanonicalState, setMessage);
-        onSuccess?.();
-      })
-      .catch((error: unknown) => {
-        setMessage(errorText(error));
-      });
+    void sessionCommit(operation, { onError: setMessage }).then((result) => {
+      if (result) onSuccess?.();
+    });
   };
 
   if (selectedClips.length < 2) return null;
@@ -59,9 +47,7 @@ export function MultiClipInspector(props: MultiClipInspectorProps) {
         timelineObjectEndTick(clip, props.session.arrangement.timebase),
       ),
     );
-    run(
-      props.api.pasteTimelineClips(props.selectedAudioClipIds, props.selectedMidiClipIds, target),
-    );
+    run(api.pasteTimelineClips(props.selectedAudioClipIds, props.selectedMidiClipIds, target));
   };
 
   const summary = [audioClips.length, midiClips.length];
@@ -84,7 +70,7 @@ export function MultiClipInspector(props: MultiClipInspectorProps) {
             <button
               type="button"
               className={clsx(styles.smallButton, styles.accent)}
-              onClick={() => run(props.api.crossfadeAudioClips(audioClips[0].id, audioClips[1].id))}
+              onClick={() => run(api.crossfadeAudioClips(audioClips[0].id, audioClips[1].id))}
             >
               Crossfade
             </button>
@@ -97,10 +83,7 @@ export function MultiClipInspector(props: MultiClipInspectorProps) {
             className={clsx(styles.smallButton, styles.danger)}
             onClick={() =>
               run(
-                props.api.removeTimelineClips(
-                  props.selectedAudioClipIds,
-                  props.selectedMidiClipIds,
-                ),
+                api.removeTimelineClips(props.selectedAudioClipIds, props.selectedMidiClipIds),
                 () => props.setSelectedClipIds([]),
               )
             }

@@ -3,9 +3,9 @@ import type { Dispatch, SetStateAction } from 'react';
 import type { AudioDeviceProbe, AudioDriverConfig, AudioStatus } from '@/model/domain';
 import { reconcileAudioSettings } from '@/features/audio/audio-settings';
 import { audioCommandSucceeded, isEmergencyMuteActive } from '@/shared/audio/audio-safety';
-import type { AudioApi } from '@/native/native-api';
+import type { AudioApi } from '@/native/api/audio';
 interface UseAudioOptions {
-  hostGeneration?: number;
+  hostGeneration: number;
   audio: AudioStatus;
   setAudio: Dispatch<SetStateAction<AudioStatus>>;
 }
@@ -18,7 +18,7 @@ export function useAudioSettings(api: AudioApi, options: UseAudioOptions) {
     setEmergencyMute,
     resetFeedbackProtection,
   } = api;
-  const { audio, hostGeneration = 0, setAudio } = options;
+  const { audio, hostGeneration, setAudio } = options;
   const [audioPreferenceMessage, setAudioPreferenceMessage] = useState<string | null>(null);
   const [deviceProbe, setDeviceProbe] = useState<AudioDeviceProbe>({
     drivers: [],

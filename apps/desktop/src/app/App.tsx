@@ -1,8 +1,10 @@
+import { SessionProvider } from '@/shared/session/session-context';
 import type { NativeApi } from '@/native/native-api';
 import clsx from 'clsx';
 import {
   Fragment,
   useEffect,
+  useMemo,
   useState,
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
@@ -26,7 +28,7 @@ import { LeftColumn } from './layout/LeftColumn';
 import { isEmergencyMuteActive } from '@/shared/audio/audio-safety';
 import { useAudioFeedbackSuspected } from '@/shared/audio/audio-meters';
 import { useAppUpdater } from '@/app/runtime/useAppUpdater';
-import { clearToast, showToast, toast } from '@/shared/toasts';
+import { clearToast, showToast } from '@/shared/toasts';
 import styles from './App.module.css';
 import shellStyles from './AppShell.module.css';
 
@@ -109,9 +111,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     runtimeProjectionFailure,
     runtimeProjectionRetrying,
     retryRuntimeProjection,
-    autosaveError,
     audioPreferenceMessage,
-    exportMessage,
     deviceProbe,
     missingDependencies,
     backgroundJob,
@@ -123,7 +123,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     ignoreMissing,
     commandOpen,
     historyState,
-    applyCanonicalState,
+    commit,
     setCommandOpen,
     refreshAudioDevices,
     probeAudioChannels,
@@ -151,18 +151,21 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     pauseTransport,
     goToStart,
     toggleRecording,
-    api: nativeApi,
     browser,
   } = useAppController(api);
   const arrange = useArrangeShell(
-    nativeApi,
+    api,
     session,
-    applyCanonicalState,
+    commit,
     hostConnectionState.generation,
     projectState?.activeProjectId ?? null,
   );
+  const sessionContext = useMemo(
+    () => ({ api, hostGeneration: hostConnectionState.generation, commit }),
+    [api, hostConnectionState.generation, commit],
+  );
   const liveFeedbackSuspected = useAudioFeedbackSuspected();
-  const appUpdater = useAppUpdater({ api: nativeApi });
+  const appUpdater = useAppUpdater({ api: api });
 
   useEffect(() => {
     if (!panelResize) return;
@@ -195,14 +198,6 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
   };
 
   useEffect(() => {
-    if (!autosaveError) {
-      clearToast('app.autosave-error');
-      return;
-    }
-    showToast('app.autosave-error', autosaveError, { kind: 'error', persistent: true });
-    return () => clearToast('app.autosave-error');
-  }, [autosaveError]);
-  useEffect(() => {
     if (!audioPreferenceMessage) {
       clearToast('app.audio-preference');
       return;
@@ -210,9 +205,6 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     showToast('app.audio-preference', audioPreferenceMessage, { kind: 'info', persistent: true });
     return () => clearToast('app.audio-preference');
   }, [audioPreferenceMessage]);
-  useEffect(() => {
-    if (exportMessage) toast(exportMessage, { kind: 'info' });
-  }, [exportMessage]);
 
   useEffect(() => {
     if (!hostConnected) {
@@ -304,229 +296,256 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     },
   ];
   return (
-    <main
-      className={clsx(shellStyles.appShell, panelResize && shellStyles.isPanelResizing)}
-      style={shellStyle}
-    >
-      <GlobalControlBar
-        hostConnectionState={hostConnectionState}
-        localHosts={localHosts}
-        hostSwitching={hostSwitching}
-        hostConnectionError={hostConnectionError}
-        onRefresh={refreshProjectHost}
-        onSwitchHost={switchHost}
-        onReconnectHost={reconnectHost}
-        hostConnected={hostConnected}
-        session={session}
-        audio={audio}
-        isMuted={isMuted}
-        historyState={historyState}
-        onUndo={() => void undo()}
-        onRedo={() => void redo()}
-        onExportProject={() => void exportProject()}
-        onImportProject={() => void importProject()}
-        onImportScore={() => void importScore()}
-        projectState={projectState}
-        projectSwitching={projectSwitching}
-        projectError={projectError}
-        onCreateProject={createProject}
-        onOpenProject={openProject}
-        onRenameProject={renameProject}
-        onToggleMute={() => void toggleMute()}
-        onResetFeedback={() => void resetFeedback()}
-        onOpenCommand={() => setCommandOpen(true)}
-        onOpenAudioSettings={() => setAudioSettingsOpen(true)}
-        audioSettingsOpen={audioSettingsOpen}
-        applyCanonicalState={applyCanonicalState}
-        transportPlaying={transportPlaying}
-        transportStarting={transportStarting}
-        transportPaused={transportPaused}
-        playheadTick={arrangementTransport.displayTick}
-        onPlay={() => void playTransport()}
-        onPause={() => void pauseTransport()}
-        onStop={() => void stopTransport()}
-        onGoToStart={() => void goToStart()}
-        recordingCommandPending={recordingCommandPending}
-        onToggleRecording={() => void toggleRecording()}
-        transportControlsApi={nativeApi}
-        audioMonitorApi={nativeApi}
-      />
+    <SessionProvider value={sessionContext}>
+      <main
+        className={clsx(shellStyles.appShell, panelResize && shellStyles.isPanelResizing)}
+        style={shellStyle}
+      >
+        <GlobalControlBar
+          hostConnectionState={hostConnectionState}
+          localHosts={localHosts}
+          hostSwitching={hostSwitching}
+          hostConnectionError={hostConnectionError}
+          onRefresh={refreshProjectHost}
+          onSwitchHost={switchHost}
+          onReconnectHost={reconnectHost}
+          hostConnected={hostConnected}
+          session={session}
+          audio={audio}
+          isMuted={isMuted}
+          historyState={historyState}
+          onUndo={() => void undo()}
+          onRedo={() => void redo()}
+          onExportProject={() => void exportProject()}
+          onImportProject={() => void importProject()}
+          onImportScore={() => void importScore()}
+          projectState={projectState}
+          projectSwitching={projectSwitching}
+          projectError={projectError}
+          onCreateProject={createProject}
+          onOpenProject={openProject}
+          onRenameProject={renameProject}
+          onToggleMute={() => void toggleMute()}
+          onResetFeedback={() => void resetFeedback()}
+          onOpenCommand={() => setCommandOpen(true)}
+          onOpenAudioSettings={() => setAudioSettingsOpen(true)}
+          audioSettingsOpen={audioSettingsOpen}
+          transportPlaying={transportPlaying}
+          transportStarting={transportStarting}
+          transportPaused={transportPaused}
+          playheadTick={arrangementTransport.displayTick}
+          onPlay={() => void playTransport()}
+          onPause={() => void pauseTransport()}
+          onStop={() => void stopTransport()}
+          onGoToStart={() => void goToStart()}
+          recordingCommandPending={recordingCommandPending}
+          onToggleRecording={() => void toggleRecording()}
+        />
 
-      <AudioSettingsDialog
-        open={audioSettingsOpen && hostConnected}
-        audio={audio}
-        probe={deviceProbe}
-        safeMode={boot.safeMode}
-        recordingActive={
-          audio.recording.active || audio.recording.processing || recordingCommandPending
-        }
-        onClose={() => setAudioSettingsOpen(false)}
-        onRefresh={refreshAudioDevices}
-        onProbeChannels={probeAudioChannels}
-        onApply={selectAudioDriver}
-        onRecover={recoverAudio}
-      />
+        <AudioSettingsDialog
+          open={audioSettingsOpen && hostConnected}
+          audio={audio}
+          probe={deviceProbe}
+          safeMode={boot.safeMode}
+          recordingActive={
+            audio.recording.active || audio.recording.processing || recordingCommandPending
+          }
+          onClose={() => setAudioSettingsOpen(false)}
+          onRefresh={refreshAudioDevices}
+          onProbeChannels={probeAudioChannels}
+          onApply={selectAudioDriver}
+          onRecover={recoverAudio}
+        />
 
-      <div className={styles.bannerStack}>
-        {isMuted && (
-          <div className={`${styles.runtimeBanner} ${styles.dangerBanner}`} role="status">
-            <strong>OUTPUT MUTED</strong>
-            <span>
-              {feedbackSuspected
-                ? 'Feedback was detected, so all output was silenced automatically.'
-                : 'All audio output is silenced.'}
-            </span>
-          </div>
-        )}
-        {boot.safeMode && (
-          <div className={`${styles.shellNotice} ${styles.safeModeNotice}`} role="status">
-            <strong>SAFE MODE</strong>
-            <span>
-              External VST3, MIDI input, driver changes, live preview and new recordings are
-              isolated. Project open, library access, offline analysis, render and export remain
-              available. Restart without <code>--safe-mode</code> to reconnect devices.
-            </span>
-          </div>
-        )}
-        {boot.recovery.recoveredFromGeneration && boot.recovery.recoveryCandidates.length > 0 && (
-          <div className={`${styles.shellNotice} ${styles.recoveryNotice}`} role="status">
-            <strong>RECOVERY CHOICE</strong>
-            <span>
-              The current session was recovered from an autosave generation. Choose a previous
-              stable generation if needed.
-            </span>
-            <div className={styles.recoveryActions}>
-              {boot.recovery.recoveryCandidates.slice(0, 5).map((candidate) => (
+        <div className={styles.bannerStack}>
+          {isMuted && (
+            <div className={`${styles.runtimeBanner} ${styles.dangerBanner}`} role="status">
+              <strong>OUTPUT MUTED</strong>
+              <span>
+                {feedbackSuspected
+                  ? 'Feedback was detected, so all output was silenced automatically.'
+                  : 'All audio output is silenced.'}
+              </span>
+            </div>
+          )}
+          {boot.safeMode && (
+            <div className={`${styles.shellNotice} ${styles.safeModeNotice}`} role="status">
+              <strong>SAFE MODE</strong>
+              <span>
+                External VST3, MIDI input, driver changes, live preview and new recordings are
+                isolated. Project open, library access, offline analysis, render and export remain
+                available. Restart without <code>--safe-mode</code> to reconnect devices.
+              </span>
+            </div>
+          )}
+          {boot.recovery.recoveredFromGeneration && boot.recovery.recoveryCandidates.length > 0 && (
+            <div className={`${styles.shellNotice} ${styles.recoveryNotice}`} role="status">
+              <strong>RECOVERY CHOICE</strong>
+              <span>
+                The current session was recovered from an autosave generation. Choose a previous
+                stable generation if needed.
+              </span>
+              <div className={styles.recoveryActions}>
+                {boot.recovery.recoveryCandidates.slice(0, 5).map((candidate) => (
+                  <button
+                    className={surface.textButton}
+                    key={candidate.fileName}
+                    disabled={!hostConnected || projectSwitching}
+                    onClick={() => setRestoreCandidate(candidate.fileName)}
+                  >
+                    {candidate.projectName ?? 'Untitled'} ·{' '}
+                    {new Date(candidate.updatedAtMs).toLocaleString('ja-JP')}
+                  </button>
+                ))}
                 <button
                   className={surface.textButton}
-                  key={candidate.fileName}
-                  disabled={!hostConnected || projectSwitching}
-                  onClick={() => setRestoreCandidate(candidate.fileName)}
+                  disabled={projectSwitching}
+                  onClick={dismissRecovery}
                 >
-                  {candidate.projectName ?? 'Untitled'} ·{' '}
-                  {new Date(candidate.updatedAtMs).toLocaleString('ja-JP')}
+                  Keep recovered session
                 </button>
-              ))}
-              <button
-                className={surface.textButton}
-                disabled={projectSwitching}
-                onClick={dismissRecovery}
-              >
-                Keep recovered session
-              </button>
+              </div>
             </div>
-          </div>
-        )}
-        {appUpdater.availableVersion && (
-          <div className={`${styles.shellNotice} ${styles.updateNotice}`} role="status">
-            <strong>UPDATE AVAILABLE</strong>
-            <span>
-              Riffra {appUpdater.availableVersion} can be installed. The session stays untouched
-              until you restart.
-            </span>
-            <div className={styles.recoveryActions}>
-              <button
-                className={surface.textButton}
-                disabled={appUpdater.installing}
-                onClick={() => void appUpdater.install()}
-              >
-                {appUpdater.installing ? 'Installing…' : 'Update & Restart'}
-              </button>
+          )}
+          {appUpdater.availableVersion && (
+            <div className={`${styles.shellNotice} ${styles.updateNotice}`} role="status">
+              <strong>UPDATE AVAILABLE</strong>
+              <span>
+                Riffra {appUpdater.availableVersion} can be installed. The session stays untouched
+                until you restart.
+              </span>
+              <div className={styles.recoveryActions}>
+                <button
+                  className={surface.textButton}
+                  disabled={appUpdater.installing}
+                  onClick={() => void appUpdater.install()}
+                >
+                  {appUpdater.installing ? 'Installing…' : 'Update & Restart'}
+                </button>
+              </div>
             </div>
-          </div>
-        )}
-        {backgroundJob && (
-          <div className={styles.runtimeBanner}>
-            <strong>
-              {backgroundJob.kind.toUpperCase()} JOB · {backgroundJob.state.toUpperCase()}
-            </strong>
-            <span>{backgroundJob.message}</span>
-            {['queued', 'running', 'cancelling'].includes(backgroundJob.state) && (
-              <button
-                className={surface.textButton}
-                disabled={!hostConnected}
-                onClick={() => void cancelActiveJob()}
-              >
-                Cancel
-              </button>
-            )}
-          </div>
-        )}
-        {!boot.nativeAvailable && (
-          <div className={styles.runtimeBanner}>
-            <strong>BROWSER PREVIEW</strong>
-            <span>
-              Native audio, VST3, MIDI, recording and Windows persistence are unavailable here. Open
-              the Tauri application to use product features; this preview does not report empty
-              results as successful operations.
-            </span>
-          </div>
-        )}
-      </div>
-
-      {restoreCandidate && (
-        <ConfirmDialog
-          title="Restore stable generation"
-          message={`Restore autosave generation ${restoreCandidate}? The current session will become the selected stable copy.`}
-          confirmLabel="Restore"
-          onConfirm={() => {
-            void restoreRecovery(restoreCandidate);
-            setRestoreCandidate(null);
-          }}
-          onCancel={() => setRestoreCandidate(null)}
-        />
-      )}
-
-      {missingDependencies.length > 0 && (
-        <div className={!hostConnected ? styles.hostDisconnected : undefined}>
-          <MissingDependencies
-            missing={missingDependencies}
-            onRelink={(item, newPath) => void relinkMissing(item, newPath)}
-            onReplacePlugin={(deviceId, newPath) =>
-              void replaceMissingPluginDevice(deviceId, newPath)
-            }
-            onDisablePlugin={(deviceId) => void disableMissingPluginDevice(deviceId)}
-            onIgnore={ignoreMissing}
-          />
+          )}
+          {backgroundJob && (
+            <div className={styles.runtimeBanner}>
+              <strong>
+                {backgroundJob.kind.toUpperCase()} JOB · {backgroundJob.state.toUpperCase()}
+              </strong>
+              <span>{backgroundJob.message}</span>
+              {['queued', 'running', 'cancelling'].includes(backgroundJob.state) && (
+                <button
+                  className={surface.textButton}
+                  disabled={!hostConnected}
+                  onClick={() => void cancelActiveJob()}
+                >
+                  Cancel
+                </button>
+              )}
+            </div>
+          )}
+          {!boot.nativeAvailable && (
+            <div className={styles.runtimeBanner}>
+              <strong>BROWSER PREVIEW</strong>
+              <span>
+                Native audio, VST3, MIDI, recording and Windows persistence are unavailable here.
+                Open the Tauri application to use product features; this preview does not report
+                empty results as successful operations.
+              </span>
+            </div>
+          )}
         </div>
-      )}
 
-      <div
-        className={clsx(shellStyles.appBody, !hostConnected && styles.hostDisconnected)}
-        data-app-body
-        aria-disabled={!hostConnected}
-      >
-        <LeftColumn
-          collapsed={leftColumnWidth === 0}
-          propertiesHeight={propertiesHeight}
-          onPropertiesHeightChange={setPropertiesHeight}
-          browser={
-            <BrowserPanel
-              projectSwitching={projectSwitching}
-              safeMode={boot?.safeMode ?? false}
-              query={browser.query}
-              onQueryChange={browser.setQuery}
-              library={{
-                ...browser.library,
-                onPreviewAsset: (asset) => void previewLibraryAsset(asset),
-                onUpdateAsset: (asset, tag, note) => void updateLibraryAsset(asset, tag, note),
-                onImportMidi: () => void importMidi(),
-              }}
-              instruments={browser.instruments}
-              plugins={browser.plugins}
-              onOpenPlugin={(plugin) => void browser.onOpenPlugin(plugin)}
-              recordings={browser.recordings}
-              inbox={browser.inbox}
-              selectedTrack={arrange.selectedTrack}
-              onApply={(placement) =>
-                void arrange.applyBrowserItem(
-                  placement,
-                  arrangementTransport.displayTickRef.current,
-                )
+        {restoreCandidate && (
+          <ConfirmDialog
+            title="Restore stable generation"
+            message={`Restore autosave generation ${restoreCandidate}? The current session will become the selected stable copy.`}
+            confirmLabel="Restore"
+            onConfirm={() => {
+              void restoreRecovery(restoreCandidate);
+              setRestoreCandidate(null);
+            }}
+            onCancel={() => setRestoreCandidate(null)}
+          />
+        )}
+
+        {missingDependencies.length > 0 && (
+          <div className={!hostConnected ? styles.hostDisconnected : undefined}>
+            <MissingDependencies
+              missing={missingDependencies}
+              onRelink={(item, newPath) => void relinkMissing(item, newPath)}
+              onReplacePlugin={(deviceId, newPath) =>
+                void replaceMissingPluginDevice(deviceId, newPath)
               }
+              onDisablePlugin={(deviceId) => void disableMissingPluginDevice(deviceId)}
+              onIgnore={ignoreMissing}
             />
-          }
-          properties={
+          </div>
+        )}
+
+        <div
+          className={clsx(shellStyles.appBody, !hostConnected && styles.hostDisconnected)}
+          data-app-body
+          aria-disabled={!hostConnected}
+        >
+          <LeftColumn
+            collapsed={leftColumnWidth === 0}
+            propertiesHeight={propertiesHeight}
+            onPropertiesHeightChange={setPropertiesHeight}
+            browser={
+              <BrowserPanel
+                projectSwitching={projectSwitching}
+                safeMode={boot?.safeMode ?? false}
+                query={browser.query}
+                onQueryChange={browser.setQuery}
+                library={{
+                  ...browser.library,
+                  onPreviewAsset: (asset) => void previewLibraryAsset(asset),
+                  onUpdateAsset: (asset, tag, note) => void updateLibraryAsset(asset, tag, note),
+                  onImportMidi: () => void importMidi(),
+                }}
+                instruments={browser.instruments}
+                plugins={browser.plugins}
+                onOpenPlugin={(plugin) => void browser.onOpenPlugin(plugin)}
+                recordings={browser.recordings}
+                inbox={browser.inbox}
+                selectedTrack={arrange.selectedTrack}
+                onApply={(placement) =>
+                  void arrange.applyBrowserItem(
+                    placement,
+                    arrangementTransport.displayTickRef.current,
+                  )
+                }
+              />
+            }
+            properties={
+              <fieldset
+                className={styles.projectBoundRegion}
+                data-project-switching={projectSwitching ? 'true' : undefined}
+                aria-busy={projectSwitching}
+                inert={projectSwitching}
+                disabled={!hostConnected || projectSwitching}
+              >
+                <PropertiesPanel
+                  onOpenDevices={arrange.lower.openDevices}
+                  audio={audio}
+                  recordingCommandPending={recordingCommandPending}
+                  session={session}
+                  arrangeSelection={arrange.selection}
+                  setArrangeSelection={arrange.setSelection}
+                  onRecordAnotherTake={(recordingSessionId) =>
+                    void startRecordingNow(recordingSessionId)
+                  }
+                />
+              </fieldset>
+            }
+          />
+
+          <LeftColumnResizeHandle
+            width={leftColumnWidth}
+            onPointerDown={startPanelResize}
+            onResizeBy={resizeLeftColumnBy}
+          />
+
+          <section className={shellStyles.workspace}>
             <fieldset
               className={styles.projectBoundRegion}
               data-project-switching={projectSwitching ? 'true' : undefined}
@@ -534,137 +553,103 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
               inert={projectSwitching}
               disabled={!hostConnected || projectSwitching}
             >
-              <PropertiesPanel
-                onOpenDevices={arrange.lower.openDevices}
-                hostGeneration={hostConnectionState.generation}
-                audio={audio}
-                recordingCommandPending={recordingCommandPending}
+              <WorkspaceArrange
+                hostConnected={hostConnected}
+                lower={arrange.lower}
+                onDisableMissingPlugin={disableMissingPluginDevice}
+                onReplaceMissingPlugin={replaceMissingPluginDevice}
+                onRescanMissingPlugins={rescanMissingPlugins}
+                key={projectState?.activeProjectId ?? 'no-project'}
+                transport={arrangementTransport}
                 session={session}
-                applyCanonicalState={applyCanonicalState}
-                arrangeSelection={arrange.selection}
-                setArrangeSelection={arrange.setSelection}
-                onRecordAnotherTake={(recordingSessionId) =>
-                  void startRecordingNow(recordingSessionId)
+                selection={arrange.selection}
+                setSelection={arrange.setSelection}
+                audio={audio}
+                onToggleTransport={() =>
+                  void (transportPlaying
+                    ? pauseTransport()
+                    : transportStarting
+                      ? stopTransport()
+                      : playTransport())
                 }
-                api={nativeApi}
+                plugins={plugins}
+                instruments={browser.instruments.items}
+                focusedTrackId={arrange.focusedTrackId}
+                onFocusTrack={arrange.setFocusedTrackId}
+                missingDeviceIds={missingDependencies
+                  .filter((item) => item.kind === 'plugin')
+                  .map((item) => item.id)}
+                runtimeProjectionStatus={runtimeProjectionStatus}
+                runtimeProjectionFailure={runtimeProjectionFailure}
+                runtimeProjectionRetrying={runtimeProjectionRetrying}
+                onRetryRuntimeProjection={retryRuntimeProjection}
               />
             </fieldset>
-          }
-        />
-
-        <LeftColumnResizeHandle
-          width={leftColumnWidth}
-          onPointerDown={startPanelResize}
-          onResizeBy={resizeLeftColumnBy}
-        />
-
-        <section className={shellStyles.workspace}>
-          <fieldset
-            className={styles.projectBoundRegion}
-            data-project-switching={projectSwitching ? 'true' : undefined}
-            aria-busy={projectSwitching}
-            inert={projectSwitching}
-            disabled={!hostConnected || projectSwitching}
-          >
-            <WorkspaceArrange
-              hostConnected={hostConnected}
-              lower={arrange.lower}
-              onDisableMissingPlugin={disableMissingPluginDevice}
-              onReplaceMissingPlugin={replaceMissingPluginDevice}
-              onRescanMissingPlugins={rescanMissingPlugins}
-              key={projectState?.activeProjectId ?? 'no-project'}
-              hostGeneration={hostConnectionState.generation}
-              transport={arrangementTransport}
-              session={session}
-              applyCanonicalState={applyCanonicalState}
-              selection={arrange.selection}
-              setSelection={arrange.setSelection}
-              api={nativeApi}
-              audio={audio}
-              onToggleTransport={() =>
-                void (transportPlaying
-                  ? pauseTransport()
-                  : transportStarting
-                    ? stopTransport()
-                    : playTransport())
-              }
-              plugins={plugins}
-              instruments={browser.instruments.items}
-              focusedTrackId={arrange.focusedTrackId}
-              onFocusTrack={arrange.setFocusedTrackId}
-              missingDeviceIds={missingDependencies
-                .filter((item) => item.kind === 'plugin')
-                .map((item) => item.id)}
-              runtimeProjectionStatus={runtimeProjectionStatus}
-              runtimeProjectionFailure={runtimeProjectionFailure}
-              runtimeProjectionRetrying={runtimeProjectionRetrying}
-              onRetryRuntimeProjection={retryRuntimeProjection}
-            />
-          </fieldset>
-        </section>
-      </div>
-
-      {commandOpen && hostConnected && (
-        <div className={styles.commandBackdrop} onMouseDown={() => setCommandOpen(false)}>
-          <section
-            className={styles.commandPalette}
-            onMouseDown={(event) => event.stopPropagation()}
-          >
-            <label>
-              <Icon name="command" />
-              <input
-                autoFocus
-                placeholder="Search actions, assets, settings…"
-                onKeyDown={(event) => {
-                  if (event.key === 'ArrowDown') {
-                    event.preventDefault();
-                    setCommandActive((index) => Math.min(index + 1, commandItems.length - 1));
-                  } else if (event.key === 'ArrowUp') {
-                    event.preventDefault();
-                    setCommandActive((index) => Math.max(index - 1, 0));
-                  } else if (event.key === 'Enter') {
-                    event.preventDefault();
-                    const item = commandItems[commandActive];
-                    if (item) {
-                      setCommandOpen(false);
-                      item.run();
-                    }
-                  } else if (event.key === 'Escape') {
-                    setCommandOpen(false);
-                  }
-                }}
-              />
-            </label>
-            {commandItems.map((item, index) => (
-              <Fragment key={item.label}>
-                {(index === 0 || commandItems[index - 1].section !== item.section) && (
-                  <span className={clsx(surface.eyebrow, styles.commandEyebrow)}>
-                    {item.section}
-                  </span>
-                )}
-                <button
-                  data-active={index === commandActive || undefined}
-                  onMouseEnter={() => setCommandActive(index)}
-                  onClick={() => {
-                    setCommandOpen(false);
-                    item.run();
-                  }}
-                >
-                  <span>{item.label}</span>
-                  <small>{item.description}</small>
-                </button>
-              </Fragment>
-            ))}
-            <footer>
-              <span>↑↓ Navigate</span>
-              <span>↵ Select</span>
-              <span>Esc Close</span>
-            </footer>
           </section>
         </div>
-      )}
 
-      <ToastStack />
-    </main>
+        {commandOpen && hostConnected && (
+          <div className={styles.commandBackdrop} onMouseDown={() => setCommandOpen(false)}>
+            <section
+              className={styles.commandPalette}
+              onMouseDown={(event) => event.stopPropagation()}
+            >
+              <label>
+                <Icon name="command" />
+                <input
+                  autoFocus
+                  placeholder="Search actions, assets, settings…"
+                  onKeyDown={(event) => {
+                    if (event.key === 'ArrowDown') {
+                      event.preventDefault();
+                      setCommandActive((index) => Math.min(index + 1, commandItems.length - 1));
+                    } else if (event.key === 'ArrowUp') {
+                      event.preventDefault();
+                      setCommandActive((index) => Math.max(index - 1, 0));
+                    } else if (event.key === 'Enter') {
+                      event.preventDefault();
+                      const item = commandItems[commandActive];
+                      if (item) {
+                        setCommandOpen(false);
+                        item.run();
+                      }
+                    } else if (event.key === 'Escape') {
+                      setCommandOpen(false);
+                    }
+                  }}
+                />
+              </label>
+              {commandItems.map((item, index) => (
+                <Fragment key={item.label}>
+                  {(index === 0 || commandItems[index - 1].section !== item.section) && (
+                    <span className={clsx(surface.eyebrow, styles.commandEyebrow)}>
+                      {item.section}
+                    </span>
+                  )}
+                  <button
+                    data-active={index === commandActive || undefined}
+                    onMouseEnter={() => setCommandActive(index)}
+                    onClick={() => {
+                      setCommandOpen(false);
+                      item.run();
+                    }}
+                  >
+                    <span>{item.label}</span>
+                    <small>{item.description}</small>
+                  </button>
+                </Fragment>
+              ))}
+              <footer>
+                <span>↑↓ Navigate</span>
+                <span>↵ Select</span>
+                <span>Esc Close</span>
+              </footer>
+            </section>
+          </div>
+        )}
+
+        <ToastStack />
+      </main>
+    </SessionProvider>
   );
 }

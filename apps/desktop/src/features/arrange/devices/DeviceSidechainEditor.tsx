@@ -4,7 +4,7 @@ import type {
   DeviceSidechainCapability,
   EffectOwner,
 } from '@/model/domain';
-import type { ArrangeWorkspaceApi } from '../arrange-api';
+import { useSessionContext } from '@/shared/session/session-context';
 import { SidechainSendControls } from '@/features/mixer/SidechainSendControls';
 import controls from '@/shared/ui/controls.module.css';
 import styles from './Devices.module.css';
@@ -15,7 +15,6 @@ interface DeviceSidechainEditorProps {
   deviceId: string;
   capabilities: DeviceSidechainCapability;
   isInstrument: boolean;
-  api: ArrangeWorkspaceApi;
   commit: (operation: Promise<ArrangementMutationResult>) => void;
   onOpenAutomation: (sidechainSendId: string) => void;
 }
@@ -26,10 +25,10 @@ export function DeviceSidechainEditor({
   deviceId,
   capabilities,
   isInstrument,
-  api,
   commit,
   onOpenAutomation,
 }: DeviceSidechainEditorProps) {
+  const { api } = useSessionContext();
   const sends = arrangement.mixer.sidechainSends.filter((send) => send.targetDeviceId === deviceId);
   if (isInstrument || (!capabilities.available && sends.length === 0)) return null;
   const canAddSource = capabilities.mono || capabilities.stereo;
@@ -77,7 +76,6 @@ export function DeviceSidechainEditor({
             arrangement.tracks.find((track) => track.id === send.sourceTrackId)?.name ??
             send.sourceTrackId
           }
-          api={api}
           commit={commit}
           onOpenAutomation={() => onOpenAutomation(send.id)}
         />

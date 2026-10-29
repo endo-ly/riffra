@@ -1,42 +1,37 @@
-import { useCallback, useEffect, useState, type CSSProperties } from 'react';
-import clsx from 'clsx';
 import type {
   ArrangementMutationResult,
   AudioStatus,
-  CanonicalState,
   CreativeSession,
   Track,
 } from '@/model/domain';
-import type { ArrangeInspectorApi } from '../arrange-api';
-import { Icon } from '@/shared/ui/primitives';
-import { resolveTrackColor, TRACK_COLOR_PALETTE } from '../model/track-colors';
-import { useInspectorOperation } from './useInspectorOperation';
 import { formatGainDb, formatPan } from '@/shared/audio/mix-format';
-import { MixValueField } from './MixValueField';
+import { useSessionContext } from '@/shared/session/session-context';
+import { Icon } from '@/shared/ui/primitives';
+import clsx from 'clsx';
+import { useCallback, useEffect, useState, type CSSProperties } from 'react';
+import { resolveTrackColor, TRACK_COLOR_PALETTE } from '../model/track-colors';
 import styles from './Inspector.module.css';
-import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
+import { MixValueField } from './MixValueField';
 
 interface TrackInspectorProps {
   track: Track;
   session: CreativeSession;
-  applyCanonicalState: (canonical: CanonicalState) => boolean;
   audio: AudioStatus;
   onOpenDevices: () => void;
-  api: ArrangeInspectorApi;
 }
 
 export function TrackInspector(props: TrackInspectorProps) {
+  const { api, commit: sessionCommit } = useSessionContext();
   const [name, setName] = useState(props.track.name);
   const [colorOpen, setColorOpen] = useState(false);
-  const { operationMessage, runOperation, setOperationMessage } = useInspectorOperation();
+  const [operationMessage, setOperationMessage] = useState<string | null>(null);
   useEffect(() => setName(props.track.name), [props.track.id, props.track.name]);
   const commit = useCallback(
     (operation: Promise<ArrangementMutationResult>) => {
-      runOperation(operation, (result) =>
-        applyArrangementMutation(result, props.applyCanonicalState, setOperationMessage),
-      );
+      setOperationMessage(null);
+      void sessionCommit(operation, { onError: setOperationMessage });
     },
-    [props.applyCanonicalState, runOperation, setOperationMessage],
+    [sessionCommit],
   );
   const trackIndex = props.session.arrangement.tracks.findIndex((t) => t.id === props.track.id);
   const displayColor = resolveTrackColor(props.track, trackIndex);
@@ -72,7 +67,7 @@ export function TrackInspector(props: TrackInspectorProps) {
                 style={{ '--swatch': hex } as CSSProperties}
                 onClick={() => {
                   setColorOpen(false);
-                  commit(props.api.updateTrack(props.track.id, { color: hex }));
+                  commit(api.updateTrack(props.track.id, { color: hex }));
                 }}
               />
             ))}
@@ -82,7 +77,7 @@ export function TrackInspector(props: TrackInspectorProps) {
               aria-label="Clear track color"
               onClick={() => {
                 setColorOpen(false);
-                commit(props.api.updateTrack(props.track.id, { color: '' }));
+                commit(api.updateTrack(props.track.id, { color: '' }));
               }}
             >
               ×
@@ -98,7 +93,7 @@ export function TrackInspector(props: TrackInspectorProps) {
             onBlur={() => {
               const next = name.trim();
               if (next && next !== props.track.name) {
-                commit(props.api.updateTrack(props.track.id, { name: next }));
+                commit(api.updateTrack(props.track.id, { name: next }));
               } else {
                 setName(props.track.name);
               }
@@ -120,7 +115,7 @@ export function TrackInspector(props: TrackInspectorProps) {
             step={0.5}
             inputStep={0.1}
             format={formatGainDb}
-            onCommit={(gainDb) => commit(props.api.updateTrack(props.track.id, { gainDb }))}
+            onCommit={(gainDb) => commit(api.updateTrack(props.track.id, { gainDb }))}
           />
           <MixValueField
             label="Pan"
@@ -132,7 +127,7 @@ export function TrackInspector(props: TrackInspectorProps) {
             step={0.05}
             inputStep={0.05}
             format={formatPan}
-            onCommit={(pan) => commit(props.api.updateTrack(props.track.id, { pan }))}
+            onCommit={(pan) => commit(api.updateTrack(props.track.id, { pan }))}
           />
         </div>
       </section>
@@ -149,7 +144,7 @@ export function TrackInspector(props: TrackInspectorProps) {
               value={props.track.midiInput.deviceId ?? ''}
               onChange={(event) =>
                 commit(
-                  props.api.setTrackMidiInput(props.track.id, {
+                  api.setTrackMidiInput(props.track.id, {
                     ...props.track.midiInput,
                     deviceId: event.currentTarget.value || undefined,
                   }),
@@ -169,7 +164,7 @@ export function TrackInspector(props: TrackInspectorProps) {
               value={props.track.midiInput.channel ?? ''}
               onChange={(event) =>
                 commit(
-                  props.api.setTrackMidiInput(props.track.id, {
+                  api.setTrackMidiInput(props.track.id, {
                     ...props.track.midiInput,
                     channel: event.currentTarget.value
                       ? Number(event.currentTarget.value)
@@ -194,7 +189,7 @@ export function TrackInspector(props: TrackInspectorProps) {
               value={props.track.audioInput?.channelIndex ?? ''}
               onChange={(event) =>
                 commit(
-                  props.api.setTrackAudioInput(
+                  api.setTrackAudioInput(
                     props.track.id,
                     event.currentTarget.value === '' ? null : Number(event.currentTarget.value),
                   ),
@@ -224,7 +219,7 @@ export function TrackInspector(props: TrackInspectorProps) {
                     type="button"
                     key={monitoring}
                     aria-pressed={props.track.monitoring === monitoring}
-                    onClick={() => commit(props.api.updateTrack(props.track.id, { monitoring }))}
+                    onClick={() => commit(api.updateTrack(props.track.id, { monitoring }))}
                   >
                     {monitoring === 'off' ? 'Off' : monitoring === 'auto' ? 'Auto' : 'On'}
                   </button>

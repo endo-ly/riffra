@@ -1,14 +1,14 @@
 import { errorText } from '@/shared/errors';
 import { useEffect, useMemo, useState } from 'react';
 import type { InstrumentLibraryItem, PluginEntry } from '@/model/domain';
-import type { JobApi } from '@/native/native-api';
+
+import { useSessionContext } from '@/shared/session/session-context';
 import { matchesInstrumentQuery } from '@/features/instruments/model/instrument-library';
 import styles from '../WorkspaceArrangeOverlay.module.css';
 
 type QuickPickerInstrument = Pick<InstrumentLibraryItem, 'id' | 'name' | 'description' | 'origin'>;
 
 interface InstrumentPickerProps {
-  api?: Pick<JobApi, 'scanVst3Folder'>;
   instruments: QuickPickerInstrument[];
   plugins?: PluginEntry[];
   onSelectInstrument: (instrumentId: string) => void;
@@ -17,6 +17,7 @@ interface InstrumentPickerProps {
 }
 
 export function InstrumentPicker(props: InstrumentPickerProps) {
+  const { api } = useSessionContext();
   const { onClose } = props;
   const [scannedPlugins, setScannedPlugins] = useState<PluginEntry[]>([]);
   const [loading, setLoading] = useState(!props.plugins);
@@ -30,14 +31,9 @@ export function InstrumentPicker(props: InstrumentPickerProps) {
       setError(null);
       return;
     }
-    if (!props.api) {
-      setLoading(false);
-      setError('External plugin catalog is unavailable.');
-      return;
-    }
     let cancelled = false;
     setLoading(true);
-    props.api
+    api
       .scanVst3Folder()
       .then((report) => {
         if (cancelled) return;
@@ -54,7 +50,7 @@ export function InstrumentPicker(props: InstrumentPickerProps) {
     return () => {
       cancelled = true;
     };
-  }, [props.api, props.plugins]);
+  }, [api, props.plugins]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {

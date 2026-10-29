@@ -1,11 +1,11 @@
 import { errorText } from '@/shared/errors';
 import { useEffect, useMemo, useState } from 'react';
 import type { PluginEntry, PluginRole } from '@/model/domain';
-import type { JobApi } from '@/native/native-api';
+
+import { useSessionContext } from '@/shared/session/session-context';
 import styles from '../WorkspaceArrangeOverlay.module.css';
 
 interface PluginPickerProps {
-  api?: Pick<JobApi, 'scanVst3Folder'>;
   title?: string;
   role: PluginRole;
   plugins?: PluginEntry[];
@@ -14,6 +14,7 @@ interface PluginPickerProps {
 }
 
 export function PluginPicker(props: PluginPickerProps) {
+  const { api } = useSessionContext();
   const { onClose } = props;
   const [scannedPlugins, setScannedPlugins] = useState<PluginEntry[]>([]);
   const [loading, setLoading] = useState(!props.plugins);
@@ -29,12 +30,7 @@ export function PluginPicker(props: PluginPickerProps) {
     }
     let cancelled = false;
     setLoading(true);
-    if (!props.api) {
-      setError('Plugin catalog is unavailable.');
-      setLoading(false);
-      return;
-    }
-    props.api
+    api
       .scanVst3Folder()
       .then((report) => {
         if (cancelled) return;
@@ -51,7 +47,7 @@ export function PluginPicker(props: PluginPickerProps) {
     return () => {
       cancelled = true;
     };
-  }, [props.api, props.plugins]);
+  }, [api, props.plugins]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {

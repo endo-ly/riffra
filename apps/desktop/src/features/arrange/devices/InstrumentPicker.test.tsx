@@ -1,3 +1,5 @@
+import { TestSessionProvider } from '@/test/session-provider';
+import { FakeNativeApi } from '@/native/native-api-fake';
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest';
@@ -54,13 +56,15 @@ describe('InstrumentPicker', () => {
     const onSelectInstrument = vi.fn();
     const onSelectVst3 = vi.fn();
     render(
-      <InstrumentPicker
-        instruments={instruments}
-        plugins={plugins}
-        onSelectInstrument={onSelectInstrument}
-        onSelectVst3={onSelectVst3}
-        onClose={vi.fn()}
-      />,
+      <TestSessionProvider api={new FakeNativeApi()}>
+        <InstrumentPicker
+          instruments={instruments}
+          plugins={plugins}
+          onSelectInstrument={onSelectInstrument}
+          onSelectVst3={onSelectVst3}
+          onClose={vi.fn()}
+        />
+      </TestSessionProvider>,
     );
 
     fireEvent.click(

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { BackgroundJobStatus, BootstrapState, PluginEntry, ScanReport } from '@/model/domain';
-import type { JobApi } from '@/native/native-api';
+
+import type { JobApi } from '@/native/api/jobs';
 import { showToast } from '@/shared/toasts';
 
 type PluginCatalogApi = Pick<JobApi, 'startScanJob'>;

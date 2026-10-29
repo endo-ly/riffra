@@ -1,26 +1,23 @@
-import { errorText } from '@/shared/errors';
-import { useEffect, useId, useRef, useState } from 'react';
 import type {
   BackgroundJobStatus,
-  CanonicalState,
   CreativeSession,
   LoudnessMastering,
   MixdownSettings,
   RenderRange,
 } from '@/model/domain';
-import type { ArrangeWorkspaceApi } from '@/features/arrange/arrange-api';
 import { chooseRenderStemDirectory, saveRenderWav } from '@/native/dialog';
-import { Icon } from '@/shared/ui/primitives';
+import { errorText } from '@/shared/errors';
+import { useSessionContext } from '@/shared/session/session-context';
 import controls from '@/shared/ui/controls.module.css';
+import { Icon } from '@/shared/ui/primitives';
+import { useEffect, useId, useRef, useState } from 'react';
+import styles from './Mixdown.module.css';
 import { DialogRow, DialogSection, MixerDialog } from './MixerDialog';
 import { RenderHistoryPanel } from './RenderHistoryPanel';
 import { RenderMeasurements } from './RenderMeasurements';
-import styles from './Mixdown.module.css';
 
 interface Props {
   session: CreativeSession;
-  api: ArrangeWorkspaceApi;
-  applyCanonicalState: (state: CanonicalState) => boolean;
   onClose: () => void;
 }
 
@@ -93,6 +90,7 @@ function fileName(path: string) {
 }
 
 export function MixdownDialog(props: Props) {
+  const { api, commit: sessionCommit } = useSessionContext();
   const canonical = props.session.settings.mixdown;
   const [enabled, setEnabled] = useState(canonical.mastering !== null);
   const [target, setTarget] = useState<LoudnessMastering>(
@@ -140,7 +138,7 @@ export function MixdownDialog(props: Props) {
     let timer: number | undefined;
     const poll = async () => {
       try {
-        const current = await props.api.getBackgroundJob(jobId);
+        const current = await api.getBackgroundJob(jobId);
         if (cancelled) return;
         if (!current) throw new Error('Render job is unavailable');
         setJob(current);
@@ -158,7 +156,7 @@ export function MixdownDialog(props: Props) {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [active, jobId, props.api]);
+  }, [active, jobId, api]);
   const save = async (render: boolean) => {
     if (busy) return;
     setSaving(true);
@@ -172,21 +170,20 @@ export function MixdownDialog(props: Props) {
         mastering: enabled ? target : null,
       };
       if (!sameMixdownSettings(settings, canonical)) {
-        const result = await props.api.setMixdown(settings);
-        if (!alive.current || !props.applyCanonicalState(result.canonical)) return;
-        if (result.projection.state === 'failed') throw new Error(result.projection.message);
+        const result = await sessionCommit(api.setMixdown(settings));
+        if (!alive.current || !result || result.projection.state === 'failed') return;
       }
       if (render) {
         const renderRange: RenderRange =
           range === 'loopRange' ? { kind: range } : { kind: 'entireArrangement' };
         const queued = stems
-          ? await props.api.startStemRenderJob({
+          ? await api.startStemRenderJob({
               allTracks: !trackId,
               trackIds: trackId ? [trackId] : [],
               range: renderRange,
               outputDirectory: outputPath || null,
             })
-          : await props.api.startRenderJob({
+          : await api.startRenderJob({
               range: renderRange,
               trackId: trackId || null,
               normalize: false,
@@ -203,7 +200,7 @@ export function MixdownDialog(props: Props) {
   const cancel = async () => {
     if (!jobId) return;
     try {
-      const result = await props.api.cancelBackgroundJob(jobId);
+      const result = await api.cancelBackgroundJob(jobId);
       if (alive.current) setJob(result);
     } catch (failure) {
       if (alive.current) setError(errorText(failure));
@@ -496,7 +493,7 @@ export function MixdownDialog(props: Props) {
           )}
         </DialogSection>
       )}
-      <RenderHistoryPanel api={props.api} refreshToken={job?.state === 'completed' ? job.id : ''} />
+      <RenderHistoryPanel refreshToken={job?.state === 'completed' ? job.id : ''} />
     </MixerDialog>
   );
 }

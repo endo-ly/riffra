@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef } from 'react';
 import type { CreativeSession, TransportStatus } from '@/model/domain';
 import { logNativeError } from '@/native/invoke';
-import type { TransportApi } from '@/native/native-api';
+
+import type { TransportApi } from '@/native/api/transport';
 interface TransportControllerOptions {
-  hostGeneration?: number;
+  hostGeneration: number;
   api: Pick<TransportApi, 'playTimeline' | 'pauseTimeline' | 'stopTimeline' | 'goToStartTimeline'>;
   sessionRef: {
     current: CreativeSession | null;
@@ -18,7 +19,7 @@ export function useTransportController({
   api,
   sessionRef,
   transport,
-  hostGeneration = 0,
+  hostGeneration,
 }: TransportControllerOptions) {
   const pendingPlayRef = useRef<Promise<void> | null>(null);
   useEffect(() => {

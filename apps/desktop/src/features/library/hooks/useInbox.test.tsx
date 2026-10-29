@@ -76,7 +76,7 @@ describe('useInbox', () => {
     const reload = vi.fn().mockResolvedValue(undefined);
     const onRelocate = vi.fn();
     const { result } = renderHook(() =>
-      useInbox(api, [first, second, third, fourth], { reload, onRelocate }),
+      useInbox(api, [first, second, third, fourth], { hostGeneration: 0, reload, onRelocate }),
     );
 
     await act(async () => {
@@ -120,7 +120,7 @@ describe('useInbox', () => {
     });
     const rename = vi.spyOn(api, 'renameRecording');
     const reload = vi.fn().mockResolvedValue(undefined);
-    const { result } = renderHook(() => useInbox(api, [first], { reload }));
+    const { result } = renderHook(() => useInbox(api, [first], { hostGeneration: 0, reload }));
 
     let failure: unknown;
     await act(async () => {
@@ -148,7 +148,9 @@ describe('useInbox', () => {
       responses: { previewAsset: fakeAudioStatus() },
     });
     const preview = vi.spyOn(api, 'previewAsset');
-    const { result } = renderHook(() => useInbox(api, [processed, raw], { reload: vi.fn() }));
+    const { result } = renderHook(() =>
+      useInbox(api, [processed, raw], { hostGeneration: 0, reload: vi.fn() }),
+    );
 
     await act(async () => {
       await result.current.preview(processed);
@@ -166,7 +168,9 @@ describe('useInbox', () => {
       recordings: [first],
       responses: { detectDuplicateRecordings: [] },
     });
-    const { result } = renderHook(() => useInbox(api, [first], { reload: vi.fn() }));
+    const { result } = renderHook(() =>
+      useInbox(api, [first], { hostGeneration: 0, reload: vi.fn() }),
+    );
 
     await act(async () => {
       await result.current.detectDuplicates();

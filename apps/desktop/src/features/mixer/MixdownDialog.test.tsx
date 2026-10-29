@@ -1,12 +1,13 @@
+import { TestSessionProvider } from '@/test/session-provider';
 // @vitest-environment jsdom
+import type { RenderResult } from '@/model/domain';
+import { canonicalState, defaultSession } from '@/native/browser-defaults';
+import { toAssetId } from '@/native/contracts';
+import { FakeNativeApi } from '@/native/native-api-fake';
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
-import type { RenderResult } from '@/model/domain';
-import { canonicalState, defaultSession } from '@/native/browser-defaults';
-import { FakeNativeApi } from '@/native/native-api-fake';
-import { toAssetId } from '@/native/contracts';
 import { MixdownDialog } from './MixdownDialog';
 
 afterEach(cleanup);
@@ -36,12 +37,9 @@ it('starts an unchanged mixdown render without committing a settings mutation', 
     result: null,
   }));
   render(
-    <MixdownDialog
-      session={session}
-      api={api}
-      applyCanonicalState={() => true}
-      onClose={() => undefined}
-    />,
+    <TestSessionProvider api={api}>
+      <MixdownDialog session={session} onClose={() => undefined} />
+    </TestSessionProvider>,
   );
 
   fireEvent.click(screen.getByRole('button', { name: 'Save and render' }));
@@ -127,15 +125,12 @@ it.each(['measured', 'unavailable'] as const)(
     function Harness() {
       const [current, setCurrent] = useState(structuredClone(session));
       return (
-        <MixdownDialog
-          session={current}
+        <TestSessionProvider
           api={api}
-          applyCanonicalState={(canonical) => {
-            setCurrent(canonical.session);
-            return true;
-          }}
-          onClose={() => undefined}
-        />
+          applyCanonicalState={(canonical) => setCurrent(canonical.session)}
+        >
+          <MixdownDialog session={current} onClose={() => undefined} />
+        </TestSessionProvider>
       );
     }
     render(<Harness />);

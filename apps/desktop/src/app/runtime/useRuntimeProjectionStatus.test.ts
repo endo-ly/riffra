@@ -36,7 +36,7 @@ function status(overrides: Partial<RuntimeProjectionStatus> = {}): RuntimeProjec
 describe('useRuntimeProjectionStatus', () => {
   it('keeps the app-level status synchronized with asynchronous projection events', async () => {
     const api = new FakeNativeApi();
-    const { result } = renderHook(() => useRuntimeProjectionStatus(api));
+    const { result } = renderHook(() => useRuntimeProjectionStatus(api, 0));
     const failed = status({
       state: 'failed',
       lastError: 'native rejected',
@@ -53,7 +53,7 @@ describe('useRuntimeProjectionStatus', () => {
 
   it('surfaces native projection preparation details', async () => {
     const api = new FakeNativeApi();
-    const { result } = renderHook(() => useRuntimeProjectionStatus(api));
+    const { result } = renderHook(() => useRuntimeProjectionStatus(api, 0));
     const detail =
       'native runtime rejected operation `timeline`: schema_version: unsupported schema_version 5, expected 6.';
 
@@ -79,7 +79,7 @@ describe('useRuntimeProjectionStatus', () => {
         resolveInitial = resolve;
       }),
     );
-    const { result } = renderHook(() => useRuntimeProjectionStatus(api));
+    const { result } = renderHook(() => useRuntimeProjectionStatus(api, 0));
     const active = status({
       state: 'active',
       runningOperationId: null,
@@ -109,7 +109,7 @@ describe('useRuntimeProjectionStatus', () => {
       status({ state: 'failed', lastError: 'native rejected', lastErrorCode: 'nativeRejected' }),
     );
     api.setResponse('retryRuntimeProjection', active);
-    const { result } = renderHook(() => useRuntimeProjectionStatus(api));
+    const { result } = renderHook(() => useRuntimeProjectionStatus(api, 0));
 
     await act(async () => {
       await result.current.retry();
@@ -128,7 +128,7 @@ describe('useRuntimeProjectionStatus', () => {
     });
     api.emitRuntimeProjectionStatus(failed);
     api.setFailure('retryRuntimeProjection', new Error('retry unavailable'));
-    const { result } = renderHook(() => useRuntimeProjectionStatus(api));
+    const { result } = renderHook(() => useRuntimeProjectionStatus(api, 0));
 
     await waitFor(() =>
       expect(result.current.failure).toBe('Audio preparation failed: native rejected'),
@@ -153,7 +153,7 @@ describe('useRuntimeProjectionStatus', () => {
       lastErrorCode: 'nativeRejected',
     });
     api.emitRuntimeProjectionStatus(failed);
-    const { result } = renderHook(() => useRuntimeProjectionStatus(api));
+    const { result } = renderHook(() => useRuntimeProjectionStatus(api, 0));
 
     await waitFor(() =>
       expect(result.current.failure).toBe('Audio preparation failed: native rejected'),
@@ -177,7 +177,7 @@ describe('useRuntimeProjectionStatus', () => {
 
   it('treats a timeline busy code as loading rather than a user failure', async () => {
     const api = new FakeNativeApi();
-    const { result } = renderHook(() => useRuntimeProjectionStatus(api));
+    const { result } = renderHook(() => useRuntimeProjectionStatus(api, 0));
 
     act(() =>
       api.emitRuntimeProjectionStatus(
@@ -209,7 +209,7 @@ describe('useRuntimeProjectionStatus', () => {
         resolveRetry = resolve;
       }),
     );
-    const { result } = renderHook(() => useRuntimeProjectionStatus(api));
+    const { result } = renderHook(() => useRuntimeProjectionStatus(api, 0));
 
     await waitFor(() => expect(result.current.failure).not.toBeNull());
     let firstRetry!: Promise<void>;
