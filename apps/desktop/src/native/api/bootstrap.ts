@@ -1,53 +1,27 @@
+import type { BootstrapState, RuntimeStartupFinished } from '@/model/domain';
 import { listen } from '@tauri-apps/api/event';
-import type { BootstrapState, RecoveryCandidate, RuntimeStartupFinished } from '@/model/domain';
-import { canonicalState, defaultProjectState, defaultSession } from '../browser-defaults';
-import {
-  getHostGeneration,
-  invokeHostOrFallback,
-  isNativeRuntime,
-  setHostConnectionAvailability,
-  setHostGeneration,
-} from '../invoke';
-import { defaultVst3Root } from './constants';
+import { adoptHostConnection, invokeHost } from '../invoke';
 
-export async function bootstrap(): Promise<BootstrapState> {
-  const session = defaultSession();
-  const state = await invokeHostOrFallback<BootstrapState>(
-    'get_bootstrap_state',
-    {},
-    {
-      canonical: canonicalState(session),
-      projectState: defaultProjectState(),
-      pluginCatalog: [],
-      runtimeStarted: false,
-      runtimeStartupFinished: false,
-      recovery: { recoveredFromGeneration: false, recoveryCandidates: [] as RecoveryCandidate[] },
-      safeMode: false,
-      nativeAvailable: false,
-      dataRoot: 'Browser preview \u2014 native persistence is unavailable',
-      vst3Root: defaultVst3Root,
-      hostConnection: {
-        mode: 'disconnected',
-        generation: 1,
-        dataRoot: null,
-        instanceId: null,
-        pid: null,
-        reason: 'Native Host is unavailable in browser preview',
-      },
-    },
-  );
-  if (state.hostConnection.generation >= getHostGeneration()) {
-    setHostGeneration(state.hostConnection.generation);
-    setHostConnectionAvailability(state.hostConnection.mode !== 'disconnected');
-  }
+export interface BootstrapApi {
+  bootstrap(): Promise<BootstrapState>;
+  onRuntimeStartupFinished(callback: (event: RuntimeStartupFinished) => void): Promise<() => void>;
+}
+
+async function bootstrap(): Promise<BootstrapState> {
+  const state = await invokeHost<BootstrapState>('get_bootstrap_state');
+  adoptHostConnection(state.hostConnection);
   return state;
 }
 
-export async function onRuntimeStartupFinished(
+async function onRuntimeStartupFinished(
   callback: (event: RuntimeStartupFinished) => void,
 ): Promise<() => void> {
-  if (!isNativeRuntime()) return () => undefined;
-  return listen<RuntimeStartupFinished>('runtime-startup-finished', ({ payload }) => {
-    callback(payload);
-  });
+  return listen<RuntimeStartupFinished>('runtime-startup-finished', ({ payload }) =>
+    callback(payload),
+  );
 }
+
+export const bootstrapApi: BootstrapApi = {
+  bootstrap,
+  onRuntimeStartupFinished,
+};

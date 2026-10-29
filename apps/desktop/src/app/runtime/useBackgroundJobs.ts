@@ -1,13 +1,15 @@
+import { errorText } from '@/shared/errors';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { BackgroundJobStatus, JobState } from '@/model/domain';
-import type { JobApi } from '@/native/native-api';
+
+import type { JobApi } from '@/native/api/jobs';
 import { logNativeError } from '@/native/invoke';
 
 const terminalJobStates: readonly JobState[] = ['completed', 'failed', 'cancelled'];
 
 export function useBackgroundJobs(
   api: Pick<JobApi, 'getBackgroundJob' | 'cancelBackgroundJob'>,
-  hostGeneration = 0,
+  hostGeneration: number,
 ) {
   const [backgroundJob, setBackgroundJob] = useState<BackgroundJobStatus | null>(null);
   const activeJobId = useRef<string | null>(null);
@@ -44,7 +46,7 @@ export function useBackgroundJobs(
       try {
         started = await start();
       } catch (error) {
-        onFailed(error instanceof Error ? error.message : String(error));
+        onFailed(errorText(error));
         return false;
       }
       activeJobId.current = started.id;
@@ -72,7 +74,7 @@ export function useBackgroundJobs(
         onCompleted(latest.result);
         return true;
       } catch (error) {
-        onFailed(error instanceof Error ? error.message : String(error));
+        onFailed(errorText(error));
         return false;
       } finally {
         if (activeJobId.current === started.id) {

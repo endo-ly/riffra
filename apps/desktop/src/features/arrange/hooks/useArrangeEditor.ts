@@ -1,7 +1,6 @@
 import { snapToBar } from '@/shared/session/timebase';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { AudioAnalysis, CanonicalState, CreativeSession } from '@/model/domain';
-import type { ArrangeApi } from '@/native/native-api';
+import type { AudioAnalysis, CreativeSession } from '@/model/domain';
 import {
   timelineObjectEndTick,
   snapGridTicks,
@@ -10,7 +9,9 @@ import {
 } from '@/features/arrange/model/arrange-timeline';
 import { isEditableTypingTarget } from '@/shared/input';
 import { useClipInteractions } from './useClipInteractions';
-import { useArrangeCommands } from './useArrangeCommands';
+import { useSessionContext } from '@/shared/session/session-context';
+import type { SessionCommit } from '@/shared/session/commit';
+export type EditorCommit = SessionCommit;
 
 export type ArrangeSelection =
   | { kind: 'none' }
@@ -21,10 +22,8 @@ export type ArrangeSelection =
 
 interface UseArrangeEditorOptions {
   session: CreativeSession;
-  applyCanonicalState: (canonical: CanonicalState) => boolean;
   selection: ArrangeSelection;
   setSelection: (selection: ArrangeSelection) => void;
-  api: ArrangeApi;
   tool: ArrangeTool;
   snap: SnapGrid;
   pixelsPerTick: number;
@@ -34,18 +33,8 @@ interface UseArrangeEditorOptions {
 }
 
 export function useArrangeEditor(options: UseArrangeEditorOptions) {
-  const {
-    session,
-    applyCanonicalState,
-    selection,
-    setSelection,
-    api,
-    tool,
-    snap,
-    pixelsPerTick,
-    displayTick,
-    analyses,
-  } = options;
+  const { session, selection, setSelection, tool, snap, pixelsPerTick, displayTick, analyses } =
+    options;
   const selectedClipIds = useMemo(
     () => (selection.kind === 'clips' ? selection.clipIds : []),
     [selection],
@@ -57,8 +46,15 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
   );
   const { arrangement } = session;
   const { timebase } = arrangement;
-  const commands = useArrangeCommands({ applyCanonicalState });
-  const { commit, message, setMessage } = commands;
+  const { api, commit: sessionCommit } = useSessionContext();
+  const [message, setMessage] = useState('');
+  const commit: EditorCommit = useCallback(
+    (operation) => {
+      setMessage('');
+      return sessionCommit(operation, { onError: setMessage });
+    },
+    [sessionCommit],
+  );
   const [snapGuide, setSnapGuide] = useState<number | null>(null);
   const [marquee, setMarquee] = useState<{
     left: number;
@@ -117,7 +113,6 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
     session,
     selectedClipIds,
     setSelectedClipIds,
-    commands: api,
     tool,
     pixelsPerTick,
     analyses,
@@ -215,10 +210,6 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
         (clipboardRef.current.audioIds.length || clipboardRef.current.midiIds.length)
       ) {
         event.preventDefault();
-        const previous = new Set([
-          ...arrangement.audioClips.map((clip) => clip.id),
-          ...arrangement.midiClips.map((clip) => clip.id),
-        ]);
         void commit(
           pasteTimelineClips(
             clipboardRef.current.audioIds,
@@ -226,14 +217,11 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
             snapTick(displayTick),
           ),
         ).then((next) => {
-          if (next) {
-            setSelectedClipIds(
-              [
-                ...next.arrangement.audioClips.map((clip) => clip.id),
-                ...next.arrangement.midiClips.map((clip) => clip.id),
-              ].filter((id) => !previous.has(id)),
-            );
-          }
+          if (next)
+            setSelectedClipIds([
+              ...(next.createdEntityIds.audioClips ?? []),
+              ...(next.createdEntityIds.midiClips ?? []),
+            ]);
         });
       } else if (event.ctrlKey && key === 'd' && selectedClipIds.length) {
         event.preventDefault();

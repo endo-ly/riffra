@@ -1,12 +1,12 @@
+import { sidechainTargetName } from '@/features/arrange/model/automation-targets';
+import { resolveTrackColor } from '@/features/arrange/model/track-colors';
 import type {
   Arrangement,
   ArrangementMutationResult,
   AutomationTarget,
   Track,
 } from '@/model/domain';
-import type { ArrangeWorkspaceApi } from '@/features/arrange/arrange-api';
-import { sidechainTargetName } from '@/features/arrange/model/automation-targets';
-import { resolveTrackColor } from '@/features/arrange/model/track-colors';
+import { useSessionContext } from '@/shared/session/session-context';
 import controls from '@/shared/ui/controls.module.css';
 import { DialogRow, DialogSection, MixerDialog } from './MixerDialog';
 import { SendRow } from './SendRow';
@@ -15,20 +15,13 @@ import { SidechainSendControls } from './SidechainSendControls';
 interface Props {
   arrangement: Arrangement;
   track: Track;
-  api: ArrangeWorkspaceApi;
   commit: (operation: Promise<ArrangementMutationResult>) => void;
   onClose: () => void;
   onOpenAutomation: (target: AutomationTarget) => void;
 }
 
-export function MixerRouting({
-  arrangement,
-  track,
-  api,
-  commit,
-  onClose,
-  onOpenAutomation,
-}: Props) {
+export function MixerRouting({ arrangement, track, commit, onClose, onOpenAutomation }: Props) {
+  const { api } = useSessionContext();
   const returns = arrangement.mixer.buses.filter((bus) => bus.kind === 'return');
   const sends = arrangement.mixer.sends.filter((send) => send.trackId === track.id);
   const sidechainSends = arrangement.mixer.sidechainSends.filter(
@@ -143,7 +136,6 @@ export function MixerRouting({
             key={send.id}
             send={send}
             endpointName={sidechainTargetName(arrangement, send.targetDeviceId) ?? 'Unknown device'}
-            api={api}
             commit={commit}
             onOpenAutomation={() =>
               onOpenAutomation({ kind: 'sidechainSendLevel', sidechainSendId: send.id })

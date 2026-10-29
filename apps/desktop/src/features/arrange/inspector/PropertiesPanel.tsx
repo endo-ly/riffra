@@ -1,30 +1,28 @@
-import type { AudioStatus, CanonicalState, CreativeSession } from '@/model/domain';
-import type { ArrangeInspectorApi } from '../arrange-api';
-import { ArrangeClipInspector } from './ArrangeClipInspector';
-import { MultiClipInspector } from './MultiClipInspector';
-import { MidiClipInspector } from './MidiClipInspector';
-import { TrackInspector } from './TrackInspector';
-import { TakeInspector } from './TakeInspector';
-import { tickToMusicalPosition } from '@/shared/session/musical-position';
-import { clipDurationTicks } from '@/features/arrange/model/arrange-timeline';
 import type { ArrangeSelection } from '@/features/arrange/hooks/useArrangeEditor';
+import { clipDurationTicks } from '@/features/arrange/model/arrange-timeline';
+import type { AudioStatus, CreativeSession } from '@/model/domain';
+import { tickToMusicalPosition } from '@/shared/session/musical-position';
+import { useSessionContext } from '@/shared/session/session-context';
 import { Icon } from '@/shared/ui/primitives';
+import { ArrangeClipInspector } from './ArrangeClipInspector';
+import { MidiClipInspector } from './MidiClipInspector';
+import { MultiClipInspector } from './MultiClipInspector';
 import styles from './PropertiesPanel.module.css';
+import { TakeInspector } from './TakeInspector';
+import { TrackInspector } from './TrackInspector';
 
 interface PropertiesPanelProps {
   onOpenDevices: () => void;
-  hostGeneration?: number;
   audio: AudioStatus;
   recordingCommandPending: boolean;
   session: CreativeSession;
-  applyCanonicalState: (canonical: CanonicalState) => boolean;
   arrangeSelection: ArrangeSelection;
   setArrangeSelection: (selection: ArrangeSelection) => void;
   onRecordAnotherTake: (recordingSessionId: string) => void | Promise<void>;
-  api: ArrangeInspectorApi;
 }
 
 export function PropertiesPanel(props: PropertiesPanelProps) {
+  const { api } = useSessionContext();
   const selectedTrackId =
     props.arrangeSelection.kind === 'track' ? props.arrangeSelection.trackId : undefined;
   const selectedTrack = props.session.arrangement.tracks.find(
@@ -50,63 +48,49 @@ export function PropertiesPanel(props: PropertiesPanelProps) {
             <TrackInspector
               track={selectedTrack}
               session={props.session}
-              applyCanonicalState={props.applyCanonicalState}
               audio={props.audio}
               onOpenDevices={props.onOpenDevices}
-              api={props.api}
             />
             <TakeInspector
-              hostGeneration={props.hostGeneration}
               session={props.session}
               selection={props.arrangeSelection}
-              applyCanonicalState={props.applyCanonicalState}
               recordingActive={props.audio.recording.active || props.audio.recording.processing}
               recordingCommandPending={props.recordingCommandPending}
               onRecordAnotherTake={props.onRecordAnotherTake}
-              api={props.api}
             />
           </>
         ) : selectedAudioClipCount + selectedMidiClipCount > 1 ? (
           <MultiClipInspector
             session={props.session}
-            applyCanonicalState={props.applyCanonicalState}
             selectedAudioClipIds={selectedAudioClipIds}
             selectedMidiClipIds={selectedMidiClipIds}
             setSelectedClipIds={setSelectedClipIds}
-            api={props.api}
           />
         ) : selectedMidiClipCount === 1 ? (
           <>
             <MidiClipInspector
               session={props.session}
-              applyCanonicalState={props.applyCanonicalState}
               selectedClipIds={selectedMidiClipIds}
               setSelectedClipIds={setSelectedClipIds}
-              api={props.api}
             />
             <TakeInspector
-              hostGeneration={props.hostGeneration}
               session={props.session}
               selection={props.arrangeSelection}
-              applyCanonicalState={props.applyCanonicalState}
               recordingActive={props.audio.recording.active || props.audio.recording.processing}
               recordingCommandPending={props.recordingCommandPending}
               onRecordAnotherTake={props.onRecordAnotherTake}
-              api={props.api}
             />
           </>
         ) : selectedAudioClipCount === 1 ? (
           <>
             <ArrangeClipInspector
               session={props.session}
-              applyCanonicalState={props.applyCanonicalState}
               selectedClipIds={selectedAudioClipIds}
               setSelectedClipIds={setSelectedClipIds}
-              api={props.api}
               onSetLoopToClip={(clip) => {
                 const timebase = props.session.arrangement.timebase;
                 const endTicks = clipDurationTicks(clip, timebase);
-                return props.api.updateTimelineLoopRange(
+                return api.updateTimelineLoopRange(
                   true,
                   tickToMusicalPosition(clip.startTick, timebase),
                   tickToMusicalPosition(clip.startTick + endTicks, timebase),
@@ -114,14 +98,11 @@ export function PropertiesPanel(props: PropertiesPanelProps) {
               }}
             />
             <TakeInspector
-              hostGeneration={props.hostGeneration}
               session={props.session}
               selection={props.arrangeSelection}
-              applyCanonicalState={props.applyCanonicalState}
               recordingActive={props.audio.recording.active || props.audio.recording.processing}
               recordingCommandPending={props.recordingCommandPending}
               onRecordAnotherTake={props.onRecordAnotherTake}
-              api={props.api}
             />
           </>
         ) : (

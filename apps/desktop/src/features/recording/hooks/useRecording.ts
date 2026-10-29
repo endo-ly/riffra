@@ -1,14 +1,18 @@
+import { errorText } from '@/shared/errors';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import type { AudioStatus, CanonicalState, RecordingAsset } from '@/model/domain';
 import { logNativeError } from '@/native/invoke';
-import type { LibraryApi, NativeEventApi, RecordingApi } from '@/native/native-api';
-import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
+
+import type { LibraryApi } from '@/native/api/library';
+import type { NativeEventApi } from '@/native/api/events';
+import type { RecordingApi } from '@/native/api/recording';
+import { applyMutation } from '@/shared/session/commit';
 interface UseRecordingOptions {
-  hostGeneration?: number;
+  hostGeneration: number;
   audio: AudioStatus;
   setAudio: Dispatch<SetStateAction<AudioStatus>>;
-  applyCanonicalState: (canonical: CanonicalState) => boolean;
+  applyCanonicalState: (canonical: CanonicalState) => void;
   onCommandFailure: (message: string) => void;
   onProjectionFailure: (message: string) => void;
   onFinalizationFailure: (message: string) => void;
@@ -27,7 +31,7 @@ export function useRecording(api: RecordingFeatureApi, options: UseRecordingOpti
     onProjectionFailure,
     onFinalizationFailure,
   } = options;
-  const hostGeneration = options.hostGeneration ?? 0;
+  const hostGeneration = options.hostGeneration;
   const [recordings, setRecordings] = useState<RecordingAsset[]>([]);
   const [recordingCommandPending, setRecordingCommandPending] = useState(false);
   const [recordingStopPending, setRecordingStopPending] = useState(false);
@@ -72,7 +76,7 @@ export function useRecording(api: RecordingFeatureApi, options: UseRecordingOpti
         return true;
       } catch (error) {
         logNativeError(errorLabel)(error);
-        onCommandFailure(error instanceof Error ? error.message : String(error));
+        onCommandFailure(errorText(error));
         return false;
       } finally {
         {
@@ -114,7 +118,7 @@ export function useRecording(api: RecordingFeatureApi, options: UseRecordingOpti
         const result = await stopArrangeRecording();
         setAudio(result.audio);
         if (result.audio.recording.active) setRecordingStopPending(true);
-        applyArrangementMutation(result, applyCanonicalState, onProjectionFailure);
+        applyMutation(result, applyCanonicalState, onProjectionFailure);
         if (result.finalization.state === 'recoveryRequired') {
           onFinalizationFailure(result.finalization.message);
         }

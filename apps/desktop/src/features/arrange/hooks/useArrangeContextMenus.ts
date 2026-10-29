@@ -1,3 +1,4 @@
+import type { ArrangementMutationResult } from '@/model/domain';
 import type {
   AudioClip,
   CreativeSession,
@@ -6,7 +7,7 @@ import type {
   ProjectTimebase,
   TrackKind,
 } from '@/model/domain';
-import type { ArrangeApi } from '@/native/native-api';
+import { useSessionContext } from '@/shared/session/session-context';
 import type { ContextMenuItem } from '@/shared/ui/ContextMenu';
 import { toast } from '@/shared/toasts';
 import {
@@ -22,15 +23,6 @@ import type { useArrangeRulerController } from './useArrangeRulerController';
 
 interface UseArrangeContextMenusOptions {
   arrangement: CreativeSession['arrangement'];
-  api: Pick<
-    ArrangeApi,
-    | 'duplicateAudioClip'
-    | 'updateAudioClip'
-    | 'removeTimelineClips'
-    | 'duplicateMidiClip'
-    | 'updateMidiClip'
-    | 'quantizeMidiNotes'
-  >;
   editor: ReturnType<typeof useArrangeEditor>;
   ruler: ReturnType<typeof useArrangeRulerController>;
   lower: ReturnType<typeof useArrangeLowerAreaController>;
@@ -38,7 +30,7 @@ interface UseArrangeContextMenusOptions {
   timebase: ProjectTimebase;
   displayTick: number;
   onOpenDevices: (trackId: string) => void;
-  addTrack: (kind: TrackKind) => Promise<CreativeSession | null>;
+  addTrack: (kind: TrackKind) => Promise<ArrangementMutationResult | null>;
   deleteTrack: (trackId: string, name: string, clipCount: number) => void;
   trackClipCounts: Map<string, number>;
   createEmptyMidiClip: (trackId: string, rawTick: number) => Promise<void>;
@@ -46,7 +38,6 @@ interface UseArrangeContextMenusOptions {
 
 export function useArrangeContextMenus({
   arrangement,
-  api,
   editor,
   ruler,
   lower,
@@ -59,6 +50,7 @@ export function useArrangeContextMenus({
   trackClipCounts,
   createEmptyMidiClip,
 }: UseArrangeContextMenusOptions) {
+  const { api } = useSessionContext();
   const [contextMenu, setContextMenu] = useState<{
     x: number;
     y: number;

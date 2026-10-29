@@ -1,25 +1,8 @@
+import type { EditorCommit } from './hooks/useArrangeEditor';
 import { useEffect, useState, type MutableRefObject } from 'react';
-import type {
-  ArrangementMutationResult,
-  CreativeSession,
-  MidiClip,
-  ProjectTimebase,
-  InstrumentMidiInspection,
-} from '@/model/domain';
-import type { ArrangeApi } from '@/native/native-api';
+import type { MidiClip, ProjectTimebase, InstrumentMidiInspection } from '@/model/domain';
+import { useSessionContext } from '@/shared/session/session-context';
 import { MidiEditorPanel, type MidiGhostNote } from './midi-editor/MidiEditorPanel';
-
-type ArrangeMidiApi = Pick<
-  ArrangeApi,
-  | 'addMidiNote'
-  | 'updateMidiNote'
-  | 'updateMidiNotes'
-  | 'removeMidiNotes'
-  | 'insertMidiNotes'
-  | 'quantizeMidiNotes'
-  | 'duplicateMidiNotes'
-  | 'getInstrumentMidiSettings'
->;
 
 interface ArrangeMidiEditorProps {
   clip: MidiClip | null;
@@ -33,12 +16,12 @@ interface ArrangeMidiEditorProps {
   previewAvailable: boolean;
   onSendMidi: (trackId: string, bytes: number[]) => Promise<unknown>;
   onPanicMidi: (trackId: string) => Promise<unknown>;
-  api: ArrangeMidiApi;
-  commit: (operation: Promise<ArrangementMutationResult | null>) => Promise<CreativeSession | null>;
+  commit: EditorCommit;
 }
 
 export function ArrangeMidiEditor(props: ArrangeMidiEditorProps) {
-  const { api, commit } = props;
+  const { api } = useSessionContext();
+  const { commit } = props;
   const [instrumentMidi, setInstrumentMidi] = useState<InstrumentMidiInspection | null>(null);
   useEffect(() => {
     if (!props.clip) {

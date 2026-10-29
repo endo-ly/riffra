@@ -1,5 +1,6 @@
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 import type { ControlCommand, ControlCommandResults } from '@/model/generated';
+import type { HostConnectionState } from '@/model/domain';
 
 let currentHostGeneration = 0;
 let hostConnected = true;
@@ -53,7 +54,7 @@ export class NativeCommandError extends Error {
   }
 }
 
-async function invokeNative<T>(command: string, args: Record<string, unknown>): Promise<T> {
+export async function invoke<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
   try {
     return await tauriInvoke<T>(command, args);
   } catch (error) {
@@ -72,16 +73,11 @@ export class HostConnectionChangedError extends Error {
   }
 }
 
-export function setHostGeneration(generation: number): void {
-  currentHostGeneration = generation;
-}
-
-export function setHostConnectionAvailability(connected: boolean): void {
-  hostConnected = connected;
-}
-
-export function getHostGeneration(): number {
-  return currentHostGeneration;
+export function adoptHostConnection(state: HostConnectionState): boolean {
+  if (state.generation < currentHostGeneration) return false;
+  currentHostGeneration = state.generation;
+  hostConnected = state.mode !== 'disconnected';
+  return true;
 }
 
 /**
@@ -89,10 +85,6 @@ export function getHostGeneration(): number {
  * is owned by the Rust Core and Runtime Reconciler; this module only
  * coalesces high-frequency UI updates through invokeLatestHost below.
  */
-export function invoke<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
-  return invokeNative<T>(command, args);
-}
-
 /** Invokes a command and rejects a response that crossed a Host switch. */
 export async function invokeHost<T>(
   command: string,
@@ -103,7 +95,7 @@ export async function invokeHost<T>(
   }
   const generation = currentHostGeneration;
   try {
-    const value = await invokeNative<T>(command, args);
+    const value = await invoke<T>(command, args);
     if (generation !== currentHostGeneration) throw new HostConnectionChangedError();
     return value;
   } catch (error) {
@@ -134,16 +126,6 @@ const latestQueues = new Map<string, LatestQueue<unknown>>();
  */
 export function isNativeRuntime(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
-}
-
-/** Browser-compatible fallback wrapper for Host-owned commands. */
-export async function invokeHostOrFallback<T>(
-  command: string,
-  args: Record<string, unknown>,
-  fallback: T,
-): Promise<T> {
-  if (!isNativeRuntime()) return fallback;
-  return invokeHost<T>(command, args);
 }
 
 /** Coalesces Host-owned high-frequency updates with a Host connection guard. */
@@ -220,18 +202,6 @@ function controlArgs(command: ControlCommand): Record<string, unknown> {
 /** Runs one Control Command through the connected Host. */
 export function dispatchControl<C extends ControlCommand>(command: C): Promise<ControlResult<C>> {
   return invokeHost<ControlResult<C>>('dispatch_control', controlArgs(command));
-}
-
-/** Runs one Control Command, or resolves to `fallback` without the native runtime. */
-export function dispatchControlOrFallback<C extends ControlCommand, F>(
-  command: C,
-  fallback: F,
-): Promise<ControlResult<C> | F> {
-  return invokeHostOrFallback<ControlResult<C> | F>(
-    'dispatch_control',
-    controlArgs(command),
-    fallback,
-  );
 }
 
 /** Runs the latest of the Control Commands queued under `key`. */

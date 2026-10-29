@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { CanonicalState, CreativeSession } from '@/model/domain';
-import type { ArrangeApi } from '@/native/native-api';
+import type { CreativeSession } from '@/model/domain';
+import type { NativeApi } from '@/native/native-api';
 import { HostConnectionChangedError, logNativeError } from '@/native/invoke';
 import { useArrangeLowerAreaController } from './useArrangeLowerAreaController';
 import type { ArrangeSelection } from './useArrangeEditor';
-import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
+import type { SessionCommit } from '@/shared/session/commit';
 import { toast } from '@/shared/toasts';
 import {
   placeBrowserItem,
@@ -14,7 +14,7 @@ import {
 
 export function useArrangeShell(
   api: Pick<
-    ArrangeApi,
+    NativeApi,
     | 'addTrack'
     | 'applyInstrument'
     | 'setTrackVst3Instrument'
@@ -23,8 +23,8 @@ export function useArrangeShell(
     | 'addMidiClipToArrangement'
   >,
   session: CreativeSession | null,
-  applyCanonicalState: (canonical: CanonicalState) => boolean,
-  hostGeneration = 0,
+  commit: SessionCommit,
+  hostGeneration: number,
   projectId: string | null = null,
 ) {
   const [selection, setSelection] = useState<ArrangeSelection>({ kind: 'none' });
@@ -78,20 +78,7 @@ export function useArrangeShell(
       return;
     }
     try {
-      await placeBrowserItem(
-        api,
-        async (operation) => {
-          const result = await operation;
-          if (result)
-            applyArrangementMutation(result, applyCanonicalState, (message) =>
-              toast(message, { kind: 'error' }),
-            );
-          return result;
-        },
-        placement,
-        target,
-        startTick,
-      );
+      await placeBrowserItem(api, commit, placement, target, startTick);
     } catch (error) {
       if (error instanceof HostConnectionChangedError) return;
       logNativeError('Place Browser item')(error);

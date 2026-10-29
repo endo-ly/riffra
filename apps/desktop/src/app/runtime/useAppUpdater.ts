@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { UpdaterApi } from '@/native/native-api';
+
+import type { UpdaterApi } from '@/native/api/updater';
 import { toast } from '@/shared/toasts';
 
 interface AppUpdaterOptions {

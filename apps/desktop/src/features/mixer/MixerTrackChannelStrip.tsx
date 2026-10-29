@@ -1,15 +1,13 @@
-import { formatGainDb, formatPan } from '@/shared/audio/mix-format';
-import { useState, type CSSProperties } from 'react';
-import type { AutomationLane, CanonicalState, Track } from '@/model/domain';
-import type { ArrangeApi, AudioApi } from '@/native/native-api';
-import { Icon } from '@/shared/ui/primitives';
 import { resolveTrackColor } from '@/features/arrange/model/track-colors';
+import type { AutomationLane, Track } from '@/model/domain';
+import { formatGainDb, formatPan } from '@/shared/audio/mix-format';
+import { useSessionContext } from '@/shared/session/session-context';
+import { Icon } from '@/shared/ui/primitives';
+import { useState, type CSSProperties } from 'react';
 import { ChannelMixSlider } from './ChannelMixSlider';
-import { MixerMeter } from './MixerMeter';
 import { useChannelMixControl } from './hooks/useChannelMixControl';
 import styles from './Mixer.module.css';
-type MixerTrackApi = Pick<ArrangeApi, 'updateTrack' | 'updateMixBus'> &
-  Pick<AudioApi, 'previewChannelMix'>;
+import { MixerMeter } from './MixerMeter';
 interface MixerTrackChannelStripProps {
   sessionId: string;
   track: Track;
@@ -18,8 +16,6 @@ interface MixerTrackChannelStripProps {
   panAutomation: AutomationLane | undefined;
   selected: boolean;
   missingDeviceIds: readonly string[];
-  api: MixerTrackApi;
-  applyCanonicalState: (canonical: CanonicalState) => boolean;
   onSelect: () => void;
   onOpenDevices: () => void;
   onOpenAutomation: () => void;
@@ -30,13 +26,12 @@ interface MixerTrackChannelStripProps {
   disabled?: boolean;
 }
 export function MixerTrackChannelStrip(props: MixerTrackChannelStripProps) {
+  const { api, commit: sessionCommit } = useSessionContext();
   const { track } = props;
   const [pendingSwitch, setPendingSwitch] = useState<'muted' | 'solo' | 'armed' | null>(null);
   const mix = useChannelMixControl({
     sessionId: props.sessionId,
     channel: track,
-    api: props.api,
-    applyCanonicalState: props.applyCanonicalState,
     onError: props.onError,
     disabled: props.disabled,
   });
@@ -50,11 +45,9 @@ export function MixerTrackChannelStrip(props: MixerTrackChannelStripProps) {
     props.onSelect();
     setPendingSwitch(field);
     try {
-      const result = await props.api.updateTrack(track.id, { [field]: !track[field] });
-      if (!props.applyCanonicalState(result.canonical)) return;
-      if (result.projection.state === 'failed') props.onError?.(result.projection.message);
-    } catch (error) {
-      props.onError?.(error instanceof Error ? error.message : String(error));
+      await sessionCommit(api.updateTrack(track.id, { [field]: !track[field] }), {
+        onError: props.onError,
+      });
     } finally {
       setPendingSwitch(null);
     }

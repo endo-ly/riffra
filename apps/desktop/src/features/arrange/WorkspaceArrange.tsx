@@ -2,14 +2,13 @@ import { Fragment, useCallback, useEffect, useMemo, useState, type CSSProperties
 import type {
   AutomationTarget,
   AudioStatus,
-  CanonicalState,
   CreativeSession,
   InstrumentLibraryItem,
   PluginEntry,
   RuntimeProjectionStatus,
   TrackKind,
 } from '@/model/domain';
-import type { ArrangeWorkspaceApi } from './arrange-api';
+import { useSessionContext } from '@/shared/session/session-context';
 import { ArrangeRuler } from './timeline/ArrangeRuler';
 import { ArrangeToolbar } from './timeline/ArrangeToolbar';
 import { ArrangeTrack } from './timeline/ArrangeTrack';
@@ -54,17 +53,15 @@ import { MixerPanel } from '@/features/mixer/MixerPanel';
 import styles from './WorkspaceArrange.module.css';
 
 interface WorkspaceArrangeProps {
+  hostConnected: boolean;
   lower: ReturnType<typeof useArrangeLowerAreaController>;
   onDisableMissingPlugin: (deviceId: string) => Promise<void>;
   onReplaceMissingPlugin: (deviceId: string, newPath: string) => Promise<void>;
   onRescanMissingPlugins: () => Promise<void>;
-  hostGeneration?: number;
   transport: ArrangementTransport;
   session: CreativeSession;
-  applyCanonicalState: (canonical: CanonicalState) => boolean;
   selection: ArrangeSelection;
   setSelection: (selection: ArrangeSelection) => void;
-  api: ArrangeWorkspaceApi;
   audio: AudioStatus;
   focusedTrackId: string | null;
   onFocusTrack: (trackId: string | null) => void;
@@ -81,7 +78,7 @@ interface WorkspaceArrangeProps {
 export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   const { arrangement } = props.session;
   const { timebase } = arrangement;
-  const { api } = props;
+  const { api, hostGeneration } = useSessionContext();
   const { onToggleTransport } = props;
   const [tool, setTool] = useState<ArrangeTool>('select');
   const [snap, setSnap] = useState<SnapGrid>('1/16');
@@ -106,7 +103,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   const [emptyDragOver, setEmptyDragOver] = useState(false);
   const [newTrackDragOver, setNewTrackDragOver] = useState(false);
   const { transport, displayTick, displayTickRef, seekLocally } = props.transport;
-  const previewScope = `${props.hostGeneration ?? 0}:${props.session.sessionId}`;
+  const previewScope = `${hostGeneration}:${props.session.sessionId}`;
   const previewAutomation = (
     target: AutomationTarget,
     value: number | null,
@@ -117,11 +114,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   };
   const { scrollerRef, zoom, pixelsPerTick, applyZoom, zoomToRange, scrollTop } =
     useArrangeViewport({ timebase, transport, displayTickRef });
-  const analyses = useWaveformAnalyses(
-    props.api,
-    arrangement.audioClips,
-    props.hostGeneration ?? 0,
-  );
+  const analyses = useWaveformAnalyses(arrangement.audioClips);
   const barTicks = ticksPerBar(timebase);
   const timelineTicks = useMemo(() => {
     const contentEnd = Math.max(
@@ -179,7 +172,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   });
   const { commit, setMessage } = editor;
   const { handleDrop, isOsFileDrag } = useArrangeDrop({
-    api: props.api,
     commit,
     pixelsPerTick,
     snapTick: editor.snapTick,
@@ -234,7 +226,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   }, [arrangement.audioClips, arrangement.midiClips]);
   const ruler = useArrangeRulerController({
     arrangement,
-    api,
     commit: editor.commit,
     snapTick: editor.snapTick,
     pixelsPerTick,
@@ -290,9 +281,9 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   const livePlay = useLivePlay({
     track: focusedTrack,
     runtimeReady,
+    hostConnected: props.hostConnected,
     missingDeviceIds,
     surfaceOpen: lower.view === 'playSurface' && !lower.collapsed,
-    api: props.api,
   });
   const { toggleComputerKeyboard } = livePlay;
   const activeInstrumentUnavailable = Boolean(
@@ -395,7 +386,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   const createEmptyMidiClip = async (trackId: string, rawTick: number) => {
     const track = arrangement.tracks.find((item) => item.id === trackId);
     if (!track || track.kind !== 'instrument') return;
-    const beforeIds = new Set(arrangement.midiClips.map((clip) => clip.id));
     const startTick = ruler.timeSelection
       ? ruler.timeSelection.startTick
       : editor.snapTick(rawTick);
@@ -404,7 +394,10 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
       : Math.max(1, barTicks);
     const next = await editor.commit(api.createMidiClip(trackId, startTick, durationTicks));
     if (!next) return;
-    const created = next.arrangement.midiClips.find((clip) => !beforeIds.has(clip.id));
+    const createdId = next.createdEntityIds.midiClips?.[0];
+    const created = next.canonical.session.arrangement.midiClips.find(
+      (clip) => clip.id === createdId,
+    );
     if (!created) return;
     ruler.clearTimeSelection();
     lower.openMidiEditor(created);
@@ -413,7 +406,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   const seekMidiEditor = (tick: number) => {
     const nextTick = Math.max(0, Math.round(tick));
     seekLocally(nextTick);
-    void props.api.seekTimeline(nextTick).catch((error) => {
+    void api.seekTimeline(nextTick).catch((error) => {
       if (error instanceof HostConnectionChangedError) return;
       setMessage(String(error));
     });
@@ -435,22 +428,22 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
       deletedTrack.instrument
     ) {
       try {
-        const status = await props.api.panicMidiTrack(trackId);
+        const status = await api.panicMidiTrack(trackId);
         if (status) editor.setMessage(status.message);
       } catch (error) {
         if (error instanceof HostConnectionChangedError) return;
         editor.setMessage(String(error));
       }
     }
-    const next = await editor.commit(props.api.removeTrack(trackId));
+    const next = await editor.commit(api.removeTrack(trackId));
     if (next) {
       if (selectedTrackId === trackId && lower.view === 'devices') lower.close();
       if (props.focusedTrackId === trackId) {
         props.onFocusTrack(null);
       }
       const remaining = new Set([
-        ...next.arrangement.audioClips.map((clip) => clip.id),
-        ...next.arrangement.midiClips.map((clip) => clip.id),
+        ...next.canonical.session.arrangement.audioClips.map((clip) => clip.id),
+        ...next.canonical.session.arrangement.midiClips.map((clip) => clip.id),
       ]);
       const clipIds = selectedClipIds.filter((id) => remaining.has(id));
       if (props.selection.kind !== 'track' || selectedTrackId === trackId)
@@ -476,7 +469,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
 
   const menus = useArrangeContextMenus({
     arrangement,
-    api,
     editor,
     ruler,
     lower,
@@ -693,7 +685,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
                   timelineWidth={timelineWidth}
                   pixelsPerTick={pixelsPerTick}
                   trackSize={trackSizes[track.id] ?? trackSize}
-                  api={props.api}
                   onCommit={editor.commit}
                   onDrop={(event, trackId, trackKind) => {
                     handleDrop(event, trackId, trackKind);
@@ -726,8 +717,8 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
                   }}
                   onAudioClipContextMenu={menus.openAudioClipContextMenu}
                   onMidiClipContextMenu={menus.openMidiClipContextMenu}
-                  onRename={(name) => void editor.commit(props.api.updateTrack(track.id, { name }))}
-                  onDuplicate={() => void editor.commit(props.api.duplicateTrack(track.id))}
+                  onRename={(name) => void editor.commit(api.updateTrack(track.id, { name }))}
+                  onDuplicate={() => void editor.commit(api.duplicateTrack(track.id))}
                   onDelete={() =>
                     void deleteTrack(track.id, track.name, trackClipCounts.get(track.id) ?? 0)
                   }
@@ -747,7 +738,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
                       : sourceIndex < trackIndex
                         ? trackIndex - 1
                         : trackIndex;
-                    void editor.commit(props.api.reorderTrack(sourceTrackId, targetIndex));
+                    void editor.commit(api.reorderTrack(sourceTrackId, targetIndex));
                   }}
                   onSetTrackSize={(size) => setTrackSizeForTrack(track.id, size)}
                 />
@@ -756,7 +747,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
                     warnings={props.audio.diagnostics.automationWarnings}
                     session={props.session}
                     target={automationTargets[track.id]!}
-                    api={props.api}
                     timelineWidth={timelineWidth}
                     pixelsPerTick={pixelsPerTick}
                     playheadTick={displayTick}
@@ -769,7 +759,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
                       setAutomationTargets((current) => ({ ...current, [track.id]: undefined }))
                     }
                     onCommit={(target, interpolation, points) =>
-                      editor.commit(props.api.setAutomation(target, interpolation, points))
+                      editor.commit(api.setAutomation(target, interpolation, points))
                     }
                   />
                 )}
@@ -781,7 +771,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
               warnings={props.audio.diagnostics.automationWarnings}
               session={props.session}
               target={mixerAutomationTarget}
-              api={props.api}
               timelineWidth={timelineWidth}
               pixelsPerTick={pixelsPerTick}
               playheadTick={displayTick}
@@ -792,7 +781,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
               onTarget={openAutomation}
               onClose={() => setMixerAutomationTarget(null)}
               onCommit={(target, interpolation, points) =>
-                editor.commit(props.api.setAutomation(target, interpolation, points))
+                editor.commit(api.setAutomation(target, interpolation, points))
               }
             />
           )}
@@ -859,7 +848,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
             previewAvailable={midiPreviewAvailable}
             onSendMidi={sendMidiPreview}
             onPanicMidi={panicMidiPreview}
-            api={props.api}
             commit={commit}
           />
         }
@@ -870,11 +858,9 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
             playing={transport?.state === 'playing'}
             currentTick={displayTick}
             onOpenAutomation={openAutomation}
-            key={`${props.session.sessionId}:${JSON.stringify(deviceTarget?.owner)}:${props.hostGeneration ?? 0}`}
+            key={`${props.session.sessionId}:${JSON.stringify(deviceTarget?.owner)}:${hostGeneration}`}
             target={deviceTarget}
             projectId={props.session.sessionId}
-            api={props.api}
-            applyCanonicalState={props.applyCanonicalState}
             plugins={props.plugins ?? []}
             instruments={props.instruments ?? []}
             missingDeviceIds={missingDeviceIds}
@@ -909,8 +895,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
               lower.openDevices();
             }}
             missingDeviceIds={missingDeviceIds}
-            api={props.api}
-            applyCanonicalState={props.applyCanonicalState}
             onSelectTrack={(trackId) => {
               ruler.clearSelectedRange();
               props.setSelection({ kind: 'track', trackId });

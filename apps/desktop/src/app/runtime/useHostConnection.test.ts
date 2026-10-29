@@ -1,11 +1,17 @@
 // @vitest-environment jsdom
 
 import { act, renderHook, waitFor } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+const tauriInvoke = vi.hoisted(() => vi.fn());
+vi.mock('@tauri-apps/api/core', () => ({ invoke: tauriInvoke }));
+vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => undefined) }));
+import { hostConnectionApi } from '@/native/api/host-connection';
+import { invokeHost } from '@/native/invoke';
 import type { LocalHostInfo } from '@/model/domain';
-import { setHostConnectionAvailability, setHostGeneration } from '@/native/invoke';
 import { FakeNativeApi } from '@/native/native-api-fake';
-import type { HostConnectionBootstrap } from '@/native/native-api';
+
+import type { HostConnectionBootstrap } from '@/native/api/host-connection';
 import { useHostConnection } from './useHostConnection';
 
 const hostA: LocalHostInfo = {
@@ -27,16 +33,6 @@ const hostB: LocalHostInfo = {
 };
 
 describe('useHostConnection', () => {
-  beforeEach(() => {
-    setHostGeneration(0);
-    setHostConnectionAvailability(true);
-  });
-
-  afterEach(() => {
-    setHostGeneration(0);
-    setHostConnectionAvailability(true);
-  });
-
   it('refreshes the Host list after a disconnected connection event', async () => {
     const api = new FakeNativeApi();
     const responses = [[hostA], [hostB]];
@@ -60,35 +56,50 @@ describe('useHostConnection', () => {
     expect(api.calls.filter((call) => call === 'listLocalHosts')).toHaveLength(2);
   });
 
-  it('ignores a stale switch response after reconnect supersedes it', async () => {
-    const api = new FakeNativeApi();
-    const bootstrap = await api.bootstrap();
-    const initialState = await api.getHostConnectionState();
+  it('keeps React and the native connection on the latest operation when a stale response arrives', async () => {
+    const fake = new FakeNativeApi();
+    const bootstrap = await fake.bootstrap();
+    const initialState = { ...(await fake.getHostConnectionState()), generation: 20 };
+    const currentState = { ...initialState, mode: 'attached' as const, generation: 21 };
     const staleState = {
       ...initialState,
-      mode: 'embedded' as const,
-      generation: initialState.generation + 2,
-    };
-    const currentState = {
-      ...initialState,
-      mode: 'attached' as const,
-      generation: initialState.generation + 1,
+      mode: 'disconnected' as const,
+      generation: 22,
+      reason: 'stale',
     };
     let resolveSwitch!: (result: HostConnectionBootstrap) => void;
-    api.setResponse(
-      'switchHost',
-      () =>
-        new Promise<HostConnectionBootstrap>((resolve) => {
+    let resolveCommand!: (result: unknown) => void;
+    let resolveRefresh: ((state: typeof initialState) => void) | undefined;
+    let testRefreshRace = false;
+    tauriInvoke.mockReset();
+    tauriInvoke.mockImplementation((command: string) => {
+      if (command === 'get_host_connection_state') {
+        if (!testRefreshRace) return Promise.resolve(initialState);
+        if (!resolveRefresh)
+          return new Promise<typeof initialState>((resolve) => {
+            resolveRefresh = resolve;
+          });
+        return Promise.resolve(currentState);
+      }
+      if (command === 'list_local_hosts') return Promise.resolve([]);
+      if (command === 'switch_host')
+        return new Promise<HostConnectionBootstrap>((resolve) => {
           resolveSwitch = resolve;
-        }),
-    );
-    api.setResponse('reconnectHost', {
-      state: currentState,
-      bootstrap: { ...bootstrap, hostConnection: currentState },
+        });
+      if (command === 'reconnect_host')
+        return Promise.resolve({
+          state: currentState,
+          bootstrap: { ...bootstrap, hostConnection: currentState },
+        });
+      if (command === 'dispatch_control')
+        return new Promise((resolve) => {
+          resolveCommand = resolve;
+        });
+      if (command === 'verification') return Promise.resolve('connected');
+      throw new Error(`unexpected command: ${command}`);
     });
-    const { result } = renderHook(() => useHostConnection(api));
-    await waitFor(() => expect(api.calls).toContain('listLocalHosts'));
-
+    const { result } = renderHook(() => useHostConnection(hostConnectionApi));
+    await waitFor(() => expect(result.current.state).toEqual(initialState));
     let switchOperation!: Promise<HostConnectionBootstrap | null>;
     act(() => {
       switchOperation = result.current.switchHost({ type: 'embedded' });
@@ -97,20 +108,31 @@ describe('useHostConnection', () => {
     await act(async () => {
       await result.current.reconnect();
     });
-
     expect(result.current.state).toEqual(currentState);
-    expect(result.current.switching).toBe(false);
+    const pendingCommand = invokeHost('dispatch_control');
     await act(async () => {
-      resolveSwitch({
-        state: staleState,
-        bootstrap: { ...bootstrap, hostConnection: staleState },
-      });
-      await switchOperation;
+      resolveSwitch({ state: staleState, bootstrap: { ...bootstrap, hostConnection: staleState } });
+      await expect(switchOperation).resolves.toBeNull();
     });
-
+    resolveCommand('ok');
+    await expect(pendingCommand).resolves.toBe('ok');
+    await expect(invokeHost('verification')).resolves.toBe('connected');
+    let oldRefresh!: ReturnType<typeof result.current.refresh>;
+    act(() => {
+      testRefreshRace = true;
+      oldRefresh = result.current.refresh();
+    });
+    await waitFor(() => expect(resolveRefresh).toBeDefined());
+    await act(async () => {
+      await result.current.refresh();
+    });
+    await act(async () => {
+      resolveRefresh?.(staleState);
+      await expect(oldRefresh).resolves.toBeNull();
+    });
+    await expect(invokeHost('verification')).resolves.toBe('connected');
     expect(result.current.state).toEqual(currentState);
+    expect(result.current.connected).toBe(true);
     expect(result.current.switching).toBe(false);
-    expect(api.calls).toContain('switchHost');
-    expect(api.calls).toContain('reconnectHost');
   });
 });

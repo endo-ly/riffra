@@ -1,18 +1,16 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import clsx from 'clsx';
+import type { ArrangeSelection } from '@/features/arrange/hooks/useArrangeEditor';
 import type {
   ArrangementMutationResult,
   AudioTakeVariant,
-  CanonicalState,
   CreativeSession,
   RecordingTakeRecord,
 } from '@/model/domain';
-import type { ArrangeInspectorApi } from '../arrange-api';
-import type { ArrangeSelection } from '@/features/arrange/hooks/useArrangeEditor';
+import { errorText } from '@/shared/errors';
+import { useSessionContext } from '@/shared/session/session-context';
 import { Icon } from '@/shared/ui/primitives';
-import { useInspectorOperation } from './useInspectorOperation';
+import clsx from 'clsx';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import styles from './Inspector.module.css';
-import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
 
 type RecordingSession = CreativeSession['arrangement']['recordingSessions'][number];
 
@@ -22,14 +20,11 @@ interface AuditionState {
 }
 
 interface TakeInspectorProps {
-  hostGeneration?: number;
   session: CreativeSession;
   selection: ArrangeSelection;
-  applyCanonicalState: (canonical: CanonicalState) => boolean;
   recordingActive: boolean;
   recordingCommandPending: boolean;
   onRecordAnotherTake: (recordingSessionId: string) => void | Promise<void>;
-  api: ArrangeInspectorApi;
 }
 
 function passOrdinal(session: RecordingSession, arrangement: CreativeSession['arrangement']) {
@@ -86,6 +81,7 @@ function defaultVariantForTake(
 }
 
 export function TakeInspector(props: TakeInspectorProps) {
+  const { api, commit: sessionCommit, hostGeneration } = useSessionContext();
   const { arrangement } = props.session;
   const groupContext = useMemo(() => {
     const selectedClipIds = props.selection.kind === 'clips' ? props.selection.clipIds : [];
@@ -153,12 +149,17 @@ export function TakeInspector(props: TakeInspectorProps) {
   const [sourceVariants, setSourceVariants] = useState<Record<string, AudioTakeVariant>>({});
   const auditionRef = useRef<AuditionState | null>(null);
   const auditionRequest = useRef(0);
-  const { operationMessage, runOperation, setOperationMessage } = useInspectorOperation();
+  const [operationMessage, setOperationMessage] = useState<string | null>(null);
+  const runOperation = <T,>(operation: Promise<T>, apply?: (result: T) => void) => {
+    setOperationMessage(null);
+    void operation
+      .then((result) => apply?.(result))
+      .catch((error: unknown) => setOperationMessage(errorText(error)));
+  };
 
   const stopNativeAudition = useCallback(
-    () =>
-      Promise.all([props.api.stopTakeComparison(), props.api.stopPreview()]).then(() => undefined),
-    [props.api],
+    () => Promise.all([api.stopTakeComparison(), api.stopPreview()]).then(() => undefined),
+    [api],
   );
 
   const resetAudition = useCallback(() => {
@@ -174,14 +175,14 @@ export function TakeInspector(props: TakeInspectorProps) {
   useEffect(() => {
     resetAudition();
     setSourceVariants({});
-  }, [props.hostGeneration, resetAudition]);
+  }, [hostGeneration, resetAudition]);
 
   useEffect(() => {
-    return props.api.onAudioStatus((status) => {
+    return api.onAudioStatus((status) => {
       if (status.previewing || auditionRef.current === null) return;
       resetAudition();
     });
-  }, [props.api, resetAudition]);
+  }, [api, resetAudition]);
 
   const contextKey = context
     ? `${context.recordingSession.id}:${context.selectedTrackId}`
@@ -205,10 +206,10 @@ export function TakeInspector(props: TakeInspectorProps) {
     [stopNativeAudition],
   );
 
-  const commit = (promise: Promise<ArrangementMutationResult>) =>
-    runOperation(promise, (result) =>
-      applyArrangementMutation(result, props.applyCanonicalState, setOperationMessage),
-    );
+  const commit = (promise: Promise<ArrangementMutationResult>) => {
+    setOperationMessage(null);
+    void sessionCommit(promise, { onError: setOperationMessage });
+  };
 
   const preview = (take: RecordingTakeRecord) => {
     const variant =
@@ -230,13 +231,13 @@ export function TakeInspector(props: TakeInspectorProps) {
     const operation = stopNativeAudition().then(() => {
       if (auditionRequest.current !== requestId) return null;
       if (take.rawAudio && take.processedAudio) {
-        return props.api
+        return api
           .startTakeComparison(take.id)
           .then((status) =>
-            variant === 'processed' ? props.api.switchTakeComparisonVariant('processed') : status,
+            variant === 'processed' ? api.switchTakeComparisonVariant('processed') : status,
           );
       }
-      return props.api.previewAsset(source.assetId, {
+      return api.previewAsset(source.assetId, {
         startMs: (source.sourceStartSample / source.sampleRate) * 1000,
         endMs: (source.sourceEndSample / source.sampleRate) * 1000,
         looped: false,
@@ -254,7 +255,7 @@ export function TakeInspector(props: TakeInspectorProps) {
     setSourceVariants((current) => ({ ...current, [take.id]: variant }));
     if (!take.rawAudio || !take.processedAudio || audition?.takeId !== take.id) return;
     const requestId = auditionRequest.current;
-    runOperation(props.api.switchTakeComparisonVariant(variant), () => {
+    runOperation(api.switchTakeComparisonVariant(variant), () => {
       if (auditionRequest.current !== requestId) return;
       const nextAudition = { takeId: take.id, variant };
       auditionRef.current = nextAudition;
@@ -331,9 +332,7 @@ export function TakeInspector(props: TakeInspectorProps) {
                     className={clsx(styles.smallButton, styles.accent)}
                     type="button"
                     aria-label={`Use Take ${index + 1}`}
-                    onClick={() =>
-                      commit(props.api.activateTake(context.recordingSession.id, take.id))
-                    }
+                    onClick={() => commit(api.activateTake(context.recordingSession.id, take.id))}
                   >
                     Use
                   </button>
@@ -341,7 +340,7 @@ export function TakeInspector(props: TakeInspectorProps) {
                 <button
                   className={styles.smallButton}
                   type="button"
-                  onClick={() => commit(props.api.placeTakeAsSeparateClip(take.id))}
+                  onClick={() => commit(api.placeTakeAsSeparateClip(take.id))}
                 >
                   Place copy
                 </button>

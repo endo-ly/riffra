@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { isEditableTypingTarget } from '@/shared/input';
 import { logNativeError } from '@/native/invoke';
-import { defaultNativeApi } from '@/native/native';
+import { defaultNativeApi } from '@/native/api';
 import type { NativeApi } from '@/native/native-api';
 import type { PluginEntry } from '@/model/domain';
 import { useAppRuntime } from '@/app/runtime/useAppRuntime';
@@ -43,11 +43,11 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     runtimeStarted,
     runtimeStartupFinished,
     sessionRef,
+    commit,
+    getCanonicalState,
     applyCanonicalState,
     session: canonicalSession,
     historyState,
-    autosaveError,
-    exportMessage,
     undo,
     redo,
     renameProject,
@@ -103,7 +103,7 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     boot,
     hostGeneration: hostConnection.state.generation,
     projectId,
-    applyCanonicalState,
+    commit,
     rescanPlugins: scanPlugins,
   });
   const {
@@ -281,11 +281,11 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     bootstrapLoading,
     retryBootstrap,
     session,
-    applyCanonicalState,
+    commit,
+    getCanonicalState,
     audio,
     setAudio,
     audioPreferenceMessage,
-    autosaveError,
     plugins,
     missingDependencies,
     relinkMissing,
@@ -298,7 +298,6 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     transportPaused,
     arrangementTransport,
     recordingCommandPending,
-    exportMessage,
     deviceProbe,
     refreshAudioDevices,
     probeAudioChannels,
@@ -334,7 +333,6 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     resetFeedback,
     toggleRecording,
     inbox,
-    api,
     startRecordingNow,
     runtimeProjectionStatus: runtimeProjection.status,
     runtimeProjectionFailure: runtimeProjection.failure,

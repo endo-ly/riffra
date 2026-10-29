@@ -16,8 +16,10 @@ function Harness({ api }: { api: FakeNativeApi }) {
   const arrangementTransport = useArrangementTransport(
     api,
     sessionRef.current.arrangement.timebase,
+    0,
   );
   const transport = useTransportController({
+    hostGeneration: 0,
     api,
     sessionRef,
     transport: arrangementTransport.transport,

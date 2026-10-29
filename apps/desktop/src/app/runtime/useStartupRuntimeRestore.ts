@@ -4,7 +4,7 @@ import type { AudioStatus, BackgroundJobStatus, BootstrapState } from '@/model/d
 import { showToast } from '@/shared/toasts';
 
 interface UseStartupRuntimeRestoreOptions {
-  hostGeneration?: number;
+  hostGeneration: number;
   hostReady?: boolean;
   boot: BootstrapState | null;
   runtimeStarted: boolean;
@@ -20,7 +20,7 @@ interface UseStartupRuntimeRestoreOptions {
 
 /** Restores the native runtime once after the startup plugin scan. */
 export function useStartupRuntimeRestore({
-  hostGeneration = 0,
+  hostGeneration,
   hostReady = true,
   boot,
   runtimeStarted,

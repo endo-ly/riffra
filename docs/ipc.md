@@ -92,8 +92,9 @@ Hostに頼める操作(Control Command)は、`riffra-runtime` の `api` モジ�
 ### 2.4 UI呼び出しの順序
 
 - 確定順序はCoreとHostのProject書き込み権が管理する。フロントエンドは状態を反映する入口で `CanonicalState.projectId` が現在のActive Projectと一致し、sequenceが受け入れ済みの値より新しい場合だけ採用する
+- 編集結果は共通の確定処理で正準状態へ反映し、状態の採否にかかわらず投影失敗を通知する
 - 中間値を捨ててよい連続制御は `dispatchLatestControl` で集約し、最終値のみ送信する。集約された待機者には同一の確定応答を返す
-- `dispatchControlOrFallback` は非ネイティブ環境(ブラウザプレビュー・スモークテスト)専用のフォールバックである。ネイティブ実行時は失敗がそのままrejectになる
+- ブラウザプレビューでは専用の NativeApi が読み取りに空の状態を返し、それ以外の操作を reject する
 
 ---
 
@@ -461,7 +462,7 @@ DesktopのTauri command境界とLive HostのControl Serverの機能分担は次�
 - Host所有のmethodは `dispatchControl` 系でControl Commandを送る。命令名とParamsは生成された型で検査される。開始時と応答時のconnection generationが一致した応答だけが成功となり、bootstrap・Host切替・Reconnectは現在generationを更新する
 - Window・dialog・Host selectorなどDesktop shell所有のmethodは通常の `invoke` を使う。再同期の対象はHost所有のmethodに限られる
 - 制作状態を変更するmethodは `CanonicalState` を含む結果を返す。起動時の履歴可否はCoreのHistoryStateで判定する
-- `previewTrackMix` と `previewMasterGainDb` はRuntime-onlyの一時プレビューであり、CanonicalStateを返すMutationではない。確定操作はそれぞれ `updateTrack` と `setMasterGainDb` を使い、結果は正準状態と投影結果を含む `ArrangementMutationResult` を返す
+- `previewChannelMix` と `previewMasterGainDb` はRuntime-onlyの一時プレビューであり、CanonicalStateを返すMutationではない。確定操作はそれぞれ `updateTrack` / `updateMixBus` と `setMasterGainDb` を使い、結果は正準状態と投影結果を含む `ArrangementMutationResult` を返す
 - 音声系methodは `AudioStatus` を返し、状態遷移と再試行はAudio設定Featureに集約する
 - 失敗は `NativeCommandError` の `code` と `details` で分岐する。Nativeの `kind` / `operation` は `details` 内の `nativeAudio` 情報から参照する
 - テストでは `native-api-fake.ts` を注入し、呼び出し記録・設定済み応答と失敗・イベント発火だけを扱う。制作規則・履歴・validationはCoreのテストが担う

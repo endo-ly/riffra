@@ -1,3 +1,4 @@
+import { TestSessionProvider } from '@/test/session-provider';
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
@@ -123,26 +124,26 @@ function Harness({
   if (!initialSession) initial.arrangement.tracks = [structuredClone(initialTrack)];
   const [session, setSession] = useState(initial);
   return (
-    <DevicesPanel
-      projectId={session.sessionId}
-      automationLanes={session.arrangement.automationLanes}
-      arrangement={session.arrangement}
-      playing={false}
-      currentTick={0}
-      onOpenAutomation={onOpenAutomation}
-      target={resolveDeviceTarget(session.arrangement, owner)}
+    <TestSessionProvider
       api={api}
-      applyCanonicalState={(canonical) => {
-        setSession(canonical.session);
-        return true;
-      }}
-      plugins={[]}
-      instruments={instruments}
-      missingDeviceIds={[]}
-      onDisableMissingPlugin={async () => undefined}
-      onReplaceMissingPlugin={async () => undefined}
-      onRescanMissingPlugins={async () => undefined}
-    />
+      applyCanonicalState={(canonical) => setSession(canonical.session)}
+    >
+      <DevicesPanel
+        projectId={session.sessionId}
+        automationLanes={session.arrangement.automationLanes}
+        arrangement={session.arrangement}
+        playing={false}
+        currentTick={0}
+        onOpenAutomation={onOpenAutomation}
+        target={resolveDeviceTarget(session.arrangement, owner)}
+        plugins={[]}
+        instruments={instruments}
+        missingDeviceIds={[]}
+        onDisableMissingPlugin={async () => undefined}
+        onReplaceMissingPlugin={async () => undefined}
+        onRescanMissingPlugins={async () => undefined}
+      />
+    </TestSessionProvider>
   );
 }
 
@@ -304,8 +305,6 @@ describe('DevicesPanel', () => {
         track,
         effects: track.effects,
       },
-      api,
-      applyCanonicalState: () => true,
       plugins: [],
       instruments: [],
       missingDeviceIds: [],
@@ -313,7 +312,9 @@ describe('DevicesPanel', () => {
       onReplaceMissingPlugin: async () => undefined,
       onRescanMissingPlugins: async () => undefined,
     };
-    const { rerender } = render(<DevicesPanel {...props} />);
+    const { rerender } = render(<DevicesPanel {...props} />, {
+      wrapper: ({ children }) => <TestSessionProvider api={api}>{children}</TestSessionProvider>,
+    });
     fireEvent.click(screen.getByRole('button', { name: 'Test Effect' }));
     await waitFor(() => expect(api.listDeviceParameters).toHaveBeenCalled());
     rerender(

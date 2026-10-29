@@ -1,19 +1,18 @@
-import type { CanonicalState, MixBus } from '@/model/domain';
-import type { ArrangeWorkspaceApi } from '@/features/arrange/arrange-api';
+import type { MixBusPatch } from '@/model/domain';
+import type { MixBus } from '@/model/domain';
+import { formatGainDb, formatPan } from '@/shared/audio/mix-format';
+import { useSessionContext } from '@/shared/session/session-context';
 import { ChannelMixSlider } from './ChannelMixSlider';
+import styles from './Mixer.module.css';
 import { MixerMeter } from './MixerMeter';
 import { useChannelMixControl } from './hooks/useChannelMixControl';
-import { formatGainDb, formatPan } from '@/shared/audio/mix-format';
-import styles from './Mixer.module.css';
 
 interface Props {
   sessionId: string;
   bus: MixBus;
   automated: boolean;
   selected: boolean;
-  api: ArrangeWorkspaceApi;
   missingDeviceIds: readonly string[];
-  applyCanonicalState: (state: CanonicalState) => boolean;
   onSelect: () => void;
   onOpenDevices: () => void;
   onOpenAutomation: () => void;
@@ -22,16 +21,11 @@ interface Props {
 }
 
 export function MixerBusChannelStrip(props: Props) {
+  const { api, commit: sessionCommit } = useSessionContext();
   const { bus } = props;
   const mix = useChannelMixControl({ ...props, channel: bus });
-  const commit = async (patch: Parameters<ArrangeWorkspaceApi['updateMixBus']>[1]) => {
-    try {
-      const result = await props.api.updateMixBus(bus.id, patch);
-      if (props.applyCanonicalState(result.canonical) && result.projection.state === 'failed')
-        props.onError(result.projection.message);
-    } catch (error) {
-      props.onError(error instanceof Error ? error.message : String(error));
-    }
+  const commit = async (patch: MixBusPatch) => {
+    await sessionCommit(api.updateMixBus(bus.id, patch), { onError: props.onError });
   };
   const missing = bus.effects.some(
     (device) => device.plugin.disabledPlaceholder || props.missingDeviceIds.includes(device.id),

@@ -21,7 +21,9 @@ import type {
   TransportStatus,
 } from '@/model/domain';
 import { defaultSession } from './browser-defaults';
-import type { NativeApi, HostConnectionBootstrap, HostConnectionChangedEvent } from './native-api';
+import type { NativeApi } from './native-api';
+import type { HostConnectionBootstrap } from '@/native/api/host-connection';
+import type { HostConnectionChangedEvent } from '@/native/api/host-connection';
 
 type ResponseValue = unknown | ((...arguments_: unknown[]) => unknown);
 
@@ -255,9 +257,6 @@ export class FakeNativeApi implements NativeApi {
   }
   redoSession(...args: Parameters<NativeApi['redoSession']>) {
     return this.command('redoSession', args);
-  }
-  getHistoryState(...args: Parameters<NativeApi['getHistoryState']>) {
-    return this.command('getHistoryState', args);
   }
   restoreRecoveryGeneration(...args: Parameters<NativeApi['restoreRecoveryGeneration']>) {
     return this.command('restoreRecoveryGeneration', args);
@@ -1035,8 +1034,6 @@ export class FakeNativeApi implements NativeApi {
           bootstrap: this.bootstrapState,
         } as HostConnectionBootstrap);
       }
-      case 'getHistoryState':
-        return Promise.resolve({ canUndo: false, canRedo: false });
       case 'listRenders':
         return Promise.resolve([]);
       case 'exportRender': {

@@ -1,130 +1,83 @@
-import type {
-  InstrumentCollection,
-  InstrumentLibraryItem,
-  LibraryAsset,
-  RecordingAsset,
-} from '@/model/domain';
-import { dispatchControl, dispatchControlOrFallback } from '../invoke';
+import type { AssetId, LibraryAsset, RecordingAsset } from '@/model/domain';
+import { dispatchControl, invokeHost } from '../invoke';
 
-export async function listRecordings(query?: string): Promise<RecordingAsset[]> {
-  return dispatchControlOrFallback(
-    { command: 'record.list', params: { query: query ?? null } },
-    [],
-  );
+export interface LibraryApi {
+  listRecordings(query?: string): Promise<RecordingAsset[]>;
+  renameRecording(id: string, name: string): Promise<string>;
+  deleteRecording(id: string): Promise<void>;
+  archiveRecording(id: string): Promise<string>;
+  promoteRecording(id: string): Promise<string>;
+  tagRecording(id: string, tag: string | null, note: string | null): Promise<LibraryAsset>;
+  detectDuplicateRecordings(): Promise<string[][]>;
+  searchLibrary(query: string): Promise<LibraryAsset[]>;
+  updateLibraryAsset(id: string, tag: string | null, note: string | null): Promise<LibraryAsset>;
+  importMidiFile(path: string, name?: string): Promise<AssetId>;
+  importMidiBytes(name: string, bytes: number[]): Promise<AssetId>;
 }
 
-export async function renameRecording(id: string, name: string): Promise<string> {
+async function listRecordings(query?: string): Promise<RecordingAsset[]> {
+  return dispatchControl({ command: 'record.list', params: { query: query ?? null } });
+}
+
+async function renameRecording(id: string, name: string): Promise<string> {
   return dispatchControl({ command: 'record.rename', params: { id, newName: name } });
 }
 
-export async function deleteRecording(id: string): Promise<void> {
+async function deleteRecording(id: string): Promise<void> {
   await dispatchControl({ command: 'record.delete', params: { id } });
 }
 
-export async function archiveRecording(id: string): Promise<string> {
+async function archiveRecording(id: string): Promise<string> {
   return dispatchControl({ command: 'record.archive', params: { id } });
 }
 
-export async function promoteRecording(id: string): Promise<string> {
+async function promoteRecording(id: string): Promise<string> {
   return dispatchControl({ command: 'record.promote', params: { id } });
 }
 
-export async function tagRecording(
+async function tagRecording(
   id: string,
   tag: string | null,
   note: string | null,
-): Promise<LibraryAsset | null> {
+): Promise<LibraryAsset> {
   return dispatchControl({ command: 'record.tag', params: { id, tag, note } });
 }
 
-export async function detectDuplicateRecordings(): Promise<string[][]> {
+async function detectDuplicateRecordings(): Promise<string[][]> {
   return dispatchControl({ command: 'record.duplicates', params: {} });
 }
 
-export async function searchLibrary(query: string): Promise<LibraryAsset[]> {
+async function searchLibrary(query: string): Promise<LibraryAsset[]> {
   if (!query.trim()) return [];
-  return dispatchControlOrFallback({ command: 'library.search', params: { query } }, []);
+  return dispatchControl({ command: 'library.search', params: { query } });
 }
 
-export async function updateLibraryAsset(
+async function updateLibraryAsset(
   id: string,
   tag: string | null,
   note: string | null,
-): Promise<LibraryAsset | null> {
-  return dispatchControlOrFallback(
-    { command: 'library.asset.update', params: { id, tag, note } },
-    null,
-  );
+): Promise<LibraryAsset> {
+  return dispatchControl({ command: 'library.asset.update', params: { id, tag, note } });
 }
 
-export async function listInstruments(): Promise<InstrumentLibraryItem[]> {
-  return dispatchControlOrFallback({ command: 'library.instrument.list', params: {} }, []);
+async function importMidiFile(path: string, name?: string): Promise<AssetId> {
+  return dispatchControl({ command: 'asset.import-midi', params: { path, name: name ?? null } });
 }
 
-export async function setInstrumentFavorite(
-  instrumentId: string,
-  favorite: boolean,
-): Promise<InstrumentLibraryItem> {
-  return dispatchControl({
-    command: 'library.instrument.favorite.set',
-    params: { instrumentId, favorite },
-  });
+async function importMidiBytes(name: string, bytes: number[]): Promise<AssetId> {
+  return invokeHost<AssetId>('import_midi_bytes', { name, bytes });
 }
 
-export async function setInstrumentCategoryOverride(
-  instrumentId: string,
-  category: string | null,
-): Promise<InstrumentLibraryItem> {
-  return dispatchControl({
-    command: 'library.instrument.category.set',
-    params: { instrumentId, category },
-  });
-}
-
-export async function setInstrumentUserTags(
-  instrumentId: string,
-  tags: string[],
-): Promise<InstrumentLibraryItem> {
-  return dispatchControl({
-    command: 'library.instrument.tags.set',
-    params: { instrumentId, tags },
-  });
-}
-
-/** Lists the categories the Host files instruments under, in display order. */
-export async function listInstrumentCategories(): Promise<string[]> {
-  return dispatchControlOrFallback({ command: 'library.instrument.category.list', params: {} }, []);
-}
-
-export async function listInstrumentCollections(): Promise<InstrumentCollection[]> {
-  return dispatchControlOrFallback(
-    { command: 'library.instrument.collection.list', params: {} },
-    [],
-  );
-}
-
-export async function createInstrumentCollection(name: string): Promise<InstrumentCollection> {
-  return dispatchControl({ command: 'library.instrument.collection.create', params: { name } });
-}
-
-export async function renameInstrumentCollection(
-  id: number,
-  name: string,
-): Promise<InstrumentCollection> {
-  return dispatchControl({ command: 'library.instrument.collection.rename', params: { id, name } });
-}
-
-export async function deleteInstrumentCollection(id: number): Promise<void> {
-  await dispatchControl({ command: 'library.instrument.collection.delete', params: { id } });
-}
-
-export async function setInstrumentCollectionMembership(
-  collectionId: number,
-  instrumentId: string,
-  included: boolean,
-): Promise<InstrumentLibraryItem> {
-  return dispatchControl({
-    command: 'library.instrument.collection.membership.set',
-    params: { collectionId, instrumentId, included },
-  });
-}
+export const libraryApi: LibraryApi = {
+  listRecordings,
+  renameRecording,
+  deleteRecording,
+  archiveRecording,
+  promoteRecording,
+  tagRecording,
+  detectDuplicateRecordings,
+  searchLibrary,
+  updateLibraryAsset,
+  importMidiFile,
+  importMidiBytes,
+};

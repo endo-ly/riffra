@@ -1,10 +1,12 @@
+import { errorText } from '@/shared/errors';
 import { useCallback, useEffect, useState } from 'react';
 import type { LibraryAsset, RecordingAsset } from '@/model/domain';
 import { audioCommandSucceeded } from '@/shared/audio/audio-safety';
-import type { AudioApi, LibraryApi } from '@/native/native-api';
+import type { AudioApi } from '@/native/api/audio';
+import type { LibraryApi } from '@/native/api/library';
 
 interface UseInboxOptions {
-  hostGeneration?: number;
+  hostGeneration: number;
   projectId?: string | null;
   reload: () => void | Promise<void>;
   onRelocate?: (recording: RecordingAsset, nextId: string) => void;
@@ -19,7 +21,7 @@ interface UseInboxOptions {
 export function useInbox(
   api: LibraryApi & AudioApi,
   recordings: RecordingAsset[],
-  { hostGeneration = 0, projectId = null, reload, onRelocate }: UseInboxOptions,
+  { hostGeneration, projectId = null, reload, onRelocate }: UseInboxOptions,
 ) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [duplicateGroups, setDuplicateGroups] = useState<string[][]>([]);
@@ -45,7 +47,7 @@ export function useInbox(
         setSelectedId(nextId);
         setMessage(`Renamed to ${name}.`);
       } catch (cause) {
-        setError(cause instanceof Error ? cause.message : String(cause));
+        setError(errorText(cause));
         throw cause;
       }
     },
@@ -61,7 +63,7 @@ export function useInbox(
         await reload();
         setMessage('Recording deleted.');
       } catch (cause) {
-        setError(cause instanceof Error ? cause.message : String(cause));
+        setError(errorText(cause));
         throw cause;
       }
     },
@@ -79,7 +81,7 @@ export function useInbox(
         await reload();
         setMessage('Recording archived.');
       } catch (cause) {
-        setError(cause instanceof Error ? cause.message : String(cause));
+        setError(errorText(cause));
         throw cause;
       }
     },
@@ -97,7 +99,7 @@ export function useInbox(
         await reload();
         setMessage('Recording promoted to the library.');
       } catch (cause) {
-        setError(cause instanceof Error ? cause.message : String(cause));
+        setError(errorText(cause));
         throw cause;
       }
     },
@@ -105,16 +107,15 @@ export function useInbox(
   );
 
   const tag = useCallback(
-    async (id: string, tag: string | null, note: string | null): Promise<LibraryAsset | null> => {
+    async (id: string, tag: string | null, note: string | null): Promise<LibraryAsset> => {
       setError(null);
       try {
         const updated = await api.tagRecording(id, tag, note);
-        if (!updated) throw new Error('The recording tag was not saved.');
         await reload();
         setMessage('Recording tag saved.');
         return updated;
       } catch (cause) {
-        setError(cause instanceof Error ? cause.message : String(cause));
+        setError(errorText(cause));
         throw cause;
       }
     },
@@ -133,7 +134,7 @@ export function useInbox(
         }
         setMessage(`Preview started: ${recording.name}.`);
       } catch (cause) {
-        setError(cause instanceof Error ? cause.message : String(cause));
+        setError(errorText(cause));
         throw cause;
       }
     },
@@ -152,7 +153,7 @@ export function useInbox(
           : `${groups.length} duplicate group${groups.length === 1 ? '' : 's'} found (${count} recordings).`,
       );
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(errorText(cause));
       throw cause;
     }
   }, [api]);

@@ -1,3 +1,4 @@
+import { TestSessionProvider } from '@/test/session-provider';
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest';
@@ -61,23 +62,22 @@ function Harness({
     midiClips: session.arrangement.midiClips,
     selectClip: (clipId) => setSelection({ kind: 'clips', clipIds: [clipId] }),
   });
-  const transport = useArrangementTransport(api, session.arrangement.timebase);
+  const transport = useArrangementTransport(api, session.arrangement.timebase, 0);
   return (
-    <>
+    <TestSessionProvider
+      api={api}
+      applyCanonicalState={(canonical) => setSession(canonical.session)}
+    >
       <WorkspaceArrange
+        hostConnected
         lower={lower}
         onDisableMissingPlugin={async () => undefined}
         onReplaceMissingPlugin={async () => undefined}
         onRescanMissingPlugins={async () => undefined}
         transport={transport}
         session={session}
-        applyCanonicalState={(canonical) => {
-          setSession(canonical.session);
-          return true;
-        }}
         selection={selection}
         setSelection={setSelection}
-        api={api}
         audio={api.audio}
         focusedTrackId={focusedTrackId}
         onFocusTrack={setFocusedTrackId}
@@ -93,7 +93,7 @@ function Harness({
         onRetryRuntimeProjection={onRetryRuntimeProjection ?? noopRetryRuntimeProjection}
       />
       <ToastStack />
-    </>
+    </TestSessionProvider>
   );
 }
 
@@ -795,7 +795,10 @@ describe('WorkspaceArrange', () => {
     api.createMidiClip = async (...args) => {
       createArgs = args;
       api.calls.push('createMidiClip');
-      return mutationResult(createdSession);
+      return {
+        ...mutationResult(createdSession),
+        createdEntityIds: { midiClips: [createdSession.arrangement.midiClips[0]!.id] },
+      };
     };
     const { container } = render(<Harness api={api} initialSession={session} />);
     const lane = container.querySelector(`[data-track-id="${track.id}"] > div[class*="lane_"]`)!;
@@ -858,7 +861,10 @@ describe('WorkspaceArrange', () => {
     api.createMidiClip = async (...args) => {
       createArgs = args;
       api.calls.push('createMidiClip');
-      return mutationResult(createdSession);
+      return {
+        ...mutationResult(createdSession),
+        createdEntityIds: { midiClips: [createdSession.arrangement.midiClips[0]!.id] },
+      };
     };
     const { container } = render(<Harness api={api} initialSession={session} />);
     const ruler = screen.getByLabelText('Timeline ruler');

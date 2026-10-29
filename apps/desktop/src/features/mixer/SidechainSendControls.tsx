@@ -1,12 +1,11 @@
 import type { ArrangementMutationResult, SidechainSend } from '@/model/domain';
-import type { ArrangeWorkspaceApi } from '@/features/arrange/arrange-api';
+import { useSessionContext } from '@/shared/session/session-context';
 import { SendRow } from './SendRow';
 
 interface SidechainSendControlsProps {
   send: SidechainSend;
   /** The other end of the sidechain: the target device from a Track, the source Track from a device. */
   endpointName: string;
-  api: ArrangeWorkspaceApi;
   commit: (operation: Promise<ArrangementMutationResult>) => void;
   onOpenAutomation: () => void;
 }
@@ -14,10 +13,10 @@ interface SidechainSendControlsProps {
 export function SidechainSendControls({
   send,
   endpointName,
-  api,
   commit,
   onOpenAutomation,
 }: SidechainSendControlsProps) {
+  const { api } = useSessionContext();
   return (
     <SendRow
       label={`${endpointName} sidechain`}

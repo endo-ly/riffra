@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { RuntimeProjectionStatus } from '@/model/domain';
-import type { NativeEventApi, TransportApi } from '@/native/native-api';
+
+import type { NativeEventApi } from '@/native/api/events';
+import type { TransportApi } from '@/native/api/transport';
 type RuntimeProjectionApi = Pick<
   NativeEventApi & TransportApi,
   'getRuntimeProjectionStatus' | 'retryRuntimeProjection' | 'onRuntimeProjectionStatus'
@@ -68,7 +70,7 @@ function reduceRuntimeProjectionStatus(
   };
 }
 
-export function useRuntimeProjectionStatus(api: RuntimeProjectionApi, hostGeneration = 0) {
+export function useRuntimeProjectionStatus(api: RuntimeProjectionApi, hostGeneration: number) {
   const [viewState, setViewState] = useState<RuntimeProjectionViewState>(
     initialRuntimeProjectionViewState,
   );

@@ -1,16 +1,6 @@
 import type { AudioStatus } from '@/model/domain';
-import { HostConnectionChangedError, dispatchControlOrFallback } from '../invoke';
-import { offlineAudioStatus } from '@/shared/audio/audio-defaults';
-
-function nativeErrorText(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  if (typeof error === 'string') return error;
-  try {
-    return JSON.stringify(error);
-  } catch {
-    return 'Unknown native error';
-  }
-}
+import { errorText } from '@/shared/errors';
+import { HostConnectionChangedError, dispatchControl } from '../invoke';
 
 export async function audioCommandError(
   operation: string,
@@ -18,13 +8,10 @@ export async function audioCommandError(
   safetyCritical = false,
 ): Promise<AudioStatus> {
   if (error instanceof HostConnectionChangedError) throw error;
-  const status = await dispatchControlOrFallback(
-    { command: 'audio.status', params: {} },
-    offlineAudioStatus(),
-  );
+  const status = await dispatchControl({ command: 'audio.status', params: {} });
   return {
     ...status,
     state: safetyCritical || status.state === 'offline' ? 'faulted' : status.state,
-    message: `${operation} failed: ${nativeErrorText(error)}. ${safetyCritical ? 'Audio output could not be confirmed; keep emergency mute engaged.' : 'Audio state was not changed.'} Saved data is safe.`,
+    message: `${operation} failed: ${errorText(error)}. ${safetyCritical ? 'Audio output could not be confirmed; keep emergency mute engaged.' : 'Audio state was not changed.'} Saved data is safe.`,
   };
 }

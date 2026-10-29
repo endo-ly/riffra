@@ -1,31 +1,22 @@
-import { useEffect, useState, type CSSProperties } from 'react';
-import clsx from 'clsx';
-import type {
-  ArrangementMutationResult,
-  AudioClip,
-  CanonicalState,
-  CreativeSession,
-} from '@/model/domain';
-import type { ArrangeInspectorApi } from '../arrange-api';
 import { clipDurationTicks, formatMusicalLength } from '@/features/arrange/model/arrange-timeline';
+import type { ArrangementMutationResult, AudioClip, CreativeSession } from '@/model/domain';
+import { formatGainDb, formatPan } from '@/shared/audio/mix-format';
+import { useSessionContext } from '@/shared/session/session-context';
 import type { ContextMenuItem } from '@/shared/ui/ContextMenu';
 import { Icon } from '@/shared/ui/primitives';
+import clsx from 'clsx';
+import { useEffect, useState, type CSSProperties } from 'react';
 import { resolveTrackColorById } from '../model/track-colors';
-import { formatGainDb, formatPan } from '@/shared/audio/mix-format';
-import { MixValueField } from './MixValueField';
 import { ClipToggles } from './ClipToggles';
-import { InspectorMenu } from './InspectorMenu';
-import { MusicalTimeField } from './MusicalTimeField';
 import styles from './Inspector.module.css';
-import { useInspectorOperation } from './useInspectorOperation';
-import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
+import { InspectorMenu } from './InspectorMenu';
+import { MixValueField } from './MixValueField';
+import { MusicalTimeField } from './MusicalTimeField';
 
 interface ArrangeClipInspectorProps {
   session: CreativeSession;
-  applyCanonicalState: (canonical: CanonicalState) => boolean;
   selectedClipIds: string[];
   setSelectedClipIds: (ids: string[]) => void;
-  api: ArrangeInspectorApi;
   onSetLoopToClip?: (clip: AudioClip) => Promise<ArrangementMutationResult>;
 }
 
@@ -46,16 +37,13 @@ function buildDrafts(clip: AudioClip): Drafts {
 }
 
 export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
+  const { api, commit: sessionCommit } = useSessionContext();
   const selected = props.session.arrangement.audioClips.filter((clip) =>
     props.selectedClipIds.includes(clip.id),
   );
   const clip = selected.length === 1 ? selected[0] : null;
   const [drafts, setDrafts] = useState<Drafts | null>(clip ? buildDrafts(clip) : null);
-  const {
-    operationMessage: message,
-    runOperation,
-    setOperationMessage: setMessage,
-  } = useInspectorOperation();
+  const [message, setMessage] = useState<string | null>(null);
 
   // Re-seed drafts when the selected clip identity changes. We do NOT reseed
   // on every value change, so the user can finish typing before a blur fires
@@ -66,18 +54,10 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
     else setDrafts(null);
   }, [clip?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const commit = (
-    operation: Promise<ArrangementMutationResult | null>,
-    label: string,
-    afterSuccess?: () => void,
-  ) => {
-    runOperation(operation, (next) => {
-      if (next) {
-        applyArrangementMutation(next, props.applyCanonicalState, setMessage);
-        afterSuccess?.();
-      } else {
-        setMessage(`${label} was not applied.`);
-      }
+  const commit = (operation: Promise<ArrangementMutationResult>, afterSuccess?: () => void) => {
+    setMessage(null);
+    void sessionCommit(operation, { onError: setMessage }).then((result) => {
+      if (result) afterSuccess?.();
     });
   };
 
@@ -89,8 +69,8 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
   const recordingTake = clip.recordingTakeId
     ? props.session.arrangement.takes.find((take) => take.id === clip.recordingTakeId)
     : undefined;
-  const patch = (fields: Record<string, unknown>, label: string) =>
-    void commit(props.api.updateAudioClip(clip.id, fields), label);
+  const patch = (fields: Record<string, unknown>) =>
+    void commit(api.updateAudioClip(clip.id, fields));
 
   const tracks = props.session.arrangement.tracks;
   const trackName = tracks.find((track) => track.id === clip.trackId)?.name;
@@ -98,7 +78,7 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
   const menuItems: ContextMenuItem[] = [
     {
       label: 'Duplicate',
-      onClick: () => commit(props.api.duplicateAudioClip(clip.id), 'Duplicate'),
+      onClick: () => commit(api.duplicateAudioClip(clip.id)),
     },
     ...(props.onSetLoopToClip
       ? [
@@ -106,7 +86,7 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
             label: 'Loop to Clip',
             onClick: () => {
               const operation = props.onSetLoopToClip?.(clip);
-              if (operation) commit(operation, 'Loop range');
+              if (operation) commit(operation);
             },
           },
         ]
@@ -116,9 +96,7 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
       label: 'Delete',
       danger: true,
       onClick: () =>
-        commit(props.api.removeTimelineClips([clip.id], []), 'Delete', () =>
-          props.setSelectedClipIds([]),
-        ),
+        commit(api.removeTimelineClips([clip.id], []), () => props.setSelectedClipIds([])),
     },
   ];
 
@@ -139,7 +117,7 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
             onChange={(event) => setDrafts({ ...drafts, name: event.currentTarget.value })}
             onBlur={() => {
               const name = drafts.name.trim();
-              if (name && name !== clip.name) patch({ name }, 'Rename');
+              if (name && name !== clip.name) patch({ name });
             }}
           />
           <small>Audio clip{trackName && ` · ${trackName}`}</small>
@@ -148,11 +126,9 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
           <ClipToggles
             muted={clip.muted}
             loopEnabled={clip.loopEnabled}
-            onToggleMuted={() =>
-              commit(props.api.updateAudioClip(clip.id, { muted: !clip.muted }), 'Mute')
-            }
+            onToggleMuted={() => commit(api.updateAudioClip(clip.id, { muted: !clip.muted }))}
             onToggleLoop={() =>
-              commit(props.api.updateAudioClip(clip.id, { loopEnabled: !clip.loopEnabled }), 'Loop')
+              commit(api.updateAudioClip(clip.id, { loopEnabled: !clip.loopEnabled }))
             }
           />
           <InspectorMenu label="Clip actions" items={menuItems} />
@@ -173,7 +149,7 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
             kind="position"
             ticks={clip.startTick}
             timebase={props.session.arrangement.timebase}
-            onCommit={(startTick) => patch({ startTick }, 'Start')}
+            onCommit={(startTick) => patch({ startTick })}
           />
           <div className={clsx(styles.inlineField, styles.readonly)}>
             <span>Length</span>
@@ -199,12 +175,7 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
                 key={variant}
                 type="button"
                 aria-pressed={clip.takeVariant === variant}
-                onClick={() =>
-                  void commit(
-                    props.api.setAudioClipTakeVariant(clip.id, variant),
-                    variant === 'raw' ? 'Raw source' : 'Processed source',
-                  )
-                }
+                onClick={() => void commit(api.setAudioClipTakeVariant(clip.id, variant))}
               >
                 {variant === 'raw' ? 'Raw' : 'Processed'}
               </button>
@@ -225,7 +196,7 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
             step={0.5}
             inputStep={0.1}
             format={formatGainDb}
-            onCommit={(gainDb) => patch({ gainDb }, 'Gain')}
+            onCommit={(gainDb) => patch({ gainDb })}
           />
           <MixValueField
             label="Pan"
@@ -237,7 +208,7 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
             step={0.05}
             inputStep={0.05}
             format={formatPan}
-            onCommit={(pan) => patch({ pan }, 'Pan')}
+            onCommit={(pan) => patch({ pan })}
           />
         </div>
       </section>
@@ -261,7 +232,7 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
                 if (!Number.isFinite(ms) || ms < 0) return;
                 const frames = Math.round((ms * clip.sourceSampleRate) / 1000);
                 if (frames !== clip.fadeIn.frames)
-                  patch({ fadeIn: { frames, sampleRate: clip.sourceSampleRate } }, 'Fade in');
+                  patch({ fadeIn: { frames, sampleRate: clip.sourceSampleRate } });
               }}
             />
             <small>ms</small>
@@ -280,7 +251,7 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
                 if (!Number.isFinite(ms) || ms < 0) return;
                 const frames = Math.round((ms * clip.sourceSampleRate) / 1000);
                 if (frames !== clip.fadeOut.frames)
-                  patch({ fadeOut: { frames, sampleRate: clip.sourceSampleRate } }, 'Fade out');
+                  patch({ fadeOut: { frames, sampleRate: clip.sourceSampleRate } });
               }}
             />
             <small>ms</small>
@@ -296,7 +267,7 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
               key={shape}
               type="button"
               aria-pressed={(clip.fadeShape ?? 'equalPower') === shape}
-              onClick={() => patch({ fadeShape: shape }, 'Fade shape')}
+              onClick={() => patch({ fadeShape: shape })}
             >
               {shape === 'linear' ? 'Linear' : shape === 'equalPower' ? 'Equal' : 'Smooth'}
             </button>

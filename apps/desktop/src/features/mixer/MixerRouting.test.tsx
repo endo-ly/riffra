@@ -1,10 +1,11 @@
+import { TestSessionProvider } from '@/test/session-provider';
 // @vitest-environment jsdom
-import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, expect, it } from 'vitest';
 import type { AutomationTarget, Track } from '@/model/domain';
 import { defaultSession } from '@/native/browser-defaults';
 import { FakeNativeApi } from '@/native/native-api-fake';
+import '@testing-library/jest-dom/vitest';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, expect, it } from 'vitest';
 import { MixerRouting } from './MixerRouting';
 
 afterEach(cleanup);
@@ -53,14 +54,15 @@ it('lists the sidechain sends of the track and opens their automation', () => {
   const api = new FakeNativeApi();
   const opened: AutomationTarget[] = [];
   render(
-    <MixerRouting
-      arrangement={session.arrangement}
-      track={track}
-      api={api}
-      commit={() => undefined}
-      onClose={() => undefined}
-      onOpenAutomation={(target) => opened.push(target)}
-    />,
+    <TestSessionProvider api={api}>
+      <MixerRouting
+        arrangement={session.arrangement}
+        track={track}
+        commit={() => undefined}
+        onClose={() => undefined}
+        onOpenAutomation={(target) => opened.push(target)}
+      />
+    </TestSessionProvider>,
   );
   expect(screen.getByText('Compressor')).toBeInTheDocument();
   expect(screen.getByLabelText('Compressor sidechain level')).toHaveValue('-6');
@@ -71,15 +73,17 @@ it('lists the sidechain sends of the track and opens their automation', () => {
 it('hides the sidechain list for tracks without sidechain sends', () => {
   const session = sidechainSession();
   session.arrangement.mixer.sidechainSends = [];
+  const api = new FakeNativeApi();
   render(
-    <MixerRouting
-      arrangement={session.arrangement}
-      track={track}
-      api={new FakeNativeApi()}
-      commit={() => undefined}
-      onClose={() => undefined}
-      onOpenAutomation={() => undefined}
-    />,
+    <TestSessionProvider api={api}>
+      <MixerRouting
+        arrangement={session.arrangement}
+        track={track}
+        commit={() => undefined}
+        onClose={() => undefined}
+        onOpenAutomation={() => undefined}
+      />
+    </TestSessionProvider>,
   );
   expect(
     screen.getByText('Add sidechain sends from the target device in Devices.'),

@@ -42,6 +42,7 @@ function useRecordingHarness(
   const [error, setError] = useState<string | null>(null);
   const [finalizationError, setFinalizationError] = useState<string | null>(null);
   const recording = useRecording(api, {
+    hostGeneration: 0,
     audio,
     setAudio,
     applyCanonicalState: (canonical) => {

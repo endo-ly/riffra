@@ -13,11 +13,15 @@ describe('useArrangementTransport', () => {
   it('publishes a stopped transport discontinuity to the clock and playhead', async () => {
     const api = new FakeNativeApi();
     const { result } = renderHook(() =>
-      useArrangementTransport(api, {
-        tempoChanges: [{ tick: 0, bpm: 120 }],
-        ppq: 960,
-        timeSignatureChanges: [{ tick: 0, numerator: 4, denominator: 4 }],
-      }),
+      useArrangementTransport(
+        api,
+        {
+          tempoChanges: [{ tick: 0, bpm: 120 }],
+          ppq: 960,
+          timeSignatureChanges: [{ tick: 0, numerator: 4, denominator: 4 }],
+        },
+        0,
+      ),
     );
 
     act(() => {

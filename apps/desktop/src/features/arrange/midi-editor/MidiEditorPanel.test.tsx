@@ -93,6 +93,13 @@ describe('MidiEditorPanel', () => {
     },
   );
 
+  it('selects the notes identified by the committed edit', async () => {
+    const { lane, onAddNote } = setup(0);
+    onAddNote.mockResolvedValue({ createdEntityIds: { midiNotes: ['note:1'] } });
+    fireEvent.doubleClick(lane, { clientX: 100, clientY: 804 });
+    expect(await screen.findByLabelText('Selected MIDI note velocity')).toBeInTheDocument();
+  });
+
   it('snaps creation, drawing, movement and right-edge resizing to the visible beat lines', () => {
     // Arrange
     const { lane, onAddNote, onUpdateNote, onUpdateNotes, onInsertNotes, playheadTickRef } =

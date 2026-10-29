@@ -1,16 +1,17 @@
 import { useEffect } from 'react';
-import type { NativeEventApi } from '@/native/native-api';
+
+import type { NativeEventApi } from '@/native/api/events';
 import { toast } from '@/shared/toasts';
 
 interface RuntimeRestartNotificationOptions {
   api: Pick<NativeEventApi, 'onRuntimeRestarted'>;
-  hostGeneration?: number;
+  hostGeneration: number;
 }
 
 /** Reports native runtime recovery without owning synchronization decisions. */
 export function useRuntimeRestartNotification({
   api,
-  hostGeneration = 0,
+  hostGeneration,
 }: RuntimeRestartNotificationOptions) {
   useEffect(() => {
     let disposed = false;

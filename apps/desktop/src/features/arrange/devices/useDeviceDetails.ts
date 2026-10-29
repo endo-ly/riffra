@@ -1,15 +1,14 @@
+import { errorText } from '@/shared/errors';
 import { useEffect, useRef, useState } from 'react';
 import type {
   ArrangementMutationResult,
-  CanonicalState,
   DeviceInspection,
   EffectOwner,
   DeviceParameterInfo,
   PluginPresetInfo,
 } from '@/model/domain';
-import type { ArrangeWorkspaceApi } from '../arrange-api';
 import { HostConnectionChangedError } from '@/native/invoke';
-import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
+import { useSessionContext } from '@/shared/session/session-context';
 
 interface DeviceDetails {
   inspection: DeviceInspection;
@@ -19,13 +18,12 @@ interface DeviceDetails {
 }
 
 export function useDeviceDetails(
-  api: ArrangeWorkspaceApi,
   owner: EffectOwner,
   deviceId: string,
   parameterValues: number[],
   stateData: string | undefined,
-  applyCanonicalState: (state: CanonicalState) => boolean,
 ) {
+  const { api, commit: sessionCommit } = useSessionContext();
   const sequence = useRef(0);
   const parameterRevision = parameterValues.join(',');
   const [details, setDetails] = useState<DeviceDetails | null>(null);
@@ -51,7 +49,7 @@ export function useDeviceDetails(
       })
       .catch((failure: unknown) => {
         if (sequence.current !== request || failure instanceof HostConnectionChangedError) return;
-        setError(failure instanceof Error ? failure.message : String(failure));
+        setError(errorText(failure));
         setDetails(null);
       })
       .finally(() => {
@@ -67,16 +65,19 @@ export function useDeviceDetails(
     setSaving(true);
     setError(null);
     try {
-      const result = await operation();
-      if (sequence.current !== request) return false;
+      const guarded = operation().then((result) => {
+        if (sequence.current !== request) throw new HostConnectionChangedError();
+        return result;
+      });
+      const result = await sessionCommit(guarded, {
+        onError: (message) => {
+          if (sequence.current === request) setError(message);
+        },
+      });
+      if (!result || sequence.current !== request) return false;
       setLoading(true);
-      applyArrangementMutation(result, applyCanonicalState, setError);
       setRefresh((value) => value + 1);
       return true;
-    } catch (failure) {
-      if (sequence.current === request && !(failure instanceof HostConnectionChangedError))
-        setError(failure instanceof Error ? failure.message : String(failure));
-      return false;
     } finally {
       // The component is keyed by Project / Track / Device. A metadata refresh
       // may supersede the mutation's read sequence without changing its target.
@@ -89,7 +90,7 @@ export function useDeviceDetails(
       await api.openPluginEditor(owner, deviceId);
     } catch (failure) {
       if (sequence.current === request && !(failure instanceof HostConnectionChangedError))
-        setError(failure instanceof Error ? failure.message : String(failure));
+        setError(errorText(failure));
     }
   };
   return { details, loading, error, saving, mutate, openEditor };

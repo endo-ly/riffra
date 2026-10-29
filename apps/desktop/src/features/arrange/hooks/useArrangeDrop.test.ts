@@ -1,10 +1,14 @@
+import { createElement, type ReactNode } from 'react';
+import { TestSessionProvider } from '@/test/session-provider';
+import { FakeNativeApi } from '@/native/native-api-fake';
+import type { AssetId } from '@/model/domain';
 // @vitest-environment jsdom
 
 import { act, renderHook, waitFor } from '@testing-library/react';
 import type { DragEvent } from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { ArrangementMutationResult, CreativeSession } from '@/model/domain';
-import { HostConnectionChangedError, setHostGeneration } from '@/native/invoke';
+import { describe, expect, it, vi } from 'vitest';
+import type { ArrangementMutationResult } from '@/model/domain';
+import { HostConnectionChangedError } from '@/native/invoke';
 import { toAssetId } from '@/native/contracts';
 import {
   RIFFRA_ASSET_MIME,
@@ -12,37 +16,41 @@ import {
   RIFFRA_PLUGIN_MIME,
 } from '@/shared/browser-drag';
 import { useArrangeDrop } from './useArrangeDrop';
-
-afterEach(() => {
-  setHostGeneration(0);
-});
+import type { SessionCommit } from '@/shared/session/commit';
 
 function mutation(createdEntityIds: Record<string, string[]> = {}): ArrangementMutationResult {
   return { createdEntityIds } as ArrangementMutationResult;
 }
 
-function dropApi(overrides: Partial<Parameters<typeof useArrangeDrop>[0]['api']> = {}) {
-  return {
-    importMidiBytes: vi.fn(async () => toAssetId('asset:midi')),
-    addAudioClipToArrangement: vi.fn(async () => null),
-    addMidiClipToArrangement: vi.fn(async () => null),
-    addTrack: vi.fn(async () => mutation({ tracks: ['track:new'] })),
-    applyInstrument: vi.fn(async () => mutation()),
-    setTrackVst3Instrument: vi.fn(async () => mutation()),
-    addEffect: vi.fn(async () => mutation()),
-    ...overrides,
-  };
+function dropApi(overrides: { importMidiBytes?: () => Promise<AssetId> } = {}) {
+  const api = new FakeNativeApi({
+    responses: {
+      importMidiBytes: overrides.importMidiBytes ?? (() => toAssetId('asset:midi')),
+      addAudioClipToArrangement: () => mutation(),
+      addMidiClipToArrangement: () => mutation(),
+      addTrack: () => mutation({ tracks: ['track:new'] }),
+      applyInstrument: () => mutation(),
+      setTrackVst3Instrument: () => mutation(),
+      addEffect: () => mutation(),
+    },
+  });
+  for (const method of [
+    'importMidiBytes',
+    'addAudioClipToArrangement',
+    'addMidiClipToArrangement',
+    'addTrack',
+    'applyInstrument',
+    'setTrackVst3Instrument',
+    'addEffect',
+  ] as const)
+    vi.spyOn(api, method);
+  return api;
 }
 
 function commitStub() {
-  return vi.fn(
-    async (
-      operation: Promise<ArrangementMutationResult | null>,
-    ): Promise<CreativeSession | null> => {
-      await operation;
-      return null;
-    },
-  );
+  return vi.fn(async (operation: Promise<unknown>) => {
+    return await operation;
+  }) as ReturnType<typeof vi.fn> & SessionCommit;
 }
 
 function assetDropEvent(payload: unknown): DragEvent {
@@ -88,14 +96,18 @@ describe('useArrangeDrop', () => {
   it('imports an OS MIDI file and places it on the selected Instrument Track', async () => {
     const api = dropApi({ importMidiBytes: vi.fn(async () => toAssetId('asset:lead')) });
     const commit = commitStub();
-    const { result } = renderHook(() =>
-      useArrangeDrop({
-        api,
-        commit,
-        pixelsPerTick: 1,
-        snapTick: (raw) => Math.round(raw),
-        setMessage: vi.fn(),
-      }),
+    const { result } = renderHook(
+      () =>
+        useArrangeDrop({
+          commit,
+          pixelsPerTick: 1,
+          snapTick: (raw) => Math.round(raw),
+          setMessage: vi.fn(),
+        }),
+      {
+        wrapper: ({ children }: { children: ReactNode }) =>
+          createElement(TestSessionProvider, { api, children }),
+      },
     );
     const event = osMidiDropEvent([new File([new Uint8Array([0x4d, 0x54, 0x68])], 'lead.mid')]);
 
@@ -129,14 +141,18 @@ describe('useArrangeDrop', () => {
       ),
     });
     const commit = commitStub();
-    const { result } = renderHook(() =>
-      useArrangeDrop({
-        api,
-        commit,
-        pixelsPerTick: 1,
-        snapTick: (raw) => Math.round(raw),
-        setMessage: vi.fn(),
-      }),
+    const { result } = renderHook(
+      () =>
+        useArrangeDrop({
+          commit,
+          pixelsPerTick: 1,
+          snapTick: (raw) => Math.round(raw),
+          setMessage: vi.fn(),
+        }),
+      {
+        wrapper: ({ children }: { children: ReactNode }) =>
+          createElement(TestSessionProvider, { api, children }),
+      },
     );
     const event = osMidiDropEvent([new File([new Uint8Array([1, 2, 3])], 'stale.mid')]);
 
@@ -145,7 +161,6 @@ describe('useArrangeDrop', () => {
       result.current.handleDrop(event, 'track:instrument', 'instrument');
     });
     await waitFor(() => expect(api.importMidiBytes).toHaveBeenCalled());
-    setHostGeneration(1);
     rejectImport?.(new HostConnectionChangedError());
 
     // Assert
@@ -158,14 +173,18 @@ describe('useArrangeDrop', () => {
     const api = dropApi();
     const commit = commitStub();
     const setMessage = vi.fn();
-    const { result } = renderHook(() =>
-      useArrangeDrop({
-        api,
-        commit,
-        pixelsPerTick: 1,
-        snapTick: (raw) => Math.round(raw),
-        setMessage,
-      }),
+    const { result } = renderHook(
+      () =>
+        useArrangeDrop({
+          commit,
+          pixelsPerTick: 1,
+          snapTick: (raw) => Math.round(raw),
+          setMessage,
+        }),
+      {
+        wrapper: ({ children }: { children: ReactNode }) =>
+          createElement(TestSessionProvider, { api, children }),
+      },
     );
     const payload = {
       version: 1,
@@ -217,14 +236,18 @@ describe('useArrangeDrop', () => {
   it('rejects a MIDI Asset on an Audio Track without invoking placement', async () => {
     const api = dropApi();
     const setMessage = vi.fn();
-    const { result } = renderHook(() =>
-      useArrangeDrop({
-        api,
-        commit: commitStub(),
-        pixelsPerTick: 1,
-        snapTick: (raw) => Math.round(raw),
-        setMessage,
-      }),
+    const { result } = renderHook(
+      () =>
+        useArrangeDrop({
+          commit: commitStub(),
+          pixelsPerTick: 1,
+          snapTick: (raw) => Math.round(raw),
+          setMessage,
+        }),
+      {
+        wrapper: ({ children }: { children: ReactNode }) =>
+          createElement(TestSessionProvider, { api, children }),
+      },
     );
     const event = assetDropEvent({
       version: 1,
@@ -247,14 +270,18 @@ describe('useArrangeDrop', () => {
   it('adds a dropped effect plug-in to any Track but not to empty space', async () => {
     const api = dropApi();
     const setMessage = vi.fn();
-    const { result } = renderHook(() =>
-      useArrangeDrop({
-        api,
-        commit: commitStub(),
-        pixelsPerTick: 1,
-        snapTick: (raw) => Math.round(raw),
-        setMessage,
-      }),
+    const { result } = renderHook(
+      () =>
+        useArrangeDrop({
+          commit: commitStub(),
+          pixelsPerTick: 1,
+          snapTick: (raw) => Math.round(raw),
+          setMessage,
+        }),
+      {
+        wrapper: ({ children }: { children: ReactNode }) =>
+          createElement(TestSessionProvider, { api, children }),
+      },
     );
     const payload = { version: 1, pluginPath: 'C:/VST3/Verb.vst3', name: 'Verb', role: 'effect' };
 

@@ -1,13 +1,14 @@
+import { TestSessionProvider } from '@/test/session-provider';
 // @vitest-environment jsdom
 
+import type { AudioClip, MidiClip } from '@/model/domain';
+import { canonicalState, defaultSession } from '@/native/browser-defaults';
+import { toAssetId } from '@/native/contracts';
+import { FakeNativeApi, fakeAudioStatus } from '@/native/native-api-fake';
 import '@testing-library/jest-dom/vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { PropertiesPanel } from './PropertiesPanel';
-import { canonicalState, defaultSession } from '@/native/browser-defaults';
-import { toAssetId } from '@/native/contracts';
-import { FakeNativeApi, fakeAudioStatus } from '@/native/native-api-fake';
-import type { AudioClip, MidiClip } from '@/model/domain';
 
 afterEach(cleanup);
 
@@ -34,17 +35,17 @@ function renderPanel(
   });
   const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
   render(
-    <PropertiesPanel
-      audio={fakeAudioStatus()}
-      recordingCommandPending={false}
-      session={session}
-      applyCanonicalState={() => true}
-      arrangeSelection={selection}
-      setArrangeSelection={() => undefined}
-      onOpenDevices={onOpenDevices}
-      onRecordAnotherTake={() => undefined}
-      api={api}
-    />,
+    <TestSessionProvider api={api}>
+      <PropertiesPanel
+        audio={fakeAudioStatus()}
+        recordingCommandPending={false}
+        session={session}
+        arrangeSelection={selection}
+        setArrangeSelection={() => undefined}
+        onOpenDevices={onOpenDevices}
+        onRecordAnotherTake={() => undefined}
+      />
+    </TestSessionProvider>,
   );
 }
 

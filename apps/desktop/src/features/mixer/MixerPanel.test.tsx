@@ -1,11 +1,12 @@
+import { TestSessionProvider } from '@/test/session-provider';
 // @vitest-environment jsdom
+import type { CreativeSession, EffectOwner, MixBus } from '@/model/domain';
+import { canonicalState, defaultSession } from '@/native/browser-defaults';
+import { FakeNativeApi } from '@/native/native-api-fake';
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
-import type { CreativeSession, EffectOwner, MixBus } from '@/model/domain';
-import { defaultSession, canonicalState } from '@/native/browser-defaults';
-import { FakeNativeApi } from '@/native/native-api-fake';
 import { MixerPanel } from './MixerPanel';
 
 afterEach(cleanup);
@@ -90,22 +91,19 @@ it('edits Group and Send routes, commits their controls, and opens Bus and Maste
     const [current, setCurrent] = useState<CreativeSession>(structuredClone(session));
     const [owner, setOwner] = useState<EffectOwner | null>(null);
     return (
-      <MixerPanel
-        session={current}
-        selectedTrackId={null}
-        selectedOwner={owner}
-        onSelectOwner={setOwner}
-        onOpenOwnerDevices={open}
-        onSelectTrack={() => undefined}
-        onOpenDevices={() => undefined}
-        onOpenAutomation={openAutomation}
-        missingDeviceIds={[]}
-        api={api}
-        applyCanonicalState={(state) => {
-          setCurrent(state.session);
-          return true;
-        }}
-      />
+      <TestSessionProvider api={api} applyCanonicalState={(state) => setCurrent(state.session)}>
+        <MixerPanel
+          session={current}
+          selectedTrackId={null}
+          selectedOwner={owner}
+          onSelectOwner={setOwner}
+          onOpenOwnerDevices={open}
+          onSelectTrack={() => undefined}
+          onOpenDevices={() => undefined}
+          onOpenAutomation={openAutomation}
+          missingDeviceIds={[]}
+        />
+      </TestSessionProvider>
     );
   }
   render(<Harness />);

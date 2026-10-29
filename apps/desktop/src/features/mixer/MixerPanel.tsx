@@ -1,20 +1,19 @@
 import type {
-  CanonicalState,
+  ArrangementMutationResult,
   AutomationTarget,
   CreativeSession,
   EffectOwner,
-  ArrangementMutationResult,
   MixBusKind,
 } from '@/model/domain';
-import type { ArrangeWorkspaceApi } from '@/features/arrange/arrange-api';
+import { useSessionContext } from '@/shared/session/session-context';
+import controls from '@/shared/ui/controls.module.css';
 import { useState } from 'react';
 import { MixdownDialog } from './MixdownDialog';
-import { MixerRouting } from './MixerRouting';
+import styles from './Mixer.module.css';
 import { MixerBusChannelStrip } from './MixerBusChannelStrip';
 import { MixerMasterChannelStrip } from './MixerMasterChannelStrip';
+import { MixerRouting } from './MixerRouting';
 import { MixerTrackChannelStrip } from './MixerTrackChannelStrip';
-import controls from '@/shared/ui/controls.module.css';
-import styles from './Mixer.module.css';
 
 interface MixerPanelProps {
   session: CreativeSession;
@@ -23,8 +22,6 @@ interface MixerPanelProps {
   onSelectOwner: (owner: EffectOwner) => void;
   onOpenOwnerDevices: (owner: EffectOwner) => void;
   missingDeviceIds: readonly string[];
-  api: ArrangeWorkspaceApi;
-  applyCanonicalState: (canonical: CanonicalState) => boolean;
   onSelectTrack: (trackId: string) => void;
   onOpenDevices: (trackId: string) => void;
   onOpenAutomation: (target: AutomationTarget) => void;
@@ -33,6 +30,7 @@ interface MixerPanelProps {
 }
 
 export function MixerPanel(props: MixerPanelProps) {
+  const { api, commit: sessionCommit } = useSessionContext();
   const { arrangement } = props.session;
   const [routingTrackId, setRoutingTrackId] = useState<string | null>(null);
   const [newName, setNewName] = useState('');
@@ -40,27 +38,20 @@ export function MixerPanel(props: MixerPanelProps) {
   const [error, setError] = useState<string | null>(null);
   const [mixdownOpen, setMixdownOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const commitMutation = sessionCommit;
   const commit = (operation: Promise<ArrangementMutationResult>) => {
     setError(null);
-    void operation
-      .then((result) => {
-        if (props.applyCanonicalState(result.canonical) && result.projection.state === 'failed')
-          setError(result.projection.message);
-      })
-      .catch((failure) => setError(failure instanceof Error ? failure.message : String(failure)));
+    void commitMutation(operation, { onError: setError });
   };
   const addBus = async () => {
     if (busy || !newName.trim()) return;
     setBusy(true);
     setError(null);
     try {
-      const result = await props.api.addMixBus(newName.trim(), newKind);
-      if (props.applyCanonicalState(result.canonical)) {
-        setNewName('');
-        if (result.projection.state === 'failed') setError(result.projection.message);
-      }
-    } catch (failure) {
-      setError(failure instanceof Error ? failure.message : String(failure));
+      const result = await commitMutation(api.addMixBus(newName.trim(), newKind), {
+        onError: setError,
+      });
+      if (result) setNewName('');
     } finally {
       setBusy(false);
     }
@@ -120,14 +111,14 @@ export function MixerPanel(props: MixerPanelProps) {
                 defaultValue={selectedBus.name}
                 onBlur={(e) => {
                   if (e.currentTarget.value !== selectedBus.name)
-                    commit(props.api.updateMixBus(selectedBus.id, { name: e.currentTarget.value }));
+                    commit(api.updateMixBus(selectedBus.id, { name: e.currentTarget.value }));
                 }}
               />
               <button
                 type="button"
                 className={`${controls.smallButton} ${controls.danger}`}
                 disabled={props.disabled}
-                onClick={() => commit(props.api.removeMixBus(selectedBus.id))}
+                onClick={() => commit(api.removeMixBus(selectedBus.id))}
               >
                 Remove channel
               </button>
@@ -159,8 +150,6 @@ export function MixerPanel(props: MixerPanelProps) {
                 )}
                 selected={props.selectedTrackId === track.id}
                 missingDeviceIds={props.missingDeviceIds}
-                api={props.api}
-                applyCanonicalState={props.applyCanonicalState}
                 onSelect={() => props.onSelectTrack(track.id)}
                 onOpenDevices={() => props.onOpenDevices(track.id)}
                 onOpenAutomation={() =>
@@ -193,9 +182,7 @@ export function MixerPanel(props: MixerPanelProps) {
                     selected={
                       props.selectedOwner?.kind === 'bus' && props.selectedOwner.id === bus.id
                     }
-                    api={props.api}
                     missingDeviceIds={props.missingDeviceIds}
-                    applyCanonicalState={props.applyCanonicalState}
                     onSelect={() => props.onSelectOwner({ kind: 'bus', id: bus.id })}
                     onOpenDevices={() => props.onOpenOwnerDevices({ kind: 'bus', id: bus.id })}
                     onOpenAutomation={() =>
@@ -224,8 +211,6 @@ export function MixerPanel(props: MixerPanelProps) {
         onOpenDevices={() => props.onOpenOwnerDevices({ kind: 'master' })}
         missingDeviceIds={props.missingDeviceIds}
         session={props.session}
-        api={props.api}
-        applyCanonicalState={props.applyCanonicalState}
         disabled={props.disabled}
       />
       {error && (
@@ -237,8 +222,6 @@ export function MixerPanel(props: MixerPanelProps) {
         <MixdownDialog
           key={props.session.sessionId}
           session={props.session}
-          api={props.api}
-          applyCanonicalState={props.applyCanonicalState}
           onClose={() => setMixdownOpen(false)}
         />
       )}
@@ -247,7 +230,6 @@ export function MixerPanel(props: MixerPanelProps) {
           onOpenAutomation={props.onOpenAutomation}
           arrangement={arrangement}
           track={routingTrack}
-          api={props.api}
           commit={commit}
           onClose={() => setRoutingTrackId(null)}
         />

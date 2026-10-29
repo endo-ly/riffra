@@ -5,7 +5,8 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { HostConnectionState, LocalHostInfo } from '@/model/domain';
-import type { HostConnectionBootstrap } from '@/native/native-api';
+
+import type { HostConnectionBootstrap } from '@/native/api/host-connection';
 import { defaultProjectState } from '@/native/browser-defaults';
 import { openHostDataRoot } from '@/native/dialog';
 import { ProjectHostSelector } from './ProjectHostSelector';
