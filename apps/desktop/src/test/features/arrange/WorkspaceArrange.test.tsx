@@ -5,8 +5,8 @@ import '@testing-library/jest-dom/vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { useArrangeLowerAreaController } from './hooks/useArrangeLowerAreaController';
-import { WorkspaceArrange } from './WorkspaceArrange';
+import { useArrangeLowerAreaController } from '@/features/arrange/hooks/useArrangeLowerAreaController';
+import { WorkspaceArrange } from '@/features/arrange/WorkspaceArrange';
 import { useArrangementTransport } from '@/features/transport/hooks/useArrangementTransport';
 import {
   type AudioClip,
