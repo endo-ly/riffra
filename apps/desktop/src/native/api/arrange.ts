@@ -17,7 +17,7 @@ import type {
   MusicalPosition,
 } from '@/model/domain';
 import type { MidiNoteInput } from '../native-api';
-import { dispatchControl, dispatchControlOrFallback, dispatchLatestControl } from '../invoke';
+import { dispatchControl, dispatchLatestControl } from '../invoke';
 
 export async function addAudioClipToArrangement(
   assetId: AssetId,
@@ -25,13 +25,10 @@ export async function addAudioClipToArrangement(
   startTick?: number,
   trackId?: string,
 ): Promise<ArrangementMutationResult | null> {
-  return dispatchControlOrFallback(
-    {
-      command: 'audio-clip.add-asset',
-      params: { assetId, name, startTick: startTick ?? null, trackId: trackId ?? null },
-    },
-    null,
-  );
+  return dispatchControl({
+    command: 'audio-clip.add-asset',
+    params: { assetId, name, startTick: startTick ?? null, trackId: trackId ?? null },
+  });
 }
 
 export async function addMidiClipToArrangement(
@@ -40,13 +37,10 @@ export async function addMidiClipToArrangement(
   startTick?: number,
   trackId?: string,
 ): Promise<ArrangementMutationResult | null> {
-  return dispatchControlOrFallback(
-    {
-      command: 'midi-clip.add-asset',
-      params: { assetId, name, startTick: startTick ?? null, trackId: trackId ?? null },
-    },
-    null,
-  );
+  return dispatchControl({
+    command: 'midi-clip.add-asset',
+    params: { assetId, name, startTick: startTick ?? null, trackId: trackId ?? null },
+  });
 }
 
 export async function createMidiClip(
@@ -55,43 +49,31 @@ export async function createMidiClip(
   durationTicks: number,
   name?: string,
 ): Promise<ArrangementMutationResult | null> {
-  return dispatchControlOrFallback(
-    {
-      command: 'midi-clip.create',
-      params: { trackId, startTick, durationTicks, name: name ?? null },
-    },
-    null,
-  );
+  return dispatchControl({
+    command: 'midi-clip.create',
+    params: { trackId, startTick, durationTicks, name: name ?? null },
+  });
 }
 
 export async function updateAudioClip(
   clipId: string,
   patch: AudioClipPatch,
 ): Promise<ArrangementMutationResult | null> {
-  return dispatchControlOrFallback(
-    { command: 'audio-clip.update', params: { clipId, patch } },
-    null,
-  );
+  return dispatchControl({ command: 'audio-clip.update', params: { clipId, patch } });
 }
 
 export async function updateMidiClip(
   clipId: string,
   patch: MidiClipPatch,
 ): Promise<ArrangementMutationResult | null> {
-  return dispatchControlOrFallback(
-    { command: 'midi-clip.update', params: { clipId, patch } },
-    null,
-  );
+  return dispatchControl({ command: 'midi-clip.update', params: { clipId, patch } });
 }
 
 export async function removeTimelineClips(
   audioClipIds: string[],
   midiClipIds: string[],
 ): Promise<ArrangementMutationResult | null> {
-  return dispatchControlOrFallback(
-    { command: 'clip.remove', params: { audioClipIds, midiClipIds } },
-    null,
-  );
+  return dispatchControl({ command: 'clip.remove', params: { audioClipIds, midiClipIds } });
 }
 
 export async function trimAudioClip(
@@ -99,38 +81,35 @@ export async function trimAudioClip(
   startTick: number,
   sourceRange: { start: number; end: number },
 ): Promise<ArrangementMutationResult | null> {
-  return dispatchControlOrFallback(
-    { command: 'audio-clip.trim', params: { clipId, startTick, sourceRange } },
-    null,
-  );
+  return dispatchControl({
+    command: 'audio-clip.trim',
+    params: { clipId, startTick, sourceRange },
+  });
 }
 
 export async function splitAudioClip(
   clipId: string,
   splitTick: number,
 ): Promise<ArrangementMutationResult | null> {
-  return dispatchControlOrFallback(
-    { command: 'audio-clip.split', params: { clipId, splitTick } },
-    null,
-  );
+  return dispatchControl({ command: 'audio-clip.split', params: { clipId, splitTick } });
 }
 
 export async function duplicateAudioClip(
   clipId: string,
 ): Promise<ArrangementMutationResult | null> {
-  return dispatchControlOrFallback({ command: 'audio-clip.duplicate', params: { clipId } }, null);
+  return dispatchControl({ command: 'audio-clip.duplicate', params: { clipId } });
 }
 
 export async function moveAudioClips(
   moves: AudioClipMove[],
 ): Promise<ArrangementMutationResult | null> {
-  return dispatchControlOrFallback({ command: 'audio-clip.move', params: { moves } }, null);
+  return dispatchControl({ command: 'audio-clip.move', params: { moves } });
 }
 
 export async function moveMidiClips(
   moves: MidiClipMove[],
 ): Promise<ArrangementMutationResult | null> {
-  return dispatchControlOrFallback({ command: 'midi-clip.move', params: { moves } }, null);
+  return dispatchControl({ command: 'midi-clip.move', params: { moves } });
 }
 
 export async function trimMidiClip(
@@ -138,24 +117,21 @@ export async function trimMidiClip(
   startTick: number,
   durationTicks: number,
 ): Promise<ArrangementMutationResult | null> {
-  return dispatchControlOrFallback(
-    { command: 'midi-clip.trim', params: { clipId, startTick, durationTicks } },
-    null,
-  );
+  return dispatchControl({
+    command: 'midi-clip.trim',
+    params: { clipId, startTick, durationTicks },
+  });
 }
 
 export async function splitMidiClip(
   clipId: string,
   splitTick: number,
 ): Promise<ArrangementMutationResult | null> {
-  return dispatchControlOrFallback(
-    { command: 'midi-clip.split', params: { clipId, splitTick } },
-    null,
-  );
+  return dispatchControl({ command: 'midi-clip.split', params: { clipId, splitTick } });
 }
 
 export async function duplicateMidiClip(clipId: string): Promise<ArrangementMutationResult | null> {
-  return dispatchControlOrFallback({ command: 'midi-clip.duplicate', params: { clipId } }, null);
+  return dispatchControl({ command: 'midi-clip.duplicate', params: { clipId } });
 }
 
 export async function pasteTimelineClips(
@@ -163,23 +139,20 @@ export async function pasteTimelineClips(
   midiClipIds: string[],
   startTick: number,
 ): Promise<ArrangementMutationResult | null> {
-  return dispatchControlOrFallback(
-    { command: 'clip.paste', params: { audioClipIds, midiClipIds, startTick } },
-    null,
-  );
+  return dispatchControl({
+    command: 'clip.paste',
+    params: { audioClipIds, midiClipIds, startTick },
+  });
 }
 
 export async function crossfadeAudioClips(
   firstId: string,
   secondId: string,
 ): Promise<ArrangementMutationResult | null> {
-  return dispatchControlOrFallback(
-    {
-      command: 'audio-clip.crossfade',
-      params: { firstClipId: firstId, secondClipId: secondId },
-    },
-    null,
-  );
+  return dispatchControl({
+    command: 'audio-clip.crossfade',
+    params: { firstClipId: firstId, secondClipId: secondId },
+  });
 }
 
 export async function addTrack(name: string, kind: TrackKind): Promise<ArrangementMutationResult> {

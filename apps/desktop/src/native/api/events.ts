@@ -11,10 +11,8 @@ import type {
   TransportStatus,
 } from '@/model/domain';
 import type { NativeEventApi } from '../native-api';
-import { isNativeRuntime } from '../invoke';
 
 function subscribe<T>(eventName: string, callback: (payload: T) => void): () => void {
-  if (!isNativeRuntime()) return () => undefined;
   let unlisten: (() => void) | null = null;
   let cancelled = false;
   void listen<T>(eventName, (event) => callback(event.payload))

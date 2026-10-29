@@ -15,7 +15,7 @@ import {
   openScoreYaml,
   openScoreInstrumentDefinition,
 } from '@/native/dialog';
-import { isNativeRuntime, logNativeError, NativeCommandError } from '@/native/invoke';
+import { logNativeError, NativeCommandError } from '@/native/invoke';
 import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
 interface UseProjectOptions {
   boot: BootstrapState | null;
@@ -276,7 +276,6 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UsePro
     }
   }, [exportProjectApi, session?.projectName]);
   const importProject = useCallback(async () => {
-    if (!isNativeRuntime()) return;
     let path: string | null;
     try {
       path = await openProjectPackage();
@@ -303,7 +302,6 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UsePro
     }
   }, [importProjectApi, performProjectOperation]);
   const importScore = useCallback(async () => {
-    if (!isNativeRuntime()) return;
     const path = await openScoreYaml().catch((error: unknown) => {
       logNativeError('openScoreYaml')(error);
       return null;

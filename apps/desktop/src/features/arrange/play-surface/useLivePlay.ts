@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { Track } from '@/model/domain';
 import type { AudioApi } from '@/native/native-api';
+import { HostConnectionChangedError, logNativeError } from '@/native/invoke';
 import {
   MUSICAL_TYPING_DEFAULT_OCTAVE,
   MUSICAL_TYPING_DEFAULT_VELOCITY,
@@ -47,6 +48,7 @@ interface UseLivePlayOptions {
   /** The Focused Instrument Track that live input plays. */
   track: Track | null;
   runtimeReady: boolean;
+  hostConnected: boolean;
   missingDeviceIds: string[];
   /** Whether the on-screen Play Surface is shown. */
   surfaceOpen: boolean;
@@ -61,6 +63,7 @@ interface UseLivePlayOptions {
 export function useLivePlay({
   track,
   runtimeReady,
+  hostConnected,
   missingDeviceIds,
   surfaceOpen,
   api,
@@ -89,13 +92,17 @@ export function useLivePlay({
   // The runtime monitors the played track with low latency while anything can play it.
   const liveTarget = canPlay && (computerKeyboard || surfaceOpen) ? targetTrackId : null;
   useEffect(() => {
-    void api.setLiveMidiTarget(liveTarget);
-  }, [api, liveTarget]);
+    if (hostConnected) void api.setLiveMidiTarget(liveTarget);
+  }, [api, hostConnected, liveTarget]);
   useEffect(
     () => () => {
-      void api.setLiveMidiTarget(null);
+      if (hostConnected)
+        void api.setLiveMidiTarget(null).catch((error: unknown) => {
+          if (!(error instanceof HostConnectionChangedError))
+            logNativeError('setLiveMidiTarget')(error);
+        });
     },
-    [api],
+    [api, hostConnected],
   );
 
   const updateSettings = useCallback(

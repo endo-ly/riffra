@@ -132,16 +132,6 @@ export function isNativeRuntime(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 }
 
-/** Browser-compatible fallback wrapper for Host-owned commands. */
-export async function invokeHostOrFallback<T>(
-  command: string,
-  args: Record<string, unknown>,
-  fallback: T,
-): Promise<T> {
-  if (!isNativeRuntime()) return fallback;
-  return invokeHost<T>(command, args);
-}
-
 /** Coalesces Host-owned high-frequency updates with a Host connection guard. */
 function invokeLatestHost<T>(
   command: string,
@@ -216,18 +206,6 @@ function controlArgs(command: ControlCommand): Record<string, unknown> {
 /** Runs one Control Command through the connected Host. */
 export function dispatchControl<C extends ControlCommand>(command: C): Promise<ControlResult<C>> {
   return invokeHost<ControlResult<C>>('dispatch_control', controlArgs(command));
-}
-
-/** Runs one Control Command, or resolves to `fallback` without the native runtime. */
-export function dispatchControlOrFallback<C extends ControlCommand, F>(
-  command: C,
-  fallback: F,
-): Promise<ControlResult<C> | F> {
-  return invokeHostOrFallback<ControlResult<C> | F>(
-    'dispatch_control',
-    controlArgs(command),
-    fallback,
-  );
 }
 
 /** Runs the latest of the Control Commands queued under `key`. */

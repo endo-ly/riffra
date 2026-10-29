@@ -1,7 +1,6 @@
 import { errorText } from '@/shared/errors';
 import type { AudioStatus } from '@/model/domain';
-import { HostConnectionChangedError, dispatchControlOrFallback } from '../invoke';
-import { offlineAudioStatus } from '@/shared/audio/audio-defaults';
+import { HostConnectionChangedError, dispatchControl } from '../invoke';
 
 export async function audioCommandError(
   operation: string,
@@ -9,10 +8,7 @@ export async function audioCommandError(
   safetyCritical = false,
 ): Promise<AudioStatus> {
   if (error instanceof HostConnectionChangedError) throw error;
-  const status = await dispatchControlOrFallback(
-    { command: 'audio.status', params: {} },
-    offlineAudioStatus(),
-  );
+  const status = await dispatchControl({ command: 'audio.status', params: {} });
   return {
     ...status,
     state: safetyCritical || status.state === 'offline' ? 'faulted' : status.state,

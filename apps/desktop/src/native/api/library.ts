@@ -4,13 +4,10 @@ import type {
   LibraryAsset,
   RecordingAsset,
 } from '@/model/domain';
-import { dispatchControl, dispatchControlOrFallback } from '../invoke';
+import { dispatchControl } from '../invoke';
 
 export async function listRecordings(query?: string): Promise<RecordingAsset[]> {
-  return dispatchControlOrFallback(
-    { command: 'record.list', params: { query: query ?? null } },
-    [],
-  );
+  return dispatchControl({ command: 'record.list', params: { query: query ?? null } });
 }
 
 export async function renameRecording(id: string, name: string): Promise<string> {
@@ -43,7 +40,7 @@ export async function detectDuplicateRecordings(): Promise<string[][]> {
 
 export async function searchLibrary(query: string): Promise<LibraryAsset[]> {
   if (!query.trim()) return [];
-  return dispatchControlOrFallback({ command: 'library.search', params: { query } }, []);
+  return dispatchControl({ command: 'library.search', params: { query } });
 }
 
 export async function updateLibraryAsset(
@@ -51,14 +48,11 @@ export async function updateLibraryAsset(
   tag: string | null,
   note: string | null,
 ): Promise<LibraryAsset | null> {
-  return dispatchControlOrFallback(
-    { command: 'library.asset.update', params: { id, tag, note } },
-    null,
-  );
+  return dispatchControl({ command: 'library.asset.update', params: { id, tag, note } });
 }
 
 export async function listInstruments(): Promise<InstrumentLibraryItem[]> {
-  return dispatchControlOrFallback({ command: 'library.instrument.list', params: {} }, []);
+  return dispatchControl({ command: 'library.instrument.list', params: {} });
 }
 
 export async function setInstrumentFavorite(
@@ -93,14 +87,11 @@ export async function setInstrumentUserTags(
 
 /** Lists the categories the Host files instruments under, in display order. */
 export async function listInstrumentCategories(): Promise<string[]> {
-  return dispatchControlOrFallback({ command: 'library.instrument.category.list', params: {} }, []);
+  return dispatchControl({ command: 'library.instrument.category.list', params: {} });
 }
 
 export async function listInstrumentCollections(): Promise<InstrumentCollection[]> {
-  return dispatchControlOrFallback(
-    { command: 'library.instrument.collection.list', params: {} },
-    [],
-  );
+  return dispatchControl({ command: 'library.instrument.collection.list', params: {} });
 }
 
 export async function createInstrumentCollection(name: string): Promise<InstrumentCollection> {

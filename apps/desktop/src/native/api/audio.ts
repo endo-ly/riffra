@@ -9,19 +9,11 @@ import type {
   AutomationTarget,
 } from '@/model/domain';
 import type { AssetPreviewOptions } from '../contracts';
-import { offlineAudioStatus } from '@/shared/audio/audio-defaults';
-import { dispatchControl, dispatchControlOrFallback } from '../invoke';
+import { dispatchControl } from '../invoke';
 import { audioCommandError } from './audio-error';
 
 export async function probeAudioDevices(): Promise<AudioDeviceProbe> {
-  return dispatchControlOrFallback(
-    { command: 'audio.probe', params: {} },
-    {
-      drivers: [],
-      refreshedAtMs: Date.now(),
-      message: 'Audio device probe is unavailable in browser preview.',
-    },
-  );
+  return dispatchControl({ command: 'audio.probe', params: {} });
 }
 
 export async function probeDeviceChannels(
@@ -29,16 +21,10 @@ export async function probeDeviceChannels(
   inputDevice: string,
   outputDevice: string,
 ): Promise<DeviceChannels> {
-  return dispatchControlOrFallback(
-    { command: 'audio.channels.probe', params: { driver, inputDevice, outputDevice } },
-    {
-      driver,
-      inputDevice,
-      inputChannels: [],
-      outputDevice,
-      outputChannels: [],
-    },
-  );
+  return dispatchControl({
+    command: 'audio.channels.probe',
+    params: { driver, inputDevice, outputDevice },
+  });
 }
 
 export async function previewAsset(
@@ -94,7 +80,7 @@ export async function stopPreview(): Promise<AudioStatus> {
 }
 
 export async function getAudioStatus(): Promise<AudioStatus> {
-  return dispatchControlOrFallback({ command: 'audio.status', params: {} }, offlineAudioStatus());
+  return dispatchControl({ command: 'audio.status', params: {} });
 }
 
 export async function setEmergencyMute(muted: boolean): Promise<AudioStatus> {

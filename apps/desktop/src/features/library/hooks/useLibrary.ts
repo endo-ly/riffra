@@ -3,7 +3,7 @@ import type { AudioStatus, LibraryAsset } from '@/model/domain';
 import { toAssetId } from '@/native/contracts';
 import type { AudioApi, LibraryApi, ProjectApi } from '@/native/native-api';
 import { openMidiFile } from '@/native/dialog';
-import { isNativeRuntime, logNativeError } from '@/native/invoke';
+import { logNativeError } from '@/native/invoke';
 
 interface UseLibraryOptions {
   setAudio: (audio: AudioStatus) => void;
@@ -66,7 +66,6 @@ export function useLibrary(
   // native dialog, then drives the cross-asset search by the file stem so the
   // freshly imported MIDI shows up in the results without a manual reload.
   const importMidi = useCallback(async () => {
-    if (!isNativeRuntime()) return;
     let selected: string | null;
     try {
       selected = await openMidiFile();

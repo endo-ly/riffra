@@ -1,8 +1,8 @@
 import type { ArrangementMutationResult, AssetId, MissingDependency } from '@/model/domain';
-import { dispatchControl, dispatchControlOrFallback } from '../invoke';
+import { dispatchControl } from '../invoke';
 
 export async function getMissingDependencies(): Promise<MissingDependency[]> {
-  return dispatchControlOrFallback({ command: 'missing.list', params: {} }, []);
+  return dispatchControl({ command: 'missing.list', params: {} });
 }
 
 export async function relinkMissingDependency(

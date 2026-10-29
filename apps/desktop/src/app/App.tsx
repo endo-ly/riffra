@@ -7,7 +7,7 @@ import {
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
-import { defaultNativeApi } from '@/native/native';
+import { defaultNativeApi } from '@/native/api';
 import { useAppController } from '@/app/useAppController';
 import { useArrangeShell } from '@/features/arrange/hooks/useArrangeShell';
 import { WorkspaceArrange } from '@/features/arrange/WorkspaceArrange';
@@ -567,6 +567,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
             disabled={!hostConnected || projectSwitching}
           >
             <WorkspaceArrange
+              hostConnected={hostConnected}
               lower={arrange.lower}
               onDisableMissingPlugin={disableMissingPluginDevice}
               onReplaceMissingPlugin={replaceMissingPluginDevice}

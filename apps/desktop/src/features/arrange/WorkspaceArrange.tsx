@@ -54,6 +54,7 @@ import { MixerPanel } from '@/features/mixer/MixerPanel';
 import styles from './WorkspaceArrange.module.css';
 
 interface WorkspaceArrangeProps {
+  hostConnected: boolean;
   lower: ReturnType<typeof useArrangeLowerAreaController>;
   onDisableMissingPlugin: (deviceId: string) => Promise<void>;
   onReplaceMissingPlugin: (deviceId: string, newPath: string) => Promise<void>;
@@ -290,6 +291,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   const livePlay = useLivePlay({
     track: focusedTrack,
     runtimeReady,
+    hostConnected: props.hostConnected,
     missingDeviceIds,
     surfaceOpen: lower.view === 'playSurface' && !lower.collapsed,
     api: props.api,

@@ -93,7 +93,7 @@ Hostに頼める操作(Control Command)は、`riffra-runtime` の `api` モジ�
 
 - 確定順序はCoreとHostのProject書き込み権が管理する。フロントエンドは状態を反映する入口で `CanonicalState.projectId` が現在のActive Projectと一致し、sequenceが受け入れ済みの値より新しい場合だけ採用する
 - 中間値を捨ててよい連続制御は `dispatchLatestControl` で集約し、最終値のみ送信する。集約された待機者には同一の確定応答を返す
-- `dispatchControlOrFallback` は非ネイティブ環境(ブラウザプレビュー・スモークテスト)専用のフォールバックである。ネイティブ実行時は失敗がそのままrejectになる
+- ブラウザプレビューでは専用の NativeApi が読み取りに空の状態を返し、それ以外の操作を reject する
 
 ---
 

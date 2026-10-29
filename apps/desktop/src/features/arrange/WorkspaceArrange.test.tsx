@@ -65,6 +65,7 @@ function Harness({
   return (
     <>
       <WorkspaceArrange
+        hostConnected
         lower={lower}
         onDisableMissingPlugin={async () => undefined}
         onReplaceMissingPlugin={async () => undefined}

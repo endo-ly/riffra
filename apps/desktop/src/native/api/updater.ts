@@ -1,4 +1,4 @@
-import { isNativeRuntime, invoke } from '../invoke';
+import { invoke } from '../invoke';
 
 /**
  * Checks the release endpoint for a newer application version. Resolves with
@@ -8,7 +8,6 @@ import { isNativeRuntime, invoke } from '../invoke';
  * silences the rejection, while the manual check reports it to the user.
  */
 export async function checkForAppUpdate(): Promise<string | null> {
-  if (!isNativeRuntime()) return null;
   return invoke<string | null>('check_for_app_update');
 }
 

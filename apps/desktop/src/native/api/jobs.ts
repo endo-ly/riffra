@@ -1,24 +1,9 @@
 import type { ScanJobStatus } from '../contracts';
 import type { BackgroundJobStatus, ScanReport } from '@/model/domain';
-import { dispatchControl, dispatchControlOrFallback } from '../invoke';
-import { defaultVst3Root } from './constants';
+import { dispatchControl } from '../invoke';
 
 export async function scanVst3Folder(path?: string): Promise<ScanReport> {
-  return dispatchControlOrFallback(
-    { command: 'plugin.scan', params: { path: path ?? null } },
-    {
-      root: path ?? defaultVst3Root,
-      startedAtMs: Date.now(),
-      finishedAtMs: Date.now(),
-      plugins: [],
-      issues: [
-        {
-          path: path ?? defaultVst3Root,
-          message: 'Native scanner is unavailable in browser preview.',
-        },
-      ],
-    },
-  );
+  return dispatchControl({ command: 'plugin.scan', params: { path: path ?? null } });
 }
 
 export async function startScanJob(path?: string): Promise<ScanJobStatus> {
