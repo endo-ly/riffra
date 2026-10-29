@@ -8,7 +8,7 @@ import type {
 } from '@/model/generated';
 import { useSessionContext } from '@/shared/session/session-context';
 import controls from '@/shared/ui/controls.module.css';
-import { DialogRow, DialogSection, MixerDialog } from './MixerDialog';
+import { Dialog, DialogRow, DialogSection } from '@/shared/ui/Dialog';
 import { SendRow } from './SendRow';
 import { SidechainSendControls } from './SidechainSendControls';
 
@@ -29,7 +29,7 @@ export function MixerRouting({ arrangement, track, commit, onClose, onOpenAutoma
   );
   const unusedReturns = returns.filter((bus) => !sends.some((send) => send.returnBusId === bus.id));
   return (
-    <MixerDialog
+    <Dialog
       label={`${track.name} routing`}
       title={track.name}
       subtitle="Routing"
@@ -148,6 +148,6 @@ export function MixerRouting({ arrangement, track, commit, onClose, onOpenAutoma
           </p>
         )}
       </DialogSection>
-    </MixerDialog>
+    </Dialog>
   );
 }

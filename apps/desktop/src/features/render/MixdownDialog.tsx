@@ -11,8 +11,8 @@ import { useSessionContext } from '@/shared/session/session-context';
 import controls from '@/shared/ui/controls.module.css';
 import { Icon } from '@/shared/ui/primitives';
 import { useEffect, useId, useRef, useState } from 'react';
-import styles from './Mixdown.module.css';
-import { DialogRow, DialogSection, MixerDialog } from './MixerDialog';
+import styles from './Render.module.css';
+import { Dialog, DialogRow, DialogSection } from '@/shared/ui/Dialog';
 import { RenderHistoryPanel } from './RenderHistoryPanel';
 import { RenderMeasurements } from './RenderMeasurements';
 
@@ -212,7 +212,7 @@ export function MixdownDialog(props: Props) {
       : null;
   const progress = job?.progress ?? null;
   return (
-    <MixerDialog
+    <Dialog
       label="Mixdown"
       title="Mixdown"
       subtitle="Render to WAV"
@@ -494,6 +494,6 @@ export function MixdownDialog(props: Props) {
         </DialogSection>
       )}
       <RenderHistoryPanel refreshToken={job?.state === 'completed' ? job.id : ''} />
-    </MixerDialog>
+    </Dialog>
   );
 }

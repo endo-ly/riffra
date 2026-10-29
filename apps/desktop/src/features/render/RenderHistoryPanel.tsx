@@ -6,8 +6,8 @@ import { ConfirmDialog } from '@/shared/ui/ConfirmDialog';
 import controls from '@/shared/ui/controls.module.css';
 import { Icon } from '@/shared/ui/primitives';
 import { useCallback, useEffect, useState } from 'react';
-import styles from './Mixdown.module.css';
-import { DialogSection } from './MixerDialog';
+import styles from './Render.module.css';
+import { DialogSection } from '@/shared/ui/Dialog';
 import { RenderMeasurements } from './RenderMeasurements';
 
 interface Props {

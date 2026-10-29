@@ -2,9 +2,9 @@ import type { CSSProperties, ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Icon } from '@/shared/ui/primitives';
 import controls from '@/shared/ui/controls.module.css';
-import styles from './MixerDialog.module.css';
+import styles from './Dialog.module.css';
 
-interface MixerDialogProps {
+interface DialogProps {
   label: string;
   title: string;
   subtitle: string;
@@ -21,7 +21,7 @@ interface MixerDialogProps {
 }
 
 /** A modal mixing surface: identity header, scrolling sections and an optional action footer. */
-export function MixerDialog({
+export function Dialog({
   label,
   title,
   subtitle,
@@ -32,7 +32,7 @@ export function MixerDialog({
   footer,
   onClose,
   children,
-}: MixerDialogProps) {
+}: DialogProps) {
   // Portaled so the dialog escapes the isolated stacking context of the panel that opens it.
   return createPortal(
     <div
