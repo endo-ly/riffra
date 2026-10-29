@@ -3,7 +3,7 @@ import type { ProjectTimebase } from '@/model/generated';
 import type { TransportStatus } from '@/model/generated';
 import type { AudioApi } from '@/native/api/audio';
 import type { NativeEventApi } from '@/native/api/events';
-import { secondsToTicks, ticksToSeconds } from '@/shared/session/timebase';
+import { secondsToTicks, ticksToSeconds } from '@/model/timebase';
 /** Arrangement Transport state shared by the Global Control Bar and the Arrange editors. */
 export type ArrangementTransport = ReturnType<typeof useArrangementTransport>;
 

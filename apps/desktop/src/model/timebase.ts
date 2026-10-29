@@ -116,3 +116,19 @@ export function snapToBar(tick: number, timebase: ProjectTimebase): number {
   const next = Math.min(previous + step, nextChange?.tick ?? Infinity);
   return Math.max(0, tick - previous < next - tick ? previous : next);
 }
+
+export function ticksToFrames(ticks: number, sampleRate: number, timebase: ProjectTimebase) {
+  return Math.round(ticksToSeconds(ticks, timebase) * sampleRate);
+}
+
+export function framesToTicks(frames: number, sampleRate: number, timebase: ProjectTimebase) {
+  return secondsToTicks(frames / sampleRate, timebase);
+}
+
+export function ticksPerBeat(timebase: ProjectTimebase) {
+  return (timebase.ppq * 4) / timebase.timeSignatureChanges[0].denominator;
+}
+
+export function ticksPerBar(timebase: ProjectTimebase) {
+  return ticksPerBeat(timebase) * timebase.timeSignatureChanges[0].numerator;
+}

@@ -8,10 +8,10 @@ import type {
   TrackKind,
 } from '@/model/generated';
 import { useSessionContext } from '@/shared/session/session-context';
+import { ticksToFrames } from '@/model/timebase';
 import {
   clipDurationTicks,
   midiClipDurationTicks,
-  ticksToFrames,
   type ArrangeTool,
 } from '@/features/arrange/model/arrange-timeline';
 import {

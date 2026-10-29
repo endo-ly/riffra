@@ -1,4 +1,4 @@
-import { snapToBar } from '@/shared/session/timebase';
+import { snapToBar } from '@/model/timebase';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AudioAnalysis, CreativeSession } from '@/model/generated';
 import {

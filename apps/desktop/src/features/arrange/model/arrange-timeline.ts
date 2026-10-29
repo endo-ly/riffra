@@ -1,10 +1,5 @@
 import type { AudioClip, MidiClip, ProjectTimebase } from '@/model/generated';
-import {
-  barBeatToTick,
-  secondsToTicks,
-  ticksToSeconds,
-  tickToBarBeat,
-} from '@/shared/session/timebase';
+import { secondsToTicks, ticksToSeconds, ticksPerBar, ticksPerBeat } from '@/model/timebase';
 
 /** Header column width, shared between the timeline geometry math and the CSS layout. */
 export const TRACK_HEADER_WIDTH = 224;
@@ -98,22 +93,6 @@ export function timelineObjectEndTick(clip: AudioClip | MidiClip, timebase: Proj
   );
 }
 
-export function ticksToFrames(ticks: number, sampleRate: number, timebase: ProjectTimebase) {
-  return Math.round(ticksToSeconds(ticks, timebase) * sampleRate);
-}
-
-export function framesToTicks(frames: number, sampleRate: number, timebase: ProjectTimebase) {
-  return secondsToTicks(frames / sampleRate, timebase);
-}
-
-export function ticksPerBeat(timebase: ProjectTimebase) {
-  return (timebase.ppq * 4) / timebase.timeSignatureChanges[0].denominator;
-}
-
-export function ticksPerBar(timebase: ProjectTimebase) {
-  return ticksPerBeat(timebase) * timebase.timeSignatureChanges[0].numerator;
-}
-
 export function timelineGridDensity(
   timebase: ProjectTimebase,
   pixelsPerTick: number,
@@ -180,57 +159,7 @@ export function countOffGridNotes(
   ).length;
 }
 
-export function formatMusicalPosition(tick: number, timebase: ProjectTimebase) {
-  const { bar, beat, offset: subdivision } = tickToBarBeat(tick, timebase);
-  return `${bar}.${beat}.${subdivision.toString().padStart(3, '0')}`;
-}
-
-/** Formats a tick span as zero-based `bars.beats.ticks`. */
-export function formatMusicalLength(ticks: number, timebase: ProjectTimebase) {
-  const barTicks = ticksPerBar(timebase);
-  const beatTicks = ticksPerBeat(timebase);
-  const safeTicks = Math.max(0, Math.round(ticks));
-  const bars = Math.floor(safeTicks / barTicks);
-  const beats = Math.floor((safeTicks % barTicks) / beatTicks);
-  const remainder = safeTicks % beatTicks;
-  return `${bars}.${beats}.${remainder.toString().padStart(3, '0')}`;
-}
-
-/** Splits `a[.b[.c]]` into whole numbers, or null when the text is not in that form. */
-function parseMusicalFields(text: string): number[] | null {
-  const parts = text.trim().split('.');
-  if (parts.length > 3 || parts.some((part) => !/^\d+$/.test(part))) return null;
-  return parts.map(Number);
-}
-
-/** Parses a one-based `bar.beat.tick` position; omitted fields start the bar or beat. */
-export function parseMusicalPosition(text: string, timebase: ProjectTimebase): number | null {
-  const fields = parseMusicalFields(text);
-  if (!fields) return null;
-  const [bar, beat = 1, tick = 0] = fields;
-  return barBeatToTick(bar, beat, tick, timebase);
-}
-
-/** Parses a zero-based `bars.beats.ticks` span; the result is always positive. */
-export function parseMusicalLength(text: string, timebase: ProjectTimebase): number | null {
-  const fields = parseMusicalFields(text);
-  if (!fields) return null;
-  const [bars, beats = 0, ticks = 0] = fields;
-  const beatTicks = ticksPerBeat(timebase);
-  if (beats >= timebase.timeSignatureChanges[0].numerator || ticks >= beatTicks) return null;
-  const total = bars * ticksPerBar(timebase) + beats * beatTicks + ticks;
-  return total > 0 ? total : null;
-}
-
-export function formatClock(tick: number, timebase: ProjectTimebase) {
-  const seconds = ticksToSeconds(Math.max(0, tick), timebase);
-  const minutes = Math.floor(seconds / 60);
-  return `${minutes}:${(seconds % 60).toFixed(2).padStart(5, '0')}`;
-}
-
-export function layoutClipLanes(
-  clips: readonly { id: string; startTick: number; endTick: number }[],
-) {
+function layoutClipLanes(clips: readonly { id: string; startTick: number; endTick: number }[]) {
   const laneEnds: number[] = [];
   const lanes = new Map<string, number>();
   for (const clip of [...clips].sort((left, right) => {

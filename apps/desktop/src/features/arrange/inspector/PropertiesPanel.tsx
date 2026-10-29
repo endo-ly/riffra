@@ -1,7 +1,7 @@
 import type { ArrangeSelection } from '@/features/arrange/hooks/useArrangeEditor';
 import { clipDurationTicks } from '@/features/arrange/model/arrange-timeline';
 import type { AudioStatus, CreativeSession } from '@/model/generated';
-import { tickToMusicalPosition } from '@/shared/session/musical-position';
+import { tickToMusicalPosition } from '@/model/time-format';
 import { useSessionContext } from '@/shared/session/session-context';
 import { Icon } from '@/shared/ui/primitives';
 import { ArrangeClipInspector } from './ArrangeClipInspector';

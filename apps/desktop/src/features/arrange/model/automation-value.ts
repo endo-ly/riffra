@@ -1,4 +1,4 @@
-import { ticksToSeconds } from '@/shared/session/timebase';
+import { ticksToSeconds } from '@/model/timebase';
 import type { AutomationInterpolation, AutomationPoint, ProjectTimebase } from '@/model/generated';
 
 export function automationValueAt(

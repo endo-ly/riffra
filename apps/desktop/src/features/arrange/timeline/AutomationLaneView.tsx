@@ -1,4 +1,4 @@
-import { secondsToTicks, ticksToSeconds } from '@/shared/session/timebase';
+import { secondsToTicks, ticksToSeconds } from '@/model/timebase';
 import { useEffect, useRef, useState, type MutableRefObject } from 'react';
 import type {
   AutomationInterpolation,

@@ -5,11 +5,6 @@ import {
   countOffGridNotes,
   clipGridTicks,
   snapClipTick,
-  formatMusicalLength,
-  formatMusicalPosition,
-  layoutClipLanes,
-  parseMusicalLength,
-  parseMusicalPosition,
   snapGridTicks,
   timelineGridDensity,
 } from '@/features/arrange/model/arrange-timeline';
@@ -47,31 +42,6 @@ describe('arrange timeline layout', () => {
     expect(snapGridTicks('1/16t', timebase)).toBe(160);
     expect(snapGridTicks('1/64', timebase)).toBe(60);
     expect(snapGridTicks('off', timebase)).toBe(0);
-  });
-
-  it('round-trips musical positions and lengths through their text forms', () => {
-    // Arrange
-    const tick = 2 * 3_840 + 1 * 960 + 120;
-
-    // Act
-    const position = formatMusicalPosition(tick, timebase);
-    const length = formatMusicalLength(tick, timebase);
-
-    // Assert
-    expect(position).toBe('3.2.120');
-    expect(length).toBe('2.1.120');
-    expect(parseMusicalPosition(position, timebase)).toBe(tick);
-    expect(parseMusicalLength(length, timebase)).toBe(tick);
-  });
-
-  it('fills omitted musical fields and rejects values outside the meter', () => {
-    expect(parseMusicalPosition('5', timebase)).toBe(4 * 3_840);
-    expect(parseMusicalLength('1.2', timebase)).toBe(3_840 + 2 * 960);
-    expect(parseMusicalPosition('0.1.000', timebase)).toBeNull();
-    expect(parseMusicalPosition('1.5.000', timebase)).toBeNull();
-    expect(parseMusicalLength('0.0.000', timebase)).toBeNull();
-    expect(parseMusicalLength('1.0.960', timebase)).toBeNull();
-    expect(parseMusicalPosition('1.x', timebase)).toBeNull();
   });
 
   it('counts notes sitting off the target grid', () => {
@@ -138,22 +108,40 @@ describe('arrange timeline layout', () => {
   });
 
   it('reuses a lane for adjacent items and orders equal starts deterministically', () => {
-    const adjacent = layoutClipLanes([
-      { id: 'first', startTick: 0, endTick: 960 },
-      { id: 'second', startTick: 960, endTick: 1_920 },
-    ]);
-    expect(adjacent.count).toBe(1);
+    const midiClip = (id: string, startTick: number, durationTicks: number): MidiClip => ({
+      instrumentControlEvents: [],
+      id,
+      name: id,
+      trackId: 'track:shared',
+      startTick,
+      durationTicks,
+      notes: [],
+      events: [],
+      muted: false,
+      loopEnabled: false,
+    });
+    const adjacent = buildTrackTimeline(
+      'track:shared',
+      [],
+      [midiClip('first', 0, 960), midiClip('second', 960, 960)],
+      timebase,
+    );
+    expect(adjacent.laneCount).toBe(1);
 
-    const equalStart = layoutClipLanes([
-      { id: 'long', startTick: 0, endTick: 1_920 },
-      { id: 'short', startTick: 0, endTick: 960 },
-    ]);
-    const equalStartReversed = layoutClipLanes([
-      { id: 'short', startTick: 0, endTick: 960 },
-      { id: 'long', startTick: 0, endTick: 1_920 },
-    ]);
-    expect(equalStart.lanes.get('short')).toBe(0);
-    expect(equalStart.lanes.get('long')).toBe(1);
+    const equalStart = buildTrackTimeline(
+      'track:shared',
+      [],
+      [midiClip('long', 0, 1_920), midiClip('short', 0, 960)],
+      timebase,
+    );
+    const equalStartReversed = buildTrackTimeline(
+      'track:shared',
+      [],
+      [midiClip('short', 0, 960), midiClip('long', 0, 1_920)],
+      timebase,
+    );
+    expect(equalStart.lanes.get('midi:short')).toBe(0);
+    expect(equalStart.lanes.get('midi:long')).toBe(1);
     expect([...equalStartReversed.lanes.entries()]).toEqual([...equalStart.lanes.entries()]);
   });
 });

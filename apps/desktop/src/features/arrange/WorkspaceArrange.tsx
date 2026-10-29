@@ -26,12 +26,11 @@ import { PlaySurface } from './play-surface/PlaySurface';
 import { midiNoteName } from './play-surface/musical-typing';
 import { useLivePlay } from './play-surface/useLivePlay';
 import { ToolbarButton } from '@/shared/ui/Toolbar';
+import { formatMusicalPosition } from '@/model/time-format';
+import { ticksPerBar, ticksPerBeat } from '@/model/timebase';
 import {
   buildTrackTimeline,
   timelineObjectEndTick,
-  formatMusicalPosition,
-  ticksPerBar,
-  ticksPerBeat,
   timelineGridDensity,
   TRACK_HEADER_WIDTH,
   type ArrangeTool,

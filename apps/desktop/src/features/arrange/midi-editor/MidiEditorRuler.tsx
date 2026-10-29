@@ -1,7 +1,7 @@
-import { musicalGridTicks, tickToBarBeat } from '@/shared/session/timebase';
+import { musicalGridTicks, tickToBarBeat } from '@/model/timebase';
 import type { Ref } from 'react';
 import type { ProjectTimebase } from '@/model/generated';
-import { formatMusicalPosition } from '@/features/arrange/model/arrange-timeline';
+import { formatMusicalPosition } from '@/model/time-format';
 import styles from './MidiEditorPanel.module.css';
 
 interface MidiEditorRulerProps {

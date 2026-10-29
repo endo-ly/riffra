@@ -10,7 +10,7 @@ import {
 import type { CreativeSession, Marker } from '@/model/generated';
 import { useSessionContext } from '@/shared/session/session-context';
 import { HostConnectionChangedError } from '@/native/invoke';
-import { tickToMusicalPosition } from '@/shared/session/musical-position';
+import { tickToMusicalPosition } from '@/model/time-format';
 import { isEditableTypingTarget } from '@/shared/input';
 
 type RangeKind = 'loop' | 'punch';

@@ -1,4 +1,5 @@
-import { clipDurationTicks, formatMusicalLength } from '@/features/arrange/model/arrange-timeline';
+import { clipDurationTicks } from '@/features/arrange/model/arrange-timeline';
+import { formatMusicalLength } from '@/model/time-format';
 import type { ArrangementMutationResult, AudioClip, CreativeSession } from '@/model/generated';
 import { formatGainDb, formatPan } from '@/shared/audio/mix-format';
 import { useSessionContext } from '@/shared/session/session-context';

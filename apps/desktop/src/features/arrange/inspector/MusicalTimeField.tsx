@@ -5,7 +5,7 @@ import {
   formatMusicalPosition,
   parseMusicalLength,
   parseMusicalPosition,
-} from '@/features/arrange/model/arrange-timeline';
+} from '@/model/time-format';
 import styles from './Inspector.module.css';
 
 const FORMATS = {

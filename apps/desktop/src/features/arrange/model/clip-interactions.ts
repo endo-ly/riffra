@@ -1,10 +1,6 @@
 import type { AudioClip, FrameRange, MidiClip, ProjectTimebase } from '@/model/generated';
-import {
-  clipDurationTicks,
-  framesToTicks,
-  midiClipDurationTicks,
-  ticksToFrames,
-} from './arrange-timeline';
+import { framesToTicks, ticksToFrames } from '@/model/timebase';
+import { clipDurationTicks, midiClipDurationTicks } from './arrange-timeline';
 
 export interface TrackRowBounds {
   trackId: string;

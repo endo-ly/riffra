@@ -4,12 +4,9 @@ import type {
   TimelineLoopRange,
   TimelinePunchRange,
 } from '@/model/generated';
-import {
-  formatClock,
-  timelineGridDensity,
-  TRACK_HEADER_WIDTH,
-} from '@/features/arrange/model/arrange-timeline';
-import { meterSegment } from '@/shared/session/timebase';
+import { timelineGridDensity, TRACK_HEADER_WIDTH } from '@/features/arrange/model/arrange-timeline';
+import { formatClock } from '@/model/time-format';
+import { meterSegment } from '@/model/timebase';
 import styles from '../WorkspaceArrange.module.css';
 
 type ArrangeRange = 'loop' | 'punch';

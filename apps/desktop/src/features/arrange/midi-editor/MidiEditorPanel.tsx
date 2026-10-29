@@ -1,6 +1,6 @@
 import type { MidiNoteInput } from '@/model/generated';
 import { errorText } from '@/shared/errors';
-import { musicalGridTicks, snapToBar } from '@/shared/session/timebase';
+import { musicalGridTicks, snapToBar } from '@/model/timebase';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, MutableRefObject } from 'react';
 import type {
@@ -10,19 +10,17 @@ import type {
   MidiNote,
   ProjectTimebase,
 } from '@/model/generated';
-import { ticksToSeconds } from '@/shared/session/timebase';
+import { ticksToSeconds } from '@/model/timebase';
 import {
   SNAP_GRID_OPTIONS,
   snapGridLabel,
   snapGridTicks,
-  ticksPerBar,
-  ticksPerBeat,
   countOffGridNotes,
   clipGridTicks,
   snapClipTick,
-  formatMusicalLength,
-  formatMusicalPosition,
 } from '@/features/arrange/model/arrange-timeline';
+import { formatMusicalLength, formatMusicalPosition } from '@/model/time-format';
+import { ticksPerBar, ticksPerBeat } from '@/model/timebase';
 import type { SnapGrid } from '@/features/arrange/model/arrange-timeline';
 import { isBlackKey, midiNoteName } from '@/features/arrange/play-surface/musical-typing';
 import { isEditableTypingTarget } from '@/shared/input';
