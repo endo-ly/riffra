@@ -20,7 +20,7 @@ export function useChannelMixControl({
   onError,
   disabled = false,
 }: UseChannelMixControlOptions) {
-  const { api, commit: sessionCommit } = useSessionContext();
+  const { api, commit: sessionCommit, getCanonicalState } = useSessionContext();
   const [gainDb, setGainDb] = useState(channel.gainDb);
   const [pan, setPan] = useState(channel.pan);
   const canonical = useRef({ gainDb: channel.gainDb, pan: channel.pan });
@@ -161,6 +161,17 @@ export function useChannelMixControl({
         queuePreview(parameter, value, previewVersion);
         await previewChain.current.catch(() => undefined);
         if (disposed.current) return;
+        const before = getCanonicalState();
+        if (before && before.session.sessionId !== sessionId) return;
+        if (before?.session.sessionId === sessionId) {
+          const currentChannel = (
+            channel.kind === 'group' || channel.kind === 'return'
+              ? before.session.arrangement.mixer.buses
+              : before.session.arrangement.tracks
+          ).find((item) => item.id === channel.id);
+          if (currentChannel)
+            canonical.current = { gainDb: currentChannel.gainDb, pan: currentChannel.pan };
+        }
         if (value === canonical.current[parameter]) return;
         const result = await sessionCommit(
           channel.kind === 'group' || channel.kind === 'return'
@@ -168,22 +179,31 @@ export function useChannelMixControl({
             : api.updateTrack(channel.id, patch),
           { onError },
         );
-        if (disposed.current) return;
-        if (!result) {
-          restoreCanonicalRuntime(parameter);
+        if (
+          disposed.current ||
+          activeSessionId.current !== sessionId ||
+          activeChannelId.current !== channel.id ||
+          interactionIds.current[parameter] !== currentInteractionId
+        )
           return;
-        }
+        const current = getCanonicalState();
+        if (
+          !current ||
+          current.session.sessionId !== sessionId ||
+          (before && current.projectId !== before.projectId) ||
+          (result && current.projectId !== result.canonical.projectId)
+        )
+          return;
         const committed = (
           channel.kind === 'group' || channel.kind === 'return'
-            ? result.canonical.session.arrangement.mixer.buses
-            : result.canonical.session.arrangement.tracks
+            ? current.session.arrangement.mixer.buses
+            : current.session.arrangement.tracks
         ).find((candidate) => candidate.id === channel.id);
-        if (committed) {
-          canonical.current = { gainDb: committed.gainDb, pan: committed.pan };
-          if (!editing.current.gainDb) setGainDb(committed.gainDb);
-          if (!editing.current.pan) setPan(committed.pan);
-        }
-        if (result.projection.state === 'failed') {
+        if (!committed) return;
+        canonical.current = { gainDb: committed.gainDb, pan: committed.pan };
+        if (!editing.current.gainDb) setGainDb(committed.gainDb);
+        if (!editing.current.pan) setPan(committed.pan);
+        if (!result || result.projection.state === 'failed') {
           restoreCanonicalRuntime(parameter);
         }
       } finally {
@@ -195,6 +215,8 @@ export function useChannelMixControl({
     [
       api,
       sessionCommit,
+      getCanonicalState,
+      sessionId,
       clearPreviewTimer,
       disabled,
       invalidatePreview,

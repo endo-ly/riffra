@@ -124,6 +124,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     commandOpen,
     historyState,
     commit,
+    getCanonicalState,
     setCommandOpen,
     refreshAudioDevices,
     probeAudioChannels,
@@ -161,8 +162,8 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     projectState?.activeProjectId ?? null,
   );
   const sessionContext = useMemo(
-    () => ({ api, hostGeneration: hostConnectionState.generation, commit }),
-    [api, hostConnectionState.generation, commit],
+    () => ({ api, hostGeneration: hostConnectionState.generation, commit, getCanonicalState }),
+    [api, hostConnectionState.generation, commit, getCanonicalState],
   );
   const liveFeedbackSuspected = useAudioFeedbackSuspected();
   const appUpdater = useAppUpdater({ api: api });

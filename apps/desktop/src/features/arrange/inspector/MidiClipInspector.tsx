@@ -90,9 +90,9 @@ export function MidiClipInspector(props: MidiClipInspectorProps) {
                 label: 'Delete',
                 danger: true,
                 onClick: () =>
-                  void commit(api.removeTimelineClips([], [clip.id])).then(() =>
-                    props.setSelectedClipIds([]),
-                  ),
+                  void commit(api.removeTimelineClips([], [clip.id])).then((result) => {
+                    if (result) props.setSelectedClipIds([]);
+                  }),
               },
             ]}
           />

@@ -245,6 +245,11 @@ describe('Arrange Inspectors', () => {
     // Act
     fireEvent.click(screen.getByRole('button', { name: 'Mute clip' }));
     fireEvent.click(screen.getByRole('button', { name: 'Loop clip' }));
+    vi.mocked(api.removeTimelineClips).mockRejectedValueOnce(new Error('MIDI deletion failed'));
+    fireEvent.click(screen.getByRole('button', { name: 'Clip actions' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
+    expect(await screen.findByText('MIDI deletion failed')).toBeInTheDocument();
+    expect(setSelectedClipIds).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Clip actions' }));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
 

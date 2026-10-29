@@ -14,7 +14,7 @@ interface UseMasterGainControlOptions {
 
 /** Shares the generation-safe preview/commit lifecycle for every Master fader. */
 export function useMasterGainControl({ session, disabled = false }: UseMasterGainControlOptions) {
-  const { api, commit: sessionCommit } = useSessionContext();
+  const { api, commit: sessionCommit, getCanonicalState } = useSessionContext();
   const [draftDb, setDraftDb] = useState(session.settings.masterDb);
   const editing = useRef(false);
   const previewTimer = useRef<number | null>(null);
@@ -98,13 +98,31 @@ export function useMasterGainControl({ session, disabled = false }: UseMasterGai
         return;
       }
       try {
-        if (gainDb === lastCommittedDb.current) return;
-        const result = await sessionCommit(api.setMasterGainDb(gainDb));
-        if (disposed.current) return;
-        if (result) {
-          lastCommittedDb.current = result.canonical.session.settings.masterDb;
-          canonicalDb.current = result.canonical.session.settings.masterDb;
+        const before = getCanonicalState();
+        if (before && before.session.sessionId !== sessionId.current) return;
+        if (before?.session.sessionId === sessionId.current) {
+          canonicalDb.current = before.session.settings.masterDb;
+          lastCommittedDb.current = canonicalDb.current;
         }
+        if (gainDb === lastCommittedDb.current) return;
+        const requestSessionId = sessionId.current;
+        const result = await sessionCommit(api.setMasterGainDb(gainDb));
+        if (
+          disposed.current ||
+          sessionId.current !== requestSessionId ||
+          interactionId.current !== currentInteractionId
+        )
+          return;
+        const current = getCanonicalState();
+        if (
+          current &&
+          current.session.sessionId === requestSessionId &&
+          (!before || current.projectId === before.projectId) &&
+          (!result || current.projectId === result.canonical.projectId)
+        ) {
+          lastCommittedDb.current = current.session.settings.masterDb;
+          canonicalDb.current = current.session.settings.masterDb;
+        } else return;
         if (!result || result.projection.state === 'failed') {
           setDraftDb(canonicalDb.current);
           previewChain.current = previewChain.current
@@ -115,7 +133,7 @@ export function useMasterGainControl({ session, disabled = false }: UseMasterGai
             .catch(() => undefined);
           return;
         }
-        setDraftDb(result.canonical.session.settings.masterDb);
+        setDraftDb(canonicalDb.current);
       } finally {
         if (
           pendingCommit.current?.interactionId === currentInteractionId &&
@@ -124,7 +142,7 @@ export function useMasterGainControl({ session, disabled = false }: UseMasterGai
           pendingCommit.current = null;
       }
     },
-    [api, sessionCommit, disabled],
+    [api, sessionCommit, getCanonicalState, disabled],
   );
 
   const beginEditing = useCallback(() => {

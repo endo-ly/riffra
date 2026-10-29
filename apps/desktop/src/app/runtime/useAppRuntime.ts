@@ -57,6 +57,7 @@ export function useAppRuntime(api: AppRuntimeApi, hostGeneration: number) {
     setStore(next);
     return true;
   }, []);
+  const getCanonicalState = useCallback(() => storeRef.current.boot?.canonical ?? null, []);
   const boot = store.boot;
   const session = boot?.canonical.session ?? null;
   const historyState = boot?.canonical.history ?? { canUndo: false, canRedo: false };
@@ -258,6 +259,7 @@ export function useAppRuntime(api: AppRuntimeApi, hostGeneration: number) {
     historyState,
     projectState,
     commit,
+    getCanonicalState,
     applyCanonicalState,
     applyProjectActivation,
     boot,
