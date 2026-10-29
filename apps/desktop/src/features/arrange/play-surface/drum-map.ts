@@ -16,6 +16,9 @@
  * GM by default, making this mapping work out of the box for most drum VSTs.
  */
 
+/** General MIDI percussion channel (0-indexed: 9 = MIDI channel 10). */
+export const GM_DRUM_CHANNEL = 9;
+
 export type DrumCategory = 'kick' | 'snare' | 'hihat' | 'tom' | 'cymbal' | 'percussion';
 
 export interface DrumPad {

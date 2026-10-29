@@ -4,7 +4,7 @@ import {
   DRUM_PAD_DEFAULT_VELOCITY,
   drumPadByKey,
 } from '@/features/arrange/play-surface/drum-map';
-import { GM_DRUM_CHANNEL } from '@/features/arrange/play-surface/musical-typing';
+import { GM_DRUM_CHANNEL } from './drum-map';
 import { isEditableTypingTarget } from '@/shared/input';
 import { useHeldMidiNotes } from './useHeldMidiNotes';
 

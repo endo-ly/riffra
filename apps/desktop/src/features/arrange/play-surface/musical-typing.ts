@@ -37,9 +37,6 @@ export const MUSICAL_TYPING_DEFAULT_VELOCITY = 100;
 export const MUSICAL_TYPING_OCTAVE_DOWN_KEY = 'z';
 export const MUSICAL_TYPING_OCTAVE_UP_KEY = 'x';
 
-/** General MIDI percussion channel (0-indexed: 9 = MIDI channel 10). */
-export const GM_DRUM_CHANNEL = 9;
-
 /** MIDI note number for C{octave}. C4 → 60, C5 → 72, etc. */
 export function baseNoteForOctave(octave: number): number {
   return (octave + 1) * 12;
@@ -48,27 +45,4 @@ export function baseNoteForOctave(octave: number): number {
 /** Look up the typing key for a semitone offset, or null for gaps (e.g. F# has no key in lower octave). */
 export function typingKeyForSemitone(semitone: number): string | null {
   return MUSICAL_TYPING_KEY_BY_SEMITONE.get(semitone) ?? null;
-}
-
-/** Standard MIDI note name for a MIDI note number, e.g. 60 → "C4". */
-export function midiNoteName(note: number): string {
-  const names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
-  const octave = Math.floor(note / 12) - 1;
-  return `${names[note % 12]}${octave}`;
-}
-
-/** True when the offset corresponds to a black key on a piano. */
-export function isBlackKey(semitone: number): boolean {
-  const withinOctave = ((semitone % 12) + 12) % 12;
-  return [1, 3, 6, 8, 10].includes(withinOctave);
-}
-
-/** Encode a Note On message as raw MIDI bytes suitable for targeted Track input. */
-export function encodeNoteOn(note: number, velocity: number, channel = 0): number[] {
-  return [0x90 | (channel & 0x0f), note & 0x7f, velocity & 0x7f];
-}
-
-/** Encode a Note Off message as raw MIDI bytes suitable for targeted Track input. */
-export function encodeNoteOff(note: number, channel = 0): number[] {
-  return [0x80 | (channel & 0x0f), note & 0x7f, 0];
 }

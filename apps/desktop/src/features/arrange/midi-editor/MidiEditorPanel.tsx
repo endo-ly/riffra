@@ -22,7 +22,7 @@ import {
 import { formatMusicalLength, formatMusicalPosition } from '@/model/time-format';
 import { ticksPerBar, ticksPerBeat } from '@/model/timebase';
 import type { SnapGrid } from '@/features/arrange/model/arrange-timeline';
-import { isBlackKey, midiNoteName } from '@/features/arrange/play-surface/musical-typing';
+import { encodeNoteOff, encodeNoteOn, isBlackKey, midiNoteName } from '@/shared/midi';
 import { isEditableTypingTarget } from '@/shared/input';
 import { toast } from '@/shared/toasts';
 import { ContextMenu, type ContextMenuItem } from '@/shared/ui/ContextMenu';
@@ -279,12 +279,12 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
   const previewNoteOn = (pitch: number) => {
     if (!previewCanSend || !previewTrackId || previewHeldNotesRef.current.has(pitch)) return;
     previewHeldNotesRef.current.add(pitch);
-    void props.onSendMidi?.(previewTrackId, [0x90, pitch, lastUsedVelocity]);
+    void props.onSendMidi?.(previewTrackId, encodeNoteOn(pitch, lastUsedVelocity));
   };
 
   const previewNoteOff = (pitch: number) => {
     if (!previewTrackId || !previewHeldNotesRef.current.delete(pitch)) return;
-    void props.onSendMidi?.(previewTrackId, [0x80, pitch, 0]);
+    void props.onSendMidi?.(previewTrackId, encodeNoteOff(pitch));
   };
 
   // Short-lived auditions for placed or moved notes. Unlike the held piano
@@ -313,13 +313,13 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
       if (ringing) {
         clearTimeout(ringing.timeout);
         auditionTimersRef.current.delete(clampedPitch);
-        void onSendMidi(ringing.trackId, [0x80, clampedPitch, 0]);
+        void onSendMidi(ringing.trackId, encodeNoteOff(clampedPitch));
       }
-      void onSendMidi(previewTrackId, [0x90, clampedPitch, clampedVelocity]);
+      void onSendMidi(previewTrackId, encodeNoteOn(clampedPitch, clampedVelocity));
       const timeout = setTimeout(
         () => {
           auditionTimersRef.current.delete(clampedPitch);
-          void onSendMidi(previewTrackId, [0x80, clampedPitch, 0]);
+          void onSendMidi(previewTrackId, encodeNoteOff(clampedPitch));
         },
         durationTicks === undefined ? 350 : auditionMsForTicks(durationTicks),
       );
@@ -335,7 +335,7 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
     return () => {
       ringing.forEach(({ timeout, trackId }, pitch) => {
         clearTimeout(timeout);
-        void onSendMidi?.(trackId, [0x80, pitch, 0]);
+        void onSendMidi?.(trackId, encodeNoteOff(pitch));
       });
       ringing.clear();
     };

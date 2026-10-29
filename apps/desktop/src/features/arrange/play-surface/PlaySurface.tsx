@@ -1,11 +1,8 @@
 import type { CSSProperties } from 'react';
 import type { AudioStatus } from '@/model/generated';
 import { drumPadByNote } from './drum-map';
-import {
-  MUSICAL_TYPING_MAX_OCTAVE,
-  MUSICAL_TYPING_MIN_OCTAVE,
-  midiNoteName,
-} from './musical-typing';
+import { MUSICAL_TYPING_MAX_OCTAVE, MUSICAL_TYPING_MIN_OCTAVE } from './musical-typing';
+import { midiNoteName } from '@/shared/midi';
 import type { LivePlay } from './useLivePlay';
 import { LIVE_PLAY_BLOCKED_REASON } from './useLivePlay';
 import {

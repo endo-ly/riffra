@@ -5,7 +5,7 @@ import type {
   InstrumentRecommendedRange,
   PlayableNotes,
 } from '@/model/generated';
-import { midiNoteName } from '@/features/arrange/play-surface/musical-typing';
+import { midiNoteName } from '@/shared/midi';
 import { Icon } from '@/shared/ui/primitives';
 import controls from '@/shared/ui/controls.module.css';
 import styles from './Devices.module.css';

@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import type { Ref } from 'react';
 import type { MidiNote } from '@/model/generated';
-import { midiNoteName } from '@/features/arrange/play-surface/musical-typing';
+import { midiNoteName } from '@/shared/midi';
 import styles from './MidiEditorPanel.module.css';
 
 const VELOCITY_DRAG_THRESHOLD = 3;

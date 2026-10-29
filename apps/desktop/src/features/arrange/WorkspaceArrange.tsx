@@ -23,7 +23,7 @@ import { ArrangeMidiEditor } from './ArrangeMidiEditor';
 import { resolveTrackColor } from './model/track-colors';
 import { ArrangePlayhead } from './components/ArrangePlayhead';
 import { PlaySurface } from './play-surface/PlaySurface';
-import { midiNoteName } from './play-surface/musical-typing';
+import { midiNoteName } from '@/shared/midi';
 import { useLivePlay } from './play-surface/useLivePlay';
 import { ToolbarButton } from '@/shared/ui/Toolbar';
 import { formatMusicalPosition } from '@/model/time-format';
