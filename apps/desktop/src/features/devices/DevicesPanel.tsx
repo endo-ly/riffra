@@ -20,7 +20,7 @@ import controls from '@/shared/ui/controls.module.css';
 import styles from './Devices.module.css';
 
 interface DevicesPanelProps {
-  projectId: string;
+  sessionId: string;
   arrangement: Arrangement;
   automationLanes: AutomationLane[];
   playing: boolean;
@@ -60,7 +60,7 @@ export function DevicesPanel(props: DevicesPanelProps) {
     if (!device) setSelectedDeviceId(null);
   }, [device]);
   const ownerKey = target ? JSON.stringify(target.owner) : '';
-  useEffect(() => setSelectedDeviceId(null), [props.projectId, ownerKey]);
+  useEffect(() => setSelectedDeviceId(null), [props.sessionId, ownerKey]);
   const plugin =
     device &&
     ('plugin' in device ? device.plugin : device.source.type === 'vst3' ? device.source : null);
@@ -131,7 +131,7 @@ export function DevicesPanel(props: DevicesPanelProps) {
           <div className={styles.workbench} data-midi={Boolean(track?.instrument)}>
             {device && plugin && !unavailable ? (
               <DeviceParameterEditor
-                key={`${props.projectId}:${JSON.stringify(target.owner)}:${device.id}:${plugin.path}`}
+                key={`${props.sessionId}:${JSON.stringify(target.owner)}:${device.id}:${plugin.path}`}
                 automationLanes={props.automationLanes}
                 automationReadActive={
                   props.playing &&

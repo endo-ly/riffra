@@ -129,7 +129,7 @@ function Harness({
       applyCanonicalState={(canonical) => setSession(canonical.session)}
     >
       <DevicesPanel
-        projectId={session.sessionId}
+        sessionId={session.sessionId}
         automationLanes={session.arrangement.automationLanes}
         arrangement={session.arrangement}
         playing={false}
@@ -293,7 +293,7 @@ describe('DevicesPanel', () => {
         }),
     );
     const props = {
-      projectId: 'project:1',
+      sessionId: 'project:1',
       automationLanes: [],
       arrangement: defaultSession().arrangement,
       playing: false,

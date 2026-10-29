@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { PluginEntry, PluginRole } from '@/model/generated';
 
 import { useSessionContext } from '@/shared/session/session-context';
-import styles from '../WorkspaceArrangeOverlay.module.css';
+import styles from './Picker.module.css';
 
 interface PluginPickerProps {
   title?: string;

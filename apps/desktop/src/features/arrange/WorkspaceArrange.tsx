@@ -15,8 +15,8 @@ import { ArrangeTrack } from './timeline/ArrangeTrack';
 import { AutomationLaneEditor } from './timeline/AutomationLaneEditor';
 import { automationOwner } from '@/model/automation';
 import type { MidiGhostNote } from './midi-editor/MidiEditorPanel';
-import { resolveDeviceTarget } from './devices/device-target';
-import { DevicesPanel } from './devices/DevicesPanel';
+import { resolveDeviceTarget } from '@/features/devices/device-target';
+import { DevicesPanel } from '@/features/devices/DevicesPanel';
 import { ArrangeLowerArea } from './ArrangeLowerArea';
 import { ArrangeOverlays, type ArrangeConfirmRequest } from './ArrangeOverlays';
 import { ArrangeMidiEditor } from './ArrangeMidiEditor';
@@ -855,7 +855,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
             onOpenAutomation={openAutomation}
             key={`${props.session.sessionId}:${JSON.stringify(deviceTarget?.owner)}:${hostGeneration}`}
             target={deviceTarget}
-            projectId={props.session.sessionId}
+            sessionId={props.session.sessionId}
             plugins={props.plugins ?? []}
             instruments={props.instruments ?? []}
             missingDeviceIds={missingDeviceIds}
