@@ -6,11 +6,8 @@ import { useArrangeLowerAreaController } from './useArrangeLowerAreaController';
 import type { ArrangeSelection } from '../model/selection';
 import type { SessionCommit } from '@/shared/session/commit';
 import { toast } from '@/shared/toasts';
-import {
-  placeBrowserItem,
-  resolvePlacementTarget,
-  type BrowserPlacement,
-} from '@/features/arrange/model/browser-placement';
+import { placeBrowserItem } from '@/features/arrange/model/place-browser-item';
+import { resolvePlacementTarget, type BrowserPlacement } from '@/shared/browser-placement';
 
 export function useArrangeShell(
   api: Pick<

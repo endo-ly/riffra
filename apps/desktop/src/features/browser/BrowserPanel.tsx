@@ -15,7 +15,7 @@ import {
   describePlacementAction,
   resolvePlacementTarget,
   type BrowserPlacement,
-} from '@/features/arrange/model/browser-placement';
+} from '@/shared/browser-placement';
 import { writeAssetDrag, writeInstrumentDrag, writePluginDrag } from '@/shared/browser-drag';
 import { showToast } from '@/shared/toasts';
 import { ConfirmDialog } from '@/shared/ui/ConfirmDialog';

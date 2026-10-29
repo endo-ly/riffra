@@ -10,11 +10,8 @@ import {
   readPluginDrag,
 } from '@/shared/browser-drag';
 import { TRACK_HEADER_WIDTH } from '@/features/arrange/model/arrange-timeline';
-import {
-  placeBrowserItem,
-  resolvePlacementTarget,
-  type BrowserPlacement,
-} from '@/features/arrange/model/browser-placement';
+import { placeBrowserItem } from '@/features/arrange/model/place-browser-item';
+import { resolvePlacementTarget, type BrowserPlacement } from '@/shared/browser-placement';
 import { useSessionContext } from '@/shared/session/session-context';
 
 type ArrangeSnapTick = (raw: number, temporaryOff?: boolean) => number;

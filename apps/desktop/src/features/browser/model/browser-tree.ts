@@ -6,7 +6,7 @@ import type {
   PluginEntry,
   RecordingAsset,
 } from '@/model/generated';
-import type { BrowserPlacement } from '@/features/arrange/model/browser-placement';
+import type { BrowserPlacement } from '@/shared/browser-placement';
 import { matchesInstrumentQuery } from '@/features/instruments/model/instrument-library';
 
 export type BrowserItem =
