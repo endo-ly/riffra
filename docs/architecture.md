@@ -99,14 +99,18 @@ flowchart TD
 フロントエンドは、機能の状態と操作を feature にまとめ、機能に属さない契約や部品を共通領域へ置く。
 型と純粋なドメイン関数は React や Tauri から独立した `model/` に置き、Native API の境界や結合テスト基盤とは分ける。
 
-| 領域       | 責務                                                                                                                                    |
-| ---------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `app`      | 起動処理とアプリ全体の組み立て                                                                                                          |
-| `features` | 機能ごとの状態・操作・UI(arrange、audio、browser、devices、instruments、library、mixer、plugins、project、recording、render、transport) |
-| `model`    | Rustから生成した型と、時間・色・オートメーション・AssetIdなどの純粋な関数                                                               |
-| `shared`   | 共通UI、MIDI基礎処理、ブラウザ項目の受け渡し契約、セッション文脈、汎用hook                                                              |
-| `native`   | ReactとTauriの境界。Native APIと命令の窓口                                                                                              |
-| `test`     | FakeNativeApi、Provider、機能をまたぐ結合テスト                                                                                         |
+| 領域       | 責務                                                                                                                                          |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `app`      | 起動処理、画面構成、Workspaceの状態と各機能の組み立て                                                                                         |
+| `features` | 機能ごとの状態・操作・UI(audio、devices、inspector、library、live-input、midi-editor、mixer、project、recording、render、timeline、transport) |
+| `model`    | Rustから生成した型と、選択状態・音源検索・クリップ時間・スナップ・色・オートメーション・AssetIdなどの純粋な関数                               |
+| `shared`   | 共通UI、MIDI基礎処理、ブラウザ項目の受け渡し契約、セッション文脈、汎用hook                                                                    |
+| `native`   | ReactとTauriの境界。Native APIと命令の窓口                                                                                                    |
+| `test`     | FakeNativeApi、Provider、機能をまたぐ結合テスト。フロントエンドのテストは `src/test/` 以下で所有領域別に整理する                              |
+
+`app/workspace/` はTimeline、MIDI Editor、Devices、Mixer、Live Inputを画面として組み合わせ、画面間の選択やパネル状態を管理する。TimelineやInspectorなど個々の機能はWorkspaceを参照せず、共有する選択・時間・スナップの計算は `model/` を使う。
+
+依存は `app` から `features` へ向ける。`features` は `app` に依存せず、機能間の依存は `devices → mixer` と `mixer → audio / render` に限る。`model` はReact、Native、Shared、Feature、Appに依存せず、`shared` は個別FeatureやAppに依存しない。
 
 フロントエンドが下位のAPIに触れるのは `native/` 配下に限る。
 
