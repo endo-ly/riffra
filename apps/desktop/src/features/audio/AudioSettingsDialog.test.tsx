@@ -5,7 +5,7 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AudioSettingsDialog } from './AudioSettingsDialog';
-import { fakeAudioStatus } from '@/native/native-api-fake';
+import { fakeAudioStatus } from '@/test/fake-native-api';
 import type {
   AudioDeviceProbe,
   AudioDriverConfig,

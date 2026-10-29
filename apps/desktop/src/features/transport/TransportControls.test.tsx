@@ -7,7 +7,7 @@ import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TransportControls } from './TransportControls';
 import { canonicalState, defaultSession } from '@/native/browser-defaults';
-import { FakeNativeApi, fakeAudioStatus } from '@/native/native-api-fake';
+import { FakeNativeApi, fakeAudioStatus } from '@/test/fake-native-api';
 
 afterEach(cleanup);
 

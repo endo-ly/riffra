@@ -2,7 +2,7 @@ import { TestSessionProvider } from '@/test/session-provider';
 // @vitest-environment jsdom
 import type { AutomationTarget, Track } from '@/model/generated';
 import { defaultSession } from '@/native/browser-defaults';
-import { FakeNativeApi } from '@/native/native-api-fake';
+import { FakeNativeApi } from '@/test/fake-native-api';
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, it } from 'vitest';

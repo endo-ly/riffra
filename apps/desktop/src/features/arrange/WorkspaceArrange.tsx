@@ -21,7 +21,7 @@ import { ArrangeLowerArea } from './ArrangeLowerArea';
 import { ArrangeOverlays, type ArrangeConfirmRequest } from './ArrangeOverlays';
 import { ArrangeMidiEditor } from './ArrangeMidiEditor';
 import { resolveTrackColor } from '@/model/track-color';
-import { ArrangePlayhead } from './components/ArrangePlayhead';
+import { ArrangePlayhead } from './timeline/ArrangePlayhead';
 import { PlaySurface } from './play-surface/PlaySurface';
 import { midiNoteName } from '@/shared/midi';
 import { useLivePlay } from './play-surface/useLivePlay';

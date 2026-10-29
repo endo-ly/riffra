@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { FakeNativeApi } from '@/native/native-api-fake';
+import { FakeNativeApi } from '@/test/fake-native-api';
 import {
   acceptActivation,
   acceptBootstrap,

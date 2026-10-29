@@ -14,7 +14,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { defaultProjectState, defaultSession } from '@/native/browser-defaults';
 import { NativeCommandError } from '@/native/invoke';
-import { FakeNativeApi } from '@/native/native-api-fake';
+import { FakeNativeApi } from '@/test/fake-native-api';
 import type { BootstrapState, ProjectActivationResult } from '@/model/generated';
 import {
   openProjectPackage,

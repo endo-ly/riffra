@@ -3,7 +3,7 @@ import { TestSessionProvider } from '@/test/session-provider';
 import type { RenderResult } from '@/model/generated';
 import { canonicalState, defaultSession } from '@/native/browser-defaults';
 import { toAssetId } from '@/model/asset-id';
-import { FakeNativeApi } from '@/native/native-api-fake';
+import { FakeNativeApi } from '@/test/fake-native-api';
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useState } from 'react';

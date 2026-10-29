@@ -6,7 +6,7 @@ import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import type { AudioStatus, CreativeSession } from '@/model/generated';
 import { canonicalState, defaultSession } from '@/native/browser-defaults';
-import { FakeNativeApi, fakeAudioStatus } from '@/native/native-api-fake';
+import { FakeNativeApi, fakeAudioStatus } from '@/test/fake-native-api';
 import { useRecording } from './useRecording';
 
 function sessionWithTrack(armed: boolean): CreativeSession {

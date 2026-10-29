@@ -21,7 +21,7 @@ import {
 import { canonicalState, defaultSession } from '@/native/browser-defaults';
 import { toAssetId } from '@/model/asset-id';
 import type { TransportStatus } from '@/model/generated';
-import { FakeNativeApi } from '@/native/native-api-fake';
+import { FakeNativeApi } from '@/test/fake-native-api';
 import type { ArrangeSelection } from '@/features/arrange/model/selection';
 import { TRACK_HEADER_WIDTH } from '@/features/arrange/model/arrange-timeline';
 import { TRACK_COLOR_PALETTE } from '@/model/track-color';

@@ -20,8 +20,8 @@ import type {
   RuntimeStartupFinished,
   TransportStatus,
 } from '@/model/generated';
-import { defaultSession } from './browser-defaults';
-import type { NativeApi } from './native-api';
+import { defaultSession } from '@/native/browser-defaults';
+import type { NativeApi } from '@/native/native-api';
 import type { HostConnectionBootstrap } from '@/native/api/host-connection';
 import type { HostConnectionChangedEvent } from '@/native/api/host-connection';
 

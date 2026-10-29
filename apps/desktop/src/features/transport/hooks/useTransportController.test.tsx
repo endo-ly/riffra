@@ -5,7 +5,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { useRef } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { defaultSession } from '@/native/browser-defaults';
-import { FakeNativeApi } from '@/native/native-api-fake';
+import { FakeNativeApi } from '@/test/fake-native-api';
 import { useArrangementTransport } from './useArrangementTransport';
 import { useTransportController } from './useTransportController';
 

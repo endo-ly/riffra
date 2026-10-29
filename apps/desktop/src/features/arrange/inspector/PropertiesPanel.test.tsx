@@ -4,7 +4,7 @@ import { TestSessionProvider } from '@/test/session-provider';
 import type { AudioClip, MidiClip } from '@/model/generated';
 import { canonicalState, defaultSession } from '@/native/browser-defaults';
 import { toAssetId } from '@/model/asset-id';
-import { FakeNativeApi, fakeAudioStatus } from '@/native/native-api-fake';
+import { FakeNativeApi, fakeAudioStatus } from '@/test/fake-native-api';
 import '@testing-library/jest-dom/vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';

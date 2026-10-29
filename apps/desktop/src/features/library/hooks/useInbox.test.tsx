@@ -4,7 +4,7 @@ import { act, renderHook } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { useInbox } from './useInbox';
 import { toAssetId } from '@/model/asset-id';
-import { FakeNativeApi, fakeAudioStatus } from '@/native/native-api-fake';
+import { FakeNativeApi, fakeAudioStatus } from '@/test/fake-native-api';
 import type { RecordingAsset } from '@/model/generated';
 
 function recording(id: string, name: string): RecordingAsset {

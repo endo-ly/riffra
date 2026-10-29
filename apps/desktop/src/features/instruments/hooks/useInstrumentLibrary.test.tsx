@@ -3,7 +3,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { AudioStatus } from '@/model/generated';
-import { FakeNativeApi, fakeAudioStatus } from '@/native/native-api-fake';
+import { FakeNativeApi, fakeAudioStatus } from '@/test/fake-native-api';
 import { useInstrumentLibrary } from './useInstrumentLibrary';
 
 function useLibraryHarness(api: FakeNativeApi, hostGeneration = 1) {

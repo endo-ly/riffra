@@ -9,7 +9,7 @@ vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => undefi
 import { hostConnectionApi } from '@/native/api/host-connection';
 import { invokeHost } from '@/native/invoke';
 import type { LocalHostInfo } from '@/model/generated';
-import { FakeNativeApi } from '@/native/native-api-fake';
+import { FakeNativeApi } from '@/test/fake-native-api';
 
 import type { HostConnectionBootstrap } from '@/native/api/host-connection';
 import { useHostConnection } from './useHostConnection';

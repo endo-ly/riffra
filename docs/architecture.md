@@ -96,15 +96,17 @@ flowchart TD
 | riffra-desktop | Tauriシェル。WebViewとHostの接続(Embedded / Attached)、命令の窓口、イベントの橋渡し                                                                         |
 | riffra-cli     | Standalone編集、`riffra serve`、Attached接続、対話モード                                                                                                    |
 
-フロントエンドの構成は次の通りである。
+フロントエンドは、機能の状態と操作を feature にまとめ、機能に属さない契約や部品を共通領域へ置く。
+型と純粋なドメイン関数は React や Tauri から独立した `model/` に置き、Native API の境界や結合テスト基盤とは分ける。
 
-| 領域       | 責務                                                                                                                           |
-| ---------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `app`      | 起動処理とアプリ全体の組み立て                                                                                                 |
-| `features` | 機能ごとの状態・操作・UI・テスト(arrange、audio、browser、instruments、library、mixer、plugins、project、recording、transport) |
-| `shared`   | 機能に属さない共通のUI部品                                                                                                     |
-| `native`   | ReactとTauriの境界。命令の窓口とテスト用の偽装(FakeNativeApi)                                                                  |
-| `model`    | Rustから生成した型(`npm run gen:types`)                                                                                        |
+| 領域       | 責務                                                                                                                                    |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `app`      | 起動処理とアプリ全体の組み立て                                                                                                          |
+| `features` | 機能ごとの状態・操作・UI(arrange、audio、browser、devices、instruments、library、mixer、plugins、project、recording、render、transport) |
+| `model`    | Rustから生成した型と、時間・色・オートメーション・AssetIdなどの純粋な関数                                                               |
+| `shared`   | 共通UI、MIDI基礎処理、ブラウザ項目の受け渡し契約、セッション文脈、汎用hook                                                              |
+| `native`   | ReactとTauriの境界。Native APIと命令の窓口                                                                                              |
+| `test`     | FakeNativeApi、Provider、機能をまたぐ結合テスト                                                                                         |
 
 フロントエンドが下位のAPIに触れるのは `native/` 配下に限る。
 

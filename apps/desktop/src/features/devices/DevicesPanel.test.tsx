@@ -14,7 +14,7 @@ import type {
   Track,
 } from '@/model/generated';
 import { canonicalState, defaultSession } from '@/native/browser-defaults';
-import { FakeNativeApi } from '@/native/native-api-fake';
+import { FakeNativeApi } from '@/test/fake-native-api';
 import { resolveDeviceTarget } from './device-target';
 import { DevicesPanel } from './DevicesPanel';
 

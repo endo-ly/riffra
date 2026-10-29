@@ -1,6 +1,6 @@
 import { createElement, type ReactNode } from 'react';
 import { TestSessionProvider } from '@/test/session-provider';
-import { FakeNativeApi } from '@/native/native-api-fake';
+import { FakeNativeApi } from '@/test/fake-native-api';
 import type { AssetId } from '@/model/generated';
 // @vitest-environment jsdom
 
