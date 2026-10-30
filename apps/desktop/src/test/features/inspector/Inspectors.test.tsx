@@ -5,7 +5,7 @@ import type { ReactElement, ReactNode } from 'react';
 // @vitest-environment jsdom
 
 import type { EditorSelection } from '@/model/editor-selection';
-import type { CanonicalState, CreativeSession } from '@/model/generated';
+import type { CreativeSession } from '@/model/generated';
 import { canonicalState, defaultSession } from '@/native/browser-defaults';
 import { toAssetId } from '@/model/asset-id';
 import {
@@ -103,10 +103,8 @@ function recordingSession(): CreativeSession {
   return session;
 }
 
-function renderWithSession(api: FakeNativeApi, element: ReactElement, canonical?: CanonicalState) {
-  const store = createTestSessionStore(api, {
-    readCanonical: canonical ? () => canonical : undefined,
-  });
+function renderWithSession(api: FakeNativeApi, element: ReactElement) {
+  const store = createTestSessionStore(api);
   return render(element, {
     wrapper: ({ children }: { children: ReactNode }) => (
       <TestSessionProvider api={api} store={store}>
@@ -168,16 +166,8 @@ describe('Arrange Inspectors', () => {
       loopEnabled: false,
     });
     const api = createFakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
-    api.updateMidiClip = vi.fn().mockResolvedValue({
-      canonical: canonicalState(session),
-      createdEntityIds: {},
-      projection: { state: 'notRequired' },
-    });
-    api.updateAudioClip = vi.fn().mockResolvedValue({
-      canonical: canonicalState(session),
-      createdEntityIds: {},
-      projection: { state: 'notRequired' },
-    });
+    api.updateMidiClip = vi.fn().mockResolvedValue(api.mutationResult(session));
+    api.updateAudioClip = vi.fn().mockResolvedValue(api.mutationResult(session));
     const clipProps = {
       session,
       selectedClipIds: ['midi:1'] as string[],
@@ -233,16 +223,8 @@ describe('Arrange Inspectors', () => {
       loopEnabled: true,
     });
     const api = createFakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
-    api.updateMidiClip = vi.fn().mockResolvedValue({
-      canonical: canonicalState(session),
-      createdEntityIds: {},
-      projection: { state: 'notRequired' },
-    });
-    api.removeTimelineClips = vi.fn().mockResolvedValue({
-      canonical: canonicalState(session),
-      createdEntityIds: {},
-      projection: { state: 'notRequired' },
-    });
+    api.updateMidiClip = vi.fn().mockResolvedValue(api.mutationResult(session));
+    api.removeTimelineClips = vi.fn().mockResolvedValue(api.mutationResult(session));
     const setSelectedClipIds = vi.fn();
     renderWithSession(
       api,
@@ -280,11 +262,7 @@ describe('Arrange Inspectors', () => {
     // Arrange
     const session = recordingSession();
     const api = createFakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
-    api.updateAudioClip = vi.fn().mockResolvedValue({
-      canonical: canonicalState(session),
-      createdEntityIds: {},
-      projection: { state: 'notRequired' },
-    });
+    api.updateAudioClip = vi.fn().mockResolvedValue(api.mutationResult(session));
     renderWithSession(
       api,
       <AudioClipInspector
@@ -292,7 +270,6 @@ describe('Arrange Inspectors', () => {
         selectedClipIds={['clip:a']}
         setSelectedClipIds={() => undefined}
       />,
-      canonicalState(session),
     );
     const slider = screen.getByLabelText('Clip gain');
 
@@ -333,10 +310,7 @@ describe('Arrange Inspectors', () => {
     const api = createFakeNativeApi({
       bootstrapState: { canonical: canonicalState(initial) },
       responses: {
-        setAudioClipTakeVariant: {
-          canonical: canonicalState(canonical),
-          projection: { state: 'notRequired' as const },
-        },
+        setAudioClipTakeVariant: () => api.mutationResult(canonical),
       },
     });
     function Harness() {

@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { canonicalState, defaultSession } from '@/native/browser-defaults';
 import { toAssetId } from '@/model/asset-id';
 import { createFakeNativeApi, type FakeNativeApi } from '@/test/support/fake-native-api';
-import { mutationResult, renderWorkspace } from '@/test/support/workspace';
+import { renderWorkspace } from '@/test/support/workspace';
 
 afterEach(cleanup);
 
@@ -56,7 +56,7 @@ describe('EditorWorkspace', () => {
       createArgs = args;
       api.calls.push('createMidiClip');
       return {
-        ...mutationResult(createdSession),
+        ...api.mutationResult(createdSession),
         createdEntityIds: { midiClips: [createdSession.arrangement.midiClips[0]!.id] },
       };
     };
@@ -122,7 +122,7 @@ describe('EditorWorkspace', () => {
       createArgs = args;
       api.calls.push('createMidiClip');
       return {
-        ...mutationResult(createdSession),
+        ...api.mutationResult(createdSession),
         createdEntityIds: { midiClips: [createdSession.arrangement.midiClips[0]!.id] },
       };
     };
@@ -289,7 +289,7 @@ describe('EditorWorkspace', () => {
       (track) => track.id !== 'track:instrument-delete',
     );
     afterDelete.arrangement.midiClips = [];
-    api.removeTrack = vi.fn().mockResolvedValue(mutationResult(afterDelete));
+    api.removeTrack = vi.fn().mockResolvedValue(api.mutationResult(afterDelete));
     renderWorkspace(api, { session });
 
     // Act

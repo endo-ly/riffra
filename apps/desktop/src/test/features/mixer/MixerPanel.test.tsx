@@ -1,7 +1,7 @@
 import { createTestSessionStore, TestSessionProvider } from '@/test/support/session-provider';
 // @vitest-environment jsdom
 import type { CreativeSession, EffectOwner, MixBus } from '@/model/generated';
-import { canonicalState, defaultSession } from '@/native/browser-defaults';
+import { defaultSession } from '@/native/browser-defaults';
 import { createFakeNativeApi } from '@/test/support/fake-native-api';
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -30,11 +30,7 @@ it('edits Group and Send routes, commits their controls, and opens Bus and Maste
     effects: [],
   });
   const api = createFakeNativeApi();
-  const receipt = () => ({
-    canonical: canonicalState(structuredClone(session)),
-    createdEntityIds: {},
-    projection: { state: 'notRequired' as const },
-  });
+  const receipt = () => api.mutationResult(structuredClone(session));
   api.addMixBus = vi.fn(async (name, kind) => {
     session.arrangement.mixer.buses.push({
       id: `bus:${kind}`,
@@ -93,7 +89,10 @@ it('edits Group and Send routes, commits their controls, and opens Bus and Maste
     const [current, setCurrent] = useState<CreativeSession>(structuredClone(session));
     const [owner, setOwner] = useState<EffectOwner | null>(null);
     const [store] = useState(() =>
-      createTestSessionStore(api, { applyCanonical: (state) => setCurrent(state.session) }),
+      createTestSessionStore(api, {
+        session: current,
+        applyCanonical: (state) => setCurrent(state.session),
+      }),
     );
     return (
       <TestSessionProvider api={api} store={store}>

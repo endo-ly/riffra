@@ -17,7 +17,7 @@ import { canonicalState, defaultSession } from '@/native/browser-defaults';
 import { toAssetId } from '@/model/asset-id';
 import { createFakeNativeApi, type FakeNativeApi } from '@/test/support/fake-native-api';
 import { TRACK_HEADER_WIDTH } from '@/features/timeline/model/timeline-layout';
-import { mutationResult, offGridAudioMoveSession, renderWorkspace } from '@/test/support/workspace';
+import { offGridAudioMoveSession, renderWorkspace } from '@/test/support/workspace';
 
 afterEach(cleanup);
 
@@ -111,10 +111,12 @@ describe('TimelineView', () => {
         mergeAudioClip('clip:audio:second', 1_920, 48_000),
       );
       const api = createFakeNativeApi();
-      const update = vi.spyOn(api, 'updateAudioClip').mockResolvedValue(mutationResult(session));
+      const update = vi
+        .spyOn(api, 'updateAudioClip')
+        .mockResolvedValue(api.mutationResult(session));
       const remove = vi
         .spyOn(api, 'removeTimelineClips')
-        .mockResolvedValue(mutationResult(session));
+        .mockResolvedValue(api.mutationResult(session));
       const { container } = renderWorkspace(api, { session });
       const selectedClipId = direction === 'next' ? 'clip:audio:first' : 'clip:audio:second';
 
@@ -143,10 +145,10 @@ describe('TimelineView', () => {
         mergeMidiClip('clip:midi:second', 960, 1_920, 'note:second', 60, 'event:second', 200),
       );
       const api = createFakeNativeApi();
-      const update = vi.spyOn(api, 'updateMidiClip').mockResolvedValue(mutationResult(session));
+      const update = vi.spyOn(api, 'updateMidiClip').mockResolvedValue(api.mutationResult(session));
       const remove = vi
         .spyOn(api, 'removeTimelineClips')
-        .mockResolvedValue(mutationResult(session));
+        .mockResolvedValue(api.mutationResult(session));
       const { container } = renderWorkspace(api, { session });
       const selectedClipId = direction === 'next' ? 'clip:midi:first' : 'clip:midi:second';
 
@@ -251,7 +253,7 @@ describe('TimelineView', () => {
 
       const next = structuredClone(session);
       next.arrangement.tracks.find((track) => track.id === 'track:soloed')!.solo = solo;
-      await act(async () => resolveUpdate(mutationResult(next)));
+      await act(async () => resolveUpdate(api.mutationResult(next)));
       expect(
         container.querySelector('[data-track-id="track:other"]')?.hasAttribute('data-inaudible'),
       ).toBe(solo);
@@ -512,7 +514,7 @@ describe('TimelineView', () => {
     const api = createFakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
     api.setResponse('moveAudioClips', (moves: AudioClipMove[]) => {
       movedClips = moves;
-      return mutationResult(session);
+      return api.mutationResult(session);
     });
     const { container } = renderWorkspace(api, { session });
     const rows = [...container.querySelectorAll<HTMLElement>('[data-arrange-track]')];
@@ -541,7 +543,7 @@ describe('TimelineView', () => {
     const api = createFakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
     api.setResponse('moveAudioClips', (moves: AudioClipMove[]) => {
       movedClips = moves;
-      return mutationResult(session);
+      return api.mutationResult(session);
     });
     const { container } = renderWorkspace(api, { session });
     const rows = [...container.querySelectorAll<HTMLElement>('[data-arrange-track]')];
@@ -590,7 +592,7 @@ describe('TimelineView', () => {
     api.addTrack = async (...args) => {
       addArgs = args;
       api.calls.push('addTrack');
-      return mutationResult(session);
+      return api.mutationResult(session);
     };
     const { container } = renderWorkspace(api, { session });
     const timeline = container.querySelector('[data-arrange-timeline]')!;
@@ -623,11 +625,11 @@ describe('TimelineView', () => {
             endTick: loopUpdates === 1 ? 3840 : 2880,
           }
         : { enabled: false, startTick: 0, endTick: 0 };
-      return mutationResult(canonical);
+      return api.mutationResult(canonical);
     });
     const widenedPunch = structuredClone(session);
     widenedPunch.arrangement.punchRange = { startTick: 0, endTick: 2880 };
-    api.setResponse('updateTimelinePunchRange', () => mutationResult(widenedPunch));
+    api.setResponse('updateTimelinePunchRange', () => api.mutationResult(widenedPunch));
     renderWorkspace(api, { session });
 
     const startHandle = screen.getByRole('slider', { name: 'Loop start' });
@@ -727,9 +729,9 @@ describe('TimelineView', () => {
     const api = createFakeNativeApi({
       bootstrapState: { canonical: canonicalState(initial) },
       responses: {
-        addMarker: mutationResult(added),
-        updateMarker: mutationResult(renamed),
-        removeMarker: mutationResult(removed),
+        addMarker: () => api.mutationResult(added),
+        updateMarker: () => api.mutationResult(renamed),
+        removeMarker: () => api.mutationResult(removed),
       },
     });
     renderWorkspace(api);

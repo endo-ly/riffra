@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import type { ArrangementMutationResult, CreativeSession } from '@/model/generated';
+import type { CreativeSession } from '@/model/generated';
 import { defaultSession } from '@/native/browser-defaults';
 import { useSessionRuntime } from '@/app/runtime/useSessionRuntime';
 import { useRuntimeProjectionToast } from '@/app/runtime/useRuntimeProjectionToast';
@@ -43,19 +43,6 @@ export function renderWorkspace(api: FakeNativeApi, options: WorkspaceRenderOpti
       },
     },
   );
-}
-
-export function mutationResult(session: CreativeSession): ArrangementMutationResult {
-  return {
-    canonical: {
-      projectId: '01900000-0000-7000-8000-000000000001',
-      session,
-      sequence: 0,
-      history: { canUndo: false, canRedo: false },
-    },
-    createdEntityIds: {},
-    projection: { state: 'notRequired' },
-  };
 }
 
 /** Two Audio Tracks with one clip whose start sits between snap boundaries. */

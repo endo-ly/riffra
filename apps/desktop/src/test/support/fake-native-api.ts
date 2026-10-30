@@ -1,5 +1,6 @@
 import type {
   ArrangementMutationResult,
+  CreativeSession,
   AudioMeterFrame,
   AudioStatus,
   BackgroundJobStatus,
@@ -161,6 +162,7 @@ class FakeNativeControls {
   private readonly listeners = new Map<keyof EventPayloads, Set<(value: never) => void>>();
   private readonly jobs = new Map<string, BackgroundJobStatus>();
   private jobSequence = 0;
+  private canonicalSequence = 0;
 
   constructor(options: FakeNativeApiOptions = {}) {
     this.audio = options.audio ?? fakeAudioStatus();
@@ -168,6 +170,7 @@ class FakeNativeControls {
     this.plugins = options.plugins ?? [];
     this.missing = options.missingDependencies ?? [];
     this.bootstrapState = mergeBootstrap(options.bootstrapState);
+    this.canonicalSequence = this.bootstrapState.canonical.sequence;
     this.instruments = options.instruments ?? defaultInstrumentLibraryItems();
     this.instrumentCollections = options.instrumentCollections ?? [];
     this.hostConnectionState = {
@@ -279,6 +282,22 @@ class FakeNativeControls {
     this.instruments = this.instruments.map((item) =>
       item.id === instrument.id ? instrument : item,
     );
+  }
+
+  /** Answers a mutation the way the Host does: the given session with the next canonical sequence. */
+  mutationResult(
+    session: CreativeSession,
+    createdEntityIds: ArrangementMutationResult['createdEntityIds'] = {},
+  ): ArrangementMutationResult {
+    return {
+      canonical: {
+        ...this.bootstrapState.canonical,
+        session,
+        sequence: ++this.canonicalSequence,
+      },
+      createdEntityIds,
+      projection: { state: 'notRequired' },
+    };
   }
 
   setResponse<K extends keyof NativeApi>(name: K, response: ResponseValue): void {
@@ -618,20 +637,14 @@ class FakeNativeControls {
 
     if (name === 'stopArrangeRecording') {
       return Promise.resolve({
-        canonical: this.bootstrapState.canonical,
+        canonical: this.mutationResult(this.bootstrapState.canonical.session).canonical,
         audio: this.audio,
         projection: { state: 'notRequired' },
         finalization: { state: 'notRequired' },
       });
     }
-    if (arrangementMutationMethodNames.has(name)) {
-      const result: ArrangementMutationResult = {
-        canonical: this.bootstrapState.canonical,
-        createdEntityIds: {},
-        projection: { state: 'notRequired' },
-      };
-      return Promise.resolve(result);
-    }
+    if (arrangementMutationMethodNames.has(name))
+      return Promise.resolve(this.mutationResult(this.bootstrapState.canonical.session));
     if (audioMethodNames.has(name)) return Promise.resolve(this.audio);
     if (voidMethodNames.has(name)) return Promise.resolve(undefined);
     throw new Error(`Unconfigured NativeApi method: ${String(name)}`);
