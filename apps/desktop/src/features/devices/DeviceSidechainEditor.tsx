@@ -4,7 +4,7 @@ import type {
   DeviceSidechainCapability,
   EffectOwner,
 } from '@/model/generated';
-import { useSessionContext } from '@/shared/session/session-context';
+import { useSession, useSessionContext } from '@/shared/session/session-context';
 import { SidechainSendControls } from '@/features/mixer/SidechainSendControls';
 import controls from '@/shared/ui/controls.module.css';
 import styles from './Devices.module.css';
@@ -28,8 +28,8 @@ export function DeviceSidechainEditor({
   commit,
   onOpenAutomation,
 }: DeviceSidechainEditorProps) {
-  const { api, getCanonicalState } = useSessionContext();
-  const sessionId = getCanonicalState()?.session.sessionId ?? '';
+  const { api } = useSessionContext();
+  const sessionId = useSession((state) => state.project.boot?.canonical.session.sessionId ?? '');
   const sends = arrangement.mixer.sidechainSends.filter((send) => send.targetDeviceId === deviceId);
   if (isInstrument || (!capabilities.available && sends.length === 0)) return null;
   const canAddSource = capabilities.mono || capabilities.stereo;

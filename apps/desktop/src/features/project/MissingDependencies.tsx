@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useSession } from '@/shared/session/session-context';
 import clsx from 'clsx';
 import type { MissingDependency } from '@/model/generated';
 import { Icon } from '@/shared/ui/primitives';
@@ -19,7 +20,20 @@ interface MissingDependenciesProps {
  * user relink, replace, ignore, or keep a missing plugin as a disabled
  * placeholder.
  */
-export function MissingDependencies({
+export function MissingDependencies() {
+  const missing = useSession((state) => state.missing);
+  return (
+    <MissingDependenciesView
+      missing={missing.items}
+      onRelink={(item, path) => void missing.relink(item, path)}
+      onReplacePlugin={(id, path) => void missing.replacePlugin(id, path)}
+      onDisablePlugin={(id) => void missing.disablePlugin(id)}
+      onIgnore={missing.ignore}
+    />
+  );
+}
+
+export function MissingDependenciesView({
   missing,
   onRelink,
   onReplacePlugin,

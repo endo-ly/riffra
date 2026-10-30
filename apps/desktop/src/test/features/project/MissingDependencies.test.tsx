@@ -5,7 +5,7 @@ import { cleanup, render, screen, waitFor, within } from '@testing-library/react
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { MissingDependency } from '@/model/generated';
-import { MissingDependencies } from '@/features/project/MissingDependencies';
+import { MissingDependenciesView } from '@/features/project/MissingDependencies';
 
 afterEach(cleanup);
 
@@ -29,7 +29,7 @@ const missing: MissingDependency[] = [
 describe('MissingDependencies (PRJ-004)', () => {
   it('surfaces every missing file and plugin, keeping the project open', () => {
     render(
-      <MissingDependencies
+      <MissingDependenciesView
         missing={missing}
         onRelink={vi.fn()}
         onReplacePlugin={vi.fn()}
@@ -47,7 +47,7 @@ describe('MissingDependencies (PRJ-004)', () => {
   it('relinks a missing reference to the replacement path the user provides', async () => {
     const onRelink = vi.fn();
     render(
-      <MissingDependencies
+      <MissingDependenciesView
         missing={missing}
         onRelink={onRelink}
         onReplacePlugin={vi.fn()}
@@ -66,7 +66,7 @@ describe('MissingDependencies (PRJ-004)', () => {
   it('keeps a missing plugin as a disabled placeholder when requested', async () => {
     const onDisablePlugin = vi.fn();
     render(
-      <MissingDependencies
+      <MissingDependenciesView
         missing={missing}
         onRelink={vi.fn()}
         onReplacePlugin={vi.fn()}
@@ -83,7 +83,7 @@ describe('MissingDependencies (PRJ-004)', () => {
     const onRelink = vi.fn();
     const onReplacePlugin = vi.fn();
     render(
-      <MissingDependencies
+      <MissingDependenciesView
         missing={missing}
         onRelink={onRelink}
         onReplacePlugin={onReplacePlugin}
@@ -104,7 +104,7 @@ describe('MissingDependencies (PRJ-004)', () => {
   it('ignores an entry so it no longer blocks the user', async () => {
     const onIgnore = vi.fn();
     render(
-      <MissingDependencies
+      <MissingDependenciesView
         missing={missing}
         onRelink={vi.fn()}
         onReplacePlugin={vi.fn()}

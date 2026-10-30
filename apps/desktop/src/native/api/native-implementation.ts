@@ -48,3 +48,5 @@ export function createNativeApi(): NativeApi {
     ...hostConnectionApi,
   };
 }
+
+export const nativeApiMethodNames = Object.keys(createNativeApi()) as (keyof NativeApi)[];

@@ -6,7 +6,7 @@ import type {
   RecordingTakeRecord,
 } from '@/model/generated';
 import { errorText } from '@/shared/errors';
-import { useSessionContext } from '@/shared/session/session-context';
+import { useSession, useSessionContext, useSessionStore } from '@/shared/session/session-context';
 import { Icon } from '@/shared/ui/primitives';
 import clsx from 'clsx';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -81,7 +81,10 @@ function defaultVariantForTake(
 }
 
 export function TakeInspector(props: TakeInspectorProps) {
-  const { api, commit: sessionCommit, hostGeneration } = useSessionContext();
+  const { api, commit: sessionCommit } = useSessionContext();
+  const store = useSessionStore();
+  const previewing = useSession((state) => state.audio.status.previewing);
+  const hostGeneration = useSession((state) => state.host.connection.generation);
   const { arrangement } = props.session;
   const groupContext = useMemo(() => {
     const selectedClipIds = props.selection.kind === 'clips' ? props.selection.clipIds : [];
@@ -178,11 +181,8 @@ export function TakeInspector(props: TakeInspectorProps) {
   }, [hostGeneration, resetAudition]);
 
   useEffect(() => {
-    return api.onAudioStatus((status) => {
-      if (status.previewing || auditionRef.current === null) return;
-      resetAudition();
-    });
-  }, [api, resetAudition]);
+    if (!previewing && auditionRef.current !== null) resetAudition();
+  }, [previewing, resetAudition]);
 
   const contextKey = context
     ? `${context.recordingSession.id}:${context.selectedTrackId}`
@@ -243,8 +243,9 @@ export function TakeInspector(props: TakeInspectorProps) {
         looped: false,
       });
     });
-    runOperation(operation, () => {
-      if (auditionRequest.current !== requestId) return;
+    runOperation(operation, (status) => {
+      if (auditionRequest.current !== requestId || !status) return;
+      store.getState().audio.setStatus(status);
       const nextAudition = { takeId: take.id, variant };
       auditionRef.current = nextAudition;
       setAudition(nextAudition);

@@ -5,7 +5,10 @@ import type {
   EffectOwner,
   MixBusKind,
 } from '@/model/generated';
-import { useSessionContext } from '@/shared/session/session-context';
+import { useSession, useSessionContext } from '@/shared/session/session-context';
+import { useShallow } from 'zustand/react/shallow';
+import { selectMissingDeviceIds } from '@/shared/session/selectors';
+import { ownerSelection, selectionOwner } from '@/model/editor-selection';
 import controls from '@/shared/ui/controls.module.css';
 import { useState } from 'react';
 import { MixdownDialog } from '@/features/render/MixdownDialog';
@@ -28,7 +31,33 @@ interface MixerPanelProps {
   disabled?: boolean;
 }
 
-export function MixerPanel(props: MixerPanelProps) {
+export function MixerPanel() {
+  const session = useSession((state) => state.project.boot!.canonical.session);
+  const workspace = useSession((state) => state.workspace);
+  const missingDeviceIds = useSession(useShallow(selectMissingDeviceIds));
+  const selectedTrackId = workspace.selection.kind === 'track' ? workspace.selection.trackId : null;
+  return (
+    <MixerPanelView
+      session={session}
+      selectedTrackId={selectedTrackId}
+      selectedOwner={selectionOwner(workspace.selection)}
+      onSelectOwner={(owner) => workspace.setSelection(ownerSelection(owner))}
+      onOpenOwnerDevices={(owner) => {
+        workspace.setSelection(ownerSelection(owner));
+        workspace.openDevices();
+      }}
+      missingDeviceIds={missingDeviceIds}
+      onSelectTrack={(trackId) => workspace.setSelection({ kind: 'track', trackId })}
+      onOpenDevices={(trackId) => {
+        workspace.setSelection({ kind: 'track', trackId });
+        workspace.openDevices();
+      }}
+      onOpenAutomation={workspace.openAutomation}
+    />
+  );
+}
+
+export function MixerPanelView(props: MixerPanelProps) {
   const { api, commit: sessionCommit } = useSessionContext();
   const { arrangement } = props.session;
   const [routingTrackId, setRoutingTrackId] = useState<string | null>(null);

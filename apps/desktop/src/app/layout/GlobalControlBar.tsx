@@ -1,16 +1,8 @@
 import clsx from 'clsx';
-import type {
-  AudioStatus,
-  CreativeSession,
-  HistoryState,
-  HostConnectionState,
-  HostTarget,
-  LocalHostInfo,
-  ProjectActivationResult,
-  ProjectState,
-} from '@/model/generated';
+import type { AudioStatus } from '@/model/generated';
+import { useSession } from '@/shared/session/session-context';
+import { isEmergencyMuteActive } from '@/shared/audio/audio-safety';
 
-import type { HostConnectionBootstrap } from '@/native/api/host-connection';
 import { AudioMonitor } from '@/features/audio/AudioMonitor';
 import { TransportControls } from '@/features/transport/TransportControls';
 import { Icon } from '@/shared/ui/primitives';
@@ -18,47 +10,31 @@ import { ProjectHostSelector } from './ProjectHostSelector';
 import styles from './GlobalControlBar.module.css';
 
 interface GlobalControlBarProps {
-  session: CreativeSession;
-  audio: AudioStatus;
-  isMuted: boolean;
-  historyState: HistoryState;
-  onUndo: () => void;
-  onRedo: () => void;
-  onExportProject: () => void;
-  onImportScore: () => void;
-  onImportProject: () => void;
-  onToggleMute: () => void;
-  onResetFeedback: () => void;
   onOpenCommand: () => void;
   onOpenAudioSettings: () => void;
   audioSettingsOpen: boolean;
-  transportPlaying: boolean;
-  transportStarting: boolean;
-  transportPaused: boolean;
-  playheadTick: number;
-  onPlay: () => void;
-  onPause: () => void;
-  onStop: () => void;
-  onGoToStart: () => void;
-  recordingCommandPending: boolean;
-  onToggleRecording: () => void;
-  hostConnectionState: HostConnectionState;
-  localHosts: LocalHostInfo[];
-  hostSwitching: boolean;
-  hostConnectionError: string | null;
-  onRefresh: () => Promise<unknown>;
-  onSwitchHost: (target: HostTarget) => Promise<HostConnectionBootstrap | null>;
-  onReconnectHost: () => Promise<unknown>;
-  hostConnected: boolean;
-  projectState: ProjectState | null;
-  projectSwitching: boolean;
-  projectError: string | null;
-  onCreateProject: (name?: string) => Promise<ProjectActivationResult | null>;
-  onOpenProject: (projectId: string) => Promise<ProjectActivationResult | null>;
-  onRenameProject: (name: string) => Promise<unknown>;
 }
 
-export function GlobalControlBar(props: GlobalControlBarProps) {
+export function GlobalControlBar(ui: GlobalControlBarProps) {
+  const project = useSession((state) => state.project);
+  const host = useSession((state) => state.host);
+  const audio = useSession((state) => state.audio);
+  const recording = useSession((state) => state.recording);
+  const props = {
+    ...ui,
+    audio: audio.status,
+    session: project.boot!.canonical.session,
+    historyState: project.boot!.canonical.history,
+    hostConnected: host.connection.mode !== 'disconnected' && !host.switching,
+    projectSwitching: project.switching,
+    isMuted: isEmergencyMuteActive(audio.status),
+    recordingCommandPending: recording.commandPending || recording.stopPending,
+    onToggleRecording: recording.toggle,
+    onUndo: project.undo,
+    onRedo: project.redo,
+    onToggleMute: audio.toggleMute,
+    onResetFeedback: audio.resetFeedback,
+  };
   const audioStateLabel = getAudioStateLabel(props.audio.state);
   const audioDetail = props.audio.feedbackSuspected
     ? props.audio.message
@@ -76,24 +52,7 @@ export function GlobalControlBar(props: GlobalControlBarProps) {
       data-global-control-bar
     >
       <div className={styles.projectControls}>
-        <ProjectHostSelector
-          state={props.hostConnectionState}
-          hosts={props.localHosts}
-          switching={props.hostSwitching}
-          error={props.hostConnectionError}
-          onRefresh={props.onRefresh}
-          onSwitch={props.onSwitchHost}
-          onReconnect={props.onReconnectHost}
-          onExportProject={props.onExportProject}
-          onImportScore={props.onImportScore}
-          onImportProject={props.onImportProject}
-          projectState={props.projectState}
-          projectSwitching={props.projectSwitching}
-          projectError={props.projectError}
-          onCreateProject={props.onCreateProject}
-          onOpenProject={props.onOpenProject}
-          onRenameProject={props.onRenameProject}
-        />
+        <ProjectHostSelector />
         <fieldset
           className={styles.projectHostBoundControls}
           disabled={!props.hostConnected || props.projectSwitching}
@@ -128,16 +87,8 @@ export function GlobalControlBar(props: GlobalControlBarProps) {
         <TransportControls
           session={props.session}
           recordingActive={props.audio.recording.active || props.audio.recording.processing}
-          transportPlaying={props.transportPlaying}
-          transportStarting={props.transportStarting}
-          transportPaused={props.transportPaused}
-          onPlay={props.onPlay}
-          onPause={props.onPause}
-          onStop={props.onStop}
-          onGoToStart={props.onGoToStart}
           recordingCommandPending={props.recordingCommandPending}
           onToggleRecording={props.onToggleRecording}
-          positionTick={props.playheadTick}
         />
       </fieldset>
 

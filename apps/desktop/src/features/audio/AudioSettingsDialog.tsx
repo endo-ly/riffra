@@ -1,4 +1,5 @@
 import { errorText } from '@/shared/errors';
+import { useSession } from '@/shared/session/session-context';
 import { useEffect, useRef, useState } from 'react';
 import type {
   AudioDeviceProbe,
@@ -39,7 +40,31 @@ interface AudioSettingsDialogProps {
   onRecover: () => Promise<AudioStatus>;
 }
 
-export function AudioSettingsDialog({
+export function AudioSettingsDialog({ onClose }: { onClose: () => void }) {
+  const audio = useSession((state) => state.audio);
+  const recording = useSession((state) => state.recording);
+  const safeMode = useSession((state) => state.project.boot?.safeMode ?? false);
+  return (
+    <AudioSettingsDialogView
+      audio={audio.status}
+      probe={audio.probe}
+      safeMode={safeMode}
+      recordingActive={
+        audio.status.recording.active ||
+        audio.status.recording.processing ||
+        recording.commandPending ||
+        recording.stopPending
+      }
+      onClose={onClose}
+      onRefresh={audio.refreshDevices}
+      onProbeChannels={audio.probeChannels}
+      onApply={audio.selectDriver}
+      onRecover={audio.recover}
+    />
+  );
+}
+
+export function AudioSettingsDialogView({
   audio,
   probe,
   safeMode,

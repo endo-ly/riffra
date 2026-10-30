@@ -1,5 +1,5 @@
 import { createElement, type ReactNode } from 'react';
-import { TestSessionProvider } from '@/test/support/session-provider';
+import { createTestSessionStore, TestSessionProvider } from '@/test/support/session-provider';
 // @vitest-environment jsdom
 
 import { act, renderHook, waitFor } from '@testing-library/react';
@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ArrangementMutationResult, CanonicalState } from '@/model/generated';
 import type { CreativeSession } from '@/model/generated';
 import { canonicalState, defaultSession } from '@/native/browser-defaults';
-import { FakeNativeApi } from '@/test/support/fake-native-api';
+import { createFakeNativeApi, type FakeNativeApi } from '@/test/support/fake-native-api';
 import { usePreviewedValue } from '@/shared/session/usePreviewedValue';
 
 function mutationResult(canonical: CanonicalState): ArrangementMutationResult {
@@ -29,6 +29,10 @@ function renderMasterValue(
     localCanonical = canonical;
     options.apply?.(canonical);
   };
+  const store = createTestSessionStore(api, {
+    applyCanonical: applyCanonicalState,
+    readCanonical: options.canonical ?? (() => localCanonical),
+  });
   return renderHook(
     () =>
       usePreviewedValue({
@@ -42,12 +46,7 @@ function renderMasterValue(
       }),
     {
       wrapper: ({ children }: { children: ReactNode }) =>
-        createElement(TestSessionProvider, {
-          api,
-          applyCanonicalState,
-          getCanonicalState: options.canonical ?? (() => localCanonical),
-          children,
-        }),
+        createElement(TestSessionProvider, { api, store, children }),
     },
   );
 }
@@ -61,7 +60,7 @@ describe('usePreviewedValue', () => {
     stale.settings.masterDb = -6;
     let current = { ...canonicalState(initial), sequence: 0 };
     let resolveCommit!: (result: ArrangementMutationResult) => void;
-    const api = new FakeNativeApi({
+    const api = createFakeNativeApi({
       responses: {
         previewMasterGainDb: () => undefined,
         setMasterGainDb: () =>
@@ -103,7 +102,7 @@ describe('usePreviewedValue', () => {
   });
 
   it('does not commit pointerup or blur after an operation is canceled', async () => {
-    const api = new FakeNativeApi({
+    const api = createFakeNativeApi({
       responses: {
         previewMasterGainDb: () => undefined,
         setMasterGainDb: () => mutationResult(canonicalState(defaultSession())),
@@ -128,7 +127,7 @@ describe('usePreviewedValue', () => {
     const session = defaultSession();
     const committed = structuredClone(session);
     committed.settings.masterDb = -6;
-    const api = new FakeNativeApi({
+    const api = createFakeNativeApi({
       responses: {
         previewMasterGainDb: () => undefined,
         setMasterGainDb: () => ({
