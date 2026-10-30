@@ -1,20 +1,15 @@
-import type { CreativeSession } from '@/model/generated';
 import { MASTER_GAIN_DB } from '@/model/mix-range';
+import { useSession } from '@/shared/session/session-context';
 import { useAudioMeters } from '@/shared/audio/audio-meters';
 import { Meter } from '@/shared/ui/primitives';
 import { ValueSlider } from '@/shared/ui/ValueSlider';
 import { useMasterGainValue } from './hooks/useMasterGainValue';
 import styles from './AudioMonitor.module.css';
 
-interface AudioMonitorProps {
-  session: CreativeSession;
-  disabled?: boolean;
-}
-
-export function AudioMonitor(props: AudioMonitorProps) {
-  const { session } = props;
+export function AudioMonitor({ disabled }: { disabled?: boolean }) {
+  const session = useSession((state) => state.project.boot!.canonical.session);
   const meters = useAudioMeters();
-  const master = useMasterGainValue(session, { disabled: props.disabled });
+  const master = useMasterGainValue(session, { disabled });
 
   return (
     <div className={styles.monitor} data-audio-monitor aria-label="Audio monitor">
@@ -30,7 +25,7 @@ export function AudioMonitor(props: AudioMonitorProps) {
         <ValueSlider
           control={master}
           range={MASTER_GAIN_DB}
-          disabled={props.disabled}
+          disabled={disabled}
           ariaLabel="Master volume"
         />
       </label>

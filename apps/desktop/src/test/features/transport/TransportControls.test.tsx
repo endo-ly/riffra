@@ -1,9 +1,8 @@
-import { createTestSessionStore, TestSessionProvider } from '@/test/support/session-provider';
+import { TestSessionProvider } from '@/test/support/session-provider';
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TransportControls } from '@/features/transport/TransportControls';
 import { canonicalState, defaultSession } from '@/native/browser-defaults';
@@ -16,19 +15,9 @@ import {
 afterEach(cleanup);
 
 function Harness({ api }: { api: FakeNativeApi }) {
-  const initial = defaultSession();
-  const [session, setSession] = useState(initial);
-  const [store] = useState(() =>
-    createTestSessionStore(api, { applyCanonical: (canonical) => setSession(canonical.session) }),
-  );
   return (
-    <TestSessionProvider api={api} store={store}>
-      <TransportControls
-        session={session}
-        recordingActive={api.audio.recording.active}
-        recordingCommandPending={false}
-        onToggleRecording={() => undefined}
-      />
+    <TestSessionProvider api={api}>
+      <TransportControls />
     </TestSessionProvider>
   );
 }

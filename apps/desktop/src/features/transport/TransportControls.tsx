@@ -13,17 +13,15 @@ const METRONOME_SOUNDS: { sound: MetronomeSound; label: string }[] = [
   { sound: 'wood', label: 'Wood' },
 ];
 
-interface TransportControlsProps {
-  session: CreativeSession;
-  recordingActive: boolean;
-  recordingCommandPending: boolean;
-  onToggleRecording: () => void;
-}
-
-export function TransportControls(props: TransportControlsProps) {
-  const { session, recordingActive, recordingCommandPending, onToggleRecording } = props;
+export function TransportControls() {
   const { api, commit } = useSessionContext();
+  const session = useSession((state) => state.project.boot!.canonical.session);
   const transport = useSession((state) => state.transport);
+  const recording = useSession((state) => state.recording);
+  const audioRecording = useSession((state) => state.audio.status.recording);
+  const recordingActive = audioRecording.active || audioRecording.processing;
+  const recordingCommandPending = recording.commandPending || recording.stopPending;
+  const onToggleRecording = recording.toggle;
   const transportPlaying = transport.status?.state === 'playing';
   const transportStarting = transport.status?.state === 'starting';
   const transportPaused = transport.status?.state === 'paused';

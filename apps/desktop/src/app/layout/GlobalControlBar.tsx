@@ -20,17 +20,13 @@ export function GlobalControlBar(ui: GlobalControlBarProps) {
   const project = useSession((state) => state.project);
   const hostConnected = useSession(selectHostReady);
   const audio = useSession((state) => state.audio);
-  const recording = useSession((state) => state.recording);
   const props = {
     ...ui,
     audio: audio.status,
-    session: project.boot!.canonical.session,
     historyState: project.boot!.canonical.history,
     hostConnected,
     projectSwitching: project.switching,
     isMuted: isEmergencyMuteActive(audio.status),
-    recordingCommandPending: recording.commandPending || recording.stopPending,
-    onToggleRecording: recording.toggle,
     onUndo: project.undo,
     onRedo: project.redo,
     onToggleMute: audio.toggleMute,
@@ -85,12 +81,7 @@ export function GlobalControlBar(ui: GlobalControlBarProps) {
         className={clsx(styles.transportControls, styles.hostBoundControls)}
         disabled={!props.hostConnected || props.projectSwitching}
       >
-        <TransportControls
-          session={props.session}
-          recordingActive={props.audio.recording.active || props.audio.recording.processing}
-          recordingCommandPending={props.recordingCommandPending}
-          onToggleRecording={() => void props.onToggleRecording()}
-        />
+        <TransportControls />
       </fieldset>
 
       <fieldset
@@ -98,7 +89,7 @@ export function GlobalControlBar(ui: GlobalControlBarProps) {
         disabled={!props.hostConnected}
       >
         <div className={styles.audioControlGroup} aria-disabled={props.projectSwitching}>
-          <AudioMonitor session={props.session} disabled={props.projectSwitching} />
+          <AudioMonitor disabled={props.projectSwitching} />
           <button
             type="button"
             className={styles.commandTrigger}
