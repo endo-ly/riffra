@@ -1,7 +1,7 @@
 import { useRef, useState, type KeyboardEvent } from 'react';
 import type { LibraryAsset, RecordingAsset } from '@/model/generated';
 import type { InboxController } from '@/features/library/hooks/useInbox';
-import type { useInstrumentLibrary } from '@/features/library/hooks/useInstrumentLibrary';
+import type { CatalogSlice } from '@/shared/session/slices/catalog';
 import { browserItemName, type BrowserItem } from './model/browser-tree';
 import styles from './BrowserPanel.module.css';
 
@@ -12,7 +12,11 @@ export type BrowserItemEdit =
 interface BrowserItemEditorProps {
   item: BrowserItem;
   edit: BrowserItemEdit;
-  instruments: ReturnType<typeof useInstrumentLibrary>;
+  instruments: Pick<
+    CatalogSlice,
+    'setTags' | 'setCategory' | 'createCollection' | 'setCollectionMembership'
+  > &
+    Pick<CatalogSlice['instruments'], 'categories'>;
   inbox: InboxController;
   onUpdateAsset: (asset: LibraryAsset, tag: string | null, note: string | null) => void;
   onDone: () => void;
