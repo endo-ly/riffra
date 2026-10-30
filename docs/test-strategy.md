@@ -22,7 +22,9 @@
 | 全体簡易確認  | アプリ全体                   | 主要フローと保存復元                   | 作業単位の終端     |
 | 実機(Windows) | OS、機器、VST3、実音         | 自動化で代替できない挙動               | マイルストーン終端 |
 
-Rust側のUnit testは対象実装と同じソースファイル内に置き、別モジュールや専用ファイルへ集約しない。フロントエンドのテストは `apps/desktop/src/test/` に集約し、`app/`、`features/`、`model/`、`native/`、`shared/` の所有領域に対応する階層へ置く。FakeNativeApiとテスト用Providerは `test/support/` に置き、部品テストは `FakeNativeApi` を注入して呼び出し記録とイベント発火を扱う。制作規則・履歴・検証の判断はCoreのテストが担うため、部品テストが制作規則を再実装することはない。
+Rust側のUnit testは対象実装と同じソースファイル内に置き、別モジュールや専用ファイルへ集約しない。フロントエンドのテストは `apps/desktop/src/test/` に集約し、`app/`、`features/`、`model/`、`native/`、`shared/` の所有領域に対応する階層へ置く。FakeNativeApiとテスト用Providerは `test/support/` に置き、部品テストは `createFakeNativeApi` で作った `FakeNativeApi` を注入して呼び出し記録とイベント発火を扱う。制作規則・履歴・検証の判断はCoreのテストが担うため、部品テストが制作規則を再実装することはない。
+
+画面をまたいで共有する状態と操作は `shared/session/` のセッションストアが持つ。そのため、アプリ全体の状態と操作は `createSessionStore(createFakeNativeApi(…))` に対してスライスを直接呼んでテストし、Nativeイベントに依存する観点は `bindSessionRuntime(store, api)` を呼んでからイベントを発火する。部品のテストは `TestSessionProvider`（または `renderWithSession`）でストアを与え、ストアの状態と操作を props で渡さない。
 
 ---
 
