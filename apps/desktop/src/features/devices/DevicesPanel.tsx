@@ -6,10 +6,14 @@ import type {
   AutomationLane,
   AutomationTarget,
   InstrumentLibraryItem,
-  InstrumentMidiInspection,
   PluginEntry,
 } from '@/model/generated';
-import { useSessionContext } from '@/shared/session/session-context';
+import { useSession, useSessionContext } from '@/shared/session/session-context';
+import { useShallow } from 'zustand/react/shallow';
+import { selectMissingDeviceIds } from '@/shared/session/selectors';
+import { selectionOwner } from '@/model/editor-selection';
+import { resolveDeviceTarget } from './device-target';
+import { useInstrumentMidiInspection } from '@/shared/session/useInstrumentMidiInspection';
 import { Toolbar } from '@/shared/ui/Toolbar';
 import { resolveTrackColor } from '@/model/track-color';
 import { DeviceParameterEditor } from './DeviceParameterEditor';
@@ -35,11 +39,39 @@ interface DevicesPanelProps {
   onRescanMissingPlugins: () => Promise<void>;
 }
 
-export function DevicesPanel(props: DevicesPanelProps) {
+export function DevicesPanel() {
+  const session = useSession((state) => state.project.boot!.canonical.session);
+  const selection = useSession((state) => state.workspace.selection);
+  const workspace = useSession((state) => state.workspace);
+  const transport = useSession((state) => state.transport);
+  const catalog = useSession((state) => state.catalog);
+  const missing = useSession((state) => state.missing);
+  const missingDeviceIds = useSession(useShallow(selectMissingDeviceIds));
+  const owner = selectionOwner(selection);
+  const target = owner ? resolveDeviceTarget(session.arrangement, owner) : null;
+  return (
+    <DevicesPanelView
+      sessionId={session.sessionId}
+      arrangement={session.arrangement}
+      automationLanes={session.arrangement.automationLanes}
+      playing={transport.status?.state === 'playing'}
+      currentTick={transport.displayTick}
+      onOpenAutomation={workspace.openAutomation}
+      target={target}
+      instruments={catalog.instruments.items}
+      plugins={catalog.plugins}
+      missingDeviceIds={missingDeviceIds}
+      onDisableMissingPlugin={missing.disablePlugin}
+      onReplaceMissingPlugin={missing.replacePlugin}
+      onRescanMissingPlugins={missing.rescanPlugins}
+    />
+  );
+}
+
+export function DevicesPanelView(props: DevicesPanelProps) {
   const { api, commit: sessionCommit } = useSessionContext();
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [midiInspection, setMidiInspection] = useState<InstrumentMidiInspection | null>(null);
   const { target } = props;
   const track = target?.track;
   const instrumentLibraryItem =
@@ -68,24 +100,13 @@ export function DevicesPanel(props: DevicesPanelProps) {
     plugin && (plugin.disabledPlaceholder || props.missingDeviceIds.includes(device!.id)),
   );
 
+  const { inspection: midiInspection, error: inspectionError } = useInstrumentMidiInspection(
+    track?.kind === 'instrument' ? track.id : null,
+    props.arrangement.revision,
+  );
   useEffect(() => {
-    if (track?.kind !== 'instrument') {
-      setMidiInspection(null);
-      return;
-    }
-    let cancelled = false;
-    void api
-      .getInstrumentMidiSettings(track.id)
-      .then((inspection) => {
-        if (!cancelled) setMidiInspection(inspection);
-      })
-      .catch((failure: unknown) => {
-        if (!cancelled) setError(errorText(failure));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [api, props.arrangement.revision, track?.id, track?.kind]);
+    if (inspectionError) setError(inspectionError);
+  }, [inspectionError]);
 
   const runOperation = (operation: Promise<unknown>) => {
     setError(null);

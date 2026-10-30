@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import type { AudioAnalysis, AudioClip } from '@/model/generated';
-import styles from './Timeline.module.css';
+import styles from './TimelineClip.module.css';
 
 export function AudioWaveform({
   analysis,

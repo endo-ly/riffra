@@ -11,7 +11,7 @@ import { automationTargetKey, automationValueAt, type AutomationOption } from '@
 import { isEditableTypingTarget } from '@/shared/input';
 import { usePointerGesture } from '@/shared/usePointerGesture';
 import { useAutomationValueDisplay } from '@/shared/useAutomationValueDisplay';
-import styles from './Timeline.module.css';
+import styles from './AutomationLane.module.css';
 
 const HEIGHT = 128;
 

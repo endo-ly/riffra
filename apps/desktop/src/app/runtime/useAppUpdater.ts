@@ -1,11 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
-import type { UpdaterApi } from '@/native/api/updater';
+import { useSessionContext } from '@/shared/session/session-context';
 import { toast } from '@/shared/toasts';
-
-interface AppUpdaterOptions {
-  api: Pick<UpdaterApi, 'checkForAppUpdate' | 'installAppUpdate'>;
-}
 
 /**
  * Tracks the application update published on the release endpoint. The
@@ -13,7 +9,8 @@ interface AppUpdaterOptions {
  * condition; the manual check reports failures instead of masking them as
  * "up to date".
  */
-export function useAppUpdater({ api }: AppUpdaterOptions) {
+export function useAppUpdater() {
+  const { api } = useSessionContext();
   const [availableVersion, setAvailableVersion] = useState<string | null>(null);
   const [installing, setInstalling] = useState(false);
 

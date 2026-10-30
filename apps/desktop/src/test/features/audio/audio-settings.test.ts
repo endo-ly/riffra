@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { reconcileAudioSettings } from '@/shared/audio/reconcile-settings';
 import type { AudioDeviceProbe, AudioStatus } from '@/model/generated';
 import {
   chooseInitialDriverRoute,
@@ -8,7 +9,6 @@ import {
   mergeAudioStatusChannels,
   mergeDeviceChannels,
   normalizeAudioSettingsDraft,
-  reconcileAudioSettings,
   selectDriverForDraft,
 } from '@/features/audio/audio-settings';
 

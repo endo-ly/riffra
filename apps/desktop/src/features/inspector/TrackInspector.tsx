@@ -12,7 +12,8 @@ import { Icon } from '@/shared/ui/primitives';
 import clsx from 'clsx';
 import { useCallback, useEffect, useState, type CSSProperties } from 'react';
 import { resolveTrackColor, TRACK_COLOR_PALETTE } from '@/model/track-color';
-import styles from './Inspector.module.css';
+import sharedStyles from './Inspector.module.css';
+import styles from './TrackInspector.module.css';
 import { MixValueField } from './MixValueField';
 
 interface TrackInspectorProps {
@@ -53,11 +54,14 @@ export function TrackInspector(props: TrackInspectorProps) {
     ? [props.track.instrument?.name ?? 'No instrument', effectSummary]
     : [effectSummary];
   return (
-    <div className={styles.inspector} style={{ '--track-color': displayColor } as CSSProperties}>
-      <div className={styles.identity}>
+    <div
+      className={sharedStyles.inspector}
+      style={{ '--track-color': displayColor } as CSSProperties}
+    >
+      <div className={sharedStyles.identity}>
         <button
           type="button"
-          className={styles.identityTile}
+          className={sharedStyles.identityTile}
           aria-label="Track color"
           aria-expanded={colorOpen}
           title={props.track.color ? `Color ${props.track.color}` : `Auto color ${displayColor}`}
@@ -94,9 +98,9 @@ export function TrackInspector(props: TrackInspectorProps) {
             </button>
           </div>
         )}
-        <div className={styles.identityBlock}>
+        <div className={sharedStyles.identityBlock}>
           <input
-            className={styles.identityName}
+            className={sharedStyles.identityName}
             aria-label="Track name"
             value={name}
             onChange={(event) => setName(event.currentTarget.value)}
@@ -113,8 +117,8 @@ export function TrackInspector(props: TrackInspectorProps) {
         </div>
       </div>
 
-      <section className={styles.section} aria-label="Track mix">
-        <div className={styles.rows}>
+      <section className={sharedStyles.section} aria-label="Track mix">
+        <div className={sharedStyles.rows}>
           <MixValueField
             label="Volume"
             name="Track gain"
@@ -134,14 +138,14 @@ export function TrackInspector(props: TrackInspectorProps) {
         </div>
       </section>
 
-      <section className={styles.section} aria-label="Track input">
-        <header className={styles.sectionHeader}>
+      <section className={sharedStyles.section} aria-label="Track input">
+        <header className={sharedStyles.sectionHeader}>
           <strong>INPUT</strong>
         </header>
         {instrumentTrack ? (
           <div className={styles.controlPair}>
             <select
-              className={styles.control}
+              className={sharedStyles.control}
               aria-label="MIDI input"
               value={props.track.midiInput.deviceId ?? ''}
               onChange={(event) =>
@@ -161,7 +165,7 @@ export function TrackInspector(props: TrackInspectorProps) {
               ))}
             </select>
             <select
-              className={styles.control}
+              className={sharedStyles.control}
               aria-label="MIDI channel"
               value={props.track.midiInput.channel ?? ''}
               onChange={(event) =>
@@ -184,9 +188,9 @@ export function TrackInspector(props: TrackInspectorProps) {
             </select>
           </div>
         ) : (
-          <div className={styles.rows}>
+          <div className={sharedStyles.rows}>
             <select
-              className={styles.control}
+              className={sharedStyles.control}
               aria-label="Audio input"
               value={props.track.audioInput?.channelIndex ?? ''}
               onChange={(event) =>
@@ -213,9 +217,9 @@ export function TrackInspector(props: TrackInspectorProps) {
                   </option>
                 )}
             </select>
-            <div className={styles.labeledRow}>
-              <span className={styles.rowLabel}>Monitor</span>
-              <div className={styles.segmented} role="group" aria-label="Monitoring">
+            <div className={sharedStyles.labeledRow}>
+              <span className={sharedStyles.rowLabel}>Monitor</span>
+              <div className={sharedStyles.segmented} role="group" aria-label="Monitoring">
                 {(['off', 'auto', 'on'] as const).map((monitoring) => (
                   <button
                     type="button"
@@ -232,8 +236,8 @@ export function TrackInspector(props: TrackInspectorProps) {
         )}
       </section>
 
-      <section className={styles.section} aria-label="Track devices">
-        <header className={styles.sectionHeader}>
+      <section className={sharedStyles.section} aria-label="Track devices">
+        <header className={sharedStyles.sectionHeader}>
           <strong>DEVICES</strong>
         </header>
         <button
@@ -252,7 +256,7 @@ export function TrackInspector(props: TrackInspectorProps) {
         </button>
       </section>
       {operationMessage && (
-        <p className={styles.message} role="status">
+        <p className={sharedStyles.message} role="status">
           {operationMessage}
         </p>
       )}

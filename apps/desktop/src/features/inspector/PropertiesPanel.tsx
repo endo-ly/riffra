@@ -2,7 +2,7 @@ import type { EditorSelection } from '@/model/editor-selection';
 import { clipDurationTicks } from '@/model/clip-time';
 import type { AudioStatus, CreativeSession } from '@/model/generated';
 import { tickToMusicalPosition } from '@/model/time-format';
-import { useSessionContext } from '@/shared/session/session-context';
+import { useSession, useSessionContext } from '@/shared/session/session-context';
 import { Icon } from '@/shared/ui/primitives';
 import { AudioClipInspector } from './AudioClipInspector';
 import { MidiClipInspector } from './MidiClipInspector';
@@ -21,7 +21,27 @@ interface PropertiesPanelProps {
   onRecordAnotherTake: (recordingSessionId: string) => void | Promise<void>;
 }
 
-export function PropertiesPanel(props: PropertiesPanelProps) {
+export function PropertiesPanel() {
+  const session = useSession((state) => state.project.boot!.canonical.session);
+  const workspace = useSession((state) => state.workspace);
+  const audio = useSession((state) => state.audio.status);
+  const recording = useSession((state) => state.recording);
+  return (
+    <PropertiesPanelView
+      session={session}
+      audio={audio}
+      editorSelection={workspace.selection}
+      setEditorSelection={workspace.setSelection}
+      onOpenDevices={workspace.openDevices}
+      recordingCommandPending={recording.commandPending || recording.stopPending}
+      onRecordAnotherTake={async (id) => {
+        await recording.start(id);
+      }}
+    />
+  );
+}
+
+export function PropertiesPanelView(props: PropertiesPanelProps) {
   const { api } = useSessionContext();
   const selectedTrackId =
     props.editorSelection.kind === 'track' ? props.editorSelection.trackId : undefined;

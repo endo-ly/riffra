@@ -4,16 +4,16 @@ import { TestSessionProvider } from '@/test/support/session-provider';
 import type { AudioClip, MidiClip } from '@/model/generated';
 import { canonicalState, defaultSession } from '@/native/browser-defaults';
 import { toAssetId } from '@/model/asset-id';
-import { FakeNativeApi, fakeAudioStatus } from '@/test/support/fake-native-api';
+import { createFakeNativeApi, fakeAudioStatus } from '@/test/support/fake-native-api';
 import '@testing-library/jest-dom/vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
-import { PropertiesPanel } from '@/features/inspector/PropertiesPanel';
+import { PropertiesPanelView } from '@/features/inspector/PropertiesPanel';
 
 afterEach(cleanup);
 
 function renderPanel(
-  selection: Parameters<typeof PropertiesPanel>[0]['editorSelection'],
+  selection: Parameters<typeof PropertiesPanelView>[0]['editorSelection'],
   initialSession = defaultSession(),
   onOpenDevices = () => undefined,
 ) {
@@ -33,10 +33,10 @@ function renderPanel(
     midiInput: {},
     effects: [],
   });
-  const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
+  const api = createFakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
   render(
     <TestSessionProvider api={api}>
-      <PropertiesPanel
+      <PropertiesPanelView
         audio={fakeAudioStatus()}
         recordingCommandPending={false}
         session={session}

@@ -35,9 +35,14 @@ export default {
        * raw values never compete across panels.
        */
       files: [
-        'apps/desktop/src/app/workspace/EditorWorkspace.module.css',
-        'apps/desktop/src/features/timeline/Timeline.module.css',
+        'apps/desktop/src/features/timeline/TimelineView.module.css',
+        'apps/desktop/src/features/timeline/TimelineRuler.module.css',
+        'apps/desktop/src/features/timeline/TrackHeader.module.css',
+        'apps/desktop/src/features/timeline/TimelineClip.module.css',
+        'apps/desktop/src/features/timeline/AutomationLane.module.css',
         'apps/desktop/src/features/midi-editor/MidiEditorPanel.module.css',
+        'apps/desktop/src/features/midi-editor/PianoKeyboard.module.css',
+        'apps/desktop/src/features/midi-editor/NoteLane.module.css',
         'apps/desktop/src/features/live-input/MusicalTypingKeyboard.module.css',
       ],
       rules: {

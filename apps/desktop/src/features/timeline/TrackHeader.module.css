@@ -1,0 +1,201 @@
+.trackHeader[data-selected='true'] {
+  border-left-color: var(--track-color);
+  background: var(--color-bg-surface-raised);
+}
+.trackHeader[data-selected='true'] .trackName {
+  color: var(--color-text-strong);
+}
+.trackHeader[data-focused='true'] {
+  background: var(--color-bg-surface-raised);
+}
+.trackHeader[data-focused='true'] .trackName {
+  color: var(--color-text-strong);
+}
+.trackHeader[data-inaudible] .trackName {
+  color: var(--color-text-muted);
+}
+
+.trackHeader {
+  position: sticky;
+  /*
+   * The ruler belongs to the horizontally scrolling timeline. Once the
+   * viewport advances, it can geometrically pass over this sticky column;
+   * keep the fixed track controls above that scrollable layer.
+   */
+  z-index: 12;
+  left: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-auto-rows: auto;
+  align-content: center;
+  gap: var(--space-1) var(--space-1-5);
+  padding: var(--space-2) var(--space-2-5);
+  background: var(--color-bg-panel);
+  border-right: 1px solid var(--color-border-default);
+  border-left: 3px solid transparent;
+}
+
+.trackHeader[data-drop='before'] {
+  box-shadow: inset 0 2px 0 var(--color-accent);
+}
+
+.trackHeader[data-drop='after'] {
+  box-shadow: inset 0 -2px 0 var(--color-accent);
+}
+
+.trackIdentity {
+  grid-column: 1;
+  min-width: 0;
+  cursor: grab;
+}
+
+.trackIdentity:active {
+  cursor: grabbing;
+}
+
+.trackNameRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.trackKindIcon {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+  color: var(--track-color);
+}
+
+.trackName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-small);
+  font-weight: 600;
+}
+
+.trackNameInput {
+  min-width: 0;
+  flex: 1;
+  padding: 1px var(--space-1);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-small);
+  font-weight: 600;
+  background: var(--color-bg-panel);
+  border: 1px solid var(--color-border-default);
+  border-radius: 2px;
+  outline: none;
+}
+
+.trackSwitches {
+  grid-column: 2;
+  display: flex;
+  gap: var(--space-0-5);
+}
+
+.trackSwitches button {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  color: var(--color-text-muted);
+  font: 700 var(--font-size-micro) var(--font-family-mono);
+  background: var(--color-bg-panel);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  display: grid;
+  place-content: center;
+}
+
+.trackSwitches button svg {
+  width: var(--size-icon-sm);
+  height: var(--size-icon-sm);
+}
+
+/* Record arming stays quiet until it is pointed at or engaged. */
+
+.trackSwitches .armButton:not(.armActive):hover {
+  color: var(--color-status-danger);
+}
+
+.trackSwitches .muteActive {
+  color: var(--color-bg-app);
+  background: var(--color-text-muted);
+  border-color: var(--color-text-muted);
+}
+
+.trackSwitches .soloActive {
+  color: var(--color-text-on-accent);
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+.trackSwitches .armActive {
+  color: var(--color-text-on-accent);
+  background: var(--color-status-danger);
+  border-color: var(--color-status-danger);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--color-status-danger) 50%, transparent);
+}
+
+.trackSwitches .monitoringButton {
+  font-size: var(--font-size-micro);
+}
+
+.trackSwitches .monAuto {
+  color: var(--color-text-on-accent);
+  background: var(--color-status-warning);
+  border-color: var(--color-status-warning);
+}
+
+.trackSwitches .monOn {
+  color: var(--color-text-on-accent);
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+.trackControl {
+  grid-column: 1 / 4;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) 44px;
+  align-items: center;
+  gap: var(--space-1-5);
+  height: 16px;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-micro);
+}
+
+.trackControl input {
+  --slider-height: 14px;
+  --slider-track-height: 2px;
+  --slider-thumb-height: 12px;
+}
+
+.trackControl output {
+  color: var(--color-text-muted);
+  font: var(--font-size-micro) var(--font-family-mono);
+  text-align: right;
+}
+
+.resizeHandle {
+  position: absolute;
+  z-index: 6;
+  left: 0;
+  right: 0;
+  bottom: -2px;
+  height: 6px;
+  cursor: ns-resize;
+}
+
+.resizeHandle:hover {
+  background: color-mix(in srgb, var(--color-accent) 40%, transparent);
+}
+
+/*
+ * Lanes and clips clip their content with overflow: clip rather than hidden so
+ * they do not become scroll containers; clip names can then stay sticky
+ * against the timeline scroller.
+ */

@@ -1,15 +1,7 @@
 import { errorText } from '@/shared/errors';
 import { useCallback, useEffect, useState } from 'react';
 import type { LibraryAsset, RecordingAsset } from '@/model/generated';
-import type { AudioApi } from '@/native/api/audio';
-import type { LibraryApi } from '@/native/api/library';
-
-interface UseInboxOptions {
-  hostGeneration: number;
-  projectId?: string | null;
-  reload: () => void | Promise<void>;
-  onRelocate?: (recording: RecordingAsset, nextId: string) => void;
-}
+import { useSession, useSessionContext } from '@/shared/session/session-context';
 
 /**
  * Drives the Inbox preservation zone (LIB-003): every unorganized take can be
@@ -17,11 +9,15 @@ interface UseInboxOptions {
  * keeping, deleted, and grouped by duplicate audio content. Mutations refresh
  * the inbox list through `reload` so the UI always reflects the filesystem.
  */
-export function useInbox(
-  api: LibraryApi & AudioApi,
-  recordings: RecordingAsset[],
-  { hostGeneration, projectId = null, reload, onRelocate }: UseInboxOptions,
-) {
+export function useInbox() {
+  const { api } = useSessionContext();
+  const hostGeneration = useSession((state) => state.host.connection.generation);
+  const projectId = useSession((state) => state.project.boot?.projectState.activeProjectId ?? null);
+  const recording = useSession((state) => state.recording);
+  const missing = useSession((state) => state.missing);
+  const recordings = recording.recordings;
+  const reload = recording.reload;
+  const onRelocate = missing.clearRelocated;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [duplicateGroups, setDuplicateGroups] = useState<string[][]>([]);
   const [message, setMessage] = useState<string | null>(null);
@@ -41,7 +37,7 @@ export function useInbox(
       try {
         const recording = recordings.find((item) => item.id === id);
         const nextId = await api.renameRecording(id, name);
-        if (recording) onRelocate?.(recording, nextId);
+        if (recording) onRelocate(recording);
         await reload();
         setSelectedId(nextId);
         setMessage(`Renamed to ${name}.`);
@@ -74,8 +70,8 @@ export function useInbox(
       setError(null);
       try {
         const recording = recordings.find((item) => item.id === id);
-        const nextId = await api.archiveRecording(id);
-        if (recording) onRelocate?.(recording, nextId);
+        await api.archiveRecording(id);
+        if (recording) onRelocate(recording);
         setSelectedId((current) => (current === id ? null : current));
         await reload();
         setMessage('Recording archived.');
@@ -92,8 +88,8 @@ export function useInbox(
       setError(null);
       try {
         const recording = recordings.find((item) => item.id === id);
-        const nextId = await api.promoteRecording(id);
-        if (recording) onRelocate?.(recording, nextId);
+        await api.promoteRecording(id);
+        if (recording) onRelocate(recording);
         setSelectedId((current) => (current === id ? null : current));
         await reload();
         setMessage('Recording promoted to the library.');

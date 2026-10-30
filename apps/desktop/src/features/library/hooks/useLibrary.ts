@@ -1,31 +1,23 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { AudioStatus, LibraryAsset } from '@/model/generated';
+import type { LibraryAsset } from '@/model/generated';
 import { toAssetId } from '@/model/asset-id';
-import type { AudioApi } from '@/native/api/audio';
-import type { LibraryApi } from '@/native/api/library';
+import { useSession, useSessionContext, useSessionStore } from '@/shared/session/session-context';
 import { openMidiFile } from '@/native/dialog';
 import { logNativeError } from '@/native/invoke';
 import { errorText } from '@/shared/errors';
 import { toast } from '@/shared/toasts';
 
 interface UseLibraryOptions {
-  setAudio: (audio: AudioStatus) => void;
   query: string;
   onSearchRequested: (query: string) => void;
-  hostGeneration: number;
-  projectId?: string | null;
 }
 
-export function useLibrary(
-  api: LibraryApi & AudioApi,
-  {
-    setAudio,
-    query: requestedQuery,
-    onSearchRequested,
-    hostGeneration,
-    projectId = null,
-  }: UseLibraryOptions,
-) {
+export function useLibrary({ query: requestedQuery, onSearchRequested }: UseLibraryOptions) {
+  const { api } = useSessionContext();
+  const store = useSessionStore();
+  const setAudio = store.getState().audio.setStatus;
+  const hostGeneration = useSession((state) => state.host.connection.generation);
+  const projectId = useSession((state) => state.project.boot?.projectState.activeProjectId ?? null);
   const { searchLibrary, updateLibraryAsset: updateAssetMetadata, previewAsset } = api;
   const [libraryResults, setLibraryResults] = useState<LibraryAsset[]>([]);
   const query = requestedQuery.trim().toLowerCase();

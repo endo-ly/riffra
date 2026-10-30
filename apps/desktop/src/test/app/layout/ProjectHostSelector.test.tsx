@@ -9,7 +9,7 @@ import type { HostConnectionState, LocalHostInfo } from '@/model/generated';
 import type { HostConnectionBootstrap } from '@/native/api/host-connection';
 import { defaultProjectState } from '@/native/browser-defaults';
 import { openHostDataRoot } from '@/native/dialog';
-import { ProjectHostSelector } from '@/app/layout/ProjectHostSelector';
+import { ProjectHostSelectorView } from '@/app/layout/ProjectHostSelector';
 
 vi.mock('@/native/dialog', () => ({
   openHostDataRoot: vi.fn().mockResolvedValue(null),
@@ -40,7 +40,7 @@ const hosts: LocalHostInfo[] = [
 
 function renderSelector(state: HostConnectionState = embedded, overrides = {}) {
   return render(
-    <ProjectHostSelector
+    <ProjectHostSelectorView
       state={state}
       hosts={hosts}
       switching={false}
@@ -226,7 +226,7 @@ describe('ProjectHostSelector', () => {
     ).toBeInTheDocument();
 
     rerender(
-      <ProjectHostSelector
+      <ProjectHostSelectorView
         state={embedded}
         hosts={hosts}
         switching={false}
@@ -268,7 +268,7 @@ describe('ProjectHostSelector', () => {
       reason: 'Host event connection closed',
     };
     render(
-      <ProjectHostSelector
+      <ProjectHostSelectorView
         state={state}
         hosts={hosts}
         switching={false}

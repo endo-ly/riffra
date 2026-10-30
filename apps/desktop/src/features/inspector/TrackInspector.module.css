@@ -1,0 +1,107 @@
+.colorPalette {
+  position: absolute;
+  top: 46px;
+  left: 12px;
+  z-index: var(--z-chrome);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1-5);
+  width: 140px;
+  padding: var(--space-2);
+  background: var(--color-bg-surface-raised);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-popover);
+}
+
+.colorSwatch {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  background: var(--swatch);
+  border: 1px solid color-mix(in srgb, var(--swatch) 60%, var(--color-shadow) 10%);
+  border-radius: 50%;
+}
+
+.colorSwatch[aria-pressed='true'] {
+  box-shadow:
+    0 0 0 2px var(--color-bg-surface-raised),
+    0 0 0 3px var(--color-accent);
+}
+
+.colorClear {
+  display: grid;
+  place-items: center;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-small);
+  background: transparent;
+  border: 1px dashed var(--color-border-default);
+}
+
+.controlPair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 76px;
+  gap: var(--space-1-5);
+}
+
+/* The instrument and effect chain at a glance; opens Devices to edit them. */
+.deviceCard {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2-5);
+  padding: var(--space-1-5);
+  color: var(--color-text-muted);
+  text-align: left;
+  background: var(--color-bg-surface);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  transition: background-color var(--duration-fast);
+}
+
+.deviceCard:hover,
+.deviceCard:focus-visible {
+  background: var(--color-bg-surface-raised);
+}
+
+.deviceCard:focus-visible {
+  border-color: color-mix(in srgb, var(--color-accent) 70%, transparent);
+  outline: none;
+}
+
+.deviceIcon {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  display: grid;
+  place-items: center;
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+  border-radius: var(--radius-sm);
+}
+
+.deviceIcon svg {
+  width: var(--size-icon-md);
+  height: var(--size-icon-md);
+}
+
+.deviceText {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.deviceText strong {
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-small);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.deviceText small {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-micro);
+}

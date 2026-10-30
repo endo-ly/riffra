@@ -50,7 +50,8 @@ interface UseLivePlayOptions {
   track: Track | null;
   runtimeReady: boolean;
   hostConnected: boolean;
-  missingDeviceIds: string[];
+  /** Whether the instrument on the track can sound. */
+  playable: boolean;
   /** Whether the on-screen Play Surface is shown. */
   surfaceOpen: boolean;
 }
@@ -64,7 +65,7 @@ export function useLivePlay({
   track,
   runtimeReady,
   hostConnected,
-  missingDeviceIds,
+  playable,
   surfaceOpen,
 }: UseLivePlayOptions) {
   const { api } = useSessionContext();
@@ -80,9 +81,7 @@ export function useLivePlay({
       ? 'notInstrument'
       : !track.instrument
         ? 'noInstrument'
-        : track.instrument.source.type === 'vst3' &&
-            (track.instrument.source.disabledPlaceholder ||
-              missingDeviceIds.includes(track.instrument.id))
+        : !playable
           ? 'instrumentMissing'
           : !runtimeReady
             ? 'runtimeUnavailable'

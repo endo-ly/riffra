@@ -1,4 +1,5 @@
 import type { AssetId, PluginRole } from '@/model/generated';
+import type { BrowserPlacement } from './browser-placement';
 
 export const RIFFRA_ASSET_MIME = 'application/x-riffra-asset';
 export const RIFFRA_INSTRUMENT_MIME = 'application/x-riffra-instrument';
@@ -112,4 +113,38 @@ export function writePluginDrag(
 
 export function readPluginDrag(dataTransfer: DataTransfer): RiffraPluginDragPayload | null {
   return readPayload(dataTransfer, RIFFRA_PLUGIN_MIME, isPluginDragPayload);
+}
+
+export function writeBrowserItemDrag(
+  dataTransfer: DataTransfer,
+  placement: BrowserPlacement,
+  origin: 'builtIn' | 'user',
+): void {
+  switch (placement.kind) {
+    case 'instrument':
+      writeInstrumentDrag(dataTransfer, {
+        version: 1,
+        instrumentId: placement.instrumentId,
+        name: placement.name,
+        origin,
+      });
+      return;
+    case 'instrumentPlugin':
+    case 'effectPlugin':
+      writePluginDrag(dataTransfer, {
+        version: 1,
+        pluginPath: placement.pluginPath,
+        name: placement.name,
+        role: placement.kind === 'instrumentPlugin' ? 'instrument' : 'effect',
+      });
+      return;
+    case 'audioAsset':
+    case 'midiAsset':
+      writeAssetDrag(dataTransfer, {
+        version: 1,
+        assetId: placement.assetId,
+        name: placement.name,
+        kind: placement.kind === 'audioAsset' ? 'audio' : 'midi',
+      });
+  }
 }

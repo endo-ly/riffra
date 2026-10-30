@@ -2,7 +2,7 @@ import { canonicalState, defaultProjectState, defaultSession } from '../browser-
 import { NativeCommandError } from '../invoke';
 import type { NativeApi } from '../native-api';
 import type { NativeEventApi } from '@/native/api/events';
-import { createNativeApi } from './native-implementation';
+import { nativeApiMethodNames } from './native-implementation';
 
 const hostConnection = {
   mode: 'disconnected',
@@ -69,7 +69,7 @@ const reads: BrowserPreviewReads = {
 
 export function createBrowserPreviewApi(): NativeApi {
   const rejected = Object.fromEntries(
-    Object.keys(createNativeApi()).map((method) => [
+    nativeApiMethodNames.map((method) => [
       method,
       async () => {
         throw new NativeCommandError({

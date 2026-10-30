@@ -3,7 +3,7 @@ import type { CreativeSession, MetronomeSound, SessionSettingsPatch } from '@/mo
 import clsx from 'clsx';
 import { formatClock, formatMusicalPosition, tickToMusicalPosition } from '@/model/time-format';
 import { TransportIcon } from './TransportIcon';
-import { useSessionContext } from '@/shared/session/session-context';
+import { useSession, useSessionContext } from '@/shared/session/session-context';
 import { ContextMenu } from '@/shared/ui/ContextMenu';
 import styles from './TransportControls.module.css';
 
@@ -13,38 +13,25 @@ const METRONOME_SOUNDS: { sound: MetronomeSound; label: string }[] = [
   { sound: 'wood', label: 'Wood' },
 ];
 
-interface TransportControlsProps {
-  session: CreativeSession;
-  recordingActive: boolean;
-  transportPlaying: boolean;
-  transportStarting?: boolean;
-  transportPaused?: boolean;
-  onPlay: () => void;
-  onPause: () => void;
-  onStop: () => void;
-  onGoToStart: () => void;
-  recordingCommandPending: boolean;
-  onToggleRecording: () => void;
-  /** Arrangement Transport playhead shown as the current position. */
-  positionTick: number;
-}
-
-export function TransportControls(props: TransportControlsProps) {
-  const {
-    session,
-    recordingActive,
-    transportPlaying,
-    transportStarting = false,
-    transportPaused = false,
-    onPlay,
-    onPause,
-    onStop,
-    onGoToStart,
-    recordingCommandPending,
-    onToggleRecording,
-    positionTick,
-  } = props;
+export function TransportControls() {
   const { api, commit } = useSessionContext();
+  const session = useSession((state) => state.project.boot!.canonical.session);
+  const transport = useSession((state) => state.transport);
+  const recording = useSession((state) => state.recording);
+  const audioRecording = useSession((state) => state.audio.status.recording);
+  const recordingActive = audioRecording.active || audioRecording.processing;
+  const recordingCommandPending = recording.commandPending || recording.stopPending;
+  const onToggleRecording = recording.toggle;
+  const transportPlaying = transport.status?.state === 'playing';
+  const transportStarting = transport.status?.state === 'starting';
+  const transportPaused = transport.status?.state === 'paused';
+  const {
+    play: onPlay,
+    pause: onPause,
+    stop: onStop,
+    goToStart: onGoToStart,
+    displayTick: positionTick,
+  } = transport;
   const initialBpm = session.arrangement.timebase.tempoChanges[0].bpm;
   const initialNumerator = session.arrangement.timebase.timeSignatureChanges[0].numerator;
   const initialDenominator = session.arrangement.timebase.timeSignatureChanges[0].denominator;
@@ -124,7 +111,7 @@ export function TransportControls(props: TransportControlsProps) {
           aria-label="Stop playback"
           title="Stop playback"
           disabled={!transportActive}
-          onClick={onStop}
+          onClick={() => void onStop()}
         >
           <TransportIcon name="stop" />
         </button>

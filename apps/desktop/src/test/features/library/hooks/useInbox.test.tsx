@@ -1,10 +1,14 @@
 // @vitest-environment jsdom
 
 import { act, renderHook } from '@testing-library/react';
+import { createElement, type ReactNode } from 'react';
+import { TestSessionProvider } from '@/test/support/session-provider';
+import { createSessionStore } from '@/shared/session/store';
+import type { FakeNativeApi } from '@/test/support/fake-native-api';
 import { describe, expect, it, vi } from 'vitest';
 import { useInbox } from '@/features/library/hooks/useInbox';
 import { toAssetId } from '@/model/asset-id';
-import { FakeNativeApi, fakeAudioStatus } from '@/test/support/fake-native-api';
+import { createFakeNativeApi, fakeAudioStatus } from '@/test/support/fake-native-api';
 import type { RecordingAsset } from '@/model/generated';
 
 function recording(id: string, name: string): RecordingAsset {
@@ -46,13 +50,37 @@ function recording(id: string, name: string): RecordingAsset {
   };
 }
 
+function renderInbox(
+  api: FakeNativeApi,
+  recordings: RecordingAsset[],
+  reload = vi.fn().mockResolvedValue(undefined),
+  onRelocate = vi.fn(),
+) {
+  const store = createSessionStore(api);
+  store.setState((state) => ({
+    recording: {
+      ...state.recording,
+      recordings,
+      reload: async () => {
+        await reload();
+        return recordings;
+      },
+    },
+    missing: { ...state.missing, clearRelocated: onRelocate },
+  }));
+  return renderHook(() => useInbox(), {
+    wrapper: ({ children }: { children: ReactNode }) =>
+      createElement(TestSessionProvider, { api, store, children }),
+  });
+}
+
 describe('useInbox', () => {
   it('delegates preview and reloads after successful mutations', async () => {
     const first = recording('recording:take-a', 'take-a');
     const second = recording('recording:take-b', 'take-b');
     const third = recording('recording:take-c', 'take-c');
     const fourth = recording('recording:take-d', 'take-d');
-    const api = new FakeNativeApi({
+    const api = createFakeNativeApi({
       recordings: [first, second, third, fourth],
       responses: {
         previewAsset: fakeAudioStatus(),
@@ -75,9 +103,7 @@ describe('useInbox', () => {
     });
     const reload = vi.fn().mockResolvedValue(undefined);
     const onRelocate = vi.fn();
-    const { result } = renderHook(() =>
-      useInbox(api, [first, second, third, fourth], { hostGeneration: 0, reload, onRelocate }),
-    );
+    const { result } = renderInbox(api, [first, second, third, fourth], reload, onRelocate);
 
     await act(async () => {
       await result.current.preview(first);
@@ -102,11 +128,7 @@ describe('useInbox', () => {
     );
     expect(reload).toHaveBeenCalledTimes(5);
     expect(onRelocate).toHaveBeenCalledTimes(3);
-    expect(onRelocate.mock.calls.map(([, nextId]) => nextId)).toEqual([
-      expect.stringContaining('renamed'),
-      expect.stringContaining('archive'),
-      expect.stringContaining('library'),
-    ]);
+    expect(onRelocate.mock.calls.map(([item]) => item.id)).toEqual([first.id, third.id, fourth.id]);
     expect(result.current.duplicateGroups).toEqual([['recording:take-a', 'recording:take-b']]);
     expect(result.current.message).toBe('Recording promoted to the library.');
     expect(result.current.error).toBeNull();
@@ -114,13 +136,13 @@ describe('useInbox', () => {
 
   it('does not reload or report success when a native mutation fails', async () => {
     const first = recording('recording:take-a', 'take-a');
-    const api = new FakeNativeApi({
+    const api = createFakeNativeApi({
       recordings: [first],
       failures: { renameRecording: new Error('native failed') },
     });
     const rename = vi.spyOn(api, 'renameRecording');
     const reload = vi.fn().mockResolvedValue(undefined);
-    const { result } = renderHook(() => useInbox(api, [first], { hostGeneration: 0, reload }));
+    const { result } = renderInbox(api, [first], reload);
 
     let failure: unknown;
     await act(async () => {
@@ -143,14 +165,12 @@ describe('useInbox', () => {
       processedAssetId: null,
       processedPath: null,
     };
-    const api = new FakeNativeApi({
+    const api = createFakeNativeApi({
       recordings: [processed, raw],
       responses: { previewAsset: fakeAudioStatus() },
     });
     const preview = vi.spyOn(api, 'previewAsset');
-    const { result } = renderHook(() =>
-      useInbox(api, [processed, raw], { hostGeneration: 0, reload: vi.fn() }),
-    );
+    const { result } = renderInbox(api, [processed, raw]);
 
     await act(async () => {
       await result.current.preview(processed);
@@ -164,13 +184,11 @@ describe('useInbox', () => {
 
   it('reports zero duplicate results and handles preview command failures', async () => {
     const first = recording('recording:take-a', 'take-a');
-    const api = new FakeNativeApi({
+    const api = createFakeNativeApi({
       recordings: [first],
       responses: { detectDuplicateRecordings: [] },
     });
-    const { result } = renderHook(() =>
-      useInbox(api, [first], { hostGeneration: 0, reload: vi.fn() }),
-    );
+    const { result } = renderInbox(api, [first]);
 
     await act(async () => {
       await result.current.detectDuplicates();

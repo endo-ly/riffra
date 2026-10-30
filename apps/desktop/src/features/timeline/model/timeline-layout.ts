@@ -1,4 +1,4 @@
-import type { AudioClip, MidiClip, ProjectTimebase } from '@/model/generated';
+import type { Arrangement, AudioClip, MidiClip, ProjectTimebase } from '@/model/generated';
 import { timelineObjectEndTick } from '@/model/clip-time';
 import { ticksPerBeat, ticksPerBar } from '@/model/timebase';
 
@@ -111,4 +111,78 @@ export function buildTrackTimeline(
 
 export function trackLaneHeight(size: TrackSize) {
   return size === 'compact' ? 50 : size === 'large' ? 96 : 76;
+}
+
+/** Timeline width in ticks: the content extent padded by two bars, at least sixteen bars. */
+export function timelineLengthTicks(arrangement: Arrangement, timebase: ProjectTimebase) {
+  const barTicks = ticksPerBar(timebase);
+  const contentEnd = Math.max(
+    ...arrangement.audioClips.map((clip) => timelineObjectEndTick(clip, timebase)),
+    ...arrangement.midiClips.map((clip) => timelineObjectEndTick(clip, timebase)),
+    ...arrangement.automationLanes.flatMap((lane) => lane.points.map((point) => point.tick)),
+    ...arrangement.markers.map((marker) => marker.tick),
+    arrangement.loopRange.startTick,
+    arrangement.loopRange.endTick,
+    ...(arrangement.punchRange
+      ? [arrangement.punchRange.startTick, arrangement.punchRange.endTick]
+      : []),
+    0,
+  );
+  return Math.max(barTicks * 16, contentEnd + barTicks * 2);
+}
+
+/** Bar, beat and subdivision grid lines as one repeating background. */
+export function timelineGridBackground(timebase: ProjectTimebase, pixelsPerTick: number) {
+  const beatWidth = ticksPerBeat(timebase) * pixelsPerTick;
+  const barWidth = ticksPerBar(timebase) * pixelsPerTick;
+  const density = timelineGridDensity(timebase, pixelsPerTick);
+  const layers = [
+    `repeating-linear-gradient(90deg, var(--timeline-grid-bar) 0 1px, transparent 1px ${barWidth}px)`,
+  ];
+  if (density.showBeats) {
+    layers.push(
+      `repeating-linear-gradient(90deg, var(--timeline-grid-beat) 0 1px, transparent 1px ${beatWidth}px)`,
+    );
+  }
+  if (density.subdivisionTicks) {
+    const subdivisionWidth = density.subdivisionTicks * pixelsPerTick;
+    layers.push(
+      `repeating-linear-gradient(90deg, var(--timeline-grid-subdivision) 0 1px, transparent 1px ${subdivisionWidth}px)`,
+    );
+  }
+  return layers.join(', ');
+}
+
+/** Tick range covered by the clips, or null when the arrangement holds no clip. */
+export function clipExtentTicks(arrangement: Arrangement, timebase: ProjectTimebase) {
+  const edges = [
+    ...arrangement.audioClips.flatMap((clip) => [
+      clip.startTick,
+      timelineObjectEndTick(clip, timebase),
+    ]),
+    ...arrangement.midiClips.flatMap((clip) => [
+      clip.startTick,
+      timelineObjectEndTick(clip, timebase),
+    ]),
+  ];
+  if (!edges.length) return null;
+  return { startTick: Math.min(...edges), endTick: Math.max(...edges) };
+}
+
+/** Number of clips on each track. */
+export function trackClipCounts(arrangement: Pick<Arrangement, 'audioClips' | 'midiClips'>) {
+  const counts = new Map<string, number>();
+  for (const clip of arrangement.audioClips) {
+    counts.set(clip.trackId, (counts.get(clip.trackId) ?? 0) + 1);
+  }
+  for (const clip of arrangement.midiClips) {
+    counts.set(clip.trackId, (counts.get(clip.trackId) ?? 0) + 1);
+  }
+  return counts;
+}
+
+/** Index a dragged track lands on when it is dropped on the row at `targetIndex`. */
+export function reorderTargetIndex(sourceIndex: number, targetIndex: number, insertAfter: boolean) {
+  if (insertAfter) return sourceIndex < targetIndex ? targetIndex : targetIndex + 1;
+  return sourceIndex < targetIndex ? targetIndex - 1 : targetIndex;
 }

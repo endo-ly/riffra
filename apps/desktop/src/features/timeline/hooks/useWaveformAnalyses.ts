@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import type { AudioAnalysis, AudioClip } from '@/model/generated';
 
-import { useSessionContext } from '@/shared/session/session-context';
+import { useSession, useSessionContext } from '@/shared/session/session-context';
 
 export function useWaveformAnalyses(clips: AudioClip[]) {
-  const { api, hostGeneration } = useSessionContext();
+  const { api } = useSessionContext();
+  const hostGeneration = useSession((state) => state.host.connection.generation);
   const [analyses, setAnalyses] = useState<Record<string, AudioAnalysis | null>>({});
   const requestedRef = useRef<Set<string>>(new Set());
   useEffect(() => {

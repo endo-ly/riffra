@@ -1,6 +1,6 @@
 import { createElement, Fragment, type ReactNode } from 'react';
 import { TestSessionProvider } from '@/test/support/session-provider';
-import { FakeNativeApi } from '@/test/support/fake-native-api';
+import { createFakeNativeApi, type FakeNativeApi } from '@/test/support/fake-native-api';
 import type { AssetId } from '@/model/generated';
 // @vitest-environment jsdom
 
@@ -27,7 +27,7 @@ function mutation(createdEntityIds: Record<string, string[]> = {}): ArrangementM
 }
 
 function dropApi(overrides: { importMidiBytes?: () => Promise<AssetId> } = {}) {
-  const api = new FakeNativeApi({
+  const api = createFakeNativeApi({
     responses: {
       importMidiBytes: overrides.importMidiBytes ?? (() => toAssetId('asset:midi')),
       addAudioClipToArrangement: () => mutation(),

@@ -2,7 +2,8 @@ import type { MixRange } from '@/model/mix-range';
 import type { PreviewedValue } from '@/shared/session/usePreviewedValue';
 import { ValueSlider } from '@/shared/ui/ValueSlider';
 import { useRef, useState } from 'react';
-import styles from './Inspector.module.css';
+import sharedStyles from './Inspector.module.css';
+import styles from './MixValueField.module.css';
 
 interface MixValueFieldProps {
   label: string;
@@ -38,7 +39,7 @@ export function MixValueField(props: MixValueFieldProps) {
 
   return (
     <div className={styles.mixField}>
-      <span className={styles.rowLabel}>{props.label}</span>
+      <span className={sharedStyles.rowLabel}>{props.label}</span>
       <ValueSlider
         control={props.control}
         range={props.range}

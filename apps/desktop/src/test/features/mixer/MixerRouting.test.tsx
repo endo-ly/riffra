@@ -2,7 +2,7 @@ import { TestSessionProvider } from '@/test/support/session-provider';
 // @vitest-environment jsdom
 import type { AutomationTarget, Track } from '@/model/generated';
 import { defaultSession } from '@/native/browser-defaults';
-import { FakeNativeApi } from '@/test/support/fake-native-api';
+import { createFakeNativeApi } from '@/test/support/fake-native-api';
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, it } from 'vitest';
@@ -51,7 +51,7 @@ function sidechainSession() {
 
 it('lists the sidechain sends of the track and opens their automation', () => {
   const session = sidechainSession();
-  const api = new FakeNativeApi();
+  const api = createFakeNativeApi();
   const opened: AutomationTarget[] = [];
   render(
     <TestSessionProvider api={api}>
@@ -73,7 +73,7 @@ it('lists the sidechain sends of the track and opens their automation', () => {
 it('hides the sidechain list for tracks without sidechain sends', () => {
   const session = sidechainSession();
   session.arrangement.mixer.sidechainSends = [];
-  const api = new FakeNativeApi();
+  const api = createFakeNativeApi();
   render(
     <TestSessionProvider api={api}>
       <MixerRouting

@@ -6,11 +6,12 @@ import type {
   RecordingTakeRecord,
 } from '@/model/generated';
 import { errorText } from '@/shared/errors';
-import { useSessionContext } from '@/shared/session/session-context';
+import { useSession, useSessionContext, useSessionStore } from '@/shared/session/session-context';
 import { Icon } from '@/shared/ui/primitives';
 import clsx from 'clsx';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import styles from './Inspector.module.css';
+import sharedStyles from './Inspector.module.css';
+import styles from './TakeInspector.module.css';
 
 type RecordingSession = CreativeSession['arrangement']['recordingSessions'][number];
 
@@ -81,7 +82,10 @@ function defaultVariantForTake(
 }
 
 export function TakeInspector(props: TakeInspectorProps) {
-  const { api, commit: sessionCommit, hostGeneration } = useSessionContext();
+  const { api, commit: sessionCommit } = useSessionContext();
+  const store = useSessionStore();
+  const previewing = useSession((state) => state.audio.status.previewing);
+  const hostGeneration = useSession((state) => state.host.connection.generation);
   const { arrangement } = props.session;
   const groupContext = useMemo(() => {
     const selectedClipIds = props.selection.kind === 'clips' ? props.selection.clipIds : [];
@@ -178,11 +182,8 @@ export function TakeInspector(props: TakeInspectorProps) {
   }, [hostGeneration, resetAudition]);
 
   useEffect(() => {
-    return api.onAudioStatus((status) => {
-      if (status.previewing || auditionRef.current === null) return;
-      resetAudition();
-    });
-  }, [api, resetAudition]);
+    if (!previewing && auditionRef.current !== null) resetAudition();
+  }, [previewing, resetAudition]);
 
   const contextKey = context
     ? `${context.recordingSession.id}:${context.selectedTrackId}`
@@ -243,8 +244,9 @@ export function TakeInspector(props: TakeInspectorProps) {
         looped: false,
       });
     });
-    runOperation(operation, () => {
-      if (auditionRequest.current !== requestId) return;
+    runOperation(operation, (status) => {
+      if (auditionRequest.current !== requestId || !status) return;
+      store.getState().audio.setStatus(status);
       const nextAudition = { takeId: take.id, variant };
       auditionRef.current = nextAudition;
       setAudition(nextAudition);
@@ -274,8 +276,8 @@ export function TakeInspector(props: TakeInspectorProps) {
   };
 
   return (
-    <section className={styles.section} aria-label="Recording takes">
-      <header className={styles.sectionHeader}>
+    <section className={sharedStyles.section} aria-label="Recording takes">
+      <header className={sharedStyles.sectionHeader}>
         <strong>TAKES</strong>
         <button
           className={styles.headerAction}
@@ -293,7 +295,7 @@ export function TakeInspector(props: TakeInspectorProps) {
         <label className={styles.field}>
           <span>Group</span>
           <select
-            className={styles.control}
+            className={sharedStyles.control}
             aria-label="Recording group"
             disabled={Boolean(context.selectedTake)}
             value={context.recordingSession.id}
@@ -329,7 +331,7 @@ export function TakeInspector(props: TakeInspectorProps) {
               <div className={styles.takeActions}>
                 {!active && (
                   <button
-                    className={clsx(styles.smallButton, styles.accent)}
+                    className={clsx(sharedStyles.smallButton, sharedStyles.accent)}
                     type="button"
                     aria-label={`Use Take ${index + 1}`}
                     onClick={() => commit(api.activateTake(context.recordingSession.id, take.id))}
@@ -338,7 +340,7 @@ export function TakeInspector(props: TakeInspectorProps) {
                   </button>
                 )}
                 <button
-                  className={styles.smallButton}
+                  className={sharedStyles.smallButton}
                   type="button"
                   onClick={() => commit(api.placeTakeAsSeparateClip(take.id))}
                 >
@@ -346,7 +348,7 @@ export function TakeInspector(props: TakeInspectorProps) {
                 </button>
                 {hasPreview && (
                   <button
-                    className={styles.iconButton}
+                    className={sharedStyles.iconButton}
                     type="button"
                     aria-label={isAuditioning ? 'Stop' : 'Preview'}
                     aria-pressed={isAuditioning}
@@ -364,7 +366,7 @@ export function TakeInspector(props: TakeInspectorProps) {
                 aria-label={`Take ${index + 1} source`}
               >
                 <span>Source</span>
-                <div className={styles.segmented}>
+                <div className={sharedStyles.segmented}>
                   <button
                     type="button"
                     aria-pressed={selectedVariant === 'raw'}
@@ -386,7 +388,7 @@ export function TakeInspector(props: TakeInspectorProps) {
         );
       })}
       {operationMessage && (
-        <p className={styles.message} role="status">
+        <p className={sharedStyles.message} role="status">
           {operationMessage}
         </p>
       )}

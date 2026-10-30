@@ -1,5 +1,6 @@
 import type {
   ArrangementMutationResult,
+  CreativeSession,
   AudioMeterFrame,
   AudioStatus,
   BackgroundJobStatus,
@@ -22,6 +23,7 @@ import type {
 } from '@/model/generated';
 import { defaultSession } from '@/native/browser-defaults';
 import type { NativeApi } from '@/native/native-api';
+import { nativeApiMethodNames } from '@/native/api/native-implementation';
 import type { HostConnectionBootstrap } from '@/native/api/host-connection';
 import type { HostConnectionChangedEvent } from '@/native/api/host-connection';
 
@@ -128,9 +130,21 @@ export function fakeAudioStatus(overrides: Partial<AudioStatus> = {}): AudioStat
   };
 }
 
-type NativeMethod<K extends keyof NativeApi> = Extract<NativeApi[K], (...args: never[]) => unknown>;
+interface EventPayloads {
+  onHostConnectionChanged: HostConnectionChangedEvent;
+  onRuntimeStartupFinished: RuntimeStartupFinished;
+  onAudioStatus: AudioStatus;
+  onCanonicalStateChanged: CanonicalState;
+  onProjectStateChanged: BootstrapState['projectState'];
+  onProjectActivated: ProjectActivationResult;
+  onAudioMeters: AudioMeterFrame;
+  onTransportStatus: TransportStatus;
+  onRuntimeProjectionStatus: RuntimeProjectionStatus;
+  onRuntimeRestarted: number;
+  onRecordingFinalized: RecordingFinalized;
+}
 
-export class FakeNativeApi implements NativeApi {
+class FakeNativeControls {
   readonly calls: string[] = [];
   readonly emergencyMuteRequests: boolean[] = [];
   audio: AudioStatus;
@@ -145,23 +159,10 @@ export class FakeNativeApi implements NativeApi {
 
   private readonly responses = new Map<keyof NativeApi, ResponseValue>();
   private readonly failures = new Map<keyof NativeApi, Error>();
-  private readonly runtimeStartupListeners = new Set<(event: RuntimeStartupFinished) => void>();
-  private readonly runtimeRestartListeners = new Set<(generation: number) => void>();
-  private readonly runtimeProjectionListeners = new Set<
-    (status: RuntimeProjectionStatus) => void
-  >();
-  private readonly recordingFinalizedListeners = new Set<(event: RecordingFinalized) => void>();
-  private readonly transportListeners = new Set<(status: TransportStatus) => void>();
-  private readonly audioStatusListeners = new Set<(status: AudioStatus) => void>();
-  private readonly canonicalStateListeners = new Set<(state: CanonicalState) => void>();
-  private readonly projectStateListeners = new Set<
-    (state: BootstrapState['projectState']) => void
-  >();
-  private readonly projectActivatedListeners = new Set<(result: ProjectActivationResult) => void>();
-  private readonly audioMetersListeners = new Set<(meters: AudioMeterFrame) => void>();
-  private readonly hostConnectionListeners = new Set<(event: HostConnectionChangedEvent) => void>();
+  private readonly listeners = new Map<keyof EventPayloads, Set<(value: never) => void>>();
   private readonly jobs = new Map<string, BackgroundJobStatus>();
   private jobSequence = 0;
+  private canonicalSequence = 0;
 
   constructor(options: FakeNativeApiOptions = {}) {
     this.audio = options.audio ?? fakeAudioStatus();
@@ -169,6 +170,7 @@ export class FakeNativeApi implements NativeApi {
     this.plugins = options.plugins ?? [];
     this.missing = options.missingDependencies ?? [];
     this.bootstrapState = mergeBootstrap(options.bootstrapState);
+    this.canonicalSequence = this.bootstrapState.canonical.sequence;
     this.instruments = options.instruments ?? defaultInstrumentLibraryItems();
     this.instrumentCollections = options.instrumentCollections ?? [];
     this.hostConnectionState = {
@@ -208,563 +210,64 @@ export class FakeNativeApi implements NativeApi {
     for (const [name, error] of Object.entries(options.failures ?? {})) {
       if (error) this.failures.set(name as keyof NativeApi, error);
     }
-    // Production NativeApi values are plain functions and are commonly
-    // destructured by feature hooks. Bind the methods that exist on this
-    // typed implementation; missing methods remain missing and fail at compile time.
-    for (const property of Object.getOwnPropertyNames(FakeNativeApi.prototype)) {
+    // Native API methods and test controls can be passed as callbacks.
+    for (const property of Object.getOwnPropertyNames(FakeNativeControls.prototype)) {
       if (property === 'constructor') continue;
       const value = Reflect.get(this, property);
       if (typeof value === 'function') Reflect.set(this, property, value.bind(this));
     }
   }
 
-  bootstrap() {
-    return this.command('bootstrap', []);
-  }
-
-  getHostConnectionState() {
-    return this.command('getHostConnectionState', []);
-  }
-
-  listLocalHosts() {
-    return this.command('listLocalHosts', []);
-  }
-
-  switchHost(target: HostTarget) {
-    return this.command('switchHost', [target]);
-  }
-
-  reconnectHost() {
-    return this.command('reconnectHost', []);
-  }
-
   onHostConnectionChanged(
     callback: Parameters<NativeApi['onHostConnectionChanged']>[0],
   ): Promise<() => void> {
     this.recordCall('onHostConnectionChanged');
-    return Promise.resolve(this.subscribe(this.hostConnectionListeners, callback));
+    return Promise.resolve(this.subscribe('onHostConnectionChanged', callback));
   }
 
   onRuntimeStartupFinished(
     callback: Parameters<NativeApi['onRuntimeStartupFinished']>[0],
   ): Promise<() => void> {
     this.recordCall('onRuntimeStartupFinished');
-    return Promise.resolve(this.subscribe(this.runtimeStartupListeners, callback));
-  }
-
-  undoSession(...args: Parameters<NativeApi['undoSession']>) {
-    return this.command('undoSession', args);
-  }
-  redoSession(...args: Parameters<NativeApi['redoSession']>) {
-    return this.command('redoSession', args);
-  }
-  restoreRecoveryGeneration(...args: Parameters<NativeApi['restoreRecoveryGeneration']>) {
-    return this.command('restoreRecoveryGeneration', args);
-  }
-  exportProject(...args: Parameters<NativeApi['exportProject']>) {
-    return this.command('exportProject', args);
-  }
-  listProjects(...args: Parameters<NativeApi['listProjects']>) {
-    return this.command('listProjects', args);
-  }
-  createProject(...args: Parameters<NativeApi['createProject']>) {
-    return this.command('createProject', args);
-  }
-  openProject(...args: Parameters<NativeApi['openProject']>) {
-    return this.command('openProject', args);
-  }
-  renameProject(...args: Parameters<NativeApi['renameProject']>) {
-    return this.command('renameProject', args);
-  }
-  importScore(...args: Parameters<NativeApi['importScore']>) {
-    return this.command('importScore', args);
-  }
-  importProject(...args: Parameters<NativeApi['importProject']>) {
-    return this.command('importProject', args);
-  }
-  importMidiFile(...args: Parameters<NativeApi['importMidiFile']>) {
-    return this.command('importMidiFile', args);
-  }
-  importMidiBytes(...args: Parameters<NativeApi['importMidiBytes']>) {
-    return this.command('importMidiBytes', args);
-  }
-  startScanJob(...args: Parameters<NativeApi['startScanJob']>) {
-    return this.command('startScanJob', args);
-  }
-  getBackgroundJob(...args: Parameters<NativeApi['getBackgroundJob']>) {
-    return this.command('getBackgroundJob', args);
-  }
-  cancelBackgroundJob(...args: Parameters<NativeApi['cancelBackgroundJob']>) {
-    return this.command('cancelBackgroundJob', args);
-  }
-  listRecordings(...args: Parameters<NativeApi['listRecordings']>) {
-    return this.command('listRecordings', args);
-  }
-  renameRecording(...args: Parameters<NativeApi['renameRecording']>) {
-    return this.command('renameRecording', args);
-  }
-  deleteRecording(...args: Parameters<NativeApi['deleteRecording']>) {
-    return this.command('deleteRecording', args);
-  }
-  archiveRecording(...args: Parameters<NativeApi['archiveRecording']>) {
-    return this.command('archiveRecording', args);
-  }
-  promoteRecording(...args: Parameters<NativeApi['promoteRecording']>) {
-    return this.command('promoteRecording', args);
-  }
-  tagRecording(...args: Parameters<NativeApi['tagRecording']>) {
-    return this.command('tagRecording', args);
-  }
-  detectDuplicateRecordings(...args: Parameters<NativeApi['detectDuplicateRecordings']>) {
-    return this.command('detectDuplicateRecordings', args);
-  }
-  searchLibrary(...args: Parameters<NativeApi['searchLibrary']>) {
-    return this.command('searchLibrary', args);
-  }
-  updateLibraryAsset(...args: Parameters<NativeApi['updateLibraryAsset']>) {
-    return this.command('updateLibraryAsset', args);
-  }
-  listInstruments(...args: Parameters<NativeApi['listInstruments']>) {
-    return this.command('listInstruments', args);
-  }
-  setInstrumentFavorite(...args: Parameters<NativeApi['setInstrumentFavorite']>) {
-    return this.command('setInstrumentFavorite', args);
-  }
-  setInstrumentCategoryOverride(...args: Parameters<NativeApi['setInstrumentCategoryOverride']>) {
-    return this.command('setInstrumentCategoryOverride', args);
-  }
-  setInstrumentUserTags(...args: Parameters<NativeApi['setInstrumentUserTags']>) {
-    return this.command('setInstrumentUserTags', args);
-  }
-  listInstrumentCategories(...args: Parameters<NativeApi['listInstrumentCategories']>) {
-    return this.command('listInstrumentCategories', args);
-  }
-  listInstrumentCollections(...args: Parameters<NativeApi['listInstrumentCollections']>) {
-    return this.command('listInstrumentCollections', args);
-  }
-  createInstrumentCollection(...args: Parameters<NativeApi['createInstrumentCollection']>) {
-    return this.command('createInstrumentCollection', args);
-  }
-  renameInstrumentCollection(...args: Parameters<NativeApi['renameInstrumentCollection']>) {
-    return this.command('renameInstrumentCollection', args);
-  }
-  deleteInstrumentCollection(...args: Parameters<NativeApi['deleteInstrumentCollection']>) {
-    return this.command('deleteInstrumentCollection', args);
-  }
-  setInstrumentCollectionMembership(
-    ...args: Parameters<NativeApi['setInstrumentCollectionMembership']>
-  ) {
-    return this.command('setInstrumentCollectionMembership', args);
-  }
-  analyzeAsset(...args: Parameters<NativeApi['analyzeAsset']>) {
-    return this.command('analyzeAsset', args);
-  }
-  checkForAppUpdate() {
-    return this.command('checkForAppUpdate', []);
-  }
-  installAppUpdate() {
-    return this.command('installAppUpdate', []);
-  }
-  setMixdown(...args: Parameters<NativeApi['setMixdown']>) {
-    return this.command('setMixdown', args);
-  }
-  startRenderJob(...args: Parameters<NativeApi['startRenderJob']>) {
-    return this.command('startRenderJob', args);
-  }
-  startStemRenderJob(...args: Parameters<NativeApi['startStemRenderJob']>) {
-    return this.command('startStemRenderJob', args);
-  }
-  listRenders(...args: Parameters<NativeApi['listRenders']>) {
-    return this.command('listRenders', args);
-  }
-  exportRender(...args: Parameters<NativeApi['exportRender']>) {
-    return this.command('exportRender', args);
-  }
-  cleanRender(...args: Parameters<NativeApi['cleanRender']>) {
-    return this.command('cleanRender', args);
-  }
-
-  probeAudioDevices(...args: Parameters<NativeApi['probeAudioDevices']>) {
-    return this.command('probeAudioDevices', args);
-  }
-  probeDeviceChannels(...args: Parameters<NativeApi['probeDeviceChannels']>) {
-    return this.command('probeDeviceChannels', args);
-  }
-  previewAsset(...args: Parameters<NativeApi['previewAsset']>) {
-    return this.command('previewAsset', args);
-  }
-  previewInstrument(...args: Parameters<NativeApi['previewInstrument']>) {
-    return this.command('previewInstrument', args);
-  }
-  stopInstrumentPreview(...args: Parameters<NativeApi['stopInstrumentPreview']>) {
-    return this.command('stopInstrumentPreview', args);
-  }
-  openPluginAudition(...args: Parameters<NativeApi['openPluginAudition']>) {
-    return this.command('openPluginAudition', args);
-  }
-  stopPreview(...args: Parameters<NativeApi['stopPreview']>) {
-    return this.command('stopPreview', args);
-  }
-  getAudioStatus(...args: Parameters<NativeApi['getAudioStatus']>) {
-    return this.command('getAudioStatus', args);
-  }
-  previewMasterGainDb(...args: Parameters<NativeApi['previewMasterGainDb']>) {
-    return this.command('previewMasterGainDb', args);
-  }
-  previewAutomationValue(...args: Parameters<NativeApi['previewAutomationValue']>) {
-    return this.command('previewAutomationValue', args);
-  }
-  previewChannelMix(...args: Parameters<NativeApi['previewChannelMix']>) {
-    return this.command('previewChannelMix', args);
-  }
-  setEmergencyMute(...args: Parameters<NativeApi['setEmergencyMute']>) {
-    return this.command('setEmergencyMute', args);
-  }
-  resetFeedbackProtection(...args: Parameters<NativeApi['resetFeedbackProtection']>) {
-    return this.command('resetFeedbackProtection', args);
-  }
-  setMasterGainDb(...args: Parameters<NativeApi['setMasterGainDb']>) {
-    return this.command('setMasterGainDb', args);
-  }
-  recoverAudioDevice(...args: Parameters<NativeApi['recoverAudioDevice']>) {
-    return this.command('recoverAudioDevice', args);
-  }
-  retryStartupRuntime(...args: Parameters<NativeApi['retryStartupRuntime']>) {
-    return this.command('retryStartupRuntime', args);
-  }
-  setAudioDriver(...args: Parameters<NativeApi['setAudioDriver']>) {
-    return this.command('setAudioDriver', args);
-  }
-  enableMidiListening(...args: Parameters<NativeApi['enableMidiListening']>) {
-    return this.command('enableMidiListening', args);
-  }
-  disableMidiListening(...args: Parameters<NativeApi['disableMidiListening']>) {
-    return this.command('disableMidiListening', args);
-  }
-  sendMidiToTrack(...args: Parameters<NativeApi['sendMidiToTrack']>) {
-    return this.command('sendMidiToTrack', args);
-  }
-  setLiveMidiTarget(...args: Parameters<NativeApi['setLiveMidiTarget']>) {
-    return this.command('setLiveMidiTarget', args);
-  }
-  panicMidiTrack(...args: Parameters<NativeApi['panicMidiTrack']>) {
-    return this.command('panicMidiTrack', args);
-  }
-  startArrangeRecording(...args: Parameters<NativeApi['startArrangeRecording']>) {
-    return this.command('startArrangeRecording', args);
-  }
-  recordAnotherTake(...args: Parameters<NativeApi['recordAnotherTake']>) {
-    return this.command('recordAnotherTake', args);
-  }
-  stopArrangeRecording(...args: Parameters<NativeApi['stopArrangeRecording']>) {
-    return this.command('stopArrangeRecording', args);
-  }
-  addAudioClipToArrangement(...args: Parameters<NativeApi['addAudioClipToArrangement']>) {
-    return this.command('addAudioClipToArrangement', args);
-  }
-  addMidiClipToArrangement(...args: Parameters<NativeApi['addMidiClipToArrangement']>) {
-    return this.command('addMidiClipToArrangement', args);
-  }
-  createMidiClip(...args: Parameters<NativeApi['createMidiClip']>) {
-    return this.command('createMidiClip', args);
-  }
-  updateAudioClip(...args: Parameters<NativeApi['updateAudioClip']>) {
-    return this.command('updateAudioClip', args);
-  }
-  updateMidiClip(...args: Parameters<NativeApi['updateMidiClip']>) {
-    return this.command('updateMidiClip', args);
-  }
-  removeTimelineClips(...args: Parameters<NativeApi['removeTimelineClips']>) {
-    return this.command('removeTimelineClips', args);
-  }
-  trimAudioClip(...args: Parameters<NativeApi['trimAudioClip']>) {
-    return this.command('trimAudioClip', args);
-  }
-  splitAudioClip(...args: Parameters<NativeApi['splitAudioClip']>) {
-    return this.command('splitAudioClip', args);
-  }
-  duplicateAudioClip(...args: Parameters<NativeApi['duplicateAudioClip']>) {
-    return this.command('duplicateAudioClip', args);
-  }
-  moveAudioClips(...args: Parameters<NativeApi['moveAudioClips']>) {
-    return this.command('moveAudioClips', args);
-  }
-  moveMidiClips(...args: Parameters<NativeApi['moveMidiClips']>) {
-    return this.command('moveMidiClips', args);
-  }
-  trimMidiClip(...args: Parameters<NativeApi['trimMidiClip']>) {
-    return this.command('trimMidiClip', args);
-  }
-  splitMidiClip(...args: Parameters<NativeApi['splitMidiClip']>) {
-    return this.command('splitMidiClip', args);
-  }
-  duplicateMidiClip(...args: Parameters<NativeApi['duplicateMidiClip']>) {
-    return this.command('duplicateMidiClip', args);
-  }
-  pasteTimelineClips(...args: Parameters<NativeApi['pasteTimelineClips']>) {
-    return this.command('pasteTimelineClips', args);
-  }
-  crossfadeAudioClips(...args: Parameters<NativeApi['crossfadeAudioClips']>) {
-    return this.command('crossfadeAudioClips', args);
-  }
-  addTrack(...args: Parameters<NativeApi['addTrack']>) {
-    return this.command('addTrack', args);
-  }
-  updateTrack(...args: Parameters<NativeApi['updateTrack']>) {
-    return this.command('updateTrack', args);
-  }
-  setAutomation(...args: Parameters<NativeApi['setAutomation']>) {
-    return this.command('setAutomation', args);
-  }
-  setTrackAudioInput(...args: Parameters<NativeApi['setTrackAudioInput']>) {
-    return this.command('setTrackAudioInput', args);
-  }
-  setTrackMidiInput(...args: Parameters<NativeApi['setTrackMidiInput']>) {
-    return this.command('setTrackMidiInput', args);
-  }
-  applyInstrument(...args: Parameters<NativeApi['applyInstrument']>) {
-    return this.command('applyInstrument', args);
-  }
-  getInstrumentMidiSettings(...args: Parameters<NativeApi['getInstrumentMidiSettings']>) {
-    return this.command('getInstrumentMidiSettings', args);
-  }
-  setInstrumentMidiSettings(...args: Parameters<NativeApi['setInstrumentMidiSettings']>) {
-    return this.command('setInstrumentMidiSettings', args);
-  }
-  setTrackVst3Instrument(...args: Parameters<NativeApi['setTrackVst3Instrument']>) {
-    return this.command('setTrackVst3Instrument', args);
-  }
-  clearTrackInstrument(...args: Parameters<NativeApi['clearTrackInstrument']>) {
-    return this.command('clearTrackInstrument', args);
-  }
-  addMixBus(...args: Parameters<NativeApi['addMixBus']>) {
-    return this.command('addMixBus', args);
-  }
-  updateMixBus(...args: Parameters<NativeApi['updateMixBus']>) {
-    return this.command('updateMixBus', args);
-  }
-  removeMixBus(...args: Parameters<NativeApi['removeMixBus']>) {
-    return this.command('removeMixBus', args);
-  }
-  setTrackOutput(...args: Parameters<NativeApi['setTrackOutput']>) {
-    return this.command('setTrackOutput', args);
-  }
-  addSend(...args: Parameters<NativeApi['addSend']>) {
-    return this.command('addSend', args);
-  }
-  updateSend(...args: Parameters<NativeApi['updateSend']>) {
-    return this.command('updateSend', args);
-  }
-  removeSend(...args: Parameters<NativeApi['removeSend']>) {
-    return this.command('removeSend', args);
-  }
-  addSidechainSend(...args: Parameters<NativeApi['addSidechainSend']>) {
-    return this.command('addSidechainSend', args);
-  }
-  updateSidechainSend(...args: Parameters<NativeApi['updateSidechainSend']>) {
-    return this.command('updateSidechainSend', args);
-  }
-  removeSidechainSend(...args: Parameters<NativeApi['removeSidechainSend']>) {
-    return this.command('removeSidechainSend', args);
-  }
-  previewSendLevel(...args: Parameters<NativeApi['previewSendLevel']>) {
-    return this.command('previewSendLevel', args);
-  }
-  previewSidechainSendLevel(...args: Parameters<NativeApi['previewSidechainSendLevel']>) {
-    return this.command('previewSidechainSendLevel', args);
-  }
-  addEffect(...args: Parameters<NativeApi['addEffect']>) {
-    return this.command('addEffect', args);
-  }
-  removeEffect(...args: Parameters<NativeApi['removeEffect']>) {
-    return this.command('removeEffect', args);
-  }
-  reorderEffects(...args: Parameters<NativeApi['reorderEffects']>) {
-    return this.command('reorderEffects', args);
-  }
-  setDeviceBypassed(...args: Parameters<NativeApi['setDeviceBypassed']>) {
-    return this.command('setDeviceBypassed', args);
-  }
-  setDeviceParameter(...args: Parameters<NativeApi['setDeviceParameter']>) {
-    return this.command('setDeviceParameter', args);
-  }
-  inspectDevice(...args: Parameters<NativeApi['inspectDevice']>) {
-    return this.command('inspectDevice', args);
-  }
-  listDeviceParameters(...args: Parameters<NativeApi['listDeviceParameters']>) {
-    return this.command('listDeviceParameters', args);
-  }
-  getDeviceParameter(...args: Parameters<NativeApi['getDeviceParameter']>) {
-    return this.command('getDeviceParameter', args);
-  }
-  formatDeviceParameterValue(...args: Parameters<NativeApi['formatDeviceParameterValue']>) {
-    return this.command('formatDeviceParameterValue', args);
-  }
-  listPluginPresets(...args: Parameters<NativeApi['listPluginPresets']>) {
-    return this.command('listPluginPresets', args);
-  }
-  getPluginPreset(...args: Parameters<NativeApi['getPluginPreset']>) {
-    return this.command('getPluginPreset', args);
-  }
-  setPluginPreset(...args: Parameters<NativeApi['setPluginPreset']>) {
-    return this.command('setPluginPreset', args);
-  }
-  openPluginEditor(...args: Parameters<NativeApi['openPluginEditor']>) {
-    return this.command('openPluginEditor', args);
-  }
-  removeTrack(...args: Parameters<NativeApi['removeTrack']>) {
-    return this.command('removeTrack', args);
-  }
-  duplicateTrack(...args: Parameters<NativeApi['duplicateTrack']>) {
-    return this.command('duplicateTrack', args);
-  }
-  reorderTrack(...args: Parameters<NativeApi['reorderTrack']>) {
-    return this.command('reorderTrack', args);
-  }
-  addMarker(...args: Parameters<NativeApi['addMarker']>) {
-    return this.command('addMarker', args);
-  }
-  updateMarker(...args: Parameters<NativeApi['updateMarker']>) {
-    return this.command('updateMarker', args);
-  }
-  removeMarker(...args: Parameters<NativeApi['removeMarker']>) {
-    return this.command('removeMarker', args);
-  }
-  addMidiNote(...args: Parameters<NativeApi['addMidiNote']>) {
-    return this.command('addMidiNote', args);
-  }
-  insertMidiNotes(...args: Parameters<NativeApi['insertMidiNotes']>) {
-    return this.command('insertMidiNotes', args);
-  }
-  updateMidiNote(...args: Parameters<NativeApi['updateMidiNote']>) {
-    return this.command('updateMidiNote', args);
-  }
-  updateMidiNotes(...args: Parameters<NativeApi['updateMidiNotes']>) {
-    return this.command('updateMidiNotes', args);
-  }
-  removeMidiNote(...args: Parameters<NativeApi['removeMidiNote']>) {
-    return this.command('removeMidiNote', args);
-  }
-  removeMidiNotes(...args: Parameters<NativeApi['removeMidiNotes']>) {
-    return this.command('removeMidiNotes', args);
-  }
-  quantizeMidiNotes(...args: Parameters<NativeApi['quantizeMidiNotes']>) {
-    return this.command('quantizeMidiNotes', args);
-  }
-  transformMidiNotes(...args: Parameters<NativeApi['transformMidiNotes']>) {
-    return this.command('transformMidiNotes', args);
-  }
-  duplicateMidiNotes(...args: Parameters<NativeApi['duplicateMidiNotes']>) {
-    return this.command('duplicateMidiNotes', args);
-  }
-  setAudioClipTakeVariant(...args: Parameters<NativeApi['setAudioClipTakeVariant']>) {
-    return this.command('setAudioClipTakeVariant', args);
-  }
-  startTakeComparison(...args: Parameters<NativeApi['startTakeComparison']>) {
-    return this.command('startTakeComparison', args);
-  }
-  switchTakeComparisonVariant(...args: Parameters<NativeApi['switchTakeComparisonVariant']>) {
-    return this.command('switchTakeComparisonVariant', args);
-  }
-  stopTakeComparison(...args: Parameters<NativeApi['stopTakeComparison']>) {
-    return this.command('stopTakeComparison', args);
-  }
-  activateTake(...args: Parameters<NativeApi['activateTake']>) {
-    return this.command('activateTake', args);
-  }
-  placeTakeAsSeparateClip(...args: Parameters<NativeApi['placeTakeAsSeparateClip']>) {
-    return this.command('placeTakeAsSeparateClip', args);
-  }
-  updateArrangementTimebase(...args: Parameters<NativeApi['updateArrangementTimebase']>) {
-    return this.command('updateArrangementTimebase', args);
-  }
-  updateTimelineLoopRange(...args: Parameters<NativeApi['updateTimelineLoopRange']>) {
-    return this.command('updateTimelineLoopRange', args);
-  }
-  updateTimelinePunchRange(...args: Parameters<NativeApi['updateTimelinePunchRange']>) {
-    return this.command('updateTimelinePunchRange', args);
-  }
-  retryRuntimeProjection(...args: Parameters<NativeApi['retryRuntimeProjection']>) {
-    return this.command('retryRuntimeProjection', args);
-  }
-  getRuntimeProjectionStatus(...args: Parameters<NativeApi['getRuntimeProjectionStatus']>) {
-    return this.command('getRuntimeProjectionStatus', args);
-  }
-  playTimeline(...args: Parameters<NativeApi['playTimeline']>) {
-    return this.command('playTimeline', args);
-  }
-
-  pauseTimeline(...args: Parameters<NativeApi['pauseTimeline']>) {
-    return this.command('pauseTimeline', args);
-  }
-  stopTimeline(...args: Parameters<NativeApi['stopTimeline']>) {
-    return this.command('stopTimeline', args);
-  }
-  goToStartTimeline(...args: Parameters<NativeApi['goToStartTimeline']>) {
-    return this.command('goToStartTimeline', args);
-  }
-  seekTimeline(...args: Parameters<NativeApi['seekTimeline']>) {
-    return this.command('seekTimeline', args);
-  }
-  updateSessionSettings(...args: Parameters<NativeApi['updateSessionSettings']>) {
-    return this.command('updateSessionSettings', args);
-  }
-  getMissingDependencies(...args: Parameters<NativeApi['getMissingDependencies']>) {
-    return this.command('getMissingDependencies', args);
-  }
-  relinkMissingDependency(...args: Parameters<NativeApi['relinkMissingDependency']>) {
-    return this.command('relinkMissingDependency', args);
-  }
-  disableMissingPlugin(...args: Parameters<NativeApi['disableMissingPlugin']>) {
-    return this.command('disableMissingPlugin', args);
-  }
-  replaceMissingTrackPlugin(...args: Parameters<NativeApi['replaceMissingTrackPlugin']>) {
-    return this.command('replaceMissingTrackPlugin', args);
+    return Promise.resolve(this.subscribe('onRuntimeStartupFinished', callback));
   }
 
   onAudioStatus(callback: Parameters<NativeApi['onAudioStatus']>[0]) {
     this.recordCall('onAudioStatus');
-    return this.subscribe(this.audioStatusListeners, callback);
+    return this.subscribe('onAudioStatus', callback);
   }
   onCanonicalStateChanged(callback: Parameters<NativeApi['onCanonicalStateChanged']>[0]) {
     this.recordCall('onCanonicalStateChanged');
-    return this.subscribe(this.canonicalStateListeners, callback);
+    return this.subscribe('onCanonicalStateChanged', callback);
   }
   onProjectStateChanged(callback: Parameters<NativeApi['onProjectStateChanged']>[0]) {
     this.recordCall('onProjectStateChanged');
-    return this.subscribe(this.projectStateListeners, callback);
+    return this.subscribe('onProjectStateChanged', callback);
   }
   onProjectActivated(callback: Parameters<NativeApi['onProjectActivated']>[0]) {
     this.recordCall('onProjectActivated');
-    return this.subscribe(this.projectActivatedListeners, callback);
+    return this.subscribe('onProjectActivated', callback);
   }
   onAudioMeters(callback: Parameters<NativeApi['onAudioMeters']>[0]) {
     this.recordCall('onAudioMeters');
-    return this.subscribe(this.audioMetersListeners, callback);
+    return this.subscribe('onAudioMeters', callback);
   }
   onTransportStatus(callback: Parameters<NativeApi['onTransportStatus']>[0]) {
     this.recordCall('onTransportStatus');
-    return this.subscribe(this.transportListeners, callback);
+    return this.subscribe('onTransportStatus', callback);
   }
   onRuntimeProjectionStatus(callback: Parameters<NativeApi['onRuntimeProjectionStatus']>[0]) {
     this.recordCall('onRuntimeProjectionStatus');
-    return this.subscribe(this.runtimeProjectionListeners, callback);
+    return this.subscribe('onRuntimeProjectionStatus', callback);
   }
   onRuntimeRestarted(callback: Parameters<NativeApi['onRuntimeRestarted']>[0]) {
     this.recordCall('onRuntimeRestarted');
-    return this.subscribe(this.runtimeRestartListeners, callback);
+    return this.subscribe('onRuntimeRestarted', callback);
   }
   onRecordingFinalized(callback: Parameters<NativeApi['onRecordingFinalized']>[0]) {
     this.recordCall('onRecordingFinalized');
-    return this.subscribe(this.recordingFinalizedListeners, callback);
+    return this.subscribe('onRecordingFinalized', callback);
   }
-  private command<K extends keyof NativeApi>(
-    name: K,
-    arguments_: Parameters<NativeMethod<K>>,
-  ): Promise<Awaited<ReturnType<NativeMethod<K>>>> {
-    return this.invoke(name, arguments_) as Promise<Awaited<ReturnType<NativeMethod<K>>>>;
-  }
-
   private recordCall(name: keyof NativeApi): void {
     this.calls.push(String(name));
   }
@@ -779,6 +282,22 @@ export class FakeNativeApi implements NativeApi {
     this.instruments = this.instruments.map((item) =>
       item.id === instrument.id ? instrument : item,
     );
+  }
+
+  /** Answers a mutation the way the Host does: the given session with the next canonical sequence. */
+  mutationResult(
+    session: CreativeSession,
+    createdEntityIds: ArrangementMutationResult['createdEntityIds'] = {},
+  ): ArrangementMutationResult {
+    return {
+      canonical: {
+        ...this.bootstrapState.canonical,
+        session,
+        sequence: ++this.canonicalSequence,
+      },
+      createdEntityIds,
+      projection: { state: 'notRequired' },
+    };
   }
 
   setResponse<K extends keyof NativeApi>(name: K, response: ResponseValue): void {
@@ -796,20 +315,20 @@ export class FakeNativeApi implements NativeApi {
 
   emitRuntimeStartupFinished(succeeded = this.bootstrapState.runtimeStarted): void {
     const event = { succeeded };
-    this.runtimeStartupListeners.forEach((listener) => listener(event));
+    this.emit('onRuntimeStartupFinished', event);
   }
 
   emitRuntimeRestarted(generation = 2): void {
-    this.runtimeRestartListeners.forEach((listener) => listener(generation));
+    this.emit('onRuntimeRestarted', generation);
   }
 
   emitRuntimeProjectionStatus(status: RuntimeProjectionStatus): void {
     this.runtimeProjection = status;
-    this.runtimeProjectionListeners.forEach((listener) => listener(status));
+    this.emit('onRuntimeProjectionStatus', status);
   }
 
   emitRecordingFinalized(event: RecordingFinalized): void {
-    this.recordingFinalizedListeners.forEach((listener) => listener(event));
+    this.emit('onRecordingFinalized', event);
   }
 
   emitTransportStatus(status: Partial<TransportStatus> = {}): void {
@@ -830,12 +349,12 @@ export class FakeNativeApi implements NativeApi {
       discontinuity: 0,
       ...status,
     };
-    this.transportListeners.forEach((listener) => listener(next));
+    this.emit('onTransportStatus', next);
   }
 
   emitAudioStatus(status: AudioStatus): void {
     this.audio = status;
-    this.audioStatusListeners.forEach((listener) => listener(status));
+    this.emit('onAudioStatus', status);
   }
 
   emitCanonicalStateChanged(state: CanonicalState): void {
@@ -843,12 +362,12 @@ export class FakeNativeApi implements NativeApi {
       ...this.bootstrapState,
       canonical: state,
     };
-    this.canonicalStateListeners.forEach((listener) => listener(state));
+    this.emit('onCanonicalStateChanged', state);
   }
 
   emitProjectStateChanged(state: BootstrapState['projectState']): void {
     this.bootstrapState = { ...this.bootstrapState, projectState: state };
-    this.projectStateListeners.forEach((listener) => listener(state));
+    this.emit('onProjectStateChanged', state);
   }
 
   emitProjectActivated(result: ProjectActivationResult): void {
@@ -858,7 +377,7 @@ export class FakeNativeApi implements NativeApi {
       projectState: result.projectState,
       recovery: result.recovery,
     };
-    this.projectActivatedListeners.forEach((listener) => listener(result));
+    this.emit('onProjectActivated', result);
   }
 
   emitHostConnectionChanged(
@@ -871,10 +390,10 @@ export class FakeNativeApi implements NativeApi {
       hostConnection: this.hostConnectionState,
     };
     const event = { state: this.hostConnectionState, bootstrap };
-    this.hostConnectionListeners.forEach((listener) => listener(event));
+    this.emit('onHostConnectionChanged', event);
   }
 
-  private invoke(name: keyof NativeApi, arguments_: unknown[]): Promise<unknown> {
+  dispatch(name: keyof NativeApi, arguments_: unknown[]): Promise<unknown> {
     this.recordCall(name);
     const failure = this.failures.get(name);
     if (failure) return Promise.reject(failure);
@@ -1025,7 +544,7 @@ export class FakeNativeApi implements NativeApi {
           state: this.hostConnectionState,
           bootstrap: this.bootstrapState,
         };
-        this.hostConnectionListeners.forEach((listener) => listener(event));
+        this.emit('onHostConnectionChanged', event);
         return Promise.resolve({
           state: this.hostConnectionState,
           bootstrap: this.bootstrapState,
@@ -1118,31 +637,38 @@ export class FakeNativeApi implements NativeApi {
 
     if (name === 'stopArrangeRecording') {
       return Promise.resolve({
-        canonical: this.bootstrapState.canonical,
+        canonical: this.mutationResult(this.bootstrapState.canonical.session).canonical,
         audio: this.audio,
         projection: { state: 'notRequired' },
         finalization: { state: 'notRequired' },
       });
     }
-    if (arrangementMutationMethodNames.has(name)) {
-      const result: ArrangementMutationResult = {
-        canonical: this.bootstrapState.canonical,
-        createdEntityIds: {},
-        projection: { state: 'notRequired' },
-      };
-      return Promise.resolve(result);
-    }
+    if (arrangementMutationMethodNames.has(name))
+      return Promise.resolve(this.mutationResult(this.bootstrapState.canonical.session));
     if (audioMethodNames.has(name)) return Promise.resolve(this.audio);
     if (voidMethodNames.has(name)) return Promise.resolve(undefined);
     throw new Error(`Unconfigured NativeApi method: ${String(name)}`);
   }
 
-  private subscribe<T>(
-    listeners: Set<(value: T) => void>,
-    callback: (value: T) => void,
+  private subscribe<K extends keyof EventPayloads>(
+    name: K,
+    callback: (value: EventPayloads[K]) => void,
   ): () => void {
-    listeners.add(callback);
-    return () => listeners.delete(callback);
+    let listeners = this.listeners.get(name);
+    if (!listeners) {
+      listeners = new Set();
+      this.listeners.set(name, listeners);
+    }
+    const listener = callback as (value: never) => void;
+    listeners.add(listener);
+    return () => {
+      listeners.delete(listener);
+      if (listeners.size === 0 && this.listeners.get(name) === listeners)
+        this.listeners.delete(name);
+    };
+  }
+  private emit<K extends keyof EventPayloads>(name: K, value: EventPayloads[K]): void {
+    this.listeners.get(name)?.forEach((listener) => listener(value as never));
   }
 
   private completedJob(kind: 'scan', result: unknown) {
@@ -1157,6 +683,22 @@ export class FakeNativeApi implements NativeApi {
     this.jobs.set(id, job);
     return job;
   }
+}
+
+export type FakeNativeApi = NativeApi & Omit<FakeNativeControls, 'dispatch'>;
+
+export function createFakeNativeApi(options: FakeNativeApiOptions = {}): FakeNativeApi {
+  const controls = new FakeNativeControls(options);
+  const methods = Object.fromEntries(
+    nativeApiMethodNames.map((name) => {
+      const event = name.startsWith('on') ? Reflect.get(controls, name) : undefined;
+      return [
+        name,
+        typeof event === 'function' ? event : (...args: unknown[]) => controls.dispatch(name, args),
+      ];
+    }),
+  );
+  return Object.assign(controls, methods) as unknown as FakeNativeApi;
 }
 
 const arrangementMutationMethodNames = new Set<keyof NativeApi>([

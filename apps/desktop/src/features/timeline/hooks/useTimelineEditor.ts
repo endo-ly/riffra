@@ -1,5 +1,5 @@
 import { snapToBar } from '@/model/timebase';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import type { AudioAnalysis, CreativeSession } from '@/model/generated';
 import type { EditorSelection } from '../../../model/editor-selection';
 import { type TimelineTool } from '@/features/timeline/model/timeline-layout';
@@ -21,13 +21,13 @@ interface UseTimelineEditorOptions {
   tool: TimelineTool;
   snap: SnapGrid;
   pixelsPerTick: number;
-  displayTick: number;
+  displayTickRef: MutableRefObject<number>;
   analyses: Record<string, AudioAnalysis | null>;
   onSplitToolUsed?: () => void;
 }
 
 export function useTimelineEditor(options: UseTimelineEditorOptions) {
-  const { session, selection, setSelection, tool, snap, pixelsPerTick, displayTick, analyses } =
+  const { session, selection, setSelection, tool, snap, pixelsPerTick, displayTickRef, analyses } =
     options;
   const selectedClipIds = useMemo(
     () => (selection.kind === 'clips' ? selection.clipIds : []),
@@ -167,10 +167,11 @@ export function useTimelineEditor(options: UseTimelineEditorOptions) {
     });
   };
 
-  useEffect(() => {
-    const keydown = (event: KeyboardEvent) => {
+  /** Handles clip editing keys; returns whether the key belonged to the timeline. */
+  const handleKeyboard = useCallback(
+    (event: KeyboardEvent) => {
       const key = event.key.toLowerCase();
-      if (isEditableTypingTarget(event.target)) return;
+      if (isEditableTypingTarget(event.target)) return false;
       if (event.ctrlKey && key === 'a') {
         event.preventDefault();
         setSelectedClipIds([
@@ -201,7 +202,7 @@ export function useTimelineEditor(options: UseTimelineEditorOptions) {
           pasteTimelineClips(
             clipboardRef.current.audioIds,
             clipboardRef.current.midiIds,
-            snapTick(displayTick),
+            snapTick(displayTickRef.current),
           ),
         ).then((next) => {
           if (next)
@@ -235,8 +236,8 @@ export function useTimelineEditor(options: UseTimelineEditorOptions) {
         const midiTargets = arrangement.midiClips.filter((clip) =>
           selectedClipIds.includes(clip.id),
         );
-        for (const clip of audioTargets) void splitClip(clip, displayTick);
-        for (const clip of midiTargets) void splitMidiClip(clip, displayTick);
+        for (const clip of audioTargets) void splitClip(clip, displayTickRef.current);
+        for (const clip of midiTargets) void splitMidiClip(clip, displayTickRef.current);
       } else if (selectedClipIds.length && event.key === 'Delete') {
         event.preventDefault();
         void commit(
@@ -249,24 +250,26 @@ export function useTimelineEditor(options: UseTimelineEditorOptions) {
               .map((clip) => clip.id),
           ),
         ).then(() => setSelectedClipIds([]));
+      } else {
+        return false;
       }
-    };
-    window.addEventListener('keydown', keydown);
-    return () => window.removeEventListener('keydown', keydown);
-  }, [
-    arrangement.audioClips,
-    arrangement.midiClips,
-    commit,
-    displayTick,
-    pasteTimelineClips,
-    removeTimelineClips,
-    selectedClipIds,
-    setSelectedClipIds,
-    snapTick,
-    splitClip,
-    splitMidiClip,
-    timebase,
-  ]);
+      return true;
+    },
+    [
+      arrangement.audioClips,
+      arrangement.midiClips,
+      commit,
+      displayTickRef,
+      pasteTimelineClips,
+      removeTimelineClips,
+      selectedClipIds,
+      setSelectedClipIds,
+      snapTick,
+      splitClip,
+      splitMidiClip,
+      timebase,
+    ],
+  );
 
   return {
     snapGuide,
@@ -275,6 +278,7 @@ export function useTimelineEditor(options: UseTimelineEditorOptions) {
     snapTick,
     selectClip,
     beginMarquee,
+    handleKeyboard,
     ...clipInteractions,
   };
 }

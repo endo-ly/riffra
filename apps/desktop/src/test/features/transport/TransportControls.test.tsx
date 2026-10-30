@@ -3,43 +3,28 @@ import { TestSessionProvider } from '@/test/support/session-provider';
 
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TransportControls } from '@/features/transport/TransportControls';
 import { canonicalState, defaultSession } from '@/native/browser-defaults';
-import { FakeNativeApi, fakeAudioStatus } from '@/test/support/fake-native-api';
+import {
+  createFakeNativeApi,
+  type FakeNativeApi,
+  fakeAudioStatus,
+} from '@/test/support/fake-native-api';
 
 afterEach(cleanup);
 
 function Harness({ api }: { api: FakeNativeApi }) {
-  const initial = defaultSession();
-  const [session, setSession] = useState(initial);
   return (
-    <TestSessionProvider
-      api={api}
-      applyCanonicalState={(canonical) => setSession(canonical.session)}
-    >
-      <TransportControls
-        session={session}
-        recordingActive={api.audio.recording.active}
-        positionTick={0}
-        transportPlaying={false}
-        transportStarting={false}
-        transportPaused={false}
-        onPlay={() => undefined}
-        onPause={() => undefined}
-        onStop={() => undefined}
-        onGoToStart={() => undefined}
-        recordingCommandPending={false}
-        onToggleRecording={() => undefined}
-      />
+    <TestSessionProvider api={api}>
+      <TransportControls />
     </TestSessionProvider>
   );
 }
 
 describe('TransportControls', () => {
   it('commits BPM and meter changes from the Arrange transport', async () => {
-    const api = new FakeNativeApi({
+    const api = createFakeNativeApi({
       bootstrapState: { canonical: canonicalState(defaultSession()) },
       audio: fakeAudioStatus(),
     });
@@ -59,7 +44,7 @@ describe('TransportControls', () => {
 
   it('chooses the metronome sound from the metronome context menu', async () => {
     // Arrange
-    const api = new FakeNativeApi({
+    const api = createFakeNativeApi({
       bootstrapState: { canonical: canonicalState(defaultSession()) },
       audio: fakeAudioStatus(),
     });

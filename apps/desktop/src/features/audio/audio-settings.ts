@@ -8,19 +8,6 @@ import type {
   DeviceChannels,
 } from '@/model/generated';
 
-export interface RequestedAudioSettings {
-  driver: string;
-  sampleRate: number;
-  bufferSize: number;
-}
-
-export interface EffectiveAudioSettings {
-  driver: string;
-  sampleRate: number | null;
-  bufferSize: number | null;
-  message: string | null;
-}
-
 export const audioSampleRateOptions = [44_100, 48_000, 88_200, 96_000] as const;
 export const audioBufferSizeOptions = [64, 128, 256, 512, 1024] as const;
 
@@ -289,28 +276,4 @@ export function isAudioSettingsDraftValid(
   if (driver.devicePairing === 'sameDevice' && draft.inputDevice !== draft.outputDevice)
     return false;
   return input.channels.some((channel) => channel.index === draft.inputChannel);
-}
-
-export function reconcileAudioSettings(
-  requested: RequestedAudioSettings,
-  status: AudioStatus,
-): EffectiveAudioSettings {
-  const unavailable = [
-    status.sampleRate !== requested.sampleRate
-      ? `${requested.sampleRate.toLocaleString()} Hz (using ${status.sampleRate?.toLocaleString() ?? 'unknown'} Hz)`
-      : null,
-    status.bufferSize !== requested.bufferSize
-      ? `${requested.bufferSize} samples (using ${status.bufferSize ?? 'unknown'} samples)`
-      : null,
-  ].filter((value): value is string => value !== null);
-
-  return {
-    driver: status.driver ?? requested.driver,
-    sampleRate: status.sampleRate,
-    bufferSize: status.bufferSize,
-    message:
-      unavailable.length > 0
-        ? `The driver did not accept ${unavailable.join(' and ')}. Effective settings are selected.`
-        : null,
-  };
 }

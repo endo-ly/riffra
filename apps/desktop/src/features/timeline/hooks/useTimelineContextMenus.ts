@@ -12,7 +12,7 @@ import type { ContextMenuItem } from '@/shared/ui/ContextMenu';
 import { toast } from '@/shared/toasts';
 import { countOffGridNotes, snapGridTicks, type SnapGrid } from '@/model/clip-grid';
 import { clipDurationTicks } from '@/model/clip-time';
-import { useState } from 'react';
+import { useState, type MutableRefObject } from 'react';
 import type { useTimelineEditor } from './useTimelineEditor';
 import type { useTimelineRulerController } from './useTimelineRulerController';
 
@@ -23,7 +23,7 @@ interface UseTimelineContextMenusOptions {
   lower: { openMidiEditor: (clip: MidiClip) => void };
   snap: SnapGrid;
   timebase: ProjectTimebase;
-  displayTick: number;
+  displayTickRef: MutableRefObject<number>;
   onOpenDevices: (trackId: string) => void;
   addTrack: (kind: TrackKind) => Promise<ArrangementMutationResult | null>;
   deleteTrack: (trackId: string, name: string, clipCount: number) => void;
@@ -38,7 +38,7 @@ export function useTimelineContextMenus({
   lower,
   snap,
   timebase,
-  displayTick,
+  displayTickRef,
   onOpenDevices,
   addTrack,
   deleteTrack,
@@ -131,7 +131,7 @@ export function useTimelineContextMenus({
           label: 'Split at Playhead',
           onClick: () => {
             closeContextMenu();
-            void editor.splitClip(clip, displayTick);
+            void editor.splitClip(clip, displayTickRef.current);
           },
         },
         {
@@ -217,7 +217,7 @@ export function useTimelineContextMenus({
           label: 'Split at Playhead',
           onClick: () => {
             closeContextMenu();
-            void editor.splitMidiClip(clip, displayTick);
+            void editor.splitMidiClip(clip, displayTickRef.current);
           },
         },
         {

@@ -1,4 +1,4 @@
-import { TestSessionProvider } from '@/test/support/session-provider';
+import { createTestSessionStore, TestSessionProvider } from '@/test/support/session-provider';
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
@@ -13,10 +13,10 @@ import type {
   InstrumentLibraryItem,
   Track,
 } from '@/model/generated';
-import { canonicalState, defaultSession } from '@/native/browser-defaults';
-import { FakeNativeApi } from '@/test/support/fake-native-api';
+import { defaultSession } from '@/native/browser-defaults';
+import { createFakeNativeApi, type FakeNativeApi } from '@/test/support/fake-native-api';
 import { resolveDeviceTarget } from '@/features/devices/device-target';
-import { DevicesPanel } from '@/features/devices/DevicesPanel';
+import { DevicesPanelView } from '@/features/devices/DevicesPanel';
 
 afterEach(cleanup);
 const effect = {
@@ -79,7 +79,7 @@ function runtimeApi(
     channels: 0,
   },
 ) {
-  return new FakeNativeApi({
+  return createFakeNativeApi({
     responses: {
       inspectDevice: {
         id: effect.id,
@@ -123,13 +123,15 @@ function Harness({
   const initial = initialSession ?? defaultSession();
   if (!initialSession) initial.arrangement.tracks = [structuredClone(initialTrack)];
   const [session, setSession] = useState(initial);
+  const [store] = useState(() =>
+    createTestSessionStore(api, {
+      session: initial,
+      applyCanonical: (canonical) => setSession(canonical.session),
+    }),
+  );
   return (
-    <TestSessionProvider
-      api={api}
-      applyCanonicalState={(canonical) => setSession(canonical.session)}
-      getCanonicalState={() => canonicalState(session)}
-    >
-      <DevicesPanel
+    <TestSessionProvider api={api} store={store}>
+      <DevicesPanelView
         sessionId={session.sessionId}
         automationLanes={session.arrangement.automationLanes}
         arrangement={session.arrangement}
@@ -202,11 +204,7 @@ describe('DevicesPanel', () => {
         };
         currentEffect.plugin.parameterValues[index] = value;
         if (index === 1) refreshingMode = true;
-        return {
-          canonical: canonicalState(structuredClone(currentSession)),
-          createdEntityIds: {},
-          projection: { state: 'notRequired' as const },
-        };
+        return api.mutationResult(structuredClone(currentSession));
       });
       api.setPluginPreset = vi.fn(async () => {
         currentParameters.forEach((parameter) => {
@@ -216,11 +214,7 @@ describe('DevicesPanel', () => {
           (parameter) => parameter.value,
         );
         api.getPluginPreset = vi.fn().mockResolvedValue({ index: 1, name: 'Soft' });
-        return {
-          canonical: canonicalState(structuredClone(currentSession)),
-          createdEntityIds: {},
-          projection: { state: 'notRequired' as const },
-        };
+        return api.mutationResult(structuredClone(currentSession));
       });
       api.openPluginEditor = vi.fn().mockResolvedValue(undefined);
       render(
@@ -313,13 +307,13 @@ describe('DevicesPanel', () => {
       onReplaceMissingPlugin: async () => undefined,
       onRescanMissingPlugins: async () => undefined,
     };
-    const { rerender } = render(<DevicesPanel {...props} />, {
+    const { rerender } = render(<DevicesPanelView {...props} />, {
       wrapper: ({ children }) => <TestSessionProvider api={api}>{children}</TestSessionProvider>,
     });
     fireEvent.click(screen.getByRole('button', { name: 'Test Effect' }));
     await waitFor(() => expect(api.listDeviceParameters).toHaveBeenCalled());
     rerender(
-      <DevicesPanel
+      <DevicesPanelView
         {...props}
         target={{ ...props.target, track: { ...track, effects: [] }, effects: [] }}
       />,
@@ -327,7 +321,7 @@ describe('DevicesPanel', () => {
     await act(async () => resolve(parameters));
     expect(screen.queryByLabelText('Level')).not.toBeInTheDocument();
     api.listDeviceParameters = vi.fn().mockRejectedValue(new Error('Inspection unavailable'));
-    rerender(<DevicesPanel {...props} />);
+    rerender(<DevicesPanelView {...props} />);
     fireEvent.click(screen.getByRole('button', { name: 'Test Effect' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Inspection unavailable');
     expect(screen.getByRole('button', { name: 'Test Effect' })).toBeInTheDocument();
@@ -403,11 +397,7 @@ describe('DevicesPanel', () => {
         enabled: true,
       },
     ];
-    const mutation = () => ({
-      canonical: canonicalState(structuredClone(currentSession)),
-      createdEntityIds: {},
-      projection: { state: 'notRequired' as const },
-    });
+    const mutation = () => api.mutationResult(structuredClone(currentSession));
     api.previewSidechainSendLevel = vi.fn().mockResolvedValue(undefined);
     api.updateSidechainSend = vi.fn(async (_id, patch) => {
       if (patch.levelDb !== undefined && patch.levelDb !== null)

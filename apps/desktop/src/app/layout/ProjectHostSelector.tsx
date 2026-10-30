@@ -11,6 +11,7 @@ import type {
 
 import type { HostConnectionBootstrap } from '@/native/api/host-connection';
 import { openHostDataRoot } from '@/native/dialog';
+import { useSession, useSessionStore } from '@/shared/session/session-context';
 import controls from '@/shared/ui/controls.module.css';
 import { Icon } from '@/shared/ui/primitives';
 import styles from './ProjectHostSelector.module.css';
@@ -51,7 +52,40 @@ interface PanelAnchor {
   top: number;
 }
 
-export function ProjectHostSelector(props: ProjectHostSelectorProps) {
+export function ProjectHostSelector() {
+  const host = useSession((state) => state.host);
+  const project = useSession((state) => state.project);
+  const store = useSessionStore();
+  const refresh = useCallback(async () => {
+    const current = store.getState();
+    const tasks: Promise<unknown>[] = [current.host.refresh()];
+    if (current.host.connection.mode !== 'disconnected' && !current.host.switching)
+      tasks.push(current.project.refreshList());
+    await Promise.allSettled(tasks);
+  }, [store]);
+  return (
+    <ProjectHostSelectorView
+      state={host.connection}
+      hosts={host.hosts}
+      switching={host.switching}
+      error={host.error}
+      onRefresh={refresh}
+      onSwitch={host.switchHost}
+      onReconnect={host.reconnect}
+      projectState={project.boot?.projectState ?? null}
+      projectSwitching={project.switching}
+      projectError={project.error}
+      onCreateProject={project.create}
+      onOpenProject={project.open}
+      onRenameProject={project.rename}
+      onImportProject={() => void project.importPackage()}
+      onImportScore={() => void project.importScore()}
+      onExportProject={() => void project.exportPackage()}
+    />
+  );
+}
+
+export function ProjectHostSelectorView(props: ProjectHostSelectorProps) {
   const [anchor, setAnchor] = useState<PanelAnchor | null>(null);
   const [nameDraft, setNameDraft] = useState('');
   const [query, setQuery] = useState('');

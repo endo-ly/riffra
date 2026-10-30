@@ -1,0 +1,311 @@
+.rulerCorner {
+  /*
+   * Sticky on both axes so the corner stays over the track header column while
+   * the timeline scrolls; the negative margin seats it in the ruler band
+   * without taking layout space. It paints above the ruler and track headers.
+   */
+  position: sticky;
+  z-index: 13;
+  top: 0;
+  left: 0;
+  width: var(--header-width);
+  height: var(--ruler-height);
+  margin-top: calc(var(--ruler-height) * -1);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
+  background: var(--color-bg-panel);
+  border-right: 1px solid var(--color-border-default);
+  border-bottom: 1px solid var(--color-border-default);
+}
+
+.rulerMode {
+  min-width: 0;
+  display: grid;
+  justify-items: end;
+  gap: var(--space-0-5);
+}
+
+.rulerMode span {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-micro);
+  font-weight: 700;
+  letter-spacing: 0.14em;
+}
+
+.rulerMode small {
+  color: var(--color-text-disabled);
+  font: var(--font-size-micro) var(--font-family-mono);
+}
+
+.ruler {
+  position: absolute;
+  z-index: 7;
+  top: 0;
+  height: var(--ruler-height);
+  cursor: crosshair;
+  background: var(--color-bg-panel);
+  border-bottom: 1px solid var(--color-border-default);
+}
+
+.barMark {
+  position: absolute;
+  inset-block: 0;
+  width: 1px;
+  border-left: 1px solid var(--color-border-default);
+}
+
+.barMark strong {
+  position: absolute;
+  top: 7px;
+  left: 6px;
+  color: var(--color-text-muted);
+  font: var(--font-size-micro) var(--font-family-mono);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.barMark i {
+  position: absolute;
+  top: 21px;
+  width: 1px;
+  height: 10px;
+  background: var(--color-border-default);
+}
+
+.barMark i.subdivisionMark {
+  top: 26px;
+  height: 5px;
+  background: var(--color-border-subtle);
+}
+
+.loopRange {
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  height: 3px;
+  min-width: 2px;
+  background: color-mix(in srgb, var(--color-status-warning) 62%, transparent);
+}
+
+.loopRange::before,
+.loopRange::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  width: 1px;
+  height: var(--ruler-height);
+  pointer-events: none;
+  background: color-mix(in srgb, var(--color-status-warning) 22%, transparent);
+  transition: background var(--duration-fast) ease;
+}
+
+.loopRange:hover::before,
+.loopRange:hover::after {
+  background: color-mix(in srgb, var(--color-status-warning) 45%, transparent);
+}
+
+.loopRange::after {
+  right: 0;
+}
+
+.timeSelection {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  height: 100%;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--color-accent) 13%, transparent);
+  border-left: 1px solid color-mix(in srgb, var(--color-accent) 50%, transparent);
+  border-right: 1px solid color-mix(in srgb, var(--color-accent) 50%, transparent);
+}
+
+.punchRange {
+  position: absolute;
+  z-index: 1;
+  top: 11px;
+  height: 3px;
+  min-width: 2px;
+  color: var(--color-status-danger);
+  font-size: var(--font-size-micro);
+  letter-spacing: 0.08em;
+  background: color-mix(in srgb, var(--color-status-danger) 58%, transparent);
+}
+
+.punchRange::before,
+.punchRange::after {
+  content: '';
+  position: absolute;
+  top: -11px;
+  width: 1px;
+  height: var(--ruler-height);
+  pointer-events: none;
+  background: color-mix(in srgb, var(--color-status-danger) 22%, transparent);
+  transition: background var(--duration-fast) ease;
+}
+
+.punchRange:hover::before,
+.punchRange:hover::after {
+  background: color-mix(in srgb, var(--color-status-danger) 45%, transparent);
+}
+
+.punchRange::after {
+  right: 0;
+}
+
+.rangeLabel {
+  position: absolute;
+  top: 7px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: var(--font-size-micro);
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--duration-fast) ease;
+}
+
+.loopRange .rangeLabel {
+  color: var(--color-status-warning);
+}
+
+.punchRange .rangeLabel {
+  color: var(--color-status-danger);
+}
+
+.loopRange:hover .rangeLabel,
+.punchRange:hover .rangeLabel,
+.rangeSelected .rangeLabel {
+  opacity: 1;
+}
+
+.rangeSelected .rangeLabel {
+  font-weight: 700;
+}
+
+.loopRange.rangeSelected {
+  background: color-mix(in srgb, var(--color-status-warning) 88%, transparent);
+}
+
+.punchRange.rangeSelected {
+  background: color-mix(in srgb, var(--color-status-danger) 88%, transparent);
+}
+
+.loopRange.rangeSelected::before,
+.loopRange.rangeSelected::after {
+  background: color-mix(in srgb, var(--color-status-warning) 72%, transparent);
+}
+
+.punchRange.rangeSelected::before,
+.punchRange.rangeSelected::after {
+  background: color-mix(in srgb, var(--color-status-danger) 72%, transparent);
+}
+
+.loopHandle,
+.punchHandle {
+  position: absolute;
+  top: 0;
+  width: 10px;
+  height: var(--ruler-height);
+  cursor: ew-resize;
+  z-index: 4;
+  background: transparent;
+}
+
+.loopHandle::after,
+.punchHandle::after {
+  content: '';
+  position: absolute;
+  top: -3px;
+  left: 50%;
+  width: 6px;
+  height: 9px;
+  transform: translateX(-50%);
+  border-radius: 1px;
+  opacity: 0.85;
+  transition:
+    opacity var(--duration-fast) ease,
+    transform var(--duration-fast) ease,
+    background var(--duration-fast) ease;
+}
+
+.loopHandle::after {
+  background: var(--color-status-warning);
+}
+
+.punchHandle::after {
+  background: var(--color-status-danger);
+}
+
+.loopHandle:hover::after,
+.punchHandle:hover::after,
+.loopRange:hover .loopHandle::after,
+.punchRange:hover .punchHandle::after {
+  opacity: 1;
+  transform: translateX(-50%) scale(1.2);
+}
+
+.loopHandle:hover::after,
+.loopRange:hover .loopHandle::after {
+  background: var(--color-status-warning);
+}
+
+.punchHandle:hover::after,
+.punchRange:hover .punchHandle::after {
+  background: var(--color-status-danger);
+}
+
+.loopHandleStart,
+.punchHandleStart {
+  left: -5px;
+}
+
+.loopHandleEnd,
+.punchHandleEnd {
+  right: -5px;
+}
+
+.marker {
+  position: absolute;
+  z-index: 6;
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  max-width: 140px;
+  height: 16px;
+  padding: 0 var(--space-1-5) 0 var(--space-3);
+  color: var(--color-text-on-accent);
+  font-size: var(--font-size-micro);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+  transform: translateX(-50%);
+  cursor: grab;
+  user-select: none;
+}
+
+.marker::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 1px;
+  height: 6px;
+  background: color-mix(in srgb, var(--color-status-warning) 55%, transparent);
+  transform: translateX(-50%);
+}
+
+.marker span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.markerSelected {
+  background: var(--color-status-warning);
+  color: var(--color-text-on-accent);
+}

@@ -4,7 +4,7 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { BrowserPanel, type BrowserPanelProps } from '@/features/library/BrowserPanel';
+import { BrowserPanelView, type BrowserPanelProps } from '@/features/library/BrowserPanel';
 import type { InboxController } from '@/features/library/hooks/useInbox';
 import type {
   InstrumentLibraryItem,
@@ -140,7 +140,7 @@ function renderBrowser(overrides: Partial<BrowserPanelProps> = {}) {
     onOpenPlugin: vi.fn(),
     ...overrides,
   };
-  render(<BrowserPanel {...props} />);
+  render(<BrowserPanelView {...props} />);
   return props;
 }
 

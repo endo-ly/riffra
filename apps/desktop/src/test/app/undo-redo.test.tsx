@@ -4,7 +4,7 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
-import { FakeNativeApi } from '@/test/support/fake-native-api';
+import { createFakeNativeApi, type FakeNativeApi } from '@/test/support/fake-native-api';
 import App from '@/app/App';
 import { canonicalState, defaultSession } from '@/native/browser-defaults';
 import type { CreativeSession, ProjectState } from '@/model/generated';
@@ -40,7 +40,7 @@ describe('Undo/Redo (PRJ-003)', () => {
       activeProjectId,
       projects: [{ projectId: activeProjectId, name, updatedAtMs: 1, error: null }],
     });
-    const fake = new FakeNativeApi({
+    const fake = createFakeNativeApi({
       bootstrapState: {
         canonical: canonicalState(original),
         projectState: projectState('Untitled Project'),

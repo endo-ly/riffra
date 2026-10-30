@@ -1,5 +1,5 @@
 import type { ArrangementMutationResult, CanonicalState } from '@/model/generated';
-import { useSessionContext } from '@/shared/session/session-context';
+import { useSessionContext, useSessionStore } from '@/shared/session/session-context';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 interface PreviewedValueOptions {
@@ -34,7 +34,8 @@ interface Identity {
 
 /** Coordinates one value's Runtime preview and one canonical commit. */
 export function usePreviewedValue(options: PreviewedValueOptions): PreviewedValue {
-  const { commit: sessionCommit, getCanonicalState } = useSessionContext();
+  const { commit: sessionCommit } = useSessionContext();
+  const store = useSessionStore();
   const [draft, setDraft] = useState(options.value);
   const canonical = useRef(options.value);
   const latest = useRef(options);
@@ -196,7 +197,7 @@ export function usePreviewedValue(options: PreviewedValueOptions): PreviewedValu
         return;
 
       const currentOptions = latest.current;
-      const before = getCanonicalState();
+      const before = store.getState().project.boot?.canonical ?? null;
       if (currentOptions.read) {
         if (!before || before.session.sessionId !== operationIdentity.sessionId) {
           completed.current = operationId;
@@ -241,7 +242,7 @@ export function usePreviewedValue(options: PreviewedValueOptions): PreviewedValu
       )
         return;
 
-      const after = getCanonicalState();
+      const after = store.getState().project.boot?.canonical ?? null;
       if (
         !after ||
         after.session.sessionId !== operationIdentity.sessionId ||
@@ -276,7 +277,7 @@ export function usePreviewedValue(options: PreviewedValueOptions): PreviewedValu
         previewDirty.current = false;
       }
     },
-    [clearTimer, getCanonicalState, queuePreview, restoreRuntime, sessionCommit],
+    [clearTimer, store, queuePreview, restoreRuntime, sessionCommit],
   );
 
   return { value: draft, begin, change, commit, cancel };
