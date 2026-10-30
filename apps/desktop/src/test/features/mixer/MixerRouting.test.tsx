@@ -59,8 +59,6 @@ it('lists the sidechain sends of the track and opens their automation', () => {
         sessionId={session.sessionId}
         arrangement={session.arrangement}
         track={track}
-        commit={() => undefined}
-        onError={() => undefined}
         onClose={() => undefined}
         onOpenAutomation={(target) => opened.push(target)}
       />
@@ -82,8 +80,6 @@ it('hides the sidechain list for tracks without sidechain sends', () => {
         sessionId={session.sessionId}
         arrangement={session.arrangement}
         track={track}
-        commit={() => undefined}
-        onError={() => undefined}
         onClose={() => undefined}
         onOpenAutomation={() => undefined}
       />

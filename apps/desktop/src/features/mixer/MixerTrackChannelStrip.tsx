@@ -120,6 +120,7 @@ export function MixerTrackChannelStrip(props: MixerTrackChannelStripProps) {
             control={gain}
             range={MIX_GAIN_DB}
             fillOrigin={MIX_GAIN_DB.min}
+            orientation="vertical"
             disabled={props.disabled}
             ariaLabel={`${track.name} gain`}
           />

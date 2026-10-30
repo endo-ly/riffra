@@ -7,6 +7,7 @@ import type {
   Track,
 } from '@/model/generated';
 import { useSessionContext } from '@/shared/session/session-context';
+import { toast } from '@/shared/toasts';
 import controls from '@/shared/ui/controls.module.css';
 import { Dialog, DialogRow, DialogSection } from '@/shared/ui/Dialog';
 import { ReturnSendControls } from './ReturnSendControls';
@@ -16,22 +17,16 @@ interface Props {
   sessionId: string;
   arrangement: Arrangement;
   track: Track;
-  commit: (operation: Promise<ArrangementMutationResult>) => void;
-  onError: (message: string) => void;
   onClose: () => void;
   onOpenAutomation: (target: AutomationTarget) => void;
 }
 
-export function MixerRouting({
-  sessionId,
-  arrangement,
-  track,
-  commit,
-  onError,
-  onClose,
-  onOpenAutomation,
-}: Props) {
-  const { api } = useSessionContext();
+export function MixerRouting({ sessionId, arrangement, track, onClose, onOpenAutomation }: Props) {
+  const { api, commit: sessionCommit } = useSessionContext();
+  const onError = (message: string) => toast(message, { kind: 'error' });
+  const commit = (operation: Promise<ArrangementMutationResult>) => {
+    void sessionCommit(operation, { onError });
+  };
   const returns = arrangement.mixer.buses.filter((bus) => bus.kind === 'return');
   const sends = arrangement.mixer.sends.filter((send) => send.trackId === track.id);
   const sidechainSends = arrangement.mixer.sidechainSends.filter(

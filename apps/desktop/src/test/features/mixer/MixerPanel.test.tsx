@@ -8,6 +8,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { useState } from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { MixerPanel } from '@/features/mixer/MixerPanel';
+import { ToastStack } from '@/shared/ui/ToastStack';
 
 afterEach(cleanup);
 
@@ -64,6 +65,7 @@ it('edits Group and Send routes, commits their controls, and opens Bus and Maste
     return receipt();
   });
   api.updateSend = vi.fn(async (id, patch) => {
+    if (patch.levelDb === -9) throw new Error('send rejected');
     Object.assign(
       session.arrangement.mixer.sends.find((send) => send.id === id)!,
       patch,
@@ -103,10 +105,14 @@ it('edits Group and Send routes, commits their controls, and opens Bus and Maste
           onOpenAutomation={openAutomation}
           missingDeviceIds={[]}
         />
+        <ToastStack />
       </TestSessionProvider>
     );
   }
   render(<Harness />);
+  expect(screen.getByLabelText('Keys gain')).toHaveStyle('--fill-direction: to top');
+  expect(screen.getByLabelText('Keys pan')).toHaveStyle('--fill-direction: to right');
+  expect(screen.getByLabelText('Master mixer gain')).toHaveStyle('--fill-direction: to top');
   const add = async (name: string, kind: MixBus['kind']) => {
     fireEvent.change(screen.getByLabelText('New channel name'), { target: { value: name } });
     fireEvent.change(screen.getByLabelText('New channel kind'), { target: { value: kind } });
@@ -114,6 +120,7 @@ it('edits Group and Send routes, commits their controls, and opens Bus and Maste
     await screen.findByRole('article', { name: `${name} mixer channel` });
   };
   await add('Group', 'group');
+  expect(screen.getByLabelText('Group gain')).toHaveStyle('--fill-direction: to top');
   await add('Reverb', 'return');
   fireEvent.click(screen.getByRole('button', { name: 'Master · 0 Sends' }));
   fireEvent.change(screen.getByLabelText('Main output'), { target: { value: 'bus:group' } });
@@ -129,6 +136,17 @@ it('edits Group and Send routes, commits their controls, and opens Bus and Maste
   await waitFor(() => expect(session.arrangement.mixer.sends[0].levelDb).toBe(-12));
   expect(api.updateSend).toHaveBeenCalledTimes(1);
   expect(api.previewSendLevel).toHaveBeenCalledWith('send:1', -12);
+  fireEvent.pointerDown(slider);
+  fireEvent.change(slider, { target: { value: '-9' } });
+  fireEvent.pointerUp(slider);
+  expect(await screen.findByText('send rejected')).toBeInTheDocument();
+  const routingDialog = screen.getByRole('dialog', { name: 'Keys routing' });
+  const errorText = screen.getByText('send rejected');
+  const notification = errorText.closest('[role="status"]');
+  expect(notification).toHaveAttribute('aria-live', 'polite');
+  expect(notification).toContainElement(errorText);
+  expect(routingDialog).not.toContainElement(errorText);
+  expect(session.arrangement.mixer.sends[0].levelDb).toBe(-12);
   const enabled = within(send).getByRole('switch', { name: 'Enabled' });
   fireEvent.click(enabled);
   await waitFor(() => expect(session.arrangement.mixer.sends[0].enabled).toBe(false));

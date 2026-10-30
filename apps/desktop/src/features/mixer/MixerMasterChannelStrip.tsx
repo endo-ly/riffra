@@ -83,6 +83,7 @@ export function MixerMasterChannelStrip(props: MixerMasterChannelStripProps) {
             control={master}
             range={MASTER_GAIN_DB}
             fillOrigin={MASTER_GAIN_DB.min}
+            orientation="vertical"
             disabled={props.disabled}
             ariaLabel="Master mixer gain"
           />

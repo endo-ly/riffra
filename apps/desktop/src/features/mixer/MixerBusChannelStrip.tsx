@@ -74,6 +74,7 @@ export function MixerBusChannelStrip(props: Props) {
             control={gain}
             range={MIX_GAIN_DB}
             fillOrigin={MIX_GAIN_DB.min}
+            orientation="vertical"
             ariaLabel={`${bus.name} gain`}
             disabled={props.disabled}
           />

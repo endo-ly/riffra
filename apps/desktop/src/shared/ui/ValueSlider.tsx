@@ -10,6 +10,7 @@ interface ValueSliderProps {
   disabled?: boolean;
   /** Value the fill grows from; omitted for sliders drawn without a fill. */
   fillOrigin?: number;
+  orientation?: 'horizontal' | 'vertical';
   className?: string;
 }
 
@@ -30,6 +31,7 @@ export function ValueSlider({
   ariaLabel,
   disabled,
   fillOrigin,
+  orientation = 'horizontal',
   className,
 }: ValueSliderProps) {
   const style = useMemo<CSSProperties | undefined>(() => {
@@ -38,8 +40,9 @@ export function ValueSlider({
     return {
       '--fill-start': `${Math.min(percent(control.value), percent(fillOrigin))}%`,
       '--fill-end': `${Math.max(percent(control.value), percent(fillOrigin))}%`,
+      '--fill-direction': orientation === 'vertical' ? 'to top' : 'to right',
     } as CSSProperties;
-  }, [control.value, fillOrigin, range.max, range.min]);
+  }, [control.value, fillOrigin, orientation, range.max, range.min]);
 
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'Escape') {
