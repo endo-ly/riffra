@@ -41,10 +41,16 @@ export function bindSessionRuntime(store: SessionStore, api: NativeApi): () => v
       })
       .catch(() => undefined);
   };
+  // The playhead clock runs only while a session provides a timebase.
   const animate = (now: number) => {
+    frame = 0;
     const timebase = store.getState().project.boot?.canonical.session.arrangement.timebase;
-    if (timebase) store.getState().transport.advance(now, timebase);
+    if (!timebase) return;
+    store.getState().transport.advance(now, timebase);
     frame = requestAnimationFrame(animate);
+  };
+  const startClock = () => {
+    if (frame === 0) frame = requestAnimationFrame(animate);
   };
   let initialLoadTimer: ReturnType<typeof setTimeout> | null = null;
   let audioTimer: ReturnType<typeof setTimeout> | null = null;
@@ -134,8 +140,10 @@ export function bindSessionRuntime(store: SessionStore, api: NativeApi): () => v
     }
     if (boot !== lastBoot) {
       lastBoot = boot;
-      if (boot)
+      if (boot) {
+        startClock();
         void store.getState().missing.reload().catch(logNativeError('getMissingDependencies'));
+      }
     }
     scheduleInitialLoad();
     const current = store.getState();
@@ -225,7 +233,7 @@ export function bindSessionRuntime(store: SessionStore, api: NativeApi): () => v
     store.getState().project.boot?.projectState.activeProjectId,
   ]);
   if (generation > 0) loadTransportPosition();
-  frame = requestAnimationFrame(animate);
+  startClock();
   loadProjection();
   if (generation > 0 && !store.getState().project.boot) void store.getState().project.bootstrap();
   void store.getState().host.refresh();
