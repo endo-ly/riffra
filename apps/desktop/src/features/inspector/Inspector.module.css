@@ -41,46 +41,6 @@ button.identityTile[aria-expanded='true'] {
   height: var(--size-icon-md);
 }
 
-.colorPalette {
-  position: absolute;
-  top: 46px;
-  left: 12px;
-  z-index: var(--z-chrome);
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-1-5);
-  width: 140px;
-  padding: var(--space-2);
-  background: var(--color-bg-surface-raised);
-  border: 1px solid var(--color-border-default);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-popover);
-}
-
-.colorSwatch {
-  width: 18px;
-  height: 18px;
-  padding: 0;
-  background: var(--swatch);
-  border: 1px solid color-mix(in srgb, var(--swatch) 60%, var(--color-shadow) 10%);
-  border-radius: 50%;
-}
-
-.colorSwatch[aria-pressed='true'] {
-  box-shadow:
-    0 0 0 2px var(--color-bg-surface-raised),
-    0 0 0 3px var(--color-accent);
-}
-
-.colorClear {
-  display: grid;
-  place-items: center;
-  color: var(--color-text-muted);
-  font-size: var(--font-size-small);
-  background: transparent;
-  border: 1px dashed var(--color-border-default);
-}
-
 .identityBlock {
   flex: 1;
   min-width: 0;
@@ -173,29 +133,6 @@ button.identityTile[aria-expanded='true'] {
   letter-spacing: 0.02em;
 }
 
-.headerAction {
-  min-height: 0;
-  padding: var(--space-0-5) 0;
-  color: var(--color-accent);
-  font-size: var(--font-size-micro);
-  background: transparent;
-  border-radius: var(--radius-sm);
-}
-
-.headerAction:disabled {
-  color: var(--color-text-muted);
-}
-
-.field {
-  min-height: 24px;
-  display: grid;
-  grid-template-columns: 52px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: var(--space-2);
-  color: var(--color-text-muted);
-  font-size: var(--font-size-micro);
-}
-
 .fieldPair {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -215,23 +152,9 @@ button.identityTile[aria-expanded='true'] {
   gap: var(--space-2);
 }
 
-/* Label, slider and value on one line, matching the track header and mixer. */
-.mixField {
-  display: grid;
-  grid-template-columns: 52px minmax(0, 1fr) 64px;
-  align-items: center;
-  gap: var(--space-2);
-}
-
 .rowLabel {
   color: var(--color-text-muted);
   font-size: var(--font-size-micro);
-}
-
-.controlPair {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 76px;
-  gap: var(--space-1-5);
 }
 
 .control {
@@ -334,103 +257,6 @@ button.identityTile[aria-expanded='true'] {
   color: var(--color-text-disabled);
 }
 
-/* A value that reads as text and turns into a number field when clicked. */
-.value {
-  height: 22px;
-  padding: 0 var(--space-1);
-  color: var(--color-text-primary);
-  font: var(--font-size-small) var(--font-family-mono);
-  font-weight: 500;
-  text-align: right;
-  background: transparent;
-  border: 0;
-  border-radius: var(--radius-sm);
-}
-
-.value:hover {
-  background: var(--color-bg-surface);
-}
-
-.valueInput {
-  width: 64px;
-  height: 22px;
-  padding: 0 var(--space-1-5);
-  color: var(--color-text-primary);
-  font: var(--font-size-small) var(--font-family-mono);
-  text-align: right;
-  background: var(--color-bg-surface);
-  border: 1px solid color-mix(in srgb, var(--color-accent) 70%, transparent);
-  border-radius: var(--radius-sm);
-  outline: none;
-}
-
-/* Fills the track between the field's origin and its value. */
-.range {
-  composes: fillSlider from '../../shared/ui/controls.module.css';
-}
-
-/* The instrument and effect chain at a glance; opens Devices to edit them. */
-.deviceCard {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: var(--space-2-5);
-  padding: var(--space-1-5);
-  color: var(--color-text-muted);
-  text-align: left;
-  background: var(--color-bg-surface);
-  border: 1px solid transparent;
-  border-radius: var(--radius-md);
-  transition: background-color var(--duration-fast);
-}
-
-.deviceCard:hover,
-.deviceCard:focus-visible {
-  background: var(--color-bg-surface-raised);
-}
-
-.deviceCard:focus-visible {
-  border-color: color-mix(in srgb, var(--color-accent) 70%, transparent);
-  outline: none;
-}
-
-.deviceIcon {
-  width: 28px;
-  height: 28px;
-  flex: 0 0 28px;
-  display: grid;
-  place-items: center;
-  color: var(--color-accent);
-  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
-  border-radius: var(--radius-sm);
-}
-
-.deviceIcon svg {
-  width: var(--size-icon-md);
-  height: var(--size-icon-md);
-}
-
-.deviceText {
-  flex: 1;
-  min-width: 0;
-  display: grid;
-  gap: 1px;
-}
-
-.deviceText strong {
-  overflow: hidden;
-  color: var(--color-text-primary);
-  font-size: var(--font-size-small);
-  font-weight: 500;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.deviceText small {
-  color: var(--color-text-muted);
-  font-size: var(--font-size-micro);
-}
-
 /* Options in one well; the chosen one rises out of it. Also groups step actions. */
 .segmented {
   composes: segmented from '../../shared/ui/controls.module.css';
@@ -438,16 +264,6 @@ button.identityTile[aria-expanded='true'] {
 
 .segmentedGap {
   margin-top: var(--space-1-5);
-}
-
-.buttonRow {
-  display: flex;
-  gap: var(--space-1-5);
-}
-
-.buttonRow > .smallButton {
-  flex: 1;
-  justify-content: center;
 }
 
 .smallButton {
@@ -458,96 +274,8 @@ button.identityTile[aria-expanded='true'] {
   composes: accent from '../../shared/ui/controls.module.css';
 }
 
-.danger {
-  composes: danger from '../../shared/ui/controls.module.css';
-}
-
 .iconButton {
   composes: iconButton from '../../shared/ui/controls.module.css';
-}
-
-.take {
-  display: grid;
-  gap: var(--space-1);
-  padding: var(--space-1) var(--space-1-5) var(--space-1);
-  border-radius: var(--radius-sm);
-}
-
-.take:hover {
-  background: var(--color-bg-surface-raised);
-}
-
-.take.auditioning {
-  background: color-mix(in srgb, var(--color-accent) 8%, transparent);
-}
-
-.takeLine {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-height: 22px;
-}
-
-.takeLine > svg {
-  width: var(--size-icon-sm);
-  height: var(--size-icon-sm);
-  color: var(--color-text-muted);
-}
-
-.takeLine strong {
-  color: var(--color-text-primary);
-  font-size: var(--font-size-small);
-  font-weight: 500;
-}
-
-.badge {
-  padding: 1px var(--space-1);
-  color: var(--color-accent);
-  font-size: var(--font-size-micro);
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
-  border-radius: var(--radius-sm);
-}
-
-.badge.muted {
-  color: var(--color-text-muted);
-  background: color-mix(in srgb, var(--color-text-primary) 7%, transparent);
-}
-
-.takeActions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  margin-left: auto;
-  opacity: 0;
-}
-
-.take:hover .takeActions,
-.take:focus-within .takeActions {
-  opacity: 1;
-}
-
-.takeSource {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding-left: var(--space-5);
-}
-
-.takeSource > span {
-  color: var(--color-text-muted);
-  font-size: var(--font-size-micro);
-}
-
-.takeSource .segmented {
-  flex: 0 0 auto;
-}
-
-.empty {
-  margin: 0;
-  color: var(--color-text-muted);
-  font-size: var(--font-size-micro);
 }
 
 .message {

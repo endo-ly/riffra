@@ -1,0 +1,103 @@
+.bannerStack {
+  position: absolute;
+  top: calc(var(--size-global-control-bar) + var(--size-toolbar) + var(--space-2));
+  inset-inline: var(--space-4);
+  z-index: var(--z-banner);
+  display: grid;
+  grid-template-columns: minmax(0, 760px);
+  justify-content: center;
+  justify-items: center;
+  gap: var(--space-2);
+  pointer-events: none;
+}
+
+.bannerStack:empty {
+  display: none;
+}
+
+.bannerStack > * {
+  max-width: 760px;
+  pointer-events: auto;
+}
+
+.runtimeBanner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2-5);
+  padding: var(--space-2-5) var(--space-3);
+  color: var(--color-status-warning);
+  font-size: var(--font-size-micro);
+  line-height: 1.45;
+  background: color-mix(in srgb, var(--color-status-warning) 18%, var(--color-bg-panel));
+  border: 1px solid color-mix(in srgb, var(--color-status-warning) 55%, transparent);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-toast);
+}
+.runtimeBanner strong {
+  flex: 0 0 auto;
+  color: inherit;
+  font: 700 var(--font-size-micro) var(--font-family-mono);
+  letter-spacing: 0.14em;
+}
+
+.shellNotice {
+  justify-self: stretch;
+  display: grid;
+  gap: var(--space-1-5);
+  padding: var(--space-2-5) var(--space-3);
+  font-size: var(--font-size-micro);
+  line-height: 1.5;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-toast);
+}
+
+.shellNotice strong {
+  font: 700 var(--font-size-micro) var(--font-family-mono);
+  letter-spacing: 0.14em;
+}
+
+.safeModeNotice {
+  color: var(--color-status-warning);
+  background: color-mix(in srgb, var(--color-status-warning) 18%, var(--color-bg-panel));
+  border: 1px solid color-mix(in srgb, var(--color-status-warning) 55%, transparent);
+}
+
+.safeModeNotice strong {
+  color: var(--color-status-warning);
+}
+
+.safeModeNotice code {
+  color: var(--color-status-warning);
+  font-family: var(--font-family-mono);
+}
+
+.recoveryNotice {
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 14%, var(--color-bg-panel));
+  border: 1px solid color-mix(in srgb, var(--color-accent) 50%, transparent);
+}
+
+.recoveryNotice strong {
+  color: var(--color-accent);
+}
+
+.updateNotice {
+  color: var(--color-status-success);
+  background: color-mix(in srgb, var(--color-status-success) 14%, var(--color-bg-panel));
+  border: 1px solid color-mix(in srgb, var(--color-status-success) 50%, transparent);
+}
+
+.updateNotice strong {
+  color: var(--color-status-success);
+}
+
+.recoveryActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2-5);
+}
+.dangerBanner {
+  color: var(--color-status-danger);
+  background: color-mix(in srgb, var(--color-status-danger) 16%, var(--color-bg-panel));
+  border-color: color-mix(in srgb, var(--color-status-danger) 55%, transparent);
+}

@@ -1,0 +1,13 @@
+.buttonRow {
+  display: flex;
+  gap: var(--space-1-5);
+}
+
+.buttonRow > button {
+  flex: 1;
+  justify-content: center;
+}
+
+.danger {
+  composes: danger from '../../shared/ui/controls.module.css';
+}

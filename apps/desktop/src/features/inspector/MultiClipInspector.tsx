@@ -4,7 +4,8 @@ import { useSessionContext } from '@/shared/session/session-context';
 import { Icon } from '@/shared/ui/primitives';
 import clsx from 'clsx';
 import { useMemo, useState } from 'react';
-import styles from './Inspector.module.css';
+import sharedStyles from './Inspector.module.css';
+import styles from './MultiClipInspector.module.css';
 
 interface MultiClipInspectorProps {
   session: CreativeSession;
@@ -52,35 +53,35 @@ export function MultiClipInspector(props: MultiClipInspectorProps) {
 
   const summary = [audioClips.length, midiClips.length];
   return (
-    <div className={styles.inspector}>
-      <div className={styles.identity}>
-        <span className={styles.identityTile}>
+    <div className={sharedStyles.inspector}>
+      <div className={sharedStyles.identity}>
+        <span className={sharedStyles.identityTile}>
           <Icon name="copy" />
         </span>
-        <div className={styles.identityBlock}>
+        <div className={sharedStyles.identityBlock}>
           <strong>{selectedClips.length} clips selected</strong>
           <small>
             {summary[0]} audio · {summary[1]} midi
           </small>
         </div>
       </div>
-      <section className={styles.section}>
+      <section className={sharedStyles.section}>
         <div className={styles.buttonRow}>
           {selectedClips.length === 2 && audioClips.length === 2 && (
             <button
               type="button"
-              className={clsx(styles.smallButton, styles.accent)}
+              className={clsx(sharedStyles.smallButton, sharedStyles.accent)}
               onClick={() => run(api.crossfadeAudioClips(audioClips[0].id, audioClips[1].id))}
             >
               Crossfade
             </button>
           )}
-          <button type="button" className={styles.smallButton} onClick={duplicate}>
+          <button type="button" className={sharedStyles.smallButton} onClick={duplicate}>
             Duplicate
           </button>
           <button
             type="button"
-            className={clsx(styles.smallButton, styles.danger)}
+            className={clsx(sharedStyles.smallButton, styles.danger)}
             onClick={() =>
               run(
                 api.removeTimelineClips(props.selectedAudioClipIds, props.selectedMidiClipIds),
@@ -92,7 +93,7 @@ export function MultiClipInspector(props: MultiClipInspectorProps) {
           </button>
         </div>
       </section>
-      {message && <p className={styles.message}>{message}</p>}
+      {message && <p className={sharedStyles.message}>{message}</p>}
     </div>
   );
 }

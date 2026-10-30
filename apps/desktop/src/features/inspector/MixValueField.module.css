@@ -1,0 +1,37 @@
+/* Label, slider and value on one line, matching the track header and mixer. */
+.mixField {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) 64px;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* A value that reads as text and turns into a number field when clicked. */
+.value {
+  height: 22px;
+  padding: 0 var(--space-1);
+  color: var(--color-text-primary);
+  font: var(--font-size-small) var(--font-family-mono);
+  font-weight: 500;
+  text-align: right;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+}
+
+.value:hover {
+  background: var(--color-bg-surface);
+}
+
+.valueInput {
+  width: 64px;
+  height: 22px;
+  padding: 0 var(--space-1-5);
+  color: var(--color-text-primary);
+  font: var(--font-size-small) var(--font-family-mono);
+  text-align: right;
+  background: var(--color-bg-surface);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 70%, transparent);
+  border-radius: var(--radius-sm);
+  outline: none;
+}

@@ -1,0 +1,221 @@
+.clip {
+  position: absolute;
+  min-height: 36px;
+  overflow: clip;
+  padding: 0;
+  text-align: left;
+  color: var(--color-text-primary);
+  /*
+   * Track color drives the clip at a fixed OKLCH lightness so every hue reads
+   * with equal weight; --clip-content colors the waveform and note marks.
+   */
+  background: oklch(from var(--track-color) 0.4 calc(c * 0.55) h);
+  border: 1px solid oklch(from var(--track-color) 0.55 calc(c * 0.7) h);
+  border-radius: var(--radius-sm);
+  cursor: grab;
+  box-shadow: var(--shadow-raised);
+
+  --clip-content: oklch(from var(--track-color) 0.88 calc(c * 0.8) h);
+}
+
+.clip:hover {
+  filter: brightness(1.08);
+}
+
+.clip:active {
+  cursor: grabbing;
+}
+
+.clip.selected {
+  border-color: var(--color-selection);
+  box-shadow:
+    0 0 0 1px var(--color-selection),
+    0 5px 16px color-mix(in srgb, var(--color-shadow) 40%, transparent);
+}
+
+.clip.looped {
+  background: oklch(from var(--track-color) 0.45 calc(c * 0.6) h);
+}
+
+.clip.missingClip {
+  background: repeating-linear-gradient(
+    -45deg,
+    color-mix(in srgb, var(--color-status-danger) 26%, var(--color-bg-panel)) 0,
+    color-mix(in srgb, var(--color-status-danger) 26%, var(--color-bg-panel)) 8px,
+    color-mix(in srgb, var(--color-status-danger) 14%, var(--color-bg-panel)) 8px,
+    color-mix(in srgb, var(--color-status-danger) 14%, var(--color-bg-panel)) 16px
+  );
+  border-color: var(--color-status-danger);
+}
+
+.missingClipLabel {
+  position: absolute;
+  z-index: 4;
+  inset: 20px 0 0;
+  display: grid;
+  place-items: center;
+  color: var(--color-status-danger);
+  font: 700 var(--font-size-micro) var(--font-family-mono);
+  letter-spacing: 0.08em;
+  pointer-events: none;
+}
+
+.clip.midiClip .waveform path {
+  stroke: none;
+}
+
+.clip.midiClip .waveform rect {
+  fill: var(--clip-content);
+}
+
+.clipHeader {
+  position: relative;
+  z-index: 3;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: 0 var(--space-2);
+  background: color-mix(in srgb, var(--color-bg-app) 34%, transparent);
+  pointer-events: none;
+}
+
+/* The name stays visible beside the track headers while a long clip scrolls past. */
+
+.clipHeader strong {
+  position: sticky;
+  left: calc(var(--header-width) + var(--space-2));
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-micro);
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.clipHeader span {
+  color: color-mix(in srgb, var(--color-text-primary) 63%, transparent);
+  font: var(--font-size-micro) var(--font-family-mono);
+  white-space: nowrap;
+}
+
+.waveform {
+  position: absolute;
+  z-index: 1;
+  inset: 20px 5px 3px;
+  width: calc(100% - 10px);
+  height: calc(100% - 23px);
+  opacity: 0.94;
+  pointer-events: none;
+}
+
+.waveform path {
+  fill: none;
+  stroke: var(--clip-content);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.waveformPending {
+  position: absolute;
+  z-index: 2;
+  left: 7px;
+  bottom: 7px;
+  color: color-mix(in srgb, var(--color-text-primary) 40%, transparent);
+  font: var(--font-size-micro) var(--font-family-mono);
+  letter-spacing: 0.08em;
+}
+
+.clipGainLine {
+  position: absolute;
+  z-index: 2;
+  left: 0;
+  right: 0;
+  height: 1px;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--color-text-strong) 18%, transparent);
+}
+
+.trimHandle {
+  position: absolute;
+  z-index: 6;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  opacity: 0;
+  pointer-events: none;
+  cursor: ew-resize;
+}
+
+.clip:hover .trimHandle,
+.clip.selected .trimHandle,
+.clip:focus-visible .trimHandle {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.trimLeft {
+  left: 0;
+  border-left: 2px solid color-mix(in srgb, var(--color-text-strong) 60%, transparent);
+}
+
+.trimRight {
+  right: 0;
+  border-right: 2px solid color-mix(in srgb, var(--color-text-strong) 60%, transparent);
+}
+
+.fadeHandle {
+  position: absolute;
+  z-index: 7;
+  top: 2px;
+  width: 8px;
+  height: 8px;
+  margin-left: calc(var(--space-1) * -1);
+  opacity: 0;
+  pointer-events: none;
+  background: var(--color-status-warning);
+  border: 1px solid var(--color-status-warning);
+  border-radius: 50%;
+  cursor: ew-resize;
+}
+
+.clip:hover .fadeHandle,
+.clip.selected .fadeHandle,
+.clip:focus-visible .fadeHandle {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.fadeIn::after,
+.fadeOut::after {
+  content: '';
+  position: absolute;
+  top: 7px;
+  width: 42px;
+  height: 1px;
+  background: color-mix(in srgb, var(--color-status-warning) 72%, transparent);
+  transform-origin: left;
+}
+
+.fadeIn::after {
+  right: 1px;
+  transform: rotate(29deg);
+}
+
+.fadeOut::after {
+  left: 1px;
+  transform: rotate(-29deg);
+}
+
+.loopBoundary {
+  position: absolute;
+  z-index: 3;
+  top: 20px;
+  bottom: 0;
+  width: 1px;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--color-selection) 48%, transparent);
+  box-shadow: 1px 0 color-mix(in srgb, var(--color-shadow) 22%, transparent);
+}

@@ -1,0 +1,182 @@
+.lane {
+  position: relative;
+  overflow: hidden;
+  background: var(--color-bg-app);
+}
+
+.marquee {
+  position: absolute;
+  z-index: 4;
+  border: 1px solid var(--color-selection);
+  background: color-mix(in srgb, var(--color-selection) 12%, transparent);
+  pointer-events: none;
+}
+
+.drawPreview {
+  position: absolute;
+  z-index: 4;
+  min-width: 4px;
+  box-sizing: border-box;
+  background: color-mix(in srgb, var(--note-fill) 70%, transparent);
+  border: 1px solid var(--note-edge);
+  border-radius: var(--radius-sm);
+  pointer-events: none;
+}
+
+.pitchRow {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-text-primary) 6%, transparent);
+  pointer-events: none;
+}
+
+.pitchBlack {
+  background: var(--color-bg-panel);
+}
+
+.pitchOctave {
+  border-bottom-color: color-mix(in srgb, var(--color-text-primary) 16%, transparent);
+}
+
+.pitchRow[data-hover] {
+  background: color-mix(in srgb, var(--key-highlight) 8%, transparent);
+}
+
+/* Time after the clip's end, where notes would not play. */
+.clipEnd {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 3;
+  background: color-mix(in srgb, var(--color-shadow) 45%, transparent);
+  border-left: 1px solid var(--color-border-strong);
+  pointer-events: none;
+}
+
+.barLine,
+.beatLine,
+.subdivisionLine {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  pointer-events: none;
+}
+
+.barLine {
+  z-index: 3;
+  background: var(--timeline-grid-bar);
+}
+
+.beatLine {
+  z-index: 2;
+  background: var(--timeline-grid-beat);
+}
+
+.subdivisionLine {
+  z-index: 1;
+  background: var(--timeline-grid-subdivision);
+}
+
+.note {
+  position: absolute;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  min-width: 4px;
+  overflow: hidden;
+  background: var(--note-fill);
+  border: 1px solid color-mix(in srgb, var(--note-edge) 70%, transparent);
+  border-radius: 3px;
+  cursor: grab;
+  user-select: none;
+}
+
+.note.dragging {
+  cursor: grabbing;
+  background: var(--track-color);
+  box-shadow:
+    0 0 0 1px var(--color-selection),
+    0 0 12px color-mix(in srgb, var(--color-accent) 55%, transparent);
+}
+
+.ghostNote {
+  position: absolute;
+  z-index: 2;
+  min-width: 4px;
+  box-sizing: border-box;
+  background: color-mix(in srgb, var(--ghost-color) 22%, transparent);
+  border-radius: 3px;
+  pointer-events: none;
+}
+
+.note.selected {
+  background: oklch(from var(--track-color) 0.8 c h);
+  border-color: var(--color-selection);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-selection) 70%, transparent);
+}
+
+.note[data-midi-warning='true'] {
+  border-color: var(--color-status-warning);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-status-warning) 60%, transparent);
+}
+
+.resizeStart,
+.resizeEnd {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: min(6px, 30%);
+  cursor: ew-resize;
+  opacity: 0;
+  transition: opacity var(--duration-fast);
+}
+
+.resizeStart {
+  left: 0;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--color-text-strong) 45%, transparent),
+    transparent
+  );
+}
+
+.resizeEnd {
+  right: 0;
+  background: linear-gradient(
+    270deg,
+    color-mix(in srgb, var(--color-text-strong) 45%, transparent),
+    transparent
+  );
+}
+
+.note:hover .resizeStart,
+.note:hover .resizeEnd {
+  opacity: 1;
+}
+
+.noteLabel {
+  overflow: hidden;
+  padding: 0 var(--space-1);
+  color: color-mix(in srgb, var(--color-shadow) 50%, transparent);
+  font: 600 9px var(--font-family-mono);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* Where a dragged note lands, shown just above it. */
+.dragReadout {
+  position: absolute;
+  z-index: 6;
+  padding: 1px var(--space-1-5);
+  color: var(--color-text-strong);
+  font: var(--font-size-micro) var(--font-family-mono);
+  white-space: nowrap;
+  background: var(--color-bg-surface-raised);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-raised);
+  pointer-events: none;
+}

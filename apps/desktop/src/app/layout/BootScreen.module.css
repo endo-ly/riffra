@@ -1,0 +1,26 @@
+.bootScreen {
+  position: relative;
+  height: 100%;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: var(--space-3);
+  background: radial-gradient(
+    circle at 50% 40%,
+    var(--color-bg-surface-raised),
+    var(--color-bg-app) 42%
+  );
+}
+
+.bootHostSelector {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+}
+.bootScreen strong {
+  letter-spacing: 0.24em;
+  font-size: var(--font-size-heading);
+}
+.bootScreen small {
+  color: var(--color-text-secondary);
+}
