@@ -97,10 +97,9 @@ export function createTransportSlice(
       const elapsed = anchor.playing ? performance.now() - anchor.at : 0;
       const tick = secondsToTicks(ticksToSeconds(anchor.tick, timebase) + elapsed / 1000, timebase);
       playhead.current = tick;
-      if (now - lastUiUpdate >= 250) {
-        lastUiUpdate = now;
-        update({ displayTick: tick });
-      }
+      if (now - lastUiUpdate < 250) return;
+      lastUiUpdate = now;
+      if (get().displayTick !== tick) update({ displayTick: tick });
     },
     play() {
       if (pendingPlay) return pendingPlay;

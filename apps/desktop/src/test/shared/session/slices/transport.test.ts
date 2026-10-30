@@ -2,6 +2,7 @@
 
 import { waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
+import { defaultSession } from '@/native/browser-defaults';
 import { createFakeNativeApi } from '@/test/support/fake-native-api';
 import { bindSessionRuntime } from '@/shared/session/runtime';
 import { createSessionStore } from '@/shared/session/store';
@@ -80,6 +81,24 @@ describe('transport', () => {
     api.emitTransportStatus({ timelineTick: 0, discontinuity: 3 });
     expect(store.getState().transport.displayTick).toBe(0);
     expect(store.getState().transport.playhead.current).toBe(0);
+  });
+
+  it('publishes a display tick only while the playhead moves', () => {
+    // Arrange
+    const api = createFakeNativeApi();
+    const store = createSessionStore(api);
+    const timebase = defaultSession().arrangement.timebase;
+    let updates = 0;
+    const stop = store.subscribe(() => (updates += 1));
+
+    // Act: a stopped playhead stays on the same tick across frames.
+    store.getState().transport.advance(1_000, timebase);
+    store.getState().transport.advance(2_000, timebase);
+
+    // Assert
+    expect(updates).toBe(0);
+    expect(store.getState().transport.displayTick).toBe(0);
+    stop();
   });
 
   it('restarts the playhead when the Active Project changes', async () => {
