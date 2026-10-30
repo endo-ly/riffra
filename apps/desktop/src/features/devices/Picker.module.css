@@ -1,13 +1,3 @@
-.pluginPickerOverlay {
-  position: fixed;
-  z-index: var(--z-popover);
-  inset: 0;
-  display: grid;
-  place-content: center;
-  background: var(--color-bg-scrim);
-  backdrop-filter: blur(3px);
-}
-
 .pluginPicker {
   width: 360px;
   max-width: calc(100vw - 32px);

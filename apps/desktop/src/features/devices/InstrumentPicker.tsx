@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { InstrumentLibraryItem, PluginEntry } from '@/model/generated';
 
 import { useSessionContext } from '@/shared/session/session-context';
+import { Modal } from '@/shared/ui/Modal';
 import { matchesInstrumentQuery } from '@/model/instrument-search';
 import styles from './Picker.module.css';
 
@@ -52,14 +53,6 @@ export function InstrumentPicker(props: InstrumentPickerProps) {
     };
   }, [api, props.plugins]);
 
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [onClose]);
-
   const plugins = props.plugins ?? scannedPlugins;
   const trimmedQuery = query.trim().toLowerCase();
   const filteredInstruments = useMemo(
@@ -80,73 +73,66 @@ export function InstrumentPicker(props: InstrumentPickerProps) {
   );
 
   return (
-    <div
-      className={styles.pluginPickerOverlay}
-      onClick={(event) => {
-        if (event.target === event.currentTarget) props.onClose();
-      }}
+    <Modal
+      label="Choose Instrument"
+      closeOnBackdrop
+      onClose={onClose}
+      className={styles.pluginPicker}
     >
-      <div
-        className={styles.pluginPicker}
-        role="dialog"
-        aria-label="Choose Instrument"
-        aria-modal="true"
-      >
-        <header>
-          <strong>Choose Instrument</strong>
-          <button type="button" className={styles.pluginPickerCancel} onClick={props.onClose}>
-            Cancel
+      <header>
+        <strong>Choose Instrument</strong>
+        <button type="button" className={styles.pluginPickerCancel} onClick={props.onClose}>
+          Cancel
+        </button>
+      </header>
+      <input
+        autoFocus
+        type="text"
+        placeholder="Search instruments and plugins..."
+        value={query}
+        onChange={(event) => setQuery(event.currentTarget.value)}
+      />
+      <div className={styles.pluginPickerList}>
+        <strong>Instruments</strong>
+        {filteredInstruments.map((instrument) => (
+          <button
+            key={instrument.id}
+            type="button"
+            className={styles.pluginPickerItem}
+            aria-label={`${instrument.name}${instrument.description ? ` — ${instrument.description}` : ''}`}
+            onClick={() => props.onSelectInstrument(instrument.id)}
+          >
+            <span>{instrument.name}</span>
+            {instrument.description && <small>{instrument.description}</small>}
           </button>
-        </header>
-        <input
-          autoFocus
-          type="text"
-          placeholder="Search instruments and plugins..."
-          value={query}
-          onChange={(event) => setQuery(event.currentTarget.value)}
-        />
-        <div className={styles.pluginPickerList}>
-          <strong>Instruments</strong>
-          {filteredInstruments.map((instrument) => (
-            <button
-              key={instrument.id}
-              type="button"
-              className={styles.pluginPickerItem}
-              aria-label={`${instrument.name}${instrument.description ? ` — ${instrument.description}` : ''}`}
-              onClick={() => props.onSelectInstrument(instrument.id)}
-            >
-              <span>{instrument.name}</span>
-              {instrument.description && <small>{instrument.description}</small>}
-            </button>
-          ))}
-          {!filteredInstruments.length && (
-            <p className={styles.pluginPickerEmpty}>No instruments match your search.</p>
-          )}
+        ))}
+        {!filteredInstruments.length && (
+          <p className={styles.pluginPickerEmpty}>No instruments match your search.</p>
+        )}
 
-          <strong>External Instruments</strong>
-          {loading && <p className={styles.pluginPickerEmpty}>Scanning VST3 instruments...</p>}
-          {error && <p className={styles.pluginPickerError}>{error}</p>}
-          {!loading && !error && !filteredPlugins.length && (
-            <p className={styles.pluginPickerEmpty}>
-              {trimmedQuery
-                ? 'No external instruments match your search.'
-                : 'No VST3 instruments found.'}
-            </p>
-          )}
-          {filteredPlugins.map((plugin) => (
-            <button
-              key={plugin.id}
-              type="button"
-              className={styles.pluginPickerItem}
-              aria-label={`${plugin.name} — ${plugin.vendor ?? 'Unknown vendor'}`}
-              onClick={() => props.onSelectVst3(plugin)}
-            >
-              <span>{plugin.name}</span>
-              <small>{plugin.vendor ?? 'Unknown vendor'}</small>
-            </button>
-          ))}
-        </div>
+        <strong>External Instruments</strong>
+        {loading && <p className={styles.pluginPickerEmpty}>Scanning VST3 instruments...</p>}
+        {error && <p className={styles.pluginPickerError}>{error}</p>}
+        {!loading && !error && !filteredPlugins.length && (
+          <p className={styles.pluginPickerEmpty}>
+            {trimmedQuery
+              ? 'No external instruments match your search.'
+              : 'No VST3 instruments found.'}
+          </p>
+        )}
+        {filteredPlugins.map((plugin) => (
+          <button
+            key={plugin.id}
+            type="button"
+            className={styles.pluginPickerItem}
+            aria-label={`${plugin.name} — ${plugin.vendor ?? 'Unknown vendor'}`}
+            onClick={() => props.onSelectVst3(plugin)}
+          >
+            <span>{plugin.name}</span>
+            <small>{plugin.vendor ?? 'Unknown vendor'}</small>
+          </button>
+        ))}
       </div>
-    </div>
+    </Modal>
   );
 }

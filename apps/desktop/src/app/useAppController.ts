@@ -261,7 +261,6 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
         void toggleMute();
         return;
       }
-      if (event.key === 'Escape') setCommandOpen(false);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);

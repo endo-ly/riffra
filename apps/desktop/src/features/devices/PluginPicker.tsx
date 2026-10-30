@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { PluginEntry, PluginRole } from '@/model/generated';
 
 import { useSessionContext } from '@/shared/session/session-context';
+import { Modal } from '@/shared/ui/Modal';
 import styles from './Picker.module.css';
 
 interface PluginPickerProps {
@@ -49,14 +50,6 @@ export function PluginPicker(props: PluginPickerProps) {
     };
   }, [api, props.plugins]);
 
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [onClose]);
-
   const plugins = props.plugins ?? scannedPlugins;
 
   const filtered = useMemo(() => {
@@ -72,54 +65,47 @@ export function PluginPicker(props: PluginPickerProps) {
   const roleLabel = props.role === 'instrument' ? 'instrument' : 'effect';
 
   return (
-    <div
-      className={styles.pluginPickerOverlay}
-      onClick={(event) => {
-        if (event.target === event.currentTarget) props.onClose();
-      }}
+    <Modal
+      label={props.title ?? 'Plugin Picker'}
+      closeOnBackdrop
+      onClose={onClose}
+      className={styles.pluginPicker}
     >
-      <div
-        className={styles.pluginPicker}
-        role="dialog"
-        aria-label={props.title ?? 'Plugin Picker'}
-        aria-modal="true"
-      >
-        <header>
-          <strong>{props.title ?? 'Choose Plugin'}</strong>
-          <button type="button" className={styles.pluginPickerCancel} onClick={onClose}>
-            Cancel
+      <header>
+        <strong>{props.title ?? 'Choose Plugin'}</strong>
+        <button type="button" className={styles.pluginPickerCancel} onClick={onClose}>
+          Cancel
+        </button>
+      </header>
+      <input
+        autoFocus
+        type="text"
+        placeholder="Search plugins..."
+        value={query}
+        onChange={(event) => setQuery(event.currentTarget.value)}
+      />
+      <div className={styles.pluginPickerList}>
+        {loading && <p className={styles.pluginPickerEmpty}>Scanning VST3 plugins...</p>}
+        {error && <p className={styles.pluginPickerError}>{error}</p>}
+        {!loading && !error && filtered.length === 0 && (
+          <p className={styles.pluginPickerEmpty}>
+            {query.trim()
+              ? 'No VST3 ' + roleLabel + 's match your search.'
+              : 'No VST3 ' + roleLabel + 's found.'}
+          </p>
+        )}
+        {filtered.map((plugin) => (
+          <button
+            key={plugin.id}
+            type="button"
+            className={styles.pluginPickerItem}
+            onClick={() => props.onSelect(plugin)}
+          >
+            <span>{plugin.name}</span>
+            <small>{plugin.vendor ?? 'Unknown vendor'}</small>
           </button>
-        </header>
-        <input
-          autoFocus
-          type="text"
-          placeholder="Search plugins..."
-          value={query}
-          onChange={(event) => setQuery(event.currentTarget.value)}
-        />
-        <div className={styles.pluginPickerList}>
-          {loading && <p className={styles.pluginPickerEmpty}>Scanning VST3 plugins...</p>}
-          {error && <p className={styles.pluginPickerError}>{error}</p>}
-          {!loading && !error && filtered.length === 0 && (
-            <p className={styles.pluginPickerEmpty}>
-              {query.trim()
-                ? 'No VST3 ' + roleLabel + 's match your search.'
-                : 'No VST3 ' + roleLabel + 's found.'}
-            </p>
-          )}
-          {filtered.map((plugin) => (
-            <button
-              key={plugin.id}
-              type="button"
-              className={styles.pluginPickerItem}
-              onClick={() => props.onSelect(plugin)}
-            >
-              <span>{plugin.name}</span>
-              <small>{plugin.vendor ?? 'Unknown vendor'}</small>
-            </button>
-          ))}
-        </div>
+        ))}
       </div>
-    </div>
+    </Modal>
   );
 }

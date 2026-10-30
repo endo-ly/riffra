@@ -69,7 +69,6 @@ function renderDialog(
   const activeProbe = overrides.probe ?? probe;
   const view = render(
     <AudioSettingsDialog
-      open
       audio={
         overrides.audio ??
         fakeAudioStatus({
@@ -191,7 +190,6 @@ describe('AudioSettingsDialog', () => {
     const refreshedPassiveProbe = { ...passiveProbe, refreshedAtMs: 2 };
     view.rerender(
       <AudioSettingsDialog
-        open
         audio={audio}
         probe={refreshedPassiveProbe}
         safeMode={false}
@@ -212,7 +210,6 @@ describe('AudioSettingsDialog', () => {
     const reprobedPassiveProbe = { ...passiveProbe, refreshedAtMs: 3 };
     view.rerender(
       <AudioSettingsDialog
-        open
         audio={audio}
         probe={reprobedPassiveProbe}
         safeMode={false}
@@ -286,7 +283,6 @@ describe('AudioSettingsDialog', () => {
     const onApply = vi.fn(async () => fakeAudioStatus());
     render(
       <AudioSettingsDialog
-        open
         audio={fakeAudioStatus({
           driver: 'Windows Audio',
           inputDevice: 'Mic',
