@@ -15,7 +15,8 @@ import { toast } from '@/shared/toasts';
 import type { ContextMenuItem } from '@/shared/ui/ContextMenu';
 import { PITCH_HIGH, PITCH_LOW, pitchFromClientY } from '../model/pitch-grid';
 
-export type MidiEditResult = void | PromiseLike<ArrangementMutationResult | null>;
+/** A note edit: the canonical the Host accepted, or null when it did not run. */
+export type NoteEdit = Promise<ArrangementMutationResult | null>;
 
 interface NoteEditingOptions {
   clip: MidiClip | null;
@@ -107,8 +108,8 @@ export function useNoteEditing(options: NoteEditingOptions) {
       ? Math.max(0, snapToBar(start + tick, timebase) - start)
       : snapClipTick(tick, start, gridTicks);
 
-  const removeSelectedNotes = (noteIds = selectedNoteIds): MidiEditResult => {
-    if (!clip || noteIds.length === 0) return;
+  const removeSelectedNotes = (noteIds = selectedNoteIds): NoteEdit | null => {
+    if (!clip || noteIds.length === 0) return null;
     const uniqueIds = [...new Set(noteIds)];
     setSelectedNoteIds([]);
     return commit(api.removeMidiNotes(clip.id, uniqueIds));
@@ -130,16 +131,16 @@ export function useNoteEditing(options: NoteEditingOptions) {
   };
 
   /** Selects the notes an edit adds to the clip once the edit lands. */
-  const selectAddedNotes = (operation: MidiEditResult): MidiEditResult => {
-    if (!clip || operation === undefined) return;
-    void Promise.resolve(operation).then((next) => {
-      if (next) setSelectedNoteIds(next.createdEntityIds.midiNotes ?? []);
-    });
+  const selectAddedNotes = (operation: NoteEdit): NoteEdit => {
+    if (clip)
+      void operation.then((next) => {
+        if (next) setSelectedNoteIds(next.createdEntityIds.midiNotes ?? []);
+      });
     return operation;
   };
 
-  const pasteNotes = (): MidiEditResult => {
-    if (!clip || !clipboardRef.current) return;
+  const pasteNotes = (): NoteEdit | null => {
+    if (!clip || !clipboardRef.current) return null;
     const anchor = snapLocalTick(
       options.playheadTickRef.current - clip.startTick,
       clip.startTick,
@@ -152,8 +153,8 @@ export function useNoteEditing(options: NoteEditingOptions) {
     return selectAddedNotes(mutations.insertNotes(clip.id, inputs));
   };
 
-  const duplicateSelectedNotes = (): MidiEditResult => {
-    if (!clip || selectedNotes.length === 0) return;
+  const duplicateSelectedNotes = (): NoteEdit | null => {
+    if (!clip || selectedNotes.length === 0) return null;
     const start = Math.min(...selectedNotes.map((note) => note.startTick));
     const end = Math.max(
       ...selectedNotes.map((note) => note.startTick + Math.max(1, note.durationTicks)),
@@ -164,8 +165,8 @@ export function useNoteEditing(options: NoteEditingOptions) {
   const nudgeSelectedNotes = (
     direction: 'left' | 'right' | 'up' | 'down',
     pitchStep = 1,
-  ): MidiEditResult => {
-    if (!clip || selectedNotes.length === 0) return;
+  ): NoteEdit | null => {
+    if (!clip || selectedNotes.length === 0) return null;
     const timeStep = snapTicks || beatTicks;
     const requestedPitchDelta =
       direction === 'up' ? pitchStep : direction === 'down' ? -pitchStep : 0;
@@ -183,7 +184,7 @@ export function useNoteEditing(options: NoteEditingOptions) {
       timeDelta = next * snapTicks - clip.startTick - anchor;
     }
     timeDelta = Math.max(-Math.min(...selectedNotes.map((note) => note.startTick)), timeDelta);
-    if (pitchDelta === 0 && timeDelta === 0) return;
+    if (pitchDelta === 0 && timeDelta === 0) return null;
     if (pitchDelta !== 0) {
       const first = selectedNotes[0];
       options.auditionNote(first.note + pitchDelta, first.velocity, first.durationTicks);
@@ -206,12 +207,12 @@ export function useNoteEditing(options: NoteEditingOptions) {
     clientY: number,
     durationTicks = newNoteLength,
     free = false,
-  ): MidiEditResult => {
-    if (!clip) return;
+  ): NoteEdit | null => {
+    if (!clip) return null;
     const bounds = lane.getBoundingClientRect();
     const rawTick = (clientX - bounds.left) / pixelsPerTick;
     const rawPitch = pitchFromClientY(clientY, bounds.top, rowHeight);
-    if (rawPitch === null) return;
+    if (rawPitch === null) return null;
     const requestedStartTick = options.placeTick(rawTick, free);
     const startTick = Math.min(Math.max(0, clip.durationTicks - 1), requestedStartTick);
     const duration = Math.max(1, Math.round(durationTicks));
@@ -276,7 +277,7 @@ export function useNoteEditing(options: NoteEditingOptions) {
     if (isEditableTypingTarget(event.target)) return;
     const key = event.key.toLowerCase();
     const modifier = event.ctrlKey || event.metaKey;
-    let operation: MidiEditResult | undefined;
+    let operation: NoteEdit | null = null;
 
     if (modifier && key === 'a') {
       setSelectedNoteIds(notes.map((note) => note.id));
@@ -307,7 +308,7 @@ export function useNoteEditing(options: NoteEditingOptions) {
 
     event.preventDefault();
     event.stopPropagation();
-    void Promise.resolve(operation);
+    if (operation) void operation;
   };
 
   const contextNote = noteContextMenu
@@ -318,7 +319,7 @@ export function useNoteEditing(options: NoteEditingOptions) {
         {
           label: 'Cut',
           onClick: () => {
-            if (copySelectedNotes()) void Promise.resolve(removeSelectedNotes());
+            if (copySelectedNotes()) void removeSelectedNotes();
             setNoteContextMenu(null);
           },
         },
@@ -342,14 +343,14 @@ export function useNoteEditing(options: NoteEditingOptions) {
           label: 'Delete',
           danger: true,
           onClick: () => {
-            void Promise.resolve(removeSelectedNotes());
+            void removeSelectedNotes();
             setNoteContextMenu(null);
           },
         },
         {
           label: 'Duplicate',
           onClick: () => {
-            void Promise.resolve(duplicateSelectedNotes());
+            void duplicateSelectedNotes();
             setNoteContextMenu(null);
           },
         },

@@ -7,16 +7,11 @@ import {
   type SetStateAction,
   type RefObject,
 } from 'react';
-import type {
-  ArrangementMutationResult,
-  MidiClip,
-  MidiNote,
-  MidiNoteInput,
-} from '@/model/generated';
+import type { MidiClip, MidiNote, MidiNoteInput } from '@/model/generated';
 import type { usePointerGesture } from '@/shared/usePointerGesture';
 import { buildNoteDragPreview, calculateNoteDrag, type NoteDragMode } from '../model/note-drag';
+import type { NoteEdit } from './useNoteEditing';
 
-type MidiEditResult = void | PromiseLike<ArrangementMutationResult | null>;
 interface Options {
   clip: MidiClip | null;
   selectedNoteIds: string[];
@@ -27,13 +22,13 @@ interface Options {
   startGesture: ReturnType<typeof usePointerGesture>;
   setLastNoteLength: Dispatch<SetStateAction<number | null>>;
   auditionNote: (pitch: number, velocity: number, duration?: number) => void;
-  selectAddedNotes: (operation: MidiEditResult) => MidiEditResult;
-  onInsertNotes?: (clipId: string, notes: MidiNoteInput[]) => MidiEditResult;
-  onUpdateNote?: (clipId: string, note: MidiNote) => MidiEditResult;
-  onUpdateNotes?: (
+  selectAddedNotes: (operation: NoteEdit) => NoteEdit;
+  onInsertNotes: (clipId: string, notes: MidiNoteInput[]) => NoteEdit;
+  onUpdateNote: (clipId: string, note: MidiNote) => NoteEdit;
+  onUpdateNotes: (
     clipId: string,
     updates: { noteId: string; patch: Partial<MidiNote> }[],
-  ) => MidiEditResult;
+  ) => NoteEdit;
 }
 const NOTE_DRAG_THRESHOLD = 3;
 export function useNoteDrag({
@@ -168,10 +163,10 @@ export function useNoteDrag({
       }
       auditionNote(preview.note, preview.velocity, preview.durationTicks);
       if (mode !== 'move') setLastNoteLength(preview.durationTicks);
-      let operation: MidiEditResult;
+      let operation: NoteEdit;
       if (copying) {
         operation = selectAddedNotes(
-          onInsertNotes?.(
+          onInsertNotes(
             clip!.id,
             originNotes.map((candidate) => {
               const next = previewNotes[candidate.id];
@@ -185,7 +180,7 @@ export function useNoteDrag({
             }),
           ),
         );
-      } else if (onUpdateNotes && originNotes.length > 1) {
+      } else if (originNotes.length > 1) {
         operation = onUpdateNotes(
           clip!.id,
           originNotes.map((candidate) => {
@@ -202,18 +197,14 @@ export function useNoteDrag({
           }),
         );
       } else {
-        operation = onUpdateNote?.(clip!.id, preview);
-      }
-      if (operation === undefined) {
-        clearDragging();
-        return;
+        operation = onUpdateNote(clip!.id, preview);
       }
       setDragging((current) =>
         current?.gestureId === gestureId
           ? { ...current, previewNotes, awaitingCanonical: true }
           : current,
       );
-      void Promise.resolve(operation).then(clearDragging, clearDragging);
+      void operation.then(clearDragging, clearDragging);
     };
     startGesture(event, { onMove: move, onEnd: finish, onCancel: clearDragging });
   };
