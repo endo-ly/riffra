@@ -354,6 +354,37 @@ describe('TimelineView', () => {
     }
   });
 
+  it('draws the take the transport is recording over the lanes', async () => {
+    // Arrange
+    const session = defaultSession();
+    session.arrangement.tracks.push(mergeTrack('track:audio', 'audio'));
+    const api = createFakeNativeApi();
+    renderWorkspace(api, { session });
+
+    // Act
+    await act(async () => {
+      api.emitTransportStatus({
+        state: 'playing',
+        recordingPhase: 'recording',
+        recordingStartTick: 960,
+        recordingPassOrdinal: 2,
+        armedTrackIds: ['track:audio'],
+        discontinuity: 1,
+      });
+    });
+
+    // Assert
+    expect(screen.getByText('RECORDING · track:audio · PASS 2')).toBeInTheDocument();
+
+    // Act
+    await act(async () => {
+      api.emitTransportStatus({ state: 'playing', recordingPhase: 'idle', discontinuity: 2 });
+    });
+
+    // Assert
+    expect(screen.queryByText('RECORDING · track:audio · PASS 2')).not.toBeInTheDocument();
+  });
+
   it('keeps an unavailable clip on the timeline and labels its missing source', async () => {
     const session = defaultSession();
     const assetId = toAssetId('asset:018f85b9-5fe1-7ef2-91d8-e6b4e665d41a');
