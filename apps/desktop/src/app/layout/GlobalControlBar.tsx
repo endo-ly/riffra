@@ -1,6 +1,7 @@
 import clsx from 'clsx';
 import type { AudioStatus } from '@/model/generated';
 import { useSession } from '@/shared/session/session-context';
+import { selectHostReady } from '@/shared/session/selectors';
 import { isEmergencyMuteActive } from '@/shared/audio/audio-safety';
 
 import { AudioMonitor } from '@/features/audio/AudioMonitor';
@@ -17,7 +18,7 @@ interface GlobalControlBarProps {
 
 export function GlobalControlBar(ui: GlobalControlBarProps) {
   const project = useSession((state) => state.project);
-  const host = useSession((state) => state.host);
+  const hostConnected = useSession(selectHostReady);
   const audio = useSession((state) => state.audio);
   const recording = useSession((state) => state.recording);
   const props = {
@@ -25,7 +26,7 @@ export function GlobalControlBar(ui: GlobalControlBarProps) {
     audio: audio.status,
     session: project.boot!.canonical.session,
     historyState: project.boot!.canonical.history,
-    hostConnected: host.connection.mode !== 'disconnected' && !host.switching,
+    hostConnected,
     projectSwitching: project.switching,
     isMuted: isEmergencyMuteActive(audio.status),
     recordingCommandPending: recording.commandPending || recording.stopPending,
@@ -63,7 +64,7 @@ export function GlobalControlBar(ui: GlobalControlBarProps) {
               aria-label="Undo"
               title="Undo (Ctrl+Z)"
               disabled={!props.historyState.canUndo}
-              onClick={props.onUndo}
+              onClick={() => void props.onUndo()}
             >
               <Icon name="undo" />
             </button>
@@ -72,7 +73,7 @@ export function GlobalControlBar(ui: GlobalControlBarProps) {
               aria-label="Redo"
               title="Redo (Ctrl+Y)"
               disabled={!props.historyState.canRedo}
-              onClick={props.onRedo}
+              onClick={() => void props.onRedo()}
             >
               <Icon name="redo" />
             </button>
@@ -88,7 +89,7 @@ export function GlobalControlBar(ui: GlobalControlBarProps) {
           session={props.session}
           recordingActive={props.audio.recording.active || props.audio.recording.processing}
           recordingCommandPending={props.recordingCommandPending}
-          onToggleRecording={props.onToggleRecording}
+          onToggleRecording={() => void props.onToggleRecording()}
         />
       </fieldset>
 
@@ -144,7 +145,7 @@ export function GlobalControlBar(ui: GlobalControlBarProps) {
           <button
             type="button"
             className={styles.emergencyButton}
-            onClick={props.onResetFeedback}
+            onClick={() => void props.onResetFeedback()}
             aria-label="Reset feedback protection"
             title="Reset feedback protection"
           >
