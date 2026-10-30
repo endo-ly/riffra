@@ -17,7 +17,7 @@ import {
   normalizeAudioSettingsDraft,
   selectDriverForDraft,
 } from '@/features/audio/audio-settings';
-import { audioCommandSucceeded } from '@/shared/audio/audio-safety';
+import { isAudioEngineUsable } from '@/shared/audio/audio-safety';
 import { Dialog } from '@/shared/ui/Dialog';
 import surface from '@/shared/ui/Surface.module.css';
 import styles from './AudioSettingsDialog.module.css';
@@ -202,7 +202,7 @@ export function AudioSettingsDialog({
     setError(null);
     try {
       const nextAudio = await onRecover();
-      if (!audioCommandSucceeded(nextAudio)) setError(nextAudio.message);
+      if (!isAudioEngineUsable(nextAudio)) setError(nextAudio.message);
     } catch (reason) {
       setError(errorText(reason) || 'Audio recovery failed.');
     } finally {
@@ -218,7 +218,7 @@ export function AudioSettingsDialog({
     setError(null);
     try {
       const nextAudio = await onApply(nextDraft);
-      if (audioCommandSucceeded(nextAudio)) onClose();
+      if (isAudioEngineUsable(nextAudio)) onClose();
       else setError(nextAudio.message);
     } catch (reason) {
       setError(errorText(reason) || 'Audio settings could not be applied.');

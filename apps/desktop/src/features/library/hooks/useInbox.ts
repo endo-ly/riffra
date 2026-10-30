@@ -1,7 +1,6 @@
 import { errorText } from '@/shared/errors';
 import { useCallback, useEffect, useState } from 'react';
 import type { LibraryAsset, RecordingAsset } from '@/model/generated';
-import { audioCommandSucceeded } from '@/shared/audio/audio-safety';
 import type { AudioApi } from '@/native/api/audio';
 import type { LibraryApi } from '@/native/api/library';
 
@@ -128,10 +127,7 @@ export function useInbox(
       try {
         const assetId = recording.processedAssetId ?? recording.rawAssetId;
         if (!assetId) throw new Error('Recording has no canonical audio Asset ID.');
-        const status = await api.previewAsset(assetId, {});
-        if (!audioCommandSucceeded(status)) {
-          throw new Error(status.message || 'The audio engine could not start the preview.');
-        }
+        await api.previewAsset(assetId, {});
         setMessage(`Preview started: ${recording.name}.`);
       } catch (cause) {
         setError(errorText(cause));

@@ -1,6 +1,5 @@
 import type { AudioStatus, RecordingStopResult } from '@/model/generated';
 import { dispatchControl } from '../invoke';
-import { audioCommandError } from './audio-error';
 
 export interface RecordingApi {
   startArrangeRecording(): Promise<AudioStatus>;
@@ -12,12 +11,8 @@ async function startArrangeRecording(): Promise<AudioStatus> {
   return dispatchControl({ command: 'record.start', params: { recordingSessionId: null } });
 }
 
-async function recordAnotherTake(recordingSessionId: string): Promise<AudioStatus> {
-  try {
-    return await dispatchControl({ command: 'record.start', params: { recordingSessionId } });
-  } catch (error) {
-    return await audioCommandError('Start another take', error);
-  }
+function recordAnotherTake(recordingSessionId: string): Promise<AudioStatus> {
+  return dispatchControl({ command: 'record.start', params: { recordingSessionId } });
 }
 
 async function stopArrangeRecording(): Promise<RecordingStopResult> {

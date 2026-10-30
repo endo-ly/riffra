@@ -1100,7 +1100,6 @@ describe('WorkspaceArrange', () => {
     api.sendMidiToTrack = async (trackId, bytes) => {
       api.calls.push('sendMidiToTrack');
       sent.push({ trackId, bytes });
-      return api.audio;
     };
     const { container } = render(<Harness api={api} initialSession={session} />);
     fireEvent.doubleClick(container.querySelector('[data-clip-id="clip:audition"]')!);
@@ -1495,7 +1494,7 @@ describe('WorkspaceArrange', () => {
   });
 
   it('reports a projection failure in place and recovers through the retry action', async () => {
-    // Arrange: the projection fails and the message takes over the status area.
+    // Arrange: the projection fails and its retry notice is shown.
     const api = new FakeNativeApi();
     const failure = 'Audio preparation failed. Retry to prepare audio.';
     const failedStatus: RuntimeProjectionStatus = {

@@ -162,7 +162,7 @@ describe('useInbox', () => {
     expect(result.current.message).toBe('Preview started: raw.');
   });
 
-  it('reports zero duplicate results and refuses faulted preview success', async () => {
+  it('reports zero duplicate results and handles preview command failures', async () => {
     const first = recording('recording:take-a', 'take-a');
     const api = new FakeNativeApi({
       recordings: [first],
@@ -177,9 +177,7 @@ describe('useInbox', () => {
     });
     expect(result.current.message).toBe('No duplicate recordings found.');
 
-    vi.spyOn(api, 'previewAsset').mockResolvedValue(
-      fakeAudioStatus({ state: 'faulted', message: 'Audio device disconnected.' }),
-    );
+    vi.spyOn(api, 'previewAsset').mockRejectedValue(new Error('Audio device disconnected.'));
     let failure: unknown;
     await act(async () => {
       try {

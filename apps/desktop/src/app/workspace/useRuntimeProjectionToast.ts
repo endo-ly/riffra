@@ -2,21 +2,19 @@ import { useEffect } from 'react';
 import type { RuntimeProjectionStatus } from '@/model/generated';
 import { clearToast, showToast } from '@/shared/toasts';
 
-interface UseWorkspaceStatusToastOptions {
+interface UseRuntimeProjectionToastOptions {
   runtimeProjectionStatus: RuntimeProjectionStatus;
   runtimeProjectionFailure: string | null;
   runtimeProjectionRetrying: boolean;
   onRetryRuntimeProjection: () => Promise<void>;
-  editorMessage: string;
 }
 
-export function useWorkspaceStatusToast({
+export function useRuntimeProjectionToast({
   runtimeProjectionStatus,
   runtimeProjectionFailure,
   runtimeProjectionRetrying,
   onRetryRuntimeProjection,
-  editorMessage,
-}: UseWorkspaceStatusToastOptions) {
+}: UseRuntimeProjectionToastOptions) {
   // Runtime projection status, rather than Arrangement revision, is the source
   // of truth for playback health. Marker and other authoring-only edits still
   // advance the canonical revision without requiring a new audio graph.
@@ -40,23 +38,23 @@ export function useWorkspaceStatusToast({
       ? (runtimeProjectionFailure ?? 'Audio preparation failed. Retry to prepare audio.')
       : unavailableClipCount || missingDeviceCount
         ? `Playback skipped ${unavailableClipCount} missing source${unavailableClipCount === 1 ? '' : 's'} and ${missingDeviceCount} missing device${missingDeviceCount === 1 ? '' : 's'}.`
-        : editorMessage;
+        : null;
   const statusPersistent =
     projectionLoading || playbackOutOfSync || unavailableClipCount > 0 || missingDeviceCount > 0;
 
   useEffect(() => {
     if (!statusMessage) {
-      clearToast('arrange.status');
+      clearToast('runtime.projection');
       return;
     }
-    showToast('arrange.status', statusMessage, {
+    showToast('runtime.projection', statusMessage, {
       kind: playbackOutOfSync ? 'error' : 'info',
       persistent: statusPersistent,
       ...(playbackOutOfSync && !runtimeProjectionRetrying
         ? { action: { label: 'Retry', onClick: () => void onRetryRuntimeProjection() } }
         : {}),
     });
-    return () => clearToast('arrange.status');
+    return () => clearToast('runtime.projection');
   }, [
     onRetryRuntimeProjection,
     playbackOutOfSync,

@@ -14,7 +14,6 @@ import type {
 } from '@/model/generated';
 
 import { dispatchControl } from '../invoke';
-import { audioCommandError } from './audio-error';
 
 export interface AudioApi {
   probeAudioDevices(): Promise<AudioDeviceProbe>;
@@ -36,9 +35,9 @@ export interface AudioApi {
   setAudioDriver(config: AudioDriverConfig): Promise<AudioStatus>;
   enableMidiListening(): Promise<AudioStatus>;
   disableMidiListening(): Promise<AudioStatus>;
-  sendMidiToTrack(trackId: string, bytes: number[]): Promise<AudioStatus | null>;
-  setLiveMidiTarget(trackId: string | null): Promise<AudioStatus | null>;
-  panicMidiTrack(trackId: string): Promise<AudioStatus | null>;
+  sendMidiToTrack(trackId: string, bytes: number[]): Promise<void>;
+  setLiveMidiTarget(trackId: string | null): Promise<void>;
+  panicMidiTrack(trackId: string): Promise<void>;
 }
 
 async function probeAudioDevices(): Promise<AudioDeviceProbe> {
@@ -56,53 +55,33 @@ async function probeDeviceChannels(
   });
 }
 
-async function previewAsset(assetId: AssetId, options: AssetPreviewOptions): Promise<AudioStatus> {
-  try {
-    return await dispatchControl({
-      command: 'asset.preview',
-      params: {
-        assetId,
-        startMs: options.startMs ?? 0,
-        endMs: options.endMs ?? null,
-        looped: options.looped ?? false,
-        gain: options.gain ?? 1,
-      },
-    });
-  } catch (error) {
-    return await audioCommandError('Preview asset', error);
-  }
+function previewAsset(assetId: AssetId, options: AssetPreviewOptions): Promise<AudioStatus> {
+  return dispatchControl({
+    command: 'asset.preview',
+    params: {
+      assetId,
+      startMs: options.startMs ?? 0,
+      endMs: options.endMs ?? null,
+      looped: options.looped ?? false,
+      gain: options.gain ?? 1,
+    },
+  });
 }
 
-async function previewInstrument(instrumentId: string): Promise<AudioStatus> {
-  try {
-    return await dispatchControl({ command: 'instrument.preview', params: { instrumentId } });
-  } catch (error) {
-    return await audioCommandError('Preview instrument', error);
-  }
+function previewInstrument(instrumentId: string): Promise<AudioStatus> {
+  return dispatchControl({ command: 'instrument.preview', params: { instrumentId } });
 }
 
-async function stopInstrumentPreview(): Promise<AudioStatus> {
-  try {
-    return await dispatchControl({ command: 'instrument.preview.stop', params: {} });
-  } catch (error) {
-    return await audioCommandError('Stop instrument preview', error);
-  }
+function stopInstrumentPreview(): Promise<AudioStatus> {
+  return dispatchControl({ command: 'instrument.preview.stop', params: {} });
 }
 
-async function openPluginAudition(pluginPath: string): Promise<AudioStatus> {
-  try {
-    return await dispatchControl({ command: 'plugin.audition.open', params: { pluginPath } });
-  } catch (error) {
-    return await audioCommandError('Open plug-in', error);
-  }
+function openPluginAudition(pluginPath: string): Promise<AudioStatus> {
+  return dispatchControl({ command: 'plugin.audition.open', params: { pluginPath } });
 }
 
-async function stopPreview(): Promise<AudioStatus> {
-  try {
-    return await dispatchControl({ command: 'asset.preview.stop', params: {} });
-  } catch (error) {
-    return await audioCommandError('Stop preview', error);
-  }
+function stopPreview(): Promise<AudioStatus> {
+  return dispatchControl({ command: 'asset.preview.stop', params: {} });
 }
 
 async function getAudioStatus(): Promise<AudioStatus> {
@@ -117,12 +96,8 @@ async function resetFeedbackProtection(): Promise<AudioStatus> {
   return dispatchControl({ command: 'audio.feedback-protection.reset', params: {} });
 }
 
-async function recoverAudioDevice(): Promise<AudioStatus> {
-  try {
-    return await dispatchControl({ command: 'audio.recover', params: {} });
-  } catch (error) {
-    return await audioCommandError('Recover audio device', error);
-  }
+function recoverAudioDevice(): Promise<AudioStatus> {
+  return dispatchControl({ command: 'audio.recover', params: {} });
 }
 
 async function retryStartupRuntime(): Promise<AudioStatus> {
@@ -133,47 +108,24 @@ async function setAudioDriver(config: AudioDriverConfig): Promise<AudioStatus> {
   return dispatchControl({ command: 'audio.driver.set', params: config });
 }
 
-async function enableMidiListening(): Promise<AudioStatus> {
-  try {
-    return await dispatchControl({ command: 'midi.listening.enable', params: {} });
-  } catch (error) {
-    return await audioCommandError('Enable MIDI listening', error);
-  }
+function enableMidiListening(): Promise<AudioStatus> {
+  return dispatchControl({ command: 'midi.listening.enable', params: {} });
 }
 
-async function disableMidiListening(): Promise<AudioStatus> {
-  try {
-    return await dispatchControl({ command: 'midi.listening.disable', params: {} });
-  } catch (error) {
-    return await audioCommandError('Disable MIDI listening', error);
-  }
+function disableMidiListening(): Promise<AudioStatus> {
+  return dispatchControl({ command: 'midi.listening.disable', params: {} });
 }
 
-async function sendMidiToTrack(trackId: string, bytes: number[]): Promise<AudioStatus | null> {
-  try {
-    await dispatchControl({ command: 'midi.send', params: { trackId, bytes } });
-    return null;
-  } catch (error) {
-    return await audioCommandError('Send MIDI to Track', error);
-  }
+async function sendMidiToTrack(trackId: string, bytes: number[]): Promise<void> {
+  await dispatchControl({ command: 'midi.send', params: { trackId, bytes } });
 }
 
-async function setLiveMidiTarget(trackId: string | null): Promise<AudioStatus | null> {
-  try {
-    await dispatchControl({ command: 'midi.target.set', params: { trackId } });
-    return null;
-  } catch (error) {
-    return await audioCommandError('Set live MIDI target', error);
-  }
+async function setLiveMidiTarget(trackId: string | null): Promise<void> {
+  await dispatchControl({ command: 'midi.target.set', params: { trackId } });
 }
 
-async function panicMidiTrack(trackId: string): Promise<AudioStatus | null> {
-  try {
-    await dispatchControl({ command: 'midi.panic', params: { trackId } });
-    return null;
-  } catch (error) {
-    return await audioCommandError('Panic MIDI Track', error);
-  }
+async function panicMidiTrack(trackId: string): Promise<void> {
+  await dispatchControl({ command: 'midi.panic', params: { trackId } });
 }
 
 export const audioApi: AudioApi = {

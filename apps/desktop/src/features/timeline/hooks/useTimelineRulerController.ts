@@ -3,6 +3,8 @@ import { useCallback, useEffect, useState, type MutableRefObject, type PointerEv
 import type { CreativeSession, Marker } from '@/model/generated';
 import { useSessionContext } from '@/shared/session/session-context';
 import { HostConnectionChangedError } from '@/native/invoke';
+import { errorText } from '@/shared/errors';
+import { showToast } from '@/shared/toasts';
 import { tickToMusicalPosition } from '@/model/time-format';
 import { isEditableTypingTarget } from '@/shared/input';
 import { usePointerGesture } from '@/shared/usePointerGesture';
@@ -33,7 +35,6 @@ interface TimelineRulerControllerOptions {
   displayTickRef: MutableRefObject<number>;
   selectedClipCount: number;
   seekLocally: (tick: number) => void;
-  setMessage: (message: string) => void;
 }
 
 export function useTimelineRulerController({
@@ -44,7 +45,6 @@ export function useTimelineRulerController({
   displayTickRef,
   selectedClipCount,
   seekLocally,
-  setMessage,
 }: TimelineRulerControllerOptions) {
   const { api } = useSessionContext();
   const startGesture = usePointerGesture();
@@ -186,7 +186,7 @@ export function useTimelineRulerController({
       seekLocally(originTick);
       void api.seekTimeline(originTick).catch((error) => {
         if (error instanceof HostConnectionChangedError) return;
-        setMessage(String(error));
+        showToast('timeline', errorText(error), { kind: 'error' });
       });
       const handle = (move: globalThis.PointerEvent) => {
         const tick = snapTick((move.clientX - bounds.left) / pixelsPerTick, move.altKey);
@@ -202,7 +202,7 @@ export function useTimelineRulerController({
           seekLocally(tick);
           void api.seekTimeline(tick).catch((error) => {
             if (error instanceof HostConnectionChangedError) return;
-            setMessage(String(error));
+            showToast('timeline', errorText(error), { kind: 'error' });
           });
         } else {
           setTimeSelection((current) =>
@@ -220,7 +220,7 @@ export function useTimelineRulerController({
         onCancel: () => setTimeSelection(null),
       });
     },
-    [api, pixelsPerTick, seekLocally, setMessage, snapTick, startGesture],
+    [api, pixelsPerTick, seekLocally, snapTick, startGesture],
   );
 
   const dragRangeHandle = useCallback(

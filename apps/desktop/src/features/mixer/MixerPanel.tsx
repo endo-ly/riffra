@@ -25,7 +25,6 @@ interface MixerPanelProps {
   onSelectTrack: (trackId: string) => void;
   onOpenDevices: (trackId: string) => void;
   onOpenAutomation: (target: AutomationTarget) => void;
-  onError?: (message: string) => void;
   disabled?: boolean;
 }
 
@@ -167,7 +166,7 @@ export function MixerPanel(props: MixerPanelProps) {
                 sendCount={
                   arrangement.mixer.sends.filter((send) => send.trackId === track.id).length
                 }
-                onError={props.onError}
+                onError={setError}
                 disabled={props.disabled}
               />
             ))}
