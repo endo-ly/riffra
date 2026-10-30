@@ -5,6 +5,8 @@ import type { AudioApi } from '@/native/api/audio';
 import type { LibraryApi } from '@/native/api/library';
 import { openMidiFile } from '@/native/dialog';
 import { logNativeError } from '@/native/invoke';
+import { errorText } from '@/shared/errors';
+import { toast } from '@/shared/toasts';
 
 interface UseLibraryOptions {
   setAudio: (audio: AudioStatus) => void;
@@ -57,7 +59,7 @@ export function useLibrary(
         const next = await previewAsset(toAssetId(asset.id), {});
         setAudio(next);
       } catch (error) {
-        logNativeError('previewLibraryAsset')(error);
+        toast(`Preview failed: ${errorText(error)}`, { kind: 'error' });
       }
     },
     [previewAsset, setAudio],

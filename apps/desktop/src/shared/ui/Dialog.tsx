@@ -1,7 +1,7 @@
 import type { CSSProperties, ReactNode } from 'react';
-import { createPortal } from 'react-dom';
 import { Icon } from '@/shared/ui/primitives';
 import controls from '@/shared/ui/controls.module.css';
+import { Modal } from './Modal';
 import styles from './Dialog.module.css';
 
 interface DialogProps {
@@ -33,49 +33,38 @@ export function Dialog({
   onClose,
   children,
 }: DialogProps) {
-  // Portaled so the dialog escapes the isolated stacking context of the panel that opens it.
-  return createPortal(
-    <div
-      className={styles.overlay}
-      role="presentation"
-      onMouseDown={closeOnBackdrop && !closeDisabled ? onClose : undefined}
+  return (
+    <Modal
+      label={label}
+      closeDisabled={closeDisabled}
+      closeOnBackdrop={closeOnBackdrop}
+      onClose={onClose}
+      className={styles.dialog}
+      style={color ? ({ '--dialog-color': color } as CSSProperties) : undefined}
     >
-      <section
-        className={styles.dialog}
-        role="dialog"
-        aria-modal="true"
-        aria-label={label}
-        style={color ? ({ '--dialog-color': color } as CSSProperties) : undefined}
-        onMouseDown={(event) => event.stopPropagation()}
-        onKeyDown={(event) => {
-          if (event.key === 'Escape' && !closeDisabled) onClose();
-        }}
-      >
-        <header className={styles.header}>
-          <span className={styles.tile}>
-            <Icon name={icon} />
-          </span>
-          <span className={styles.identity}>
-            <strong>{title}</strong>
-            <small>{subtitle}</small>
-          </span>
-          <button
-            autoFocus
-            type="button"
-            className={controls.iconButton}
-            aria-label="Close"
-            title="Close"
-            disabled={closeDisabled}
-            onClick={onClose}
-          >
-            <Icon name="close" />
-          </button>
-        </header>
-        <div className={styles.body}>{children}</div>
-        {footer && <footer className={styles.footer}>{footer}</footer>}
-      </section>
-    </div>,
-    document.body,
+      <header className={styles.header}>
+        <span className={styles.tile}>
+          <Icon name={icon} />
+        </span>
+        <span className={styles.identity}>
+          <strong>{title}</strong>
+          <small>{subtitle}</small>
+        </span>
+        <button
+          autoFocus
+          type="button"
+          className={controls.iconButton}
+          aria-label="Close"
+          title="Close"
+          disabled={closeDisabled}
+          onClick={onClose}
+        >
+          <Icon name="close" />
+        </button>
+      </header>
+      <div className={styles.body}>{children}</div>
+      {footer && <footer className={styles.footer}>{footer}</footer>}
+    </Modal>
   );
 }
 

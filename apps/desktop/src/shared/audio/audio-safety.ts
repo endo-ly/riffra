@@ -1,23 +1,19 @@
 import type { AudioStatus } from '@/model/generated';
 
 /**
- * Audio safety state transitions. These encode the product invariants that keep
- * output safe: a command that faults the engine must not be treated as success,
- * and the runtime remains the single source of truth for emergency mute.
+ * Audio safety state transitions. The Runtime remains the source of truth for
+ * engine health and emergency mute.
  */
 
 /**
- * Returns true when an audio command's returned status represents a usable
- * (non-faulted, non-offline) engine and does not report a command failure.
+ * Returns true when the audio engine can continue running commands.
  */
-export function audioCommandSucceeded(audio: Pick<AudioStatus, 'state' | 'message'>): boolean {
-  return (
-    audio.state !== 'faulted' && audio.state !== 'offline' && !audio.message.includes(' failed: ')
-  );
+export function isAudioEngineUsable(audio: Pick<AudioStatus, 'state'>): boolean {
+  return audio.state !== 'faulted' && audio.state !== 'offline';
 }
 
 /** Returns whether the Audio Runtime is currently forcing output silent. */
-export function isOutputMuted(audio: Pick<AudioStatus, 'state'>): boolean {
+function isOutputMuted(audio: Pick<AudioStatus, 'state'>): boolean {
   return audio.state === 'muted';
 }
 

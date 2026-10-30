@@ -56,9 +56,9 @@ it('lists the sidechain sends of the track and opens their automation', () => {
   render(
     <TestSessionProvider api={api}>
       <MixerRouting
+        sessionId={session.sessionId}
         arrangement={session.arrangement}
         track={track}
-        commit={() => undefined}
         onClose={() => undefined}
         onOpenAutomation={(target) => opened.push(target)}
       />
@@ -77,9 +77,9 @@ it('hides the sidechain list for tracks without sidechain sends', () => {
   render(
     <TestSessionProvider api={api}>
       <MixerRouting
+        sessionId={session.sessionId}
         arrangement={session.arrangement}
         track={track}
-        commit={() => undefined}
         onClose={() => undefined}
         onOpenAutomation={() => undefined}
       />

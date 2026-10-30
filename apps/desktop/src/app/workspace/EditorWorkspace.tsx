@@ -37,11 +37,13 @@ import {
 } from '@/features/timeline/model/timeline-layout';
 import { timelineObjectEndTick } from '@/model/clip-time';
 import type { SnapGrid } from '@/model/clip-grid';
-import { HostConnectionChangedError } from '@/native/invoke';
+import { HostConnectionChangedError, logNativeError } from '@/native/invoke';
+import { errorText } from '@/shared/errors';
+import { showToast } from '@/shared/toasts';
 import { isEditableTypingTarget } from '@/shared/input';
 import { useTimelineEditor } from '@/features/timeline/hooks/useTimelineEditor';
 import { ownerSelection, selectionOwner, type EditorSelection } from '../../model/editor-selection';
-import { useWorkspaceStatusToast } from '@/app/workspace/useWorkspaceStatusToast';
+import { useRuntimeProjectionToast } from '@/app/workspace/useRuntimeProjectionToast';
 import type { useWorkspaceLowerAreaController } from '@/app/workspace/useWorkspaceLowerAreaController';
 import { useTimelineRulerController } from '@/features/timeline/hooks/useTimelineRulerController';
 import type { ArrangementTransport } from '@/features/transport/hooks/useArrangementTransport';
@@ -171,18 +173,21 @@ export function EditorWorkspace(props: EditorWorkspaceProps) {
     analyses,
     onSplitToolUsed: () => setTool('select'),
   });
-  const { commit, setMessage } = editor;
+  const { commit } = editor;
   const { handleDrop, isOsFileDrag } = useTimelineDrop({
     commit,
     pixelsPerTick,
     snapTick: editor.snapTick,
-    setMessage,
   });
   const sendMidiPreview = useCallback(
-    (trackId: string, bytes: number[]) => api.sendMidiToTrack(trackId, bytes),
+    (trackId: string, bytes: number[]) =>
+      api.sendMidiToTrack(trackId, bytes).catch(logNativeError('sendMidiToTrack')),
     [api],
   );
-  const panicMidiPreview = useCallback((trackId: string) => api.panicMidiTrack(trackId), [api]);
+  const panicMidiPreview = useCallback(
+    (trackId: string) => api.panicMidiTrack(trackId).catch(logNativeError('panicMidiTrack')),
+    [api],
+  );
   const projectionDiagnostics = props.runtimeProjectionStatus.activeDiagnostics;
   const unavailableClipIds = projectionDiagnostics?.unavailableClipIds ?? [];
   const missingDeviceIds = useMemo(
@@ -194,12 +199,11 @@ export function EditorWorkspace(props: EditorWorkspaceProps) {
     ],
     [projectionDiagnostics?.missingDeviceIds, props.missingDeviceIds],
   );
-  const { playbackOutOfSync } = useWorkspaceStatusToast({
+  const { playbackOutOfSync } = useRuntimeProjectionToast({
     runtimeProjectionStatus: props.runtimeProjectionStatus,
     runtimeProjectionFailure: props.runtimeProjectionFailure ?? null,
     runtimeProjectionRetrying: props.runtimeProjectionRetrying,
     onRetryRuntimeProjection: props.onRetryRuntimeProjection,
-    editorMessage: editor.message,
   });
   const selectedClipIds = props.selection.kind === 'clips' ? props.selection.clipIds : [];
   const selectedTrackId = props.selection.kind === 'track' ? props.selection.trackId : null;
@@ -228,7 +232,6 @@ export function EditorWorkspace(props: EditorWorkspaceProps) {
     displayTickRef,
     selectedClipCount: selectedClipIds.length,
     seekLocally,
-    setMessage: editor.setMessage,
   });
   const { lower } = props;
   const { activeMidiClip } = lower;
@@ -404,7 +407,7 @@ export function EditorWorkspace(props: EditorWorkspaceProps) {
     seekLocally(nextTick);
     void api.seekTimeline(nextTick).catch((error) => {
       if (error instanceof HostConnectionChangedError) return;
-      setMessage(String(error));
+      showToast('timeline', errorText(error), { kind: 'error' });
     });
   };
 
@@ -424,11 +427,10 @@ export function EditorWorkspace(props: EditorWorkspaceProps) {
       deletedTrack.instrument
     ) {
       try {
-        const status = await api.panicMidiTrack(trackId);
-        if (status) editor.setMessage(status.message);
+        await api.panicMidiTrack(trackId);
       } catch (error) {
         if (error instanceof HostConnectionChangedError) return;
-        editor.setMessage(String(error));
+        showToast('timeline', errorText(error), { kind: 'error' });
       }
     }
     const next = await editor.commit(api.removeTrack(trackId));
@@ -656,6 +658,7 @@ export function EditorWorkspace(props: EditorWorkspaceProps) {
             arrangement.tracks.map((track, trackIndex) => (
               <Fragment key={track.id}>
                 <TimelineTrack
+                  sessionId={props.session.sessionId}
                   track={track}
                   soloActive={soloActive}
                   trackIndex={trackIndex}
@@ -885,7 +888,6 @@ export function EditorWorkspace(props: EditorWorkspaceProps) {
               props.setSelection({ kind: 'track', trackId });
               lower.openDevices();
             }}
-            onError={setMessage}
           />
         }
       />

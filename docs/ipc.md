@@ -94,6 +94,7 @@ Hostに頼める操作(Control Command)は、`riffra-runtime` の `api` モジ�
 - 確定順序はCoreとHostのProject書き込み権が管理する。フロントエンドは状態を反映する入口で `CanonicalState.projectId` が現在のActive Projectと一致し、sequenceが受け入れ済みの値より新しい場合だけ採用する
 - 編集結果は共通の確定処理で正準状態へ反映し、状態の採否にかかわらず投影失敗を通知する
 - 中間値を捨ててよい連続制御は `dispatchLatestControl` で集約し、最終値のみ送信する。集約された待機者には同一の確定応答を返す
+- 値の試聴は間引いて直列に送り、確定は1操作につき1回だけ行う。試聴に失敗した場合は、確定値をもう一度試聴してから確定する
 - ブラウザプレビューでは専用の NativeApi が読み取りに空の状態を返し、それ以外の操作を reject する
 
 ---
@@ -463,6 +464,6 @@ DesktopのTauri command境界とLive HostのControl Serverの機能分担は次�
 - Window・dialog・Host selectorなどDesktop shell所有のmethodは通常の `invoke` を使う。再同期の対象はHost所有のmethodに限られる
 - 制作状態を変更するmethodは `CanonicalState` を含む結果を返す。起動時の履歴可否はCoreのHistoryStateで判定する
 - `previewChannelMix` と `previewMasterGainDb` はRuntime-onlyの一時プレビューであり、CanonicalStateを返すMutationではない。確定操作はそれぞれ `updateTrack` / `updateMixBus` と `setMasterGainDb` を使い、結果は正準状態と投影結果を含む `ArrangementMutationResult` を返す
-- 音声系methodは `AudioStatus` を返し、状態遷移と再試行はAudio設定Featureに集約する
+- 状態を返す音声系methodは成功時に `AudioStatus` を返し、失敗時は `NativeCommandError` を投げる。MIDI送信系methodも失敗時は同じ例外を投げ、成功時に値を返さない。状態遷移と再試行はAudio設定Featureに集約する
 - 失敗は `NativeCommandError` の `code` と `details` で分岐する。Nativeの `kind` / `operation` は `details` 内の `nativeAudio` 情報から参照する
 - テストでは `test/support/fake-native-api.ts` を注入し、呼び出し記録・設定済み応答と失敗・イベント発火だけを扱う。制作規則・履歴・validationはCoreのテストが担う

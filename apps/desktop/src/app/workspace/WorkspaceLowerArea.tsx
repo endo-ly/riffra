@@ -1,5 +1,6 @@
-import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactNode } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import { ResizeHandle } from '@/shared/ui/ResizeHandle';
+import { usePointerGesture } from '@/shared/usePointerGesture';
 import styles from './WorkspaceLowerArea.module.css';
 import type { WorkspaceLowerView } from './useWorkspaceLowerAreaController';
 
@@ -34,6 +35,7 @@ export function WorkspaceLowerArea({
   devices,
   playSurface,
 }: WorkspaceLowerAreaProps) {
+  const startGesture = usePointerGesture();
   if (view === 'closed') return null;
 
   const applyHeight = (workspace: HTMLElement | null, nextHeight: number) => {
@@ -47,22 +49,15 @@ export function WorkspaceLowerArea({
     onHeightChange(clamped);
   };
 
-  const startResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+  const startResize = (event: React.PointerEvent<HTMLDivElement>) => {
     event.preventDefault();
     const startY = event.clientY;
     const startHeight = collapsed ? COLLAPSED_HEIGHT : height;
     const workspace = event.currentTarget.closest<HTMLElement>('[data-arrange-workspace]');
-    const move = (pointer: PointerEvent) => {
-      applyHeight(workspace, startHeight - pointer.clientY + startY);
-    };
-    const finish = () => {
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', finish);
-      window.removeEventListener('pointercancel', finish);
-    };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', finish);
-    window.addEventListener('pointercancel', finish);
+    startGesture(event, {
+      onMove: (pointer) => applyHeight(workspace, startHeight - pointer.clientY + startY),
+      onEnd: () => undefined,
+    });
   };
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {

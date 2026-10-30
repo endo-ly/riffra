@@ -51,7 +51,7 @@
 
 .fillSlider::-webkit-slider-runnable-track {
   background: linear-gradient(
-    to right,
+    var(--fill-direction, to right),
     var(--color-border-subtle) var(--fill-start),
     color-mix(in srgb, var(--color-accent) 75%, transparent) var(--fill-start) var(--fill-end),
     var(--color-border-subtle) var(--fill-end)

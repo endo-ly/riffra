@@ -7,7 +7,6 @@ import type {
 import { Icon } from '@/shared/ui/primitives';
 import controls from '@/shared/ui/controls.module.css';
 import { useSessionContext } from '@/shared/session/session-context';
-import { InstrumentPicker } from './InstrumentPicker';
 import { PluginPicker } from './PluginPicker';
 import type { DeviceTarget } from './device-target';
 import styles from './Devices.module.css';
@@ -64,33 +63,35 @@ export function DeviceChain(props: DeviceChainProps) {
   };
   return (
     <>
-      {picker === 'instrument' && track && (
-        <InstrumentPicker
-          instruments={props.instruments}
-          plugins={props.plugins}
-          onSelectInstrument={(id) => {
-            props.commit(api.applyInstrument(track.id, id));
-            setPicker(null);
-          }}
-          onSelectVst3={(plugin) => {
-            props.commit(api.setTrackVst3Instrument(track.id, plugin.path));
-            setPicker(null);
-          }}
-          onClose={() => setPicker(null)}
-        />
-      )}
-      {(picker === 'effect' || replaceTarget) && (
+      {(picker === 'effect' || replaceTarget || (picker === 'instrument' && track)) && (
         <PluginPicker
           plugins={props.plugins}
-          role={replaceTarget?.role ?? 'effect'}
-          title={replaceTarget ? 'Replace Plugin' : 'Add Effect'}
-          onSelect={(plugin) => {
+          role={replaceTarget?.role ?? (picker === 'instrument' ? 'instrument' : 'effect')}
+          instruments={picker === 'instrument' && !replaceTarget ? props.instruments : undefined}
+          onSelectInstrument={
+            picker === 'instrument' && track
+              ? (id) => {
+                  props.commit(api.applyInstrument(track.id, id));
+                  setPicker(null);
+                }
+              : undefined
+          }
+          onSelectPlugin={(plugin) => {
             if (replaceTarget)
               props.runOperation(props.onReplaceMissingPlugin(replaceTarget.id, plugin.path));
+            else if (picker === 'instrument' && track)
+              props.commit(api.setTrackVst3Instrument(track.id, plugin.path));
             else props.commit(api.addEffect(owner, plugin.path));
             setReplaceTarget(null);
             setPicker(null);
           }}
+          title={
+            replaceTarget
+              ? 'Replace Plugin'
+              : picker === 'instrument'
+                ? 'Choose Instrument'
+                : 'Add Effect'
+          }
           onClose={() => {
             setReplaceTarget(null);
             setPicker(null);

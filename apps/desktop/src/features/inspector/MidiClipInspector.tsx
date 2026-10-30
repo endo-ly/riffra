@@ -1,12 +1,12 @@
 import type { ArrangementMutationResult, CreativeSession } from '@/model/generated';
 import { useSessionContext } from '@/shared/session/session-context';
 import { Icon } from '@/shared/ui/primitives';
+import { MenuButton } from '@/shared/ui/MenuButton';
 import { useEffect, useState, type CSSProperties } from 'react';
 import type { MidiClipPatch } from '@/model/generated';
 import { resolveTrackColorById } from '@/model/track-color';
 import { ClipToggles } from './ClipToggles';
 import styles from './Inspector.module.css';
-import { InspectorMenu } from './InspectorMenu';
 import { MusicalTimeField } from './MusicalTimeField';
 
 interface MidiClipInspectorProps {
@@ -78,7 +78,7 @@ export function MidiClipInspector(props: MidiClipInspectorProps) {
             onToggleMuted={() => patch({ muted: !clip.muted })}
             onToggleLoop={() => patch({ loopEnabled: !clip.loopEnabled })}
           />
-          <InspectorMenu
+          <MenuButton
             label="Clip actions"
             items={[
               {

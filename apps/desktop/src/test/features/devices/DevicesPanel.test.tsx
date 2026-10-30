@@ -127,6 +127,7 @@ function Harness({
     <TestSessionProvider
       api={api}
       applyCanonicalState={(canonical) => setSession(canonical.session)}
+      getCanonicalState={() => canonicalState(session)}
     >
       <DevicesPanel
         sessionId={session.sessionId}
@@ -432,8 +433,9 @@ describe('DevicesPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Automation' }));
     expect(opened).toEqual([{ kind: 'sidechainSendLevel', sidechainSendId: 'sidechain:1' }]);
     const slider = screen.getByLabelText('Drums sidechain level');
+    fireEvent.pointerDown(slider, { pointerId: 1 });
     fireEvent.change(slider, { target: { value: '-12' } });
-    fireEvent.pointerUp(slider);
+    fireEvent.pointerUp(slider, { pointerId: 1 });
     await waitFor(() =>
       expect(api.updateSidechainSend).toHaveBeenCalledWith('sidechain:1', { levelDb: -12 }),
     );

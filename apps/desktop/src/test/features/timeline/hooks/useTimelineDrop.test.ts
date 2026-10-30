@@ -1,12 +1,13 @@
-import { createElement, type ReactNode } from 'react';
+import { createElement, Fragment, type ReactNode } from 'react';
 import { TestSessionProvider } from '@/test/support/session-provider';
 import { FakeNativeApi } from '@/test/support/fake-native-api';
 import type { AssetId } from '@/model/generated';
 // @vitest-environment jsdom
 
-import { act, renderHook, waitFor } from '@testing-library/react';
+import '@testing-library/jest-dom/vitest';
+import { act, cleanup, renderHook, screen, waitFor } from '@testing-library/react';
 import type { DragEvent } from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ArrangementMutationResult } from '@/model/generated';
 import { HostConnectionChangedError } from '@/native/invoke';
 import { toAssetId } from '@/model/asset-id';
@@ -17,6 +18,9 @@ import {
 } from '@/shared/browser-drag';
 import { useTimelineDrop } from '@/features/timeline/hooks/useTimelineDrop';
 import type { SessionCommit } from '@/shared/session/commit';
+import { ToastStack } from '@/shared/ui/ToastStack';
+
+afterEach(() => cleanup());
 
 function mutation(createdEntityIds: Record<string, string[]> = {}): ArrangementMutationResult {
   return { createdEntityIds } as ArrangementMutationResult;
@@ -51,6 +55,16 @@ function commitStub() {
   return vi.fn(async (operation: Promise<unknown>) => {
     return await operation;
   }) as ReturnType<typeof vi.fn> & SessionCommit;
+}
+
+function sessionWrapper(api: FakeNativeApi, withToast = false) {
+  return ({ children }: { children: ReactNode }) =>
+    createElement(TestSessionProvider, {
+      api,
+      children: withToast
+        ? createElement(Fragment, null, children, createElement(ToastStack))
+        : children,
+    });
 }
 
 function assetDropEvent(payload: unknown): DragEvent {
@@ -102,12 +116,8 @@ describe('useArrangeDrop', () => {
           commit,
           pixelsPerTick: 1,
           snapTick: (raw) => Math.round(raw),
-          setMessage: vi.fn(),
         }),
-      {
-        wrapper: ({ children }: { children: ReactNode }) =>
-          createElement(TestSessionProvider, { api, children }),
-      },
+      { wrapper: sessionWrapper(api) },
     );
     const event = osMidiDropEvent([new File([new Uint8Array([0x4d, 0x54, 0x68])], 'lead.mid')]);
 
@@ -147,12 +157,8 @@ describe('useArrangeDrop', () => {
           commit,
           pixelsPerTick: 1,
           snapTick: (raw) => Math.round(raw),
-          setMessage: vi.fn(),
         }),
-      {
-        wrapper: ({ children }: { children: ReactNode }) =>
-          createElement(TestSessionProvider, { api, children }),
-      },
+      { wrapper: sessionWrapper(api) },
     );
     const event = osMidiDropEvent([new File([new Uint8Array([1, 2, 3])], 'stale.mid')]);
 
@@ -172,19 +178,14 @@ describe('useArrangeDrop', () => {
   it('places a dragged instrument on an Instrument Track, creating one when needed', async () => {
     const api = dropApi();
     const commit = commitStub();
-    const setMessage = vi.fn();
     const { result } = renderHook(
       () =>
         useTimelineDrop({
           commit,
           pixelsPerTick: 1,
           snapTick: (raw) => Math.round(raw),
-          setMessage,
         }),
-      {
-        wrapper: ({ children }: { children: ReactNode }) =>
-          createElement(TestSessionProvider, { api, children }),
-      },
+      { wrapper: sessionWrapper(api, true) },
     );
     const payload = {
       version: 1,
@@ -228,26 +229,21 @@ describe('useArrangeDrop', () => {
       );
     });
     await waitFor(() =>
-      expect(setMessage).toHaveBeenCalledWith('Instruments load on an Instrument Track.'),
+      expect(screen.getByText('Instruments load on an Instrument Track.')).toBeInTheDocument(),
     );
     expect(api.applyInstrument).toHaveBeenCalledTimes(2);
   });
 
   it('rejects a MIDI Asset on an Audio Track without invoking placement', async () => {
     const api = dropApi();
-    const setMessage = vi.fn();
     const { result } = renderHook(
       () =>
         useTimelineDrop({
           commit: commitStub(),
           pixelsPerTick: 1,
           snapTick: (raw) => Math.round(raw),
-          setMessage,
         }),
-      {
-        wrapper: ({ children }: { children: ReactNode }) =>
-          createElement(TestSessionProvider, { api, children }),
-      },
+      { wrapper: sessionWrapper(api, true) },
     );
     const event = assetDropEvent({
       version: 1,
@@ -261,7 +257,9 @@ describe('useArrangeDrop', () => {
     });
 
     await waitFor(() =>
-      expect(setMessage).toHaveBeenCalledWith('MIDI can only be placed on an Instrument Track.'),
+      expect(
+        screen.getByText('MIDI can only be placed on an Instrument Track.'),
+      ).toBeInTheDocument(),
     );
     expect(event.preventDefault).toHaveBeenCalled();
     expect(api.addMidiClipToArrangement).not.toHaveBeenCalled();
@@ -269,19 +267,14 @@ describe('useArrangeDrop', () => {
 
   it('adds a dropped effect plug-in to any Track but not to empty space', async () => {
     const api = dropApi();
-    const setMessage = vi.fn();
     const { result } = renderHook(
       () =>
         useTimelineDrop({
           commit: commitStub(),
           pixelsPerTick: 1,
           snapTick: (raw) => Math.round(raw),
-          setMessage,
         }),
-      {
-        wrapper: ({ children }: { children: ReactNode }) =>
-          createElement(TestSessionProvider, { api, children }),
-      },
+      { wrapper: sessionWrapper(api, true) },
     );
     const payload = { version: 1, pluginPath: 'C:/VST3/Verb.vst3', name: 'Verb', role: 'effect' };
 
@@ -302,7 +295,7 @@ describe('useArrangeDrop', () => {
     act(() => {
       result.current.handleDrop(browserDropEvent(RIFFRA_PLUGIN_MIME, payload));
     });
-    await waitFor(() => expect(setMessage).toHaveBeenCalledWith('Drop an effect on a Track.'));
+    await waitFor(() => expect(screen.getByText('Drop an effect on a Track.')).toBeInTheDocument());
     expect(api.addEffect).toHaveBeenCalledTimes(1);
   });
 });

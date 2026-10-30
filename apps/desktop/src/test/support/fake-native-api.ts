@@ -11,7 +11,7 @@ import type {
   RecordingAsset,
   RecordingStatus,
   RuntimeProjectionStatus,
-  ScanReport,
+  PluginEntry,
   HostConnectionState,
   HostTarget,
   LocalHostInfo,
@@ -31,7 +31,7 @@ export interface FakeNativeApiOptions {
   bootstrapState?: Partial<BootstrapState>;
   audio?: AudioStatus;
   recordings?: RecordingAsset[];
-  plugins?: ScanReport['plugins'];
+  plugins?: PluginEntry[];
   instruments?: InstrumentLibraryItem[];
   instrumentCollections?: InstrumentCollection[];
   missingDependencies?: MissingDependency[];
@@ -136,7 +136,7 @@ export class FakeNativeApi implements NativeApi {
   audio: AudioStatus;
   runtimeProjection: RuntimeProjectionStatus;
   recordings: RecordingAsset[];
-  plugins: ScanReport['plugins'];
+  plugins: PluginEntry[];
   instruments: InstrumentLibraryItem[];
   instrumentCollections: InstrumentCollection[];
   bootstrapState: BootstrapState;
@@ -287,9 +287,6 @@ export class FakeNativeApi implements NativeApi {
   }
   importMidiBytes(...args: Parameters<NativeApi['importMidiBytes']>) {
     return this.command('importMidiBytes', args);
-  }
-  scanVst3Folder(...args: Parameters<NativeApi['scanVst3Folder']>) {
-    return this.command('scanVst3Folder', args);
   }
   startScanJob(...args: Parameters<NativeApi['startScanJob']>) {
     return this.command('startScanJob', args);
@@ -1115,8 +1112,6 @@ export class FakeNativeApi implements NativeApi {
       case 'updateLibraryAsset':
       case 'tagRecording':
         return Promise.resolve(null);
-      case 'scanVst3Folder':
-        return Promise.resolve({ plugins: this.plugins, issues: [] });
       default:
         break;
     }

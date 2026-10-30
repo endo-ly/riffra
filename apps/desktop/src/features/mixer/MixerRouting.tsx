@@ -7,21 +7,26 @@ import type {
   Track,
 } from '@/model/generated';
 import { useSessionContext } from '@/shared/session/session-context';
+import { toast } from '@/shared/toasts';
 import controls from '@/shared/ui/controls.module.css';
 import { Dialog, DialogRow, DialogSection } from '@/shared/ui/Dialog';
-import { SendRow } from './SendRow';
+import { ReturnSendControls } from './ReturnSendControls';
 import { SidechainSendControls } from './SidechainSendControls';
 
 interface Props {
+  sessionId: string;
   arrangement: Arrangement;
   track: Track;
-  commit: (operation: Promise<ArrangementMutationResult>) => void;
   onClose: () => void;
   onOpenAutomation: (target: AutomationTarget) => void;
 }
 
-export function MixerRouting({ arrangement, track, commit, onClose, onOpenAutomation }: Props) {
-  const { api } = useSessionContext();
+export function MixerRouting({ sessionId, arrangement, track, onClose, onOpenAutomation }: Props) {
+  const { api, commit: sessionCommit } = useSessionContext();
+  const onError = (message: string) => toast(message, { kind: 'error' });
+  const commit = (operation: Promise<ArrangementMutationResult>) => {
+    void sessionCommit(operation, { onError });
+  };
   const returns = arrangement.mixer.buses.filter((bus) => bus.kind === 'return');
   const sends = arrangement.mixer.sends.filter((send) => send.trackId === track.id);
   const sidechainSends = arrangement.mixer.sidechainSends.filter(
@@ -82,41 +87,38 @@ export function MixerRouting({ arrangement, track, commit, onClose, onOpenAutoma
         {sends.map((send) => {
           const returnName =
             returns.find((bus) => bus.id === send.returnBusId)?.name ?? 'Missing Return';
-          return (
-            <SendRow
-              key={send.id}
-              label={`${returnName} send`}
-              endpoint={
-                <select
-                  className={controls.control}
-                  aria-label="Return"
-                  value={send.returnBusId}
-                  onChange={(e) =>
-                    commit(api.updateSend(send.id, { returnBusId: e.currentTarget.value }))
-                  }
-                >
-                  {returns
-                    .filter(
-                      (bus) =>
-                        bus.id === send.returnBusId ||
-                        !sends.some((other) => other.returnBusId === bus.id),
-                    )
-                    .map((bus) => (
-                      <option key={bus.id} value={bus.id}>
-                        {bus.name}
-                      </option>
-                    ))}
-                </select>
+          const endpoint = (
+            <select
+              className={controls.control}
+              aria-label="Return"
+              value={send.returnBusId}
+              onChange={(e) =>
+                commit(api.updateSend(send.id, { returnBusId: e.currentTarget.value }))
               }
-              levelDb={send.levelDb}
-              position={send.position}
-              enabled={send.enabled}
-              removeLabel="Remove Send"
-              previewLevel={(value) => api.previewSendLevel(send.id, value)}
-              submitLevel={(value) => api.updateSend(send.id, { levelDb: value })}
+            >
+              {returns
+                .filter(
+                  (bus) =>
+                    bus.id === send.returnBusId ||
+                    !sends.some((other) => other.returnBusId === bus.id),
+                )
+                .map((bus) => (
+                  <option key={bus.id} value={bus.id}>
+                    {bus.name}
+                  </option>
+                ))}
+            </select>
+          );
+          return (
+            <ReturnSendControls
+              key={send.id}
+              sessionId={sessionId}
+              send={send}
+              label={`${returnName} send`}
+              endpoint={endpoint}
               commit={commit}
+              onError={onError}
               onPositionChange={(position) => commit(api.updateSend(send.id, { position }))}
-              onEnabledChange={(enabled) => commit(api.updateSend(send.id, { enabled }))}
               onOpenAutomation={() => onOpenAutomation({ kind: 'sendLevel', sendId: send.id })}
               onRemove={() => commit(api.removeSend(send.id))}
             />
@@ -134,9 +136,11 @@ export function MixerRouting({ arrangement, track, commit, onClose, onOpenAutoma
         {sidechainSends.map((send) => (
           <SidechainSendControls
             key={send.id}
+            sessionId={sessionId}
             send={send}
             endpointName={sidechainTargetName(arrangement, send.targetDeviceId) ?? 'Unknown device'}
             commit={commit}
+            onError={onError}
             onOpenAutomation={() =>
               onOpenAutomation({ kind: 'sidechainSendLevel', sidechainSendId: send.id })
             }

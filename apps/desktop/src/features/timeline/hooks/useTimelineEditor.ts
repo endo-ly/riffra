@@ -6,9 +6,12 @@ import { type TimelineTool } from '@/features/timeline/model/timeline-layout';
 import { timelineObjectEndTick } from '@/model/clip-time';
 import { snapGridTicks, type SnapGrid } from '@/model/clip-grid';
 import { isEditableTypingTarget } from '@/shared/input';
+import { idsInClientRect } from '@/shared/rect-selection';
+import { usePointerGesture } from '@/shared/usePointerGesture';
 import { useClipInteractions } from './useClipInteractions';
 import { useSessionContext } from '@/shared/session/session-context';
 import type { SessionCommit } from '@/shared/session/commit';
+import { showToast } from '@/shared/toasts';
 export type EditorCommit = SessionCommit;
 
 interface UseTimelineEditorOptions {
@@ -38,14 +41,8 @@ export function useTimelineEditor(options: UseTimelineEditorOptions) {
   const { arrangement } = session;
   const { timebase } = arrangement;
   const { api, commit: sessionCommit } = useSessionContext();
-  const [message, setMessage] = useState('');
-  const commit: EditorCommit = useCallback(
-    (operation) => {
-      setMessage('');
-      return sessionCommit(operation, { onError: setMessage });
-    },
-    [sessionCommit],
-  );
+  const startGesture = usePointerGesture();
+  const commit: EditorCommit = sessionCommit;
   const [snapGuide, setSnapGuide] = useState<number | null>(null);
   const [marquee, setMarquee] = useState<{
     left: number;
@@ -109,7 +106,6 @@ export function useTimelineEditor(options: UseTimelineEditorOptions) {
     analyses,
     snapTick,
     commit,
-    setMessage,
     setSnapGuide,
     onSplitToolUsed: options.onSplitToolUsed,
   });
@@ -150,26 +146,25 @@ export function useTimelineEditor(options: UseTimelineEditorOptions) {
         height: Math.abs(pointer.clientY - originY),
       });
     const finish = (pointer: PointerEvent) => {
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', finish);
-      const left = Math.min(originX, pointer.clientX);
-      const right = Math.max(originX, pointer.clientX);
-      const top = Math.min(originY, pointer.clientY);
-      const bottom = Math.max(originY, pointer.clientY);
-      const nextIds = [...timeline.querySelectorAll<HTMLElement>('[data-clip-id]')]
-        .filter((element) => {
-          const rect = element.getBoundingClientRect();
-          return (
-            rect.right >= left && rect.left <= right && rect.bottom >= top && rect.top <= bottom
-          );
-        })
-        .map((element) => element.dataset.clipId!)
-        .filter(Boolean);
+      const nextIds = idsInClientRect(
+        timeline,
+        '[data-clip-id]',
+        (element) => element.dataset.clipId,
+        {
+          left: Math.min(originX, pointer.clientX),
+          right: Math.max(originX, pointer.clientX),
+          top: Math.min(originY, pointer.clientY),
+          bottom: Math.max(originY, pointer.clientY),
+        },
+      );
       setSelectedClipIds(event.ctrlKey ? [...new Set([...selectedClipIds, ...nextIds])] : nextIds);
       setMarquee(null);
     };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', finish);
+    startGesture(event, {
+      onMove: move,
+      onEnd: finish,
+      onCancel: () => setMarquee(null),
+    });
   };
 
   useEffect(() => {
@@ -192,7 +187,8 @@ export function useTimelineEditor(options: UseTimelineEditorOptions) {
             .filter((clip) => selectedClipIds.includes(clip.id))
             .map((clip) => clip.id),
         };
-        setMessage(
+        showToast(
+          'timeline',
           `${selectedClipIds.length} clip${selectedClipIds.length === 1 ? '' : 's'} copied.`,
         );
       } else if (
@@ -265,7 +261,6 @@ export function useTimelineEditor(options: UseTimelineEditorOptions) {
     pasteTimelineClips,
     removeTimelineClips,
     selectedClipIds,
-    setMessage,
     setSelectedClipIds,
     snapTick,
     splitClip,
@@ -274,14 +269,12 @@ export function useTimelineEditor(options: UseTimelineEditorOptions) {
   ]);
 
   return {
-    message,
     snapGuide,
     marquee,
     commit,
     snapTick,
     selectClip,
     beginMarquee,
-    setMessage,
     ...clipInteractions,
   };
 }

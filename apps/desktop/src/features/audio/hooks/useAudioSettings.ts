@@ -2,7 +2,9 @@ import { useCallback, useEffect, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import type { AudioDeviceProbe, AudioDriverConfig, AudioStatus } from '@/model/generated';
 import { reconcileAudioSettings } from '@/features/audio/audio-settings';
-import { audioCommandSucceeded, isEmergencyMuteActive } from '@/shared/audio/audio-safety';
+import { errorText } from '@/shared/errors';
+import { isAudioEngineUsable, isEmergencyMuteActive } from '@/shared/audio/audio-safety';
+import { toast } from '@/shared/toasts';
 import type { AudioApi } from '@/native/api/audio';
 interface UseAudioOptions {
   hostGeneration: number;
@@ -57,7 +59,7 @@ export function useAudioSettings(api: AudioApi, options: UseAudioOptions) {
     async (config: AudioDriverConfig) => {
       const nextAudio = await setAudioDriver(config);
       setAudio(nextAudio);
-      if (!audioCommandSucceeded(nextAudio)) return nextAudio;
+      if (!isAudioEngineUsable(nextAudio)) return nextAudio;
       const effective = reconcileAudioSettings(
         {
           driver: config.driver,
@@ -78,12 +80,18 @@ export function useAudioSettings(api: AudioApi, options: UseAudioOptions) {
   }, [enableMidiListening, setAudio]);
   const toggleMute = useCallback(async () => {
     const muted = !isEmergencyMuteActive(audio);
-    const nextAudio = await setEmergencyMute(muted);
-    setAudio(nextAudio);
+    try {
+      setAudio(await setEmergencyMute(muted));
+    } catch (error) {
+      toast(`Emergency mute failed: ${errorText(error)}`, { kind: 'error' });
+    }
   }, [audio, setAudio, setEmergencyMute]);
   const resetFeedback = useCallback(async () => {
-    const nextAudio = await resetFeedbackProtection();
-    setAudio(nextAudio);
+    try {
+      setAudio(await resetFeedbackProtection());
+    } catch (error) {
+      toast(`Feedback protection reset failed: ${errorText(error)}`, { kind: 'error' });
+    }
   }, [resetFeedbackProtection, setAudio]);
   return {
     audioPreferenceMessage,

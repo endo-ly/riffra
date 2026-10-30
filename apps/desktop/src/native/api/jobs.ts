@@ -1,18 +1,13 @@
-export type ScanJobStatus = Extract<BackgroundJobStatus, { kind: 'scan' }>;
+type ScanJobStatus = Extract<BackgroundJobStatus, { kind: 'scan' }>;
 
-import type { BackgroundJobStatus, ScanReport } from '@/model/generated';
+import type { BackgroundJobStatus } from '@/model/generated';
 
 import { dispatchControl } from '../invoke';
 
 export interface JobApi {
-  scanVst3Folder(path?: string): Promise<ScanReport>;
   startScanJob(path?: string): Promise<ScanJobStatus>;
   getBackgroundJob(id: string): Promise<BackgroundJobStatus | null>;
   cancelBackgroundJob(id: string): Promise<BackgroundJobStatus | null>;
-}
-
-async function scanVst3Folder(path?: string): Promise<ScanReport> {
-  return dispatchControl({ command: 'plugin.scan', params: { path: path ?? null } });
 }
 
 async function startScanJob(path?: string): Promise<ScanJobStatus> {
@@ -33,7 +28,6 @@ async function cancelBackgroundJob(id: string): Promise<BackgroundJobStatus | nu
 }
 
 export const jobsApi: JobApi = {
-  scanVst3Folder,
   startScanJob,
   getBackgroundJob,
   cancelBackgroundJob,

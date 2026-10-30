@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { Track } from '@/model/generated';
 import { useSessionContext } from '@/shared/session/session-context';
 import { HostConnectionChangedError, logNativeError } from '@/native/invoke';
+import { errorText } from '@/shared/errors';
 import {
   MUSICAL_TYPING_DEFAULT_OCTAVE,
   MUSICAL_TYPING_DEFAULT_VELOCITY,
@@ -91,7 +92,10 @@ export function useLivePlay({
   // The runtime monitors the played track with low latency while anything can play it.
   const liveTarget = canPlay && (computerKeyboard || surfaceOpen) ? targetTrackId : null;
   useEffect(() => {
-    if (hostConnected) void api.setLiveMidiTarget(liveTarget);
+    if (hostConnected)
+      void api.setLiveMidiTarget(liveTarget).catch((error: unknown) => {
+        if (!(error instanceof HostConnectionChangedError)) setMessage(errorText(error));
+      });
   }, [api, hostConnected, liveTarget]);
   useEffect(
     () => () => {
@@ -124,8 +128,11 @@ export function useLivePlay({
 
   const sendMidi = useCallback(
     async (trackId: string, bytes: number[]) => {
-      const status = await api.sendMidiToTrack(trackId, bytes);
-      if (status) setMessage(status.message);
+      try {
+        await api.sendMidiToTrack(trackId, bytes);
+      } catch (error) {
+        if (!(error instanceof HostConnectionChangedError)) setMessage(errorText(error));
+      }
     },
     [api],
   );

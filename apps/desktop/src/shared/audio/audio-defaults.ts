@@ -6,9 +6,7 @@ import type { AudioStatus } from '@/model/generated';
  * unreachable or has not started yet; do not inline equivalent literals, they
  * drift from the production runtime's actual fields.
  */
-export function offlineAudioStatus(
-  message = 'Native audio sidecar is not connected.',
-): AudioStatus {
+function offlineAudioStatus(message = 'Native audio sidecar is not connected.'): AudioStatus {
   return {
     state: 'offline',
     driver: null,

@@ -1100,7 +1100,6 @@ describe('WorkspaceArrange', () => {
     api.sendMidiToTrack = async (trackId, bytes) => {
       api.calls.push('sendMidiToTrack');
       sent.push({ trackId, bytes });
-      return api.audio;
     };
     const { container } = render(<Harness api={api} initialSession={session} />);
     fireEvent.doubleClick(container.querySelector('[data-clip-id="clip:audition"]')!);
@@ -1339,13 +1338,13 @@ describe('WorkspaceArrange', () => {
 
     // Act
     fireEvent.click(screen.getByLabelText('Instrument Delete track menu'));
-    fireEvent.click(screen.getByRole('button', { name: 'Open Devices' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Open Devices' }));
     expect(screen.getByRole('region', { name: 'Arrange lower area' })).toHaveAttribute(
       'data-view',
       'devices',
     );
     fireEvent.click(screen.getByLabelText('Instrument Delete track menu'));
-    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
 
     // Assert
     expect(screen.getByText(/This also removes 1 Clip from the Timeline/)).toBeInTheDocument();
@@ -1400,7 +1399,11 @@ describe('WorkspaceArrange', () => {
 
     // Act
     fireEvent.click(screen.getByLabelText('Guitar track menu'));
-    fireEvent.click(screen.getByRole('button', { name: 'Open Devices' }));
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    fireEvent.mouseDown(document.body);
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText('Guitar track menu'));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Open Devices' }));
 
     // Assert
     expect(screen.getByRole('region', { name: 'Arrange lower area' })).toHaveAttribute(
@@ -1491,7 +1494,7 @@ describe('WorkspaceArrange', () => {
   });
 
   it('reports a projection failure in place and recovers through the retry action', async () => {
-    // Arrange: the projection fails and the message takes over the status area.
+    // Arrange: the projection fails and its retry notice is shown.
     const api = new FakeNativeApi();
     const failure = 'Audio preparation failed. Retry to prepare audio.';
     const failedStatus: RuntimeProjectionStatus = {

@@ -8,7 +8,9 @@ import type {
   TrackKind,
 } from '@/model/generated';
 import { useSessionContext } from '@/shared/session/session-context';
+import { showToast } from '@/shared/toasts';
 import { ticksToFrames } from '@/model/timebase';
+import { usePointerGesture } from '@/shared/usePointerGesture';
 import { clipDurationTicks, midiClipDurationTicks } from '@/model/clip-time';
 import type { TimelineTool } from '@/features/timeline/model/timeline-layout';
 import {
@@ -23,7 +25,6 @@ import {
   readTrackRows,
   restoreClipElementStyle,
   restoreFadeHandleStyle,
-  usePointerGesture,
 } from './clipMoveGesture';
 
 interface ClipInteractionOptions {
@@ -35,7 +36,6 @@ interface ClipInteractionOptions {
   analyses: Record<string, AudioAnalysis | null>;
   snapTick: (tick: number, temporaryOff?: boolean) => number;
   commit: EditorCommit;
-  setMessage: (message: string) => void;
   setSnapGuide: (tick: number | null) => void;
   onSplitToolUsed?: () => void;
 }
@@ -50,7 +50,6 @@ export function useClipInteractions(options: ClipInteractionOptions) {
     analyses,
     snapTick,
     commit,
-    setMessage,
     setSnapGuide,
     onSplitToolUsed,
   } = options;
@@ -68,7 +67,7 @@ export function useClipInteractions(options: ClipInteractionOptions) {
       const target = snapTick(tick);
       const end = clip.startTick + clipDurationTicks(clip, timebase);
       if (target <= clip.startTick || target >= end) {
-        setMessage('Click inside the selected clip to split it.');
+        showToast('timeline', 'Click inside the selected clip to split it.');
         return;
       }
       const next = await commit(commands.splitAudioClip(clip.id, target));
@@ -79,7 +78,7 @@ export function useClipInteractions(options: ClipInteractionOptions) {
         ]);
       }
     },
-    [commands, commit, setMessage, setSelectedClipIds, snapTick, timebase],
+    [commands, commit, setSelectedClipIds, snapTick, timebase],
   );
 
   const splitMidiClip = useCallback(
@@ -87,12 +86,12 @@ export function useClipInteractions(options: ClipInteractionOptions) {
       const target = snapTick(tick);
       const end = clip.startTick + midiClipDurationTicks(clip);
       if (target <= clip.startTick || target >= end) {
-        setMessage('Click inside the selected MIDI clip to split it.');
+        showToast('timeline', 'Click inside the selected MIDI clip to split it.');
         return;
       }
       await commit(commands.splitMidiClip(clip.id, target));
     },
-    [commands, commit, setMessage, snapTick],
+    [commands, commit, snapTick],
   );
 
   const beginClipMove = useCallback(
@@ -117,21 +116,12 @@ export function useClipInteractions(options: ClipInteractionOptions) {
         trackIds: arrangement.tracks.map((track) => track.id),
         trackAcceptsKind,
         setSnapGuide,
-        setMessage,
         startGesture,
         onDuplicate,
         onMove,
       });
     },
-    [
-      arrangement.tracks,
-      pixelsPerTick,
-      setMessage,
-      setSnapGuide,
-      snapTick,
-      startGesture,
-      trackAcceptsKind,
-    ],
+    [arrangement.tracks, pixelsPerTick, setSnapGuide, snapTick, startGesture, trackAcceptsKind],
   );
 
   const beginMove = useCallback(
@@ -238,7 +228,6 @@ export function useClipInteractions(options: ClipInteractionOptions) {
     (event: React.PointerEvent<HTMLSpanElement>, clip: MidiClip, side: 'left' | 'right') => {
       event.stopPropagation();
       const element = event.currentTarget.parentElement as HTMLButtonElement;
-      const handle = event.currentTarget;
       const originX = event.clientX;
       const originStart = clip.startTick;
       const originDuration = midiClipDurationTicks(clip);
@@ -246,7 +235,6 @@ export function useClipInteractions(options: ClipInteractionOptions) {
       const originWidth = element.style.width;
       let startTick = originStart;
       let durationTicks = originDuration;
-      handle.setPointerCapture?.(event.pointerId);
       const move = (pointer: PointerEvent) => {
         const result = calculateMidiTrim(
           clip,
@@ -268,7 +256,7 @@ export function useClipInteractions(options: ClipInteractionOptions) {
         if (startTick === originStart && durationTicks === originDuration) return;
         void commit(commands.trimMidiClip(clip.id, startTick, durationTicks));
       };
-      startGesture(handle, {
+      startGesture(event, {
         onMove: move,
         onEnd: finish,
         onCancel: () => restoreClipElementStyle(element, originLeft, originWidth, setSnapGuide),
@@ -281,11 +269,10 @@ export function useClipInteractions(options: ClipInteractionOptions) {
     (event: React.PointerEvent<HTMLSpanElement>, clip: AudioClip, side: 'left' | 'right') => {
       event.stopPropagation();
       if (clip.loopEnabled && side === 'left') {
-        setMessage('Disable Clip Loop before trimming the source start.');
+        showToast('timeline', 'Disable Clip Loop before trimming the source start.');
         return;
       }
       const element = event.currentTarget.parentElement as HTMLButtonElement;
-      const handle = event.currentTarget;
       const originX = event.clientX;
       const originStart = clip.startTick;
       const originRange = clip.sourceRange;
@@ -295,7 +282,6 @@ export function useClipInteractions(options: ClipInteractionOptions) {
       let startTick = originStart;
       let range = originRange;
       let duration = clip.timelineDuration.frames;
-      handle.setPointerCapture?.(event.pointerId);
       const move = (pointer: PointerEvent) => {
         const result = calculateAudioTrim(
           clip,
@@ -327,23 +313,13 @@ export function useClipInteractions(options: ClipInteractionOptions) {
           void commit(commands.trimAudioClip(clip.id, startTick, range));
         }
       };
-      startGesture(handle, {
+      startGesture(event, {
         onMove: move,
         onEnd: finish,
         onCancel: () => restoreClipElementStyle(element, originLeft, originWidth, setSnapGuide),
       });
     },
-    [
-      analyses,
-      commands,
-      commit,
-      pixelsPerTick,
-      setMessage,
-      setSnapGuide,
-      snapTick,
-      startGesture,
-      timebase,
-    ],
+    [analyses, commands, commit, pixelsPerTick, setSnapGuide, snapTick, startGesture, timebase],
   );
 
   const mergeAudioClip = useCallback(
@@ -360,7 +336,7 @@ export function useClipInteractions(options: ClipInteractionOptions) {
               item.sourceRange.end === clip.sourceRange.start),
       );
       if (!adjacent) {
-        setMessage('No adjacent clip to merge with.');
+        showToast('timeline', 'No adjacent clip to merge with.');
         return;
       }
       const target = direction === 'next' ? clip : adjacent;
@@ -380,7 +356,7 @@ export function useClipInteractions(options: ClipInteractionOptions) {
       );
       if (updated) await commit(commands.removeTimelineClips([removed.id], []));
     },
-    [arrangement.audioClips, commands, commit, setMessage, timebase],
+    [arrangement.audioClips, commands, commit, timebase],
   );
 
   const mergeMidiClip = useCallback(
@@ -395,7 +371,7 @@ export function useClipInteractions(options: ClipInteractionOptions) {
             : item.startTick + midiClipDurationTicks(item) === clip.startTick),
       );
       if (!adjacent) {
-        setMessage('No adjacent MIDI clip to merge with.');
+        showToast('timeline', 'No adjacent MIDI clip to merge with.');
         return;
       }
       const target = direction === 'next' ? clip : adjacent;
@@ -418,7 +394,7 @@ export function useClipInteractions(options: ClipInteractionOptions) {
       );
       if (updated) await commit(commands.removeTimelineClips([], [shifted.id]));
     },
-    [arrangement.midiClips, commands, commit, setMessage],
+    [arrangement.midiClips, commands, commit],
   );
 
   const beginFade = useCallback(
@@ -429,7 +405,6 @@ export function useClipInteractions(options: ClipInteractionOptions) {
       const origin = side === 'in' ? clip.fadeIn.frames : clip.fadeOut.frames;
       const originLeft = handle.style.left;
       let frames = origin;
-      handle.setPointerCapture?.(event.pointerId);
       const move = (pointer: PointerEvent) => {
         const delta = ticksToFrames(
           (pointer.clientX - originX) / pixelsPerTick,
@@ -449,7 +424,7 @@ export function useClipInteractions(options: ClipInteractionOptions) {
           commands.updateAudioClip(clip.id, side === 'in' ? { fadeIn: value } : { fadeOut: value }),
         );
       };
-      startGesture(handle, {
+      startGesture(event, {
         onMove: move,
         onEnd: finish,
         onCancel: () => restoreFadeHandleStyle(handle, originLeft),

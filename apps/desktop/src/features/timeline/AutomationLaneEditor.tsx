@@ -8,6 +8,7 @@ import type {
   EffectOwner,
 } from '@/model/generated';
 import { useSessionContext } from '@/shared/session/session-context';
+import { errorText } from '@/shared/errors';
 import {
   automationDevices,
   automationOptions,
@@ -68,8 +69,7 @@ export function AutomationLaneEditor(props: Props) {
       const entries: [string, DeviceParameterInfo[]][] = [];
       for (const result of results) {
         if (result.status === 'fulfilled') entries.push([result.value[0], result.value[1]]);
-        else
-          setError(result.reason instanceof Error ? result.reason.message : String(result.reason));
+        else setError(errorText(result.reason));
       }
       setParameters(Object.fromEntries(entries));
     });

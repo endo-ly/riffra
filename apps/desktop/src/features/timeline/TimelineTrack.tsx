@@ -1,5 +1,5 @@
 import type { EditorCommit } from './hooks/useTimelineEditor';
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 import type {
   AudioAnalysis,
   AudioClip,
@@ -9,6 +9,9 @@ import type {
   Track,
 } from '@/model/generated';
 import { useSessionContext } from '@/shared/session/session-context';
+import { useChannelMixValue } from '@/shared/session/useChannelMixValue';
+import { MIX_GAIN_DB, MIX_PAN } from '@/model/mix-range';
+import { ValueSlider } from '@/shared/ui/ValueSlider';
 import { AudioClipView } from './AudioClipView';
 import { MidiClipView } from './MidiClipView';
 import {
@@ -22,10 +25,13 @@ import { isBrowserItemDrag } from '@/features/timeline/hooks/useTimelineDrop';
 import { resolveTrackColor } from '@/model/track-color';
 import { formatGainDb, formatPan } from '@/shared/audio/mix-format';
 import { Icon } from '@/shared/ui/primitives';
-import controls from '@/shared/ui/controls.module.css';
+import type { ContextMenuItem } from '@/shared/ui/ContextMenu';
+import { MenuButton } from '@/shared/ui/MenuButton';
+import { usePointerGesture } from '@/shared/usePointerGesture';
 import styles from './Timeline.module.css';
 
 interface TimelineTrackProps {
+  sessionId: string;
   track: Track;
   trackIndex?: number;
   timeline: TrackTimeline;
@@ -79,7 +85,9 @@ interface PendingTrackValues {
 
 export function TimelineTrack(props: TimelineTrackProps) {
   const { api } = useSessionContext();
-  const detailsRef = useRef<HTMLDetailsElement>(null);
+  const gain = useChannelMixValue(props.track, 'gainDb', { sessionId: props.sessionId });
+  const pan = useChannelMixValue(props.track, 'pan', { sessionId: props.sessionId });
+  const startGesture = usePointerGesture();
   const [dragOver, setDragOver] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [dropHint, setDropHint] = useState<'before' | 'after' | null>(null);
@@ -119,18 +127,6 @@ export function TimelineTrack(props: TimelineTrackProps) {
     });
   };
 
-  useEffect(() => {
-    const onClick = (event: MouseEvent) => {
-      const details = detailsRef.current;
-      if (!details) return;
-      if (details.open && !details.contains(event.target as Node)) {
-        details.removeAttribute('open');
-      }
-    };
-    document.addEventListener('click', onClick);
-    return () => document.removeEventListener('click', onClick);
-  }, []);
-
   const audioItems = props.timeline.items.filter(
     (item): item is TimelineAudioItem => item.kind === 'audio',
   );
@@ -143,31 +139,29 @@ export function TimelineTrack(props: TimelineTrackProps) {
   const showVolume = props.trackSize !== 'compact';
   const showPan = props.trackSize === 'large';
 
-  const onResizePointerDown = (event: React.PointerEvent) => {
+  const onResizePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     event.preventDefault();
     event.stopPropagation();
-    if (!props.onSetTrackSize) return;
+    const setTrackSize = props.onSetTrackSize;
+    if (!setTrackSize) return;
     const sizes: TrackSize[] = ['compact', 'normal', 'large'];
     const startIndex = sizes.indexOf(props.trackSize);
     const startY = event.clientY;
     let lastIndex = startIndex;
-    const onMove = (e: PointerEvent) => {
-      const delta = e.clientY - startY;
-      const targetIndex = Math.max(
-        0,
-        Math.min(sizes.length - 1, startIndex + Math.round(delta / 25)),
-      );
-      if (targetIndex !== lastIndex) {
-        lastIndex = targetIndex;
-        props.onSetTrackSize!(sizes[targetIndex]);
-      }
-    };
-    const onUp = () => {
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onUp);
-    };
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp);
+    startGesture(event, {
+      onMove: (pointer) => {
+        const delta = pointer.clientY - startY;
+        const targetIndex = Math.max(
+          0,
+          Math.min(sizes.length - 1, startIndex + Math.round(delta / 25)),
+        );
+        if (targetIndex !== lastIndex) {
+          lastIndex = targetIndex;
+          setTrackSize(sizes[targetIndex]);
+        }
+      },
+      onEnd: () => undefined,
+    });
   };
 
   const activeMonitoring = pendingTrackValues.monitoring ?? props.track.monitoring;
@@ -177,41 +171,13 @@ export function TimelineTrack(props: TimelineTrackProps) {
   const monitoringClass =
     activeMonitoring === 'auto' ? styles.monAuto : activeMonitoring === 'on' ? styles.monOn : '';
 
-  const closeMenu = () => detailsRef.current?.removeAttribute('open');
-  const trackMenuItems: ReactNode[] = [
-    <button
-      key="devices"
-      onClick={() => {
-        closeMenu();
-        props.onOpenDevices();
-      }}
-    >
-      Open Devices
-    </button>,
+  const trackMenuItems: ContextMenuItem[] = [
+    { label: 'Open Devices', onClick: props.onOpenDevices },
+    { separator: true },
+    { label: 'Duplicate', onClick: props.onDuplicate },
+    { separator: true },
+    { label: 'Delete', danger: true, onClick: props.onDelete },
   ];
-  trackMenuItems.push(
-    <hr key="separator-actions" className={styles.menuSeparator} />,
-    <button
-      key="duplicate"
-      onClick={() => {
-        closeMenu();
-        props.onDuplicate();
-      }}
-    >
-      Duplicate
-    </button>,
-    <hr key="separator-delete" className={styles.menuSeparator} />,
-    <button
-      key="delete"
-      className={styles.deleteTrack}
-      onClick={() => {
-        closeMenu();
-        props.onDelete();
-      }}
-    >
-      Delete
-    </button>,
-  );
 
   return (
     <div
@@ -234,7 +200,7 @@ export function TimelineTrack(props: TimelineTrackProps) {
         className={styles.trackHeader}
         data-drop={dropHint ?? undefined}
         onClick={(event) => {
-          if (!(event.target as HTMLElement).closest('button, input, details, summary')) {
+          if (!(event.target as HTMLElement).closest('button, input')) {
             props.onSelectTrack();
           }
         }}
@@ -361,56 +327,29 @@ export function TimelineTrack(props: TimelineTrackProps) {
             </button>
           )}
         </div>
-        <details ref={detailsRef} className={styles.trackMenu}>
-          <summary aria-label={`${props.track.name} track menu`}>
-            <Icon name="more" />
-          </summary>
-          <div>{trackMenuItems}</div>
-        </details>
+        <MenuButton label={`${props.track.name} track menu`} items={trackMenuItems} />
         {showVolume && (
           <label className={styles.trackControl}>
             <span>VOL</span>
-            <input
-              key={`${props.track.id}:gain:${props.track.gainDb}`}
-              className={controls.slider}
-              aria-label={`${props.track.name} gain`}
-              type="range"
-              min="-60"
-              max="12"
-              step="0.5"
-              defaultValue={props.track.gainDb}
-              onPointerUp={(event) =>
-                void props.onCommit(
-                  api.updateTrack(props.track.id, {
-                    gainDb: Number(event.currentTarget.value),
-                  }),
-                )
-              }
+            <ValueSlider
+              control={gain}
+              range={MIX_GAIN_DB}
+              fillOrigin={MIX_GAIN_DB.min}
+              ariaLabel={`${props.track.name} gain`}
             />
-            <output>{formatGainDb(props.track.gainDb)}</output>
+            <output>{formatGainDb(gain.value)}</output>
           </label>
         )}
         {showPan && (
           <label className={styles.trackControl}>
             <span>PAN</span>
-            <input
-              key={`${props.track.id}:pan:${props.track.pan}`}
-              className={controls.slider}
-              aria-label={`${props.track.name} pan`}
-              type="range"
-              min="-1"
-              max="1"
-              step="0.05"
-              defaultValue={props.track.pan}
-              onPointerUp={(event) =>
-                void props.onCommit(
-                  api.updateTrack(props.track.id, {
-                    pan: Number(event.currentTarget.value),
-                  }),
-                )
-              }
+            <ValueSlider
+              control={pan}
+              range={MIX_PAN}
+              fillOrigin={0}
+              ariaLabel={`${props.track.name} pan`}
             />
-            <output>{formatPan(props.track.pan)}</output>
+            <output>{formatPan(pan.value)}</output>
           </label>
         )}
       </aside>

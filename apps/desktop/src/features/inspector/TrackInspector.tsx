@@ -6,6 +6,8 @@ import type {
 } from '@/model/generated';
 import { formatGainDb, formatPan } from '@/shared/audio/mix-format';
 import { useSessionContext } from '@/shared/session/session-context';
+import { MIX_GAIN_DB, MIX_PAN } from '@/model/mix-range';
+import { useChannelMixValue } from '@/shared/session/useChannelMixValue';
 import { Icon } from '@/shared/ui/primitives';
 import clsx from 'clsx';
 import { useCallback, useEffect, useState, type CSSProperties } from 'react';
@@ -25,6 +27,14 @@ export function TrackInspector(props: TrackInspectorProps) {
   const [name, setName] = useState(props.track.name);
   const [colorOpen, setColorOpen] = useState(false);
   const [operationMessage, setOperationMessage] = useState<string | null>(null);
+  const gain = useChannelMixValue(props.track, 'gainDb', {
+    sessionId: props.session.sessionId,
+    onError: setOperationMessage,
+  });
+  const pan = useChannelMixValue(props.track, 'pan', {
+    sessionId: props.session.sessionId,
+    onError: setOperationMessage,
+  });
   useEffect(() => setName(props.track.name), [props.track.id, props.track.name]);
   const commit = useCallback(
     (operation: Promise<ArrangementMutationResult>) => {
@@ -108,26 +118,18 @@ export function TrackInspector(props: TrackInspectorProps) {
           <MixValueField
             label="Volume"
             name="Track gain"
-            value={props.track.gainDb}
-            min={-60}
-            max={12}
-            origin={-60}
-            step={0.5}
-            inputStep={0.1}
+            control={gain}
+            range={MIX_GAIN_DB}
+            fillOrigin={MIX_GAIN_DB.min}
             format={formatGainDb}
-            onCommit={(gainDb) => commit(api.updateTrack(props.track.id, { gainDb }))}
           />
           <MixValueField
             label="Pan"
             name="Track pan"
-            value={props.track.pan}
-            min={-1}
-            max={1}
-            origin={0}
-            step={0.05}
-            inputStep={0.05}
+            control={pan}
+            range={MIX_PAN}
+            fillOrigin={0}
             format={formatPan}
-            onCommit={(pan) => commit(api.updateTrack(props.track.id, { pan }))}
           />
         </div>
       </section>

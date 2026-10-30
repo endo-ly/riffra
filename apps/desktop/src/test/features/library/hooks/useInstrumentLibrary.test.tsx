@@ -3,7 +3,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { AudioStatus } from '@/model/generated';
-import { FakeNativeApi, fakeAudioStatus } from '@/test/support/fake-native-api';
+import { FakeNativeApi } from '@/test/support/fake-native-api';
 import { useInstrumentLibrary } from '@/features/library/hooks/useInstrumentLibrary';
 
 function useLibraryHarness(api: FakeNativeApi, hostGeneration = 1) {
@@ -146,16 +146,8 @@ describe('useInstrumentLibrary', () => {
     await act(async () => {
       await result.current.preview(first);
     });
-    api.setResponse('previewInstrument', () =>
-      Promise.resolve(
-        fakeAudioStatus({
-          previewing: true,
-          instrumentPreviewing: true,
-          message:
-            'Preview instrument failed: replacement preview failed. Audio state was not changed. Saved data is safe.',
-        }),
-      ),
-    );
+    api.setFailure('previewInstrument', new Error('replacement preview failed'));
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     await act(async () => {
       await result.current.preview(second);
@@ -164,5 +156,7 @@ describe('useInstrumentLibrary', () => {
     expect(result.current.previewingId).toBe(first.id);
     expect(result.current.previewPendingId).toBeNull();
     expect(result.current.error).toContain('replacement preview failed');
+    expect(errorSpy).toHaveBeenCalledOnce();
+    errorSpy.mockRestore();
   });
 });

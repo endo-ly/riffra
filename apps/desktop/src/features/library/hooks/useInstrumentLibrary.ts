@@ -5,7 +5,6 @@ import type { AudioApi } from '@/native/api/audio';
 import type { InstrumentLibraryApi } from '@/native/api/instruments';
 import type { NativeEventApi } from '@/native/api/events';
 import { logNativeError } from '@/native/invoke';
-import { audioCommandSucceeded } from '@/shared/audio/audio-safety';
 
 interface UseInstrumentLibraryOptions {
   hostGeneration: number;
@@ -234,14 +233,7 @@ export function useInstrumentLibrary(
         const next = await previewInstrument(item.id);
         if (isCurrentRequest()) {
           nativeInstrumentPreviewing.current = next.instrumentPreviewing;
-          if (!audioCommandSucceeded(next)) {
-            if (!next.instrumentPreviewing) setPreviewingId(null);
-            setError(next.message);
-          } else if (next.instrumentPreviewing) {
-            setPreviewingId(item.id);
-          } else {
-            setPreviewingId(null);
-          }
+          setPreviewingId(next.instrumentPreviewing ? item.id : null);
           setAudio(next);
         }
       } catch (cause) {

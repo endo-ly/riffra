@@ -3,7 +3,7 @@ import type { ReactElement, ReactNode } from 'react';
 // @vitest-environment jsdom
 
 import type { EditorSelection } from '@/model/editor-selection';
-import type { CreativeSession } from '@/model/generated';
+import type { CanonicalState, CreativeSession } from '@/model/generated';
 import { canonicalState, defaultSession } from '@/native/browser-defaults';
 import { toAssetId } from '@/model/asset-id';
 import { FakeNativeApi, fakeAudioStatus } from '@/test/support/fake-native-api';
@@ -97,10 +97,12 @@ function recordingSession(): CreativeSession {
   return session;
 }
 
-function renderWithSession(api: FakeNativeApi, element: ReactElement) {
+function renderWithSession(api: FakeNativeApi, element: ReactElement, canonical?: CanonicalState) {
   return render(element, {
     wrapper: ({ children }: { children: ReactNode }) => (
-      <TestSessionProvider api={api}>{children}</TestSessionProvider>
+      <TestSessionProvider api={api} getCanonicalState={canonical ? () => canonical : undefined}>
+        {children}
+      </TestSessionProvider>
     ),
   });
 }
@@ -265,7 +267,7 @@ describe('Arrange Inspectors', () => {
     expect(await screen.findByText('MIDI edit failed')).toBeInTheDocument();
   });
 
-  it('commits Clip gain from the keyboard and typed values, and discards a cancelled edit', () => {
+  it('commits Clip gain from the keyboard and typed values, and discards a cancelled edit', async () => {
     // Arrange
     const session = recordingSession();
     const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
@@ -281,16 +283,19 @@ describe('Arrange Inspectors', () => {
         selectedClipIds={['clip:a']}
         setSelectedClipIds={() => undefined}
       />,
+      canonicalState(session),
     );
     const slider = screen.getByLabelText('Clip gain');
 
     // Act
     fireEvent.change(slider, { target: { value: '-6' } });
     fireEvent.keyUp(slider, { key: 'ArrowLeft' });
+    await waitFor(() => expect(api.updateAudioClip).toHaveBeenCalledTimes(1));
     fireEvent.click(screen.getByRole('button', { name: 'Edit clip gain' }));
     const typed = screen.getByRole('spinbutton', { name: 'Edit clip gain' });
     fireEvent.change(typed, { target: { value: '3.2' } });
     fireEvent.blur(typed);
+    await waitFor(() => expect(api.updateAudioClip).toHaveBeenCalledTimes(2));
     fireEvent.click(screen.getByRole('button', { name: 'Edit clip gain' }));
     const cancelled = screen.getByRole('spinbutton', { name: 'Edit clip gain' });
     fireEvent.change(cancelled, { target: { value: '9' } });
@@ -298,15 +303,16 @@ describe('Arrange Inspectors', () => {
     fireEvent.blur(cancelled);
     fireEvent.click(screen.getByRole('button', { name: 'Edit clip gain' }));
     const clamped = screen.getByRole('spinbutton', { name: 'Edit clip gain' });
-    expect(clamped).toHaveAttribute('min', '-60');
+    expect(clamped).toHaveAttribute('min', '-90');
     expect(clamped).toHaveAttribute('max', '24');
-    fireEvent.change(clamped, { target: { value: '-70' } });
+    fireEvent.change(clamped, { target: { value: '-100' } });
     fireEvent.blur(clamped);
+    await waitFor(() => expect(api.updateAudioClip).toHaveBeenCalledTimes(3));
 
     // Assert
     expect(api.updateAudioClip).toHaveBeenNthCalledWith(1, 'clip:a', { gainDb: -6 });
     expect(api.updateAudioClip).toHaveBeenNthCalledWith(2, 'clip:a', { gainDb: 3.2 });
-    expect(api.updateAudioClip).toHaveBeenNthCalledWith(3, 'clip:a', { gainDb: -60 });
+    expect(api.updateAudioClip).toHaveBeenNthCalledWith(3, 'clip:a', { gainDb: -90 });
     expect(api.updateAudioClip).toHaveBeenCalledTimes(3);
     expect(screen.getByRole('button', { name: 'Edit clip gain' })).toHaveTextContent('+0.0 dB');
   });

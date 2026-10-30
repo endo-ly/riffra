@@ -20,6 +20,7 @@ import { useMissingDependencies } from '@/features/project/hooks/useMissingDepen
 import { useRecording } from '@/features/recording/hooks/useRecording';
 import { usePluginCatalog } from '@/features/library/hooks/usePluginCatalog';
 import { toast } from '@/shared/toasts';
+import { errorText } from '@/shared/errors';
 
 export function useAppController(api: NativeApi = defaultNativeApi) {
   const { getAudioStatus } = api;
@@ -81,7 +82,7 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
       try {
         setAudio(await api.openPluginAudition(plugin.path));
       } catch (error) {
-        logNativeError('openPluginAudition')(error);
+        toast(`Plug-in could not open: ${errorText(error)}`, { kind: 'error' });
       }
     },
     [api, setAudio],
@@ -261,7 +262,6 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
         void toggleMute();
         return;
       }
-      if (event.key === 'Escape') setCommandOpen(false);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);

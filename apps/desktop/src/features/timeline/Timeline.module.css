@@ -377,16 +377,6 @@
   color: var(--color-text-muted);
 }
 
-/*
- * Each row is its own stacking context (z-index above); an open track menu
- * would paint below the rows that follow it, so lift the row while the menu
- * is showing.
- */
-
-.trackRow:has(.trackMenu[open]) {
-  z-index: 20;
-}
-
 .trackHeader {
   position: sticky;
   /*
@@ -467,91 +457,6 @@
   grid-column: 2;
   display: flex;
   gap: var(--space-0-5);
-}
-
-.trackMenu {
-  position: relative;
-  grid-column: 3;
-}
-
-.trackMenu summary {
-  width: 20px;
-  height: 22px;
-  display: grid;
-  place-content: center;
-  color: var(--color-text-muted);
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  list-style: none;
-}
-
-.trackMenu summary svg {
-  width: var(--size-icon-sm);
-  height: var(--size-icon-sm);
-}
-
-.trackMenu summary::-webkit-details-marker {
-  display: none;
-}
-
-.trackMenu summary:hover,
-.trackMenu[open] summary {
-  color: var(--color-text-primary);
-  background: var(--color-bg-hover);
-  border-color: var(--color-border-default);
-}
-
-.trackMenu > div {
-  position: absolute;
-  z-index: 30;
-  top: 26px;
-  right: 0;
-  width: 148px;
-  display: none;
-  padding: var(--space-1);
-  background: var(--color-bg-surface-raised);
-  border: 1px solid var(--color-border-strong);
-  border-radius: var(--radius-sm);
-  box-shadow: var(--shadow-popover);
-}
-
-.trackMenu[open] > div {
-  display: grid;
-}
-
-.trackMenu button {
-  padding: var(--space-1) var(--space-2);
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-micro);
-  text-align: left;
-  background: transparent;
-  border: 0;
-  border-radius: var(--radius-sm);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.trackMenu button:hover {
-  color: var(--color-text-primary);
-  background: var(--color-bg-hover);
-}
-
-.trackMenu .menuSeparator {
-  margin: var(--space-1) var(--space-0-5);
-  border: 0;
-  border-top: 1px solid var(--color-border-default);
-}
-
-.trackMenu .deleteTrack {
-  color: var(--color-status-danger);
-}
-
-.trackMenu .deleteTrack:hover {
-  color: var(--color-status-danger);
-  background: color-mix(in srgb, var(--color-status-danger) 14%, transparent);
 }
 
 .trackSwitches button {

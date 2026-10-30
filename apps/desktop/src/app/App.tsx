@@ -2,7 +2,6 @@ import { SessionProvider } from '@/shared/session/session-context';
 import type { NativeApi } from '@/native/native-api';
 import clsx from 'clsx';
 import {
-  Fragment,
   useEffect,
   useMemo,
   useState,
@@ -17,14 +16,15 @@ import { PropertiesPanel } from '@/features/inspector/PropertiesPanel';
 import { BrowserPanel } from '@/features/library/BrowserPanel';
 import { MissingDependencies } from '@/features/project/MissingDependencies';
 import { ResizeHandle } from '@/shared/ui/ResizeHandle';
+import { usePointerGesture } from '@/shared/usePointerGesture';
 import { AudioSettingsDialog } from '@/features/audio/AudioSettingsDialog';
 import { ConfirmDialog } from '@/shared/ui/ConfirmDialog';
-import { Icon } from '@/shared/ui/primitives';
 import surface from '@/shared/ui/Surface.module.css';
 import { ToastStack } from '@/shared/ui/ToastStack';
 import { GlobalControlBar } from './layout/GlobalControlBar';
 import { ProjectHostSelector } from './layout/ProjectHostSelector';
 import { LeftColumn } from './layout/LeftColumn';
+import { CommandPalette } from './layout/CommandPalette';
 import { isEmergencyMuteActive } from '@/shared/audio/audio-safety';
 import { useAudioFeedbackSuspected } from '@/shared/audio/audio-meters';
 import { useAppUpdater } from '@/app/runtime/useAppUpdater';
@@ -77,13 +77,10 @@ function LeftColumnResizeHandle(props: {
 export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}) {
   const [leftColumnWidth, setLeftColumnWidth] = useState<number>(LEFT_COLUMN_WIDTH.default);
   const [propertiesHeight, setPropertiesHeight] = useState<number | null>(null);
-  const [panelResize, setPanelResize] = useState<{
-    startX: number;
-    startWidth: number;
-  } | null>(null);
+  const [isPanelResizing, setIsPanelResizing] = useState(false);
   const [audioSettingsOpen, setAudioSettingsOpen] = useState(false);
   const [restoreCandidate, setRestoreCandidate] = useState<string | null>(null);
-  const [commandActive, setCommandActive] = useState(0);
+  const startPanelResizeGesture = usePointerGesture();
   const {
     hostConnectionState,
     localHosts,
@@ -168,29 +165,17 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
   const liveFeedbackSuspected = useAudioFeedbackSuspected();
   const appUpdater = useAppUpdater({ api: api });
 
-  useEffect(() => {
-    if (!panelResize) return;
-    const onPointerMove = (event: PointerEvent) => {
-      const delta = event.clientX - panelResize.startX;
-      setLeftColumnWidth(adjustLeftColumnWidth(panelResize.startWidth, delta));
-    };
-    const stopResize = () => setPanelResize(null);
-    window.addEventListener('pointermove', onPointerMove);
-    window.addEventListener('pointerup', stopResize);
-    window.addEventListener('pointercancel', stopResize);
-    return () => {
-      window.removeEventListener('pointermove', onPointerMove);
-      window.removeEventListener('pointerup', stopResize);
-      window.removeEventListener('pointercancel', stopResize);
-    };
-  }, [panelResize]);
-
   const startPanelResize = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
     event.preventDefault();
-    setPanelResize({
-      startX: event.clientX,
-      startWidth: leftColumnWidth,
+    const startX = event.clientX;
+    const startWidth = leftColumnWidth;
+    setIsPanelResizing(true);
+    startPanelResizeGesture(event, {
+      onMove: (pointer) =>
+        setLeftColumnWidth(adjustLeftColumnWidth(startWidth, pointer.clientX - startX)),
+      onEnd: () => setIsPanelResizing(false),
+      onCancel: () => setIsPanelResizing(false),
     });
   };
 
@@ -213,10 +198,6 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
       setCommandOpen(false);
     }
   }, [hostConnected, setAudioSettingsOpen, setCommandOpen]);
-
-  useEffect(() => {
-    if (commandOpen) setCommandActive(0);
-  }, [commandOpen]);
 
   const sessionSelector = (
     <ProjectHostSelector
@@ -299,7 +280,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
   return (
     <SessionProvider value={sessionContext}>
       <main
-        className={clsx(shellStyles.appShell, panelResize && shellStyles.isPanelResizing)}
+        className={clsx(shellStyles.appShell, isPanelResizing && shellStyles.isPanelResizing)}
         style={shellStyle}
       >
         <GlobalControlBar
@@ -343,20 +324,21 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
           onToggleRecording={() => void toggleRecording()}
         />
 
-        <AudioSettingsDialog
-          open={audioSettingsOpen && hostConnected}
-          audio={audio}
-          probe={deviceProbe}
-          safeMode={boot.safeMode}
-          recordingActive={
-            audio.recording.active || audio.recording.processing || recordingCommandPending
-          }
-          onClose={() => setAudioSettingsOpen(false)}
-          onRefresh={refreshAudioDevices}
-          onProbeChannels={probeAudioChannels}
-          onApply={selectAudioDriver}
-          onRecover={recoverAudio}
-        />
+        {audioSettingsOpen && hostConnected && (
+          <AudioSettingsDialog
+            audio={audio}
+            probe={deviceProbe}
+            safeMode={boot.safeMode}
+            recordingActive={
+              audio.recording.active || audio.recording.processing || recordingCommandPending
+            }
+            onClose={() => setAudioSettingsOpen(false)}
+            onRefresh={refreshAudioDevices}
+            onProbeChannels={probeAudioChannels}
+            onApply={selectAudioDriver}
+            onRecover={recoverAudio}
+          />
+        )}
 
         <div className={styles.bannerStack}>
           {isMuted && (
@@ -590,63 +572,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
         </div>
 
         {commandOpen && hostConnected && (
-          <div className={styles.commandBackdrop} onMouseDown={() => setCommandOpen(false)}>
-            <section
-              className={styles.commandPalette}
-              onMouseDown={(event) => event.stopPropagation()}
-            >
-              <label>
-                <Icon name="command" />
-                <input
-                  autoFocus
-                  placeholder="Search actions, assets, settings…"
-                  onKeyDown={(event) => {
-                    if (event.key === 'ArrowDown') {
-                      event.preventDefault();
-                      setCommandActive((index) => Math.min(index + 1, commandItems.length - 1));
-                    } else if (event.key === 'ArrowUp') {
-                      event.preventDefault();
-                      setCommandActive((index) => Math.max(index - 1, 0));
-                    } else if (event.key === 'Enter') {
-                      event.preventDefault();
-                      const item = commandItems[commandActive];
-                      if (item) {
-                        setCommandOpen(false);
-                        item.run();
-                      }
-                    } else if (event.key === 'Escape') {
-                      setCommandOpen(false);
-                    }
-                  }}
-                />
-              </label>
-              {commandItems.map((item, index) => (
-                <Fragment key={item.label}>
-                  {(index === 0 || commandItems[index - 1].section !== item.section) && (
-                    <span className={clsx(surface.eyebrow, styles.commandEyebrow)}>
-                      {item.section}
-                    </span>
-                  )}
-                  <button
-                    data-active={index === commandActive || undefined}
-                    onMouseEnter={() => setCommandActive(index)}
-                    onClick={() => {
-                      setCommandOpen(false);
-                      item.run();
-                    }}
-                  >
-                    <span>{item.label}</span>
-                    <small>{item.description}</small>
-                  </button>
-                </Fragment>
-              ))}
-              <footer>
-                <span>↑↓ Navigate</span>
-                <span>↵ Select</span>
-                <span>Esc Close</span>
-              </footer>
-            </section>
-          </div>
+          <CommandPalette items={commandItems} onClose={() => setCommandOpen(false)} />
         )}
 
         <ToastStack />

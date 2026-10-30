@@ -46,35 +46,6 @@ export function ToolbarSegmented<T extends string>(props: {
   );
 }
 
-export function ToolbarTabs<T extends string>(props: {
-  label: string;
-  value: T;
-  options: readonly { value: T; label: string; disabled?: boolean }[];
-  onChange: (value: T) => void;
-}) {
-  return (
-    <div className={styles.segmented} role="tablist" aria-label={props.label}>
-      {props.options.map((option) => (
-        <button
-          key={option.value}
-          type="button"
-          role="tab"
-          aria-selected={option.value === props.value}
-          className={
-            option.value === props.value
-              ? `${styles.segmentedButton} ${styles.active}`
-              : styles.segmentedButton
-          }
-          disabled={option.disabled}
-          onClick={() => props.onChange(option.value)}
-        >
-          {option.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
 export function ToolbarButton(props: {
   icon?: string;
   ariaLabel?: string;

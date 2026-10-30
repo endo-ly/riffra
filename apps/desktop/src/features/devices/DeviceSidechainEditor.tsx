@@ -28,7 +28,8 @@ export function DeviceSidechainEditor({
   commit,
   onOpenAutomation,
 }: DeviceSidechainEditorProps) {
-  const { api } = useSessionContext();
+  const { api, getCanonicalState } = useSessionContext();
+  const sessionId = getCanonicalState()?.session.sessionId ?? '';
   const sends = arrangement.mixer.sidechainSends.filter((send) => send.targetDeviceId === deviceId);
   if (isInstrument || (!capabilities.available && sends.length === 0)) return null;
   const canAddSource = capabilities.mono || capabilities.stereo;
@@ -71,6 +72,7 @@ export function DeviceSidechainEditor({
       {sends.map((send) => (
         <SidechainSendControls
           key={send.id}
+          sessionId={sessionId}
           send={send}
           endpointName={
             arrangement.tracks.find((track) => track.id === send.sourceTrackId)?.name ??

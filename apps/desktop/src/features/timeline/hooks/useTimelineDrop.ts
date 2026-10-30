@@ -13,6 +13,7 @@ import { TRACK_HEADER_WIDTH } from '@/features/timeline/model/timeline-layout';
 import { placeBrowserItem } from '@/features/timeline/place-browser-item';
 import { resolvePlacementTarget, type BrowserPlacement } from '@/shared/browser-placement';
 import { useSessionContext } from '@/shared/session/session-context';
+import { showToast } from '@/shared/toasts';
 
 type TimelineSnapTick = (raw: number, temporaryOff?: boolean) => number;
 
@@ -20,7 +21,6 @@ interface UseTimelineDropOptions {
   commit: EditorCommit;
   pixelsPerTick: number;
   snapTick: TimelineSnapTick;
-  setMessage: (message: string) => void;
 }
 
 const isOsFileDrag = (event: DragEvent) => event.dataTransfer.types.includes('Files');
@@ -60,18 +60,13 @@ function readBrowserDrag(dataTransfer: DataTransfer): BrowserPlacement | string 
 }
 
 /** Coordinates Browser item and OS MIDI-file drops in the Arrange workspace. */
-export function useTimelineDrop({
-  commit,
-  pixelsPerTick,
-  snapTick,
-  setMessage,
-}: UseTimelineDropOptions) {
+export function useTimelineDrop({ commit, pixelsPerTick, snapTick }: UseTimelineDropOptions) {
   const { api } = useSessionContext();
   const handleBrowserDrop = useCallback(
     async (event: DragEvent, trackId?: string, trackKind?: TrackKind): Promise<void> => {
       const placement = readBrowserDrag(event.dataTransfer);
       if (typeof placement === 'string') {
-        setMessage(placement);
+        showToast('timeline', placement, { kind: 'error' });
         return;
       }
       const target = resolvePlacementTarget(
@@ -80,7 +75,7 @@ export function useTimelineDrop({
         true,
       );
       if (target.kind === 'invalid') {
-        setMessage(target.reason);
+        showToast('timeline', target.reason, { kind: 'error' });
         return;
       }
       const timeline = event.currentTarget.closest('[data-arrange-timeline]');
@@ -92,13 +87,15 @@ export function useTimelineDrop({
       );
       await placeBrowserItem(api, commit, placement, target, tick);
     },
-    [api, commit, pixelsPerTick, setMessage, snapTick],
+    [api, commit, pixelsPerTick, snapTick],
   );
 
   const handleOsMidiDrop = useCallback(
     async (files: FileList, trackId?: string, trackKind?: TrackKind): Promise<void> => {
       if (trackKind === 'audio') {
-        setMessage('MIDI can only be placed on an Instrument Track.');
+        showToast('timeline', 'MIDI can only be placed on an Instrument Track.', {
+          kind: 'error',
+        });
         return;
       }
       for (const file of Array.from(files)) {
@@ -115,7 +112,7 @@ export function useTimelineDrop({
         }
       }
     },
-    [api, commit, setMessage],
+    [api, commit],
   );
 
   const handleDrop = useCallback(
