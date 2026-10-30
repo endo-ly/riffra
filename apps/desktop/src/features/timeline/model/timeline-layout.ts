@@ -31,7 +31,7 @@ export interface TimelineMidiItem {
   endTick: number;
 }
 
-export type TimelineItem = TimelineAudioItem | TimelineMidiItem;
+type TimelineItem = TimelineAudioItem | TimelineMidiItem;
 
 export interface TrackTimeline {
   items: readonly TimelineItem[];

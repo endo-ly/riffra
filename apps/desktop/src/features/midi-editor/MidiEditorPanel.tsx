@@ -1,16 +1,21 @@
-import type { MidiNoteInput } from '@/model/generated';
-import { errorText } from '@/shared/errors';
-import { musicalGridTicks, snapToBar } from '@/model/timebase';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { CSSProperties, MutableRefObject } from 'react';
 import type {
   ArrangementMutationResult,
   InstrumentMidiInspection,
   MidiClip,
   MidiNote,
+  MidiNoteInput,
   ProjectTimebase,
 } from '@/model/generated';
-import { ticksToSeconds } from '@/model/timebase';
+import { errorText } from '@/shared/errors';
+import {
+  musicalGridTicks,
+  snapToBar,
+  ticksPerBar,
+  ticksPerBeat,
+  ticksToSeconds,
+} from '@/model/timebase';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { CSSProperties, MutableRefObject } from 'react';
 import {
   SNAP_GRID_OPTIONS,
   snapGridLabel,
@@ -18,10 +23,9 @@ import {
   countOffGridNotes,
   clipGridTicks,
   snapClipTick,
+  type SnapGrid,
 } from '@/model/clip-grid';
 import { formatMusicalLength, formatMusicalPosition } from '@/model/time-format';
-import { ticksPerBar, ticksPerBeat } from '@/model/timebase';
-import type { SnapGrid } from '@/model/clip-grid';
 import { encodeNoteOff, encodeNoteOn, isBlackKey, midiNoteName } from '@/shared/midi';
 import { isEditableTypingTarget } from '@/shared/input';
 import { idsInClientRect } from '@/shared/rect-selection';

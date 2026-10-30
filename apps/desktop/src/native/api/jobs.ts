@@ -1,4 +1,4 @@
-export type ScanJobStatus = Extract<BackgroundJobStatus, { kind: 'scan' }>;
+type ScanJobStatus = Extract<BackgroundJobStatus, { kind: 'scan' }>;
 
 import type { BackgroundJobStatus } from '@/model/generated';
 

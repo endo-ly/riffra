@@ -13,7 +13,7 @@ export function isAudioEngineUsable(audio: Pick<AudioStatus, 'state'>): boolean 
 }
 
 /** Returns whether the Audio Runtime is currently forcing output silent. */
-export function isOutputMuted(audio: Pick<AudioStatus, 'state'>): boolean {
+function isOutputMuted(audio: Pick<AudioStatus, 'state'>): boolean {
   return audio.state === 'muted';
 }
 

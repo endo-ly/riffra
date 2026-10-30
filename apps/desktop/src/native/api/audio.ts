@@ -1,4 +1,4 @@
-export interface AssetPreviewOptions {
+interface AssetPreviewOptions {
   startMs?: number;
   endMs?: number | null;
   looped?: boolean;
