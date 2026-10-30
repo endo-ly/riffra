@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import type { MidiClip, MidiNote } from '@/model/generated';
 import type { MidiGhostNote } from './model/ghost-notes';
 import { clipGridTicks, snapClipTick, snapGridTicks, type SnapGrid } from '@/model/clip-grid';
@@ -127,6 +127,15 @@ export function MidiEditorPanel({ clip, trackColor }: MidiEditorPanelProps) {
     [],
   );
 
+  const sendMidi = useCallback(
+    (trackId: string, bytes: number[]) =>
+      api.sendMidiToTrack(trackId, bytes).catch(logNativeError('sendMidiToTrack')),
+    [api],
+  );
+  const panicMidi = useCallback(
+    (trackId: string) => api.panicMidiTrack(trackId).catch(logNativeError('panicMidiTrack')),
+    [api],
+  );
   const { previewNoteOn, previewNoteOff, auditionNote } = useMidiPreview({
     clipId,
     trackId: clip?.trackId ?? null,
@@ -135,9 +144,8 @@ export function MidiEditorPanel({ clip, trackColor }: MidiEditorPanelProps) {
     velocity: lastUsedVelocity,
     timebase: arrangement.timebase,
     clipStartTick,
-    onSendMidi: (trackId, bytes) =>
-      api.sendMidiToTrack(trackId, bytes).catch(logNativeError('sendMidiToTrack')),
-    onPanicMidi: (trackId) => api.panicMidiTrack(trackId).catch(logNativeError('panicMidiTrack')),
+    onSendMidi: sendMidi,
+    onPanicMidi: panicMidi,
   });
   const editing = useNoteEditing({
     clip,

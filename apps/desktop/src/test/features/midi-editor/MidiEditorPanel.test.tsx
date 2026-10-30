@@ -10,7 +10,7 @@ import { canonicalState, defaultSession } from '@/native/browser-defaults';
 import { MidiEditorPanel } from '@/features/midi-editor/MidiEditorPanel';
 import { createFakeNativeApi, type FakeNativeApi } from '@/test/support/fake-native-api';
 import { renderWithSession } from '@/test/support/session-provider';
-import { mutationResult, renderWorkspace } from '@/test/support/workspace';
+import { renderWorkspace } from '@/test/support/workspace';
 
 afterEach(cleanup);
 
@@ -195,6 +195,73 @@ describe('MidiEditorPanel', () => {
     expect(insertMidiNotes).toHaveBeenLastCalledWith('clip:1', [
       { pitch: 60, startTick: 720, durationTicks: 200, velocity: 96, channel: 1 },
     ]);
+  });
+
+  it('keeps a held preview note sounding while the editor re-renders', () => {
+    // Arrange: an Instrument Track that can preview, and a playhead the panel reads.
+    const clip: MidiClip = {
+      instrumentControlEvents: [],
+      id: 'clip:1',
+      name: 'Clip',
+      trackId: 'track:1',
+      startTick: 0,
+      durationTicks: 3_840,
+      notes: [],
+      events: [],
+      muted: false,
+      loopEnabled: false,
+    };
+    const session = defaultSession();
+    session.arrangement.tracks.push({
+      id: 'track:1',
+      name: 'Keys',
+      kind: 'instrument',
+      gainDb: 0,
+      pan: 0,
+      externalAudioSourceTrackIds: [],
+      panLaw: 'equalPower',
+      muted: false,
+      solo: false,
+      armed: false,
+      monitoring: 'off',
+      midiInput: {},
+      instrument: {
+        id: 'device:1',
+        name: 'Fake Synth',
+        bypassed: false,
+        midi: { transposeSemitones: 0, playableNotes: null, keyswitches: [] },
+        source: {
+          type: 'vst3',
+          path: 'C:/Plugins/Fake.vst3',
+          parameterValues: [],
+          disabledPlaceholder: false,
+        },
+      },
+      effects: [],
+    });
+    session.arrangement.midiClips = [clip];
+    const api = createFakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
+    api.setResponse('getInstrumentMidiSettings', null);
+    const sendMidi = vi.spyOn(api, 'sendMidiToTrack');
+    const panicMidi = vi.spyOn(api, 'panicMidiTrack');
+    const { store } = renderWithSession(<MidiEditorPanel clip={clip} trackColor={null} />, { api });
+    const key = screen.getByRole('button', { name: 'Preview C4' });
+
+    // Act: hold the key, then move the playhead so the panel renders again.
+    fireEvent.pointerDown(key, { pointerId: 1 });
+    act(() => store.getState().transport.seekLocally(480));
+
+    // Assert: the held note is neither released nor panicked by the re-render.
+    expect(sendMidi).toHaveBeenCalledTimes(1);
+    expect(sendMidi).toHaveBeenLastCalledWith('track:1', [0x90, 60, 96]);
+    expect(panicMidi).not.toHaveBeenCalled();
+
+    // Act
+    fireEvent.pointerUp(key, { pointerId: 1 });
+
+    // Assert: the release sends the matching note off.
+    expect(sendMidi).toHaveBeenLastCalledWith('track:1', [0x80, 60, 0]);
+    expect(panicMidi).not.toHaveBeenCalled();
   });
 
   it('creates a note off the grid with Alt, like every other placement', () => {
@@ -426,7 +493,7 @@ describe('MidiEditorPanel', () => {
     // Assert
     await waitFor(() => expect(finishQuantize).toBeDefined());
     expect(screen.queryByText('Quantized 1 note to 1/16.')).not.toBeInTheDocument();
-    finishQuantize!(mutationResult(session));
+    finishQuantize!(api.mutationResult(session));
     await screen.findByText('Quantized 1 note to 1/16.');
     expect(api.calls.filter((call) => call === 'quantizeMidiNotes')).toHaveLength(1);
   });
@@ -484,7 +551,7 @@ describe('MidiEditorPanel', () => {
     api.updateMidiNotes = async (...args) => {
       updateArgs = args;
       api.calls.push('updateMidiNotes');
-      return mutationResult(session);
+      return api.mutationResult(session);
     };
     const { container } = renderWorkspace(api, { session });
 
@@ -543,7 +610,7 @@ describe('MidiEditorPanel', () => {
     api.addMidiNote = async (...args) => {
       addArgs = args;
       api.calls.push('addMidiNote');
-      return mutationResult(session);
+      return api.mutationResult(session);
     };
     const { container } = renderWorkspace(api, { session });
     fireEvent.doubleClick(container.querySelector('[data-clip-id="clip:draw"]')!);
@@ -939,7 +1006,7 @@ describe('MidiEditorPanel', () => {
     expect(bar).toHaveAttribute('aria-label', 'C4 velocity 76');
     expect(secondaryBar).toHaveAttribute('aria-label', 'E4 velocity 92');
 
-    resolveUpdate(mutationResult(committedSession));
+    resolveUpdate(api.mutationResult(committedSession));
     await waitFor(() => expect(bar).toHaveAttribute('aria-label', 'C4 velocity 76'));
 
     const pianoKey = velocityLane.querySelector('[data-piano-key="60"]') as HTMLElement;
