@@ -1,20 +1,12 @@
-import { useCallback, useEffect, useRef, type MutableRefObject } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
+import { useSession } from '@/shared/session/session-context';
 import { TRACK_HEADER_WIDTH } from './model/timeline-layout';
-import styles from './Timeline.module.css';
+import styles from './TimelineView.module.css';
 
-interface TimelinePlayheadProps {
-  positionRef: MutableRefObject<number>;
-  positionTick: number;
-  pixelsPerTick: number;
-  playing: boolean;
-}
-
-export function TimelinePlayhead({
-  positionRef,
-  positionTick,
-  pixelsPerTick,
-  playing,
-}: TimelinePlayheadProps) {
+export function TimelinePlayhead({ pixelsPerTick }: { pixelsPerTick: number }) {
+  const positionRef = useSession((state) => state.transport.playhead);
+  const positionTick = useSession((state) => state.transport.displayTick);
+  const playing = useSession((state) => state.transport.status?.state === 'playing');
   const elementRef = useRef<HTMLDivElement>(null);
 
   const updatePosition = useCallback(() => {

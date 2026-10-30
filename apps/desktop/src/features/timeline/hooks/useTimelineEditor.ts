@@ -1,5 +1,5 @@
 import { snapToBar } from '@/model/timebase';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import type { AudioAnalysis, CreativeSession } from '@/model/generated';
 import type { EditorSelection } from '../../../model/editor-selection';
 import { type TimelineTool } from '@/features/timeline/model/timeline-layout';
@@ -167,10 +167,11 @@ export function useTimelineEditor(options: UseTimelineEditorOptions) {
     });
   };
 
-  useEffect(() => {
-    const keydown = (event: KeyboardEvent) => {
+  /** Handles clip editing keys; returns whether the key belonged to the timeline. */
+  const handleKeyboard = useCallback(
+    (event: KeyboardEvent) => {
       const key = event.key.toLowerCase();
-      if (isEditableTypingTarget(event.target)) return;
+      if (isEditableTypingTarget(event.target)) return false;
       if (event.ctrlKey && key === 'a') {
         event.preventDefault();
         setSelectedClipIds([
@@ -249,24 +250,26 @@ export function useTimelineEditor(options: UseTimelineEditorOptions) {
               .map((clip) => clip.id),
           ),
         ).then(() => setSelectedClipIds([]));
+      } else {
+        return false;
       }
-    };
-    window.addEventListener('keydown', keydown);
-    return () => window.removeEventListener('keydown', keydown);
-  }, [
-    arrangement.audioClips,
-    arrangement.midiClips,
-    commit,
-    displayTick,
-    pasteTimelineClips,
-    removeTimelineClips,
-    selectedClipIds,
-    setSelectedClipIds,
-    snapTick,
-    splitClip,
-    splitMidiClip,
-    timebase,
-  ]);
+      return true;
+    },
+    [
+      arrangement.audioClips,
+      arrangement.midiClips,
+      commit,
+      displayTick,
+      pasteTimelineClips,
+      removeTimelineClips,
+      selectedClipIds,
+      setSelectedClipIds,
+      snapTick,
+      splitClip,
+      splitMidiClip,
+      timebase,
+    ],
+  );
 
   return {
     snapGuide,
@@ -275,6 +278,7 @@ export function useTimelineEditor(options: UseTimelineEditorOptions) {
     snapTick,
     selectClip,
     beginMarquee,
+    handleKeyboard,
     ...clipInteractions,
   };
 }

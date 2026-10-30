@@ -1,10 +1,7 @@
 import type { EditorCommit } from './useTimelineEditor';
 import { useCallback, useEffect, useState, type MutableRefObject, type PointerEvent } from 'react';
 import type { CreativeSession, Marker } from '@/model/generated';
-import { useSessionContext } from '@/shared/session/session-context';
-import { HostConnectionChangedError } from '@/native/invoke';
-import { errorText } from '@/shared/errors';
-import { showToast } from '@/shared/toasts';
+import { useSessionContext, useSessionStore } from '@/shared/session/session-context';
 import { tickToMusicalPosition } from '@/model/time-format';
 import { isEditableTypingTarget } from '@/shared/input';
 import { usePointerGesture } from '@/shared/usePointerGesture';
@@ -34,7 +31,6 @@ interface TimelineRulerControllerOptions {
   pixelsPerTick: number;
   displayTickRef: MutableRefObject<number>;
   selectedClipCount: number;
-  seekLocally: (tick: number) => void;
 }
 
 export function useTimelineRulerController({
@@ -44,9 +40,9 @@ export function useTimelineRulerController({
   pixelsPerTick,
   displayTickRef,
   selectedClipCount,
-  seekLocally,
 }: TimelineRulerControllerOptions) {
   const { api } = useSessionContext();
+  const store = useSessionStore();
   const startGesture = usePointerGesture();
   const [selectedMarkerId, setSelectedMarkerId] = useState<string | null>(null);
   const [selectedRange, setSelectedRange] = useState<RangeKind | null>(null);
@@ -183,11 +179,7 @@ export function useTimelineRulerController({
       const originTick = snapTick((event.clientX - bounds.left) / pixelsPerTick, event.altKey);
       const originX = event.clientX;
       let seeking = true;
-      seekLocally(originTick);
-      void api.seekTimeline(originTick).catch((error) => {
-        if (error instanceof HostConnectionChangedError) return;
-        showToast('timeline', errorText(error), { kind: 'error' });
-      });
+      void store.getState().transport.seek(originTick);
       const handle = (move: globalThis.PointerEvent) => {
         const tick = snapTick((move.clientX - bounds.left) / pixelsPerTick, move.altKey);
         if (seeking && Math.abs(move.clientX - originX) > 4) {
@@ -199,11 +191,7 @@ export function useTimelineRulerController({
           return;
         }
         if (seeking) {
-          seekLocally(tick);
-          void api.seekTimeline(tick).catch((error) => {
-            if (error instanceof HostConnectionChangedError) return;
-            showToast('timeline', errorText(error), { kind: 'error' });
-          });
+          void store.getState().transport.seek(tick);
         } else {
           setTimeSelection((current) =>
             current
@@ -220,7 +208,7 @@ export function useTimelineRulerController({
         onCancel: () => setTimeSelection(null),
       });
     },
-    [api, pixelsPerTick, seekLocally, snapTick, startGesture],
+    [store, pixelsPerTick, snapTick, startGesture],
   );
 
   const dragRangeHandle = useCallback(

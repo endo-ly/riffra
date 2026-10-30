@@ -1,14 +1,7 @@
 import { ContextMenu, type ContextMenuItem } from '@/shared/ui/ContextMenu';
 import { ConfirmDialog } from '@/shared/ui/ConfirmDialog';
-import overlayStyles from './WorkspaceOverlays.module.css';
-
-export interface WorkspaceConfirmRequest {
-  title: string;
-  message: string;
-  confirmLabel?: string;
-  danger?: boolean;
-  onConfirm: () => void;
-}
+import type { WorkspaceConfirmRequest } from './hooks/useTimelineTrackOperations';
+import overlayStyles from './TimelineOverlays.module.css';
 
 interface WorkspaceMarkerRenameController {
   markerRename: { markerId: string; name: string } | null;
@@ -17,7 +10,7 @@ interface WorkspaceMarkerRenameController {
   cancelMarkerRename: () => void;
 }
 
-interface WorkspaceOverlaysProps {
+interface TimelineOverlaysProps {
   ruler: WorkspaceMarkerRenameController;
   contextMenu: { x: number; y: number; items: ContextMenuItem[] } | null;
   onCloseContextMenu: () => void;
@@ -25,7 +18,7 @@ interface WorkspaceOverlaysProps {
   onDismissConfirm: () => void;
 }
 
-export function WorkspaceOverlays(props: WorkspaceOverlaysProps) {
+export function TimelineOverlays(props: TimelineOverlaysProps) {
   return (
     <>
       {props.ruler.markerRename && (
