@@ -9,6 +9,9 @@ import type {
   Track,
 } from '@/model/generated';
 import { useSessionContext } from '@/shared/session/session-context';
+import { useChannelMixValue } from '@/shared/session/useChannelMixValue';
+import { MIX_GAIN_DB, MIX_PAN } from '@/model/mix-range';
+import { ValueSlider } from '@/shared/ui/ValueSlider';
 import { AudioClipView } from './AudioClipView';
 import { MidiClipView } from './MidiClipView';
 import {
@@ -22,11 +25,11 @@ import { isBrowserItemDrag } from '@/features/timeline/hooks/useTimelineDrop';
 import { resolveTrackColor } from '@/model/track-color';
 import { formatGainDb, formatPan } from '@/shared/audio/mix-format';
 import { Icon } from '@/shared/ui/primitives';
-import controls from '@/shared/ui/controls.module.css';
 import { usePointerGesture } from '@/shared/usePointerGesture';
 import styles from './Timeline.module.css';
 
 interface TimelineTrackProps {
+  sessionId: string;
   track: Track;
   trackIndex?: number;
   timeline: TrackTimeline;
@@ -80,6 +83,8 @@ interface PendingTrackValues {
 
 export function TimelineTrack(props: TimelineTrackProps) {
   const { api } = useSessionContext();
+  const gain = useChannelMixValue(props.track, 'gainDb', { sessionId: props.sessionId });
+  const pan = useChannelMixValue(props.track, 'pan', { sessionId: props.sessionId });
   const startGesture = usePointerGesture();
   const detailsRef = useRef<HTMLDetailsElement>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -370,47 +375,25 @@ export function TimelineTrack(props: TimelineTrackProps) {
         {showVolume && (
           <label className={styles.trackControl}>
             <span>VOL</span>
-            <input
-              key={`${props.track.id}:gain:${props.track.gainDb}`}
-              className={controls.slider}
-              aria-label={`${props.track.name} gain`}
-              type="range"
-              min="-60"
-              max="12"
-              step="0.5"
-              defaultValue={props.track.gainDb}
-              onPointerUp={(event) =>
-                void props.onCommit(
-                  api.updateTrack(props.track.id, {
-                    gainDb: Number(event.currentTarget.value),
-                  }),
-                )
-              }
+            <ValueSlider
+              control={gain}
+              range={MIX_GAIN_DB}
+              fillOrigin={MIX_GAIN_DB.min}
+              ariaLabel={`${props.track.name} gain`}
             />
-            <output>{formatGainDb(props.track.gainDb)}</output>
+            <output>{formatGainDb(gain.value)}</output>
           </label>
         )}
         {showPan && (
           <label className={styles.trackControl}>
             <span>PAN</span>
-            <input
-              key={`${props.track.id}:pan:${props.track.pan}`}
-              className={controls.slider}
-              aria-label={`${props.track.name} pan`}
-              type="range"
-              min="-1"
-              max="1"
-              step="0.05"
-              defaultValue={props.track.pan}
-              onPointerUp={(event) =>
-                void props.onCommit(
-                  api.updateTrack(props.track.id, {
-                    pan: Number(event.currentTarget.value),
-                  }),
-                )
-              }
+            <ValueSlider
+              control={pan}
+              range={MIX_PAN}
+              fillOrigin={0}
+              ariaLabel={`${props.track.name} pan`}
             />
-            <output>{formatPan(props.track.pan)}</output>
+            <output>{formatPan(pan.value)}</output>
           </label>
         )}
       </aside>

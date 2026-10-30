@@ -1,62 +1,49 @@
-import { useRef, useState, type CSSProperties } from 'react';
+import type { MixRange } from '@/model/mix-range';
+import type { PreviewedValue } from '@/shared/session/usePreviewedValue';
+import { ValueSlider } from '@/shared/ui/ValueSlider';
+import { useRef, useState } from 'react';
 import styles from './Inspector.module.css';
 
 interface MixValueFieldProps {
   label: string;
   /** Accessible name of the slider; the value editor reads as `Edit <name>`. */
   name: string;
-  value: number;
-  min: number;
-  max: number;
+  control: PreviewedValue;
+  range: MixRange;
   /** Value the slider fill grows from: `min` for a level, the center for a balance. */
-  origin: number;
-  step: number;
-  /** Step for typed values, finer than the slider's. */
-  inputStep: number;
+  fillOrigin: number;
   format: (value: number) => string;
-  onCommit: (value: number) => void;
 }
 
-/**
- * One line of label, slider and value. The slider fills from `origin` to the
- * value. Clicking the value switches it to a number field. A drag or typed
- * value is shown only while it is being edited; otherwise the field reflects
- * the current value, so rejected input never lingers.
- */
+/** One line of label, shared range control and a directly editable value. */
 export function MixValueField(props: MixValueFieldProps) {
-  const [draft, setDraft] = useState<number | null>(null);
   const [typing, setTyping] = useState(false);
-  const cancelled = useRef(false);
-  const shown = draft ?? props.value;
-  const percent = (value: number) => ((value - props.min) / (props.max - props.min)) * 100;
-  const fill = {
-    '--fill-start': `${Math.min(percent(shown), percent(props.origin))}%`,
-    '--fill-end': `${Math.max(percent(shown), percent(props.origin))}%`,
-  } as CSSProperties;
+  const [text, setText] = useState('');
+  const canceled = useRef(false);
 
-  const finish = (next: number | null) => {
-    if (next !== null && Number.isFinite(next)) {
-      const value = Math.max(props.min, Math.min(props.max, next));
-      if (value !== props.value) props.onCommit(value);
+  const finish = (raw: string) => {
+    if (canceled.current) {
+      canceled.current = false;
+      return;
     }
-    setDraft(null);
+    const next = Number(raw);
+    if (!Number.isFinite(next)) {
+      props.control.cancel();
+      return;
+    }
+    const value = Math.max(props.range.min, Math.min(props.range.max, next));
+    props.control.change(value);
+    void props.control.commit(value);
   };
 
   return (
     <div className={styles.mixField}>
       <span className={styles.rowLabel}>{props.label}</span>
-      <input
-        className={styles.range}
-        aria-label={props.name}
-        type="range"
-        min={props.min}
-        max={props.max}
-        step={props.step}
-        value={shown}
-        style={fill}
-        onChange={(event) => setDraft(Number(event.currentTarget.value))}
-        onPointerUp={() => finish(draft)}
-        onKeyUp={() => finish(draft)}
+      <ValueSlider
+        control={props.control}
+        range={props.range}
+        ariaLabel={props.name}
+        fillOrigin={props.fillOrigin}
       />
       {typing ? (
         <input
@@ -64,21 +51,28 @@ export function MixValueField(props: MixValueFieldProps) {
           aria-label={`Edit ${props.name.toLowerCase()}`}
           autoFocus
           type="number"
-          min={props.min}
-          max={props.max}
-          step={props.inputStep}
-          value={shown}
-          onChange={(event) => setDraft(Number(event.currentTarget.value))}
-          onBlur={() => {
+          min={props.range.min}
+          max={props.range.max}
+          step={props.range.step}
+          value={text}
+          onFocus={props.control.begin}
+          onChange={(event) => setText(event.currentTarget.value)}
+          onBlur={(event) => {
             setTyping(false);
-            finish(cancelled.current ? null : draft);
-            cancelled.current = false;
+            finish(event.currentTarget.value);
           }}
           onKeyDown={(event) => {
-            if (event.key === 'Enter') event.currentTarget.blur();
+            if (event.key === 'Enter') {
+              event.preventDefault();
+              finish(event.currentTarget.value);
+              setTyping(false);
+            }
             if (event.key === 'Escape') {
-              cancelled.current = true;
-              event.currentTarget.blur();
+              event.preventDefault();
+              event.stopPropagation();
+              canceled.current = true;
+              props.control.cancel();
+              setTyping(false);
             }
           }}
         />
@@ -87,9 +81,13 @@ export function MixValueField(props: MixValueFieldProps) {
           type="button"
           className={styles.value}
           aria-label={`Edit ${props.name.toLowerCase()}`}
-          onClick={() => setTyping(true)}
+          onClick={() => {
+            canceled.current = false;
+            setText(String(props.control.value));
+            setTyping(true);
+          }}
         >
-          {props.format(shown)}
+          {props.format(props.control.value)}
         </button>
       )}
     </div>

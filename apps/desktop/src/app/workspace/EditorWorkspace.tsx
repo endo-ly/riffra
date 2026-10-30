@@ -656,6 +656,7 @@ export function EditorWorkspace(props: EditorWorkspaceProps) {
             arrangement.tracks.map((track, trackIndex) => (
               <Fragment key={track.id}>
                 <TimelineTrack
+                  sessionId={props.session.sessionId}
                   track={track}
                   soloActive={soloActive}
                   trackIndex={trackIndex}

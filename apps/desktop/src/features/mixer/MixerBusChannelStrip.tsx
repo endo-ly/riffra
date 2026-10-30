@@ -1,11 +1,12 @@
 import type { MixBusPatch } from '@/model/generated';
 import type { MixBus } from '@/model/generated';
+import { MIX_GAIN_DB, MIX_PAN } from '@/model/mix-range';
 import { formatGainDb, formatPan } from '@/shared/audio/mix-format';
 import { useSessionContext } from '@/shared/session/session-context';
-import { ChannelMixSlider } from './ChannelMixSlider';
+import { useChannelMixValue } from '@/shared/session/useChannelMixValue';
+import { ValueSlider } from '@/shared/ui/ValueSlider';
 import styles from './Mixer.module.css';
 import { MixerMeter } from './MixerMeter';
-import { useChannelMixControl } from './hooks/useChannelMixControl';
 
 interface Props {
   sessionId: string;
@@ -23,7 +24,8 @@ interface Props {
 export function MixerBusChannelStrip(props: Props) {
   const { api, commit: sessionCommit } = useSessionContext();
   const { bus } = props;
-  const mix = useChannelMixControl({ ...props, channel: bus });
+  const gain = useChannelMixValue(bus, 'gainDb', props);
+  const pan = useChannelMixValue(bus, 'pan', props);
   const commit = async (patch: MixBusPatch) => {
     await sessionCommit(api.updateMixBus(bus.id, patch), { onError: props.onError });
   };
@@ -54,16 +56,13 @@ export function MixerBusChannelStrip(props: Props) {
       </button>
       <label className={styles.panControl}>
         <span>
-          PAN <output>{formatPan(mix.pan)}</output>
+          PAN <output>{formatPan(pan.value)}</output>
         </span>
-        <ChannelMixSlider
-          mix={mix}
-          parameter="pan"
+        <ValueSlider
+          control={pan}
+          range={MIX_PAN}
+          fillOrigin={0}
           ariaLabel={`${bus.name} pan`}
-          min={-1}
-          max={1}
-          step={0.01}
-          value={mix.pan}
           disabled={props.disabled}
         />
       </label>
@@ -71,17 +70,14 @@ export function MixerBusChannelStrip(props: Props) {
         <MixerMeter busId={bus.id} />
         <label className={styles.faderControl}>
           <span className={styles.faderLabel}>GAIN</span>
-          <ChannelMixSlider
-            mix={mix}
-            parameter="gainDb"
+          <ValueSlider
+            control={gain}
+            range={MIX_GAIN_DB}
+            fillOrigin={MIX_GAIN_DB.min}
             ariaLabel={`${bus.name} gain`}
-            min={-90}
-            max={24}
-            step={0.1}
-            value={mix.gainDb}
             disabled={props.disabled}
           />
-          <output>{formatGainDb(mix.gainDb)}</output>
+          <output>{formatGainDb(gain.value)}</output>
         </label>
       </div>
       <div className={styles.switches}>

@@ -1,8 +1,11 @@
 import { clipDurationTicks } from '@/model/clip-time';
 import { formatMusicalLength } from '@/model/time-format';
 import type { ArrangementMutationResult, AudioClip, CreativeSession } from '@/model/generated';
+import type { CanonicalState } from '@/model/generated';
+import { MIX_GAIN_DB, MIX_PAN } from '@/model/mix-range';
 import { formatGainDb, formatPan } from '@/shared/audio/mix-format';
 import { useSessionContext } from '@/shared/session/session-context';
+import { usePreviewedValue } from '@/shared/session/usePreviewedValue';
 import type { ContextMenuItem } from '@/shared/ui/ContextMenu';
 import { Icon } from '@/shared/ui/primitives';
 import clsx from 'clsx';
@@ -187,29 +190,11 @@ export function AudioClipInspector(props: AudioClipInspectorProps) {
 
       <section className={styles.section} aria-label="Clip mix">
         <div className={styles.rows}>
-          <MixValueField
-            label="Gain"
-            name="Clip gain"
-            value={clip.gainDb}
-            min={-60}
-            max={24}
-            origin={-60}
-            step={0.5}
-            inputStep={0.1}
-            format={formatGainDb}
-            onCommit={(gainDb) => patch({ gainDb })}
-          />
-          <MixValueField
-            label="Pan"
-            name="Clip pan"
-            value={clip.pan}
-            min={-1}
-            max={1}
-            origin={0}
-            step={0.05}
-            inputStep={0.05}
-            format={formatPan}
-            onCommit={(pan) => patch({ pan })}
+          <AudioClipMixFields
+            key={clip.id}
+            clip={clip}
+            sessionId={props.session.sessionId}
+            onError={setMessage}
           />
         </div>
       </section>
@@ -279,4 +264,58 @@ export function AudioClipInspector(props: AudioClipInspectorProps) {
       {message && <p className={styles.message}>{message}</p>}
     </div>
   );
+}
+
+function AudioClipMixFields({
+  clip,
+  sessionId,
+  onError,
+}: {
+  clip: AudioClip;
+  sessionId: string;
+  onError: (message: string) => void;
+}) {
+  const { api } = useSessionContext();
+  const gain = useClipMixValue(clip, sessionId, 'gainDb', onError, api.updateAudioClip.bind(api));
+  const pan = useClipMixValue(clip, sessionId, 'pan', onError, api.updateAudioClip.bind(api));
+
+  return (
+    <>
+      <MixValueField
+        label="Gain"
+        name="Clip gain"
+        control={gain}
+        range={MIX_GAIN_DB}
+        fillOrigin={MIX_GAIN_DB.min}
+        format={formatGainDb}
+      />
+      <MixValueField
+        label="Pan"
+        name="Clip pan"
+        control={pan}
+        range={MIX_PAN}
+        fillOrigin={0}
+        format={formatPan}
+      />
+    </>
+  );
+}
+
+function useClipMixValue(
+  clip: AudioClip,
+  sessionId: string,
+  parameter: 'gainDb' | 'pan',
+  onError: (message: string) => void,
+  updateAudioClip: ReturnType<typeof useSessionContext>['api']['updateAudioClip'],
+) {
+  const read = (canonical: CanonicalState) =>
+    canonical.session.arrangement.audioClips.find((item) => item.id === clip.id)?.[parameter];
+  return usePreviewedValue({
+    value: clip[parameter],
+    sessionId,
+    target: `audioClip:${clip.id}:${parameter}`,
+    read,
+    submit: (value) => updateAudioClip(clip.id, { [parameter]: value }),
+    onError,
+  });
 }

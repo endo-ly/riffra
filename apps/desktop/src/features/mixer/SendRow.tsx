@@ -1,8 +1,11 @@
 import type { ReactNode } from 'react';
-import type { ArrangementMutationResult, SendPosition } from '@/model/generated';
+import type { SendPosition } from '@/model/generated';
+import { MIX_GAIN_DB } from '@/model/mix-range';
+import { formatGainDb } from '@/shared/audio/mix-format';
+import type { PreviewedValue } from '@/shared/session/usePreviewedValue';
 import { Icon } from '@/shared/ui/primitives';
+import { ValueSlider } from '@/shared/ui/ValueSlider';
 import controls from '@/shared/ui/controls.module.css';
-import { LevelSlider } from './LevelSlider';
 import styles from './SendRow.module.css';
 
 interface SendRowProps {
@@ -10,13 +13,10 @@ interface SendRowProps {
   label: string;
   /** Where the signal goes or comes from: a name or a picker. */
   endpoint: ReactNode;
-  levelDb: number;
+  level: PreviewedValue;
   position: SendPosition;
   enabled: boolean;
   removeLabel: string;
-  previewLevel: (value: number) => Promise<unknown>;
-  submitLevel: (value: number) => Promise<ArrangementMutationResult>;
-  commit: (operation: Promise<ArrangementMutationResult>) => void;
   onPositionChange: (position: SendPosition) => void;
   onEnabledChange: (enabled: boolean) => void;
   onOpenAutomation: () => void;
@@ -42,14 +42,14 @@ export function SendRow(props: SendRowProps) {
         onChange={(event) => props.onEnabledChange(event.currentTarget.checked)}
       />
       <div className={styles.endpoint}>{props.endpoint}</div>
-      <LevelSlider
+      <ValueSlider
+        control={props.level}
+        range={MIX_GAIN_DB}
+        fillOrigin={MIX_GAIN_DB.min}
         ariaLabel={`${props.label} level`}
-        initial={props.levelDb}
-        enabled={props.enabled}
-        preview={props.previewLevel}
-        submit={props.submitLevel}
-        commit={props.commit}
+        disabled={!props.enabled}
       />
+      <output>{formatGainDb(props.level.value)}</output>
       <div className={controls.segmented} role="group" aria-label="Position">
         {POSITIONS.map(([position, label, title]) => (
           <button

@@ -1,7 +1,9 @@
 import type { CreativeSession } from '@/model/generated';
+import { MASTER_GAIN_DB } from '@/model/mix-range';
 import { useAudioMeters } from '@/shared/audio/audio-meters';
 import { Meter } from '@/shared/ui/primitives';
-import { useMasterGainControl } from './hooks/useMasterGainControl';
+import { ValueSlider } from '@/shared/ui/ValueSlider';
+import { useMasterGainValue } from './hooks/useMasterGainValue';
 import styles from './AudioMonitor.module.css';
 
 interface AudioMonitorProps {
@@ -12,16 +14,7 @@ interface AudioMonitorProps {
 export function AudioMonitor(props: AudioMonitorProps) {
   const { session } = props;
   const meters = useAudioMeters();
-  const {
-    draftDb: masterDraftDb,
-    setDraftDb: setMasterDraftDb,
-    beginEditing,
-    preview,
-    commit,
-  } = useMasterGainControl({
-    session,
-    disabled: props.disabled,
-  });
+  const master = useMasterGainValue(session, { disabled: props.disabled });
 
   return (
     <div className={styles.monitor} data-audio-monitor aria-label="Audio monitor">
@@ -33,35 +26,12 @@ export function AudioMonitor(props: AudioMonitorProps) {
       </div>
       <label className={styles.master}>
         <span>Master</span>
-        <strong>{masterDraftDb.toFixed(1)} dB</strong>
-        <input
-          aria-label="Master volume"
+        <strong>{master.value.toFixed(1)} dB</strong>
+        <ValueSlider
+          control={master}
+          range={MASTER_GAIN_DB}
           disabled={props.disabled}
-          type="range"
-          min="-90"
-          max="0"
-          step="0.5"
-          value={masterDraftDb}
-          onPointerDown={beginEditing}
-          onKeyDown={(event) => {
-            if (
-              ['ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'].includes(event.key)
-            )
-              beginEditing();
-          }}
-          onPointerUp={(event) => void commit(Number(event.currentTarget.value))}
-          onBlur={(event) => void commit(Number(event.currentTarget.value))}
-          onKeyUp={(event) => {
-            if (
-              ['ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'].includes(event.key)
-            )
-              void commit(Number(event.currentTarget.value));
-          }}
-          onChange={(event) => {
-            const gainDb = Number(event.target.value);
-            setMasterDraftDb(gainDb);
-            preview(gainDb);
-          }}
+          ariaLabel="Master volume"
         />
       </label>
     </div>

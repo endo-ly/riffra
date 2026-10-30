@@ -227,10 +227,12 @@ export function MixerPanel(props: MixerPanelProps) {
       )}
       {routingTrack && (
         <MixerRouting
+          sessionId={props.session.sessionId}
           onOpenAutomation={props.onOpenAutomation}
           arrangement={arrangement}
           track={routingTrack}
           commit={commit}
+          onError={setError}
           onClose={() => setRoutingTrackId(null)}
         />
       )}

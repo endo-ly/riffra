@@ -1,9 +1,11 @@
-import { useMasterGainControl } from '@/features/audio/hooks/useMasterGainControl';
+import { useMasterGainValue } from '@/features/audio/hooks/useMasterGainValue';
+import { MASTER_GAIN_DB } from '@/model/mix-range';
 import type { CreativeSession } from '@/model/generated';
 import { useAudioMeters } from '@/shared/audio/audio-meters';
 import { formatGainDb } from '@/shared/audio/mix-format';
+import { ValueSlider } from '@/shared/ui/ValueSlider';
 import { Icon } from '@/shared/ui/primitives';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import styles from './Mixer.module.css';
 import { MixerMeter } from './MixerMeter';
 
@@ -40,16 +42,7 @@ export function MixerMasterChannelStrip(props: MixerMasterChannelStripProps) {
     previousClipCount.current = meters.hardClipSamples;
     return undefined;
   }, [meters.available, meters.hardClipSamples]);
-  const master = useMasterGainControl({
-    session: props.session,
-    disabled: props.disabled,
-  });
-  const commit = useCallback(
-    (value: number) => {
-      void master.commit(value);
-    },
-    [master],
-  );
+  const master = useMasterGainValue(props.session, { disabled: props.disabled });
   const safetyWarning =
     meters.available &&
     (meters.feedbackSuspected || clipLatched || meters.limiterGainReductionDb > 0);
@@ -86,37 +79,14 @@ export function MixerMasterChannelStrip(props: MixerMasterChannelStripProps) {
 
         <label className={styles.masterFader}>
           <span>MASTER GAIN</span>
-          <input
-            type="range"
-            min="-90"
-            max="0"
-            step="0.5"
-            value={master.draftDb}
+          <ValueSlider
+            control={master}
+            range={MASTER_GAIN_DB}
+            fillOrigin={MASTER_GAIN_DB.min}
             disabled={props.disabled}
-            aria-label="Master mixer gain"
-            onPointerDown={master.beginEditing}
-            onKeyDown={(event) => {
-              if (
-                ['ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'].includes(event.key)
-              )
-                master.beginEditing();
-            }}
-            onChange={(event) => {
-              const value = Number(event.currentTarget.value);
-              master.setDraftDb(value);
-              master.preview(value);
-            }}
-            onPointerUp={(event) => commit(Number(event.currentTarget.value))}
-            onBlur={(event) => commit(Number(event.currentTarget.value))}
-            onKeyUp={(event) => {
-              if (
-                ['ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'].includes(event.key)
-              ) {
-                commit(Number(event.currentTarget.value));
-              }
-            }}
+            ariaLabel="Master mixer gain"
           />
-          <output>{formatGainDb(master.draftDb)}</output>
+          <output>{formatGainDb(master.value)}</output>
         </label>
       </div>
 

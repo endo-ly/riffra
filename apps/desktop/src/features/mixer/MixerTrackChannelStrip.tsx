@@ -1,11 +1,12 @@
 import { resolveTrackColor } from '@/model/track-color';
 import type { AutomationLane, Track } from '@/model/generated';
+import { MIX_GAIN_DB, MIX_PAN } from '@/model/mix-range';
 import { formatGainDb, formatPan } from '@/shared/audio/mix-format';
 import { useSessionContext } from '@/shared/session/session-context';
 import { Icon } from '@/shared/ui/primitives';
+import { ValueSlider } from '@/shared/ui/ValueSlider';
 import { useState, type CSSProperties } from 'react';
-import { ChannelMixSlider } from './ChannelMixSlider';
-import { useChannelMixControl } from './hooks/useChannelMixControl';
+import { useChannelMixValue } from '@/shared/session/useChannelMixValue';
 import styles from './Mixer.module.css';
 import { MixerMeter } from './MixerMeter';
 interface MixerTrackChannelStripProps {
@@ -29,9 +30,13 @@ export function MixerTrackChannelStrip(props: MixerTrackChannelStripProps) {
   const { api, commit: sessionCommit } = useSessionContext();
   const { track } = props;
   const [pendingSwitch, setPendingSwitch] = useState<'muted' | 'solo' | 'armed' | null>(null);
-  const mix = useChannelMixControl({
+  const gain = useChannelMixValue(track, 'gainDb', {
     sessionId: props.sessionId,
-    channel: track,
+    onError: props.onError,
+    disabled: props.disabled,
+  });
+  const pan = useChannelMixValue(track, 'pan', {
+    sessionId: props.sessionId,
     onError: props.onError,
     disabled: props.disabled,
   });
@@ -91,23 +96,15 @@ export function MixerTrackChannelStrip(props: MixerTrackChannelStripProps) {
       </button>
       <label className={styles.panControl}>
         <span>
-          PAN · STATIC <output>{formatPan(mix.pan)}</output>
+          PAN · STATIC <output>{formatPan(pan.value)}</output>
           {props.panAutomation?.points.length ? <b>AUTO</b> : null}
         </span>
-        <ChannelMixSlider
-          mix={mix}
-          parameter="pan"
-          min={-1}
-          max={1}
-          step={0.01}
-          value={mix.pan}
+        <ValueSlider
+          control={pan}
+          range={MIX_PAN}
+          fillOrigin={0}
           disabled={props.disabled}
           ariaLabel={`${track.name} pan`}
-          onDoubleClick={() => {
-            mix.setPan(0);
-            mix.schedulePreview('pan', 0);
-            void mix.commit('pan', 0);
-          }}
         />
       </label>
 
@@ -119,22 +116,14 @@ export function MixerTrackChannelStrip(props: MixerTrackChannelStripProps) {
             <span>GAIN · STATIC</span>
             {props.volumeAutomation?.points.length ? <b>AUTO</b> : null}
           </span>
-          <ChannelMixSlider
-            mix={mix}
-            parameter="gainDb"
-            min={-90}
-            max={24}
-            step={0.1}
-            value={mix.gainDb}
+          <ValueSlider
+            control={gain}
+            range={MIX_GAIN_DB}
+            fillOrigin={MIX_GAIN_DB.min}
             disabled={props.disabled}
             ariaLabel={`${track.name} gain`}
-            onDoubleClick={() => {
-              mix.setGainDb(0);
-              mix.schedulePreview('gainDb', 0);
-              void mix.commit('gainDb', 0);
-            }}
           />
-          <output>{formatGainDb(mix.gainDb)}</output>
+          <output>{formatGainDb(gain.value)}</output>
         </label>
       </div>
 
