@@ -74,10 +74,12 @@ export function createTransportSlice(
         playing: status.state === 'playing',
       };
       playhead.current = status.timelineTick;
-      update({
-        status: meaningfullyChanged(get().status, status) ? status : get().status,
-        displayTick: status.timelineTick,
-      });
+      const previous = get();
+      const next = meaningfullyChanged(previous.status, status) ? status : previous.status;
+      // The Host repeats its status while nothing moves; keep the state identity
+      // so only a real change reaches the components that read it.
+      if (next === previous.status && previous.displayTick === status.timelineTick) return;
+      update({ status: next, displayTick: status.timelineTick });
     },
     seekLocally(tick) {
       anchor = { tick, at: performance.now(), playing: get().status?.state === 'playing' };

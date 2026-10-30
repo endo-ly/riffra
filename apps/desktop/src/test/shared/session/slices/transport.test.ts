@@ -83,6 +83,23 @@ describe('transport', () => {
     expect(store.getState().transport.playhead.current).toBe(0);
   });
 
+  it('keeps the transport state when the Host repeats its status', async () => {
+    // Arrange
+    const { api, store } = await setup();
+    api.emitTransportStatus({ timelineTick: 960 });
+    const settled = store.getState().transport;
+    let updates = 0;
+    const stop = store.subscribe(() => (updates += 1));
+
+    // Act
+    api.emitTransportStatus({ timelineTick: 960 });
+
+    // Assert
+    stop();
+    expect(updates).toBe(0);
+    expect(store.getState().transport).toBe(settled);
+  });
+
   it('publishes a display tick only while the playhead moves', () => {
     // Arrange
     const api = createFakeNativeApi();
