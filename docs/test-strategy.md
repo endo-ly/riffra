@@ -24,7 +24,7 @@
 
 Rust側のUnit testは対象実装と同じソースファイル内に置き、別モジュールや専用ファイルへ集約しない。フロントエンドのテストは `apps/desktop/src/test/` に集約し、`app/`、`features/`、`model/`、`native/`、`shared/` の所有領域に対応する階層へ置く。FakeNativeApiとテスト用Providerは `test/support/` に置き、部品テストは `createFakeNativeApi` で作った `FakeNativeApi` を注入して呼び出し記録とイベント発火を扱う。制作規則・履歴・検証の判断はCoreのテストが担うため、部品テストが制作規則を再実装することはない。
 
-画面をまたいで共有する状態と操作は `shared/session/` のセッションストアが持つ。そのため、アプリ全体の状態と操作は `createSessionStore(createFakeNativeApi(…))` に対してスライスを直接呼んでテストし、Nativeイベントに依存する観点は `bindSessionRuntime(store, api)` を呼んでからイベントを発火する。部品のテストは `TestSessionProvider`（または `renderWithSession`）でストアを与え、ストアの状態と操作を props で渡さない。
+画面をまたいで共有する状態と操作は `shared/session/` のセッションストアが持つ。そのため、アプリ全体の状態と操作は `createSessionStore(createFakeNativeApi(…))` に対してスライスを直接呼んでテストし、Nativeイベントに依存する観点は `bindSessionRuntime(store, api)` を呼んでからイベントを発火する。部品のテストは `TestSessionProvider`（または `renderWithSession`）でストアを与え、ストアの状態と操作を props で渡さない。再描画の範囲は、値を描く部品の描画回数で確認する。再生位置のように高頻度で変わる値を受け取っても、それを描かない部品が再描画されないことを、タイムラインのトラック行で固定する。
 
 ---
 
