@@ -1,9 +1,9 @@
-import { TestSessionProvider } from '@/test/support/session-provider';
+import { createTestSessionStore, TestSessionProvider } from '@/test/support/session-provider';
 // @vitest-environment jsdom
 import type { RenderResult } from '@/model/generated';
 import { canonicalState, defaultSession } from '@/native/browser-defaults';
 import { toAssetId } from '@/model/asset-id';
-import { FakeNativeApi } from '@/test/support/fake-native-api';
+import { createFakeNativeApi } from '@/test/support/fake-native-api';
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useState } from 'react';
@@ -14,7 +14,7 @@ afterEach(cleanup);
 
 it('starts an unchanged mixdown render without committing a settings mutation', async () => {
   const session = defaultSession();
-  const api = new FakeNativeApi();
+  const api = createFakeNativeApi();
   const setMixdown = vi.fn(async () => {
     throw new Error('unchanged settings must not be committed');
   });
@@ -52,7 +52,7 @@ it.each(['measured', 'unavailable'] as const)(
   'saves canonical mastering targets and displays the completed %s WAV',
   async (state) => {
     const session = defaultSession();
-    const api = new FakeNativeApi();
+    const api = createFakeNativeApi();
     const setMixdown = vi.fn(async (settings) => {
       session.settings.mixdown = structuredClone(settings);
       return {
@@ -124,11 +124,13 @@ it.each(['measured', 'unavailable'] as const)(
     }));
     function Harness() {
       const [current, setCurrent] = useState(structuredClone(session));
+      const [store] = useState(() =>
+        createTestSessionStore(api, {
+          applyCanonical: (canonical) => setCurrent(canonical.session),
+        }),
+      );
       return (
-        <TestSessionProvider
-          api={api}
-          applyCanonicalState={(canonical) => setCurrent(canonical.session)}
-        >
+        <TestSessionProvider api={api} store={store}>
           <MixdownDialog session={current} onClose={() => undefined} />
         </TestSessionProvider>
       );

@@ -5,9 +5,15 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import App from '@/app/App';
-import { useRuntimeRestartNotification } from '@/app/runtime/useRuntimeRestartNotification';
+import { createSessionStore } from '@/shared/session/store';
+import { bindSessionRuntime } from '@/shared/session/runtime';
 import { useAppUpdater } from '@/app/runtime/useAppUpdater';
-import { FakeNativeApi, fakeAudioStatus } from '@/test/support/fake-native-api';
+import { TestSessionProvider } from '@/test/support/session-provider';
+import {
+  createFakeNativeApi,
+  type FakeNativeApi,
+  fakeAudioStatus,
+} from '@/test/support/fake-native-api';
 import { defaultSession } from '@/native/browser-defaults';
 import { ToastStack } from '@/shared/ui/ToastStack';
 
@@ -24,7 +30,7 @@ async function renderApp(api: FakeNativeApi) {
 
 describe('App native boundary', () => {
   it('boots once and delegates emergency mute to the native host', async () => {
-    const api = new FakeNativeApi();
+    const api = createFakeNativeApi();
 
     await renderApp(api);
     expect(
@@ -40,7 +46,7 @@ describe('App native boundary', () => {
   });
 
   it('shows a Bootstrap failure and returns to the app after Retry', async () => {
-    const api = new FakeNativeApi({
+    const api = createFakeNativeApi({
       failures: { bootstrap: new Error('Host bootstrap failed') },
     });
     render(<App api={api} />);
@@ -58,7 +64,7 @@ describe('App native boundary', () => {
   });
 
   it('supports both left column resize handles from the keyboard', async () => {
-    const api = new FakeNativeApi();
+    const api = createFakeNativeApi();
     await renderApp(api);
 
     const leftColumnHandle = screen.getByRole('separator', {
@@ -75,7 +81,7 @@ describe('App native boundary', () => {
   });
 
   it('removes a collapsed left column from the interaction tree', async () => {
-    const api = new FakeNativeApi();
+    const api = createFakeNativeApi();
     await renderApp(api);
 
     const leftColumn = screen.getByRole('complementary', { name: 'Left column' });
@@ -92,12 +98,9 @@ describe('App native boundary', () => {
   });
 
   it('shows a runtime restart notification without replaying session commands', async () => {
-    const api = new FakeNativeApi();
-    function RuntimeNotification() {
-      useRuntimeRestartNotification({ api, hostGeneration: 0 });
-      return <ToastStack />;
-    }
-    render(<RuntimeNotification />);
+    const api = createFakeNativeApi();
+    const stop = bindSessionRuntime(createSessionStore(api), api);
+    render(<ToastStack />);
     await waitFor(() => expect(api.calls).toContain('onRuntimeRestarted'));
     const callsBeforeRestart = [...api.calls];
 
@@ -106,10 +109,11 @@ describe('App native boundary', () => {
     await waitFor(() => expect(screen.getByText('Audio engine restarted.')).toBeInTheDocument());
     expect(api.calls.filter((call) => call === 'retryRuntimeProjection')).toHaveLength(0);
     expect(api.calls.slice(0, callsBeforeRestart.length)).toEqual(callsBeforeRestart);
+    stop();
   });
 
   it('waits for runtime startup before starting the VST scan', async () => {
-    const api = new FakeNativeApi({
+    const api = createFakeNativeApi({
       bootstrapState: { runtimeStarted: false, runtimeStartupFinished: false },
     });
 
@@ -122,7 +126,7 @@ describe('App native boundary', () => {
   });
 
   it('retries runtime restoration once after a successful startup scan', async () => {
-    const api = new FakeNativeApi({
+    const api = createFakeNativeApi({
       bootstrapState: { runtimeStarted: false, runtimeStartupFinished: false },
     });
 
@@ -140,7 +144,7 @@ describe('App native boundary', () => {
   });
 
   it('ignores a cancelled transport failure after a newer status event', async () => {
-    const api = new FakeNativeApi();
+    const api = createFakeNativeApi();
     let rejectPlay: (reason?: unknown) => void = () => undefined;
     api.setResponse(
       'playTimeline',
@@ -161,7 +165,7 @@ describe('App native boundary', () => {
   });
 
   it('keeps the newest canonical state when events arrive out of order', async () => {
-    const api = new FakeNativeApi();
+    const api = createFakeNativeApi();
     await renderApp(api);
     const newer = { ...defaultSession(), projectName: 'Newest' };
     newer.arrangement.tracks.push({
@@ -214,7 +218,7 @@ describe('App native boundary', () => {
   });
 
   it('surfaces the native feedback cause in the global safety control', async () => {
-    const api = new FakeNativeApi({
+    const api = createFakeNativeApi({
       audio: fakeAudioStatus({
         state: 'muted',
         feedbackSuspected: true,
@@ -233,7 +237,7 @@ describe('App native boundary', () => {
   });
 
   it('offers the checked application update and installs it on demand', async () => {
-    const api = new FakeNativeApi({ responses: { checkForAppUpdate: '9.9.9' } });
+    const api = createFakeNativeApi({ responses: { checkForAppUpdate: '9.9.9' } });
 
     await renderApp(api);
 
@@ -244,9 +248,9 @@ describe('App native boundary', () => {
   });
 
   it('stays silent when the startup check fails and reports a failed manual check', async () => {
-    const api = new FakeNativeApi({ failures: { checkForAppUpdate: new Error('offline') } });
+    const api = createFakeNativeApi({ failures: { checkForAppUpdate: new Error('offline') } });
     function UpdateCheckProbe() {
-      const updater = useAppUpdater({ api });
+      const updater = useAppUpdater();
       return (
         <>
           <ToastStack />
@@ -256,7 +260,11 @@ describe('App native boundary', () => {
         </>
       );
     }
-    render(<UpdateCheckProbe />);
+    render(
+      <TestSessionProvider api={api}>
+        <UpdateCheckProbe />
+      </TestSessionProvider>,
+    );
 
     await waitFor(() => expect(api.calls).toContain('checkForAppUpdate'));
     expect(screen.queryByText(/check for updates/i)).not.toBeInTheDocument();

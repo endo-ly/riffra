@@ -1,5 +1,5 @@
 import { TestSessionProvider } from '@/test/support/session-provider';
-import { FakeNativeApi } from '@/test/support/fake-native-api';
+import { createFakeNativeApi } from '@/test/support/fake-native-api';
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest';
@@ -56,7 +56,7 @@ describe('PluginPicker', () => {
     const onSelectInstrument = vi.fn();
     const onSelectPlugin = vi.fn();
     render(
-      <TestSessionProvider api={new FakeNativeApi()}>
+      <TestSessionProvider api={createFakeNativeApi()}>
         <PluginPicker
           title="Choose Instrument"
           role="instrument"
@@ -87,7 +87,7 @@ describe('PluginPicker', () => {
   it('filters plug-ins by name or vendor and omits instrument sections for effect selection', () => {
     const onSelectPlugin = vi.fn();
     render(
-      <TestSessionProvider api={new FakeNativeApi()}>
+      <TestSessionProvider api={createFakeNativeApi()}>
         <PluginPicker
           title="Add Effect"
           role="effect"

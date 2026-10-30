@@ -4,7 +4,7 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AudioSettingsDialog } from '@/features/audio/AudioSettingsDialog';
+import { AudioSettingsDialogView } from '@/features/audio/AudioSettingsDialog';
 import { fakeAudioStatus } from '@/test/support/fake-native-api';
 import type {
   AudioDeviceProbe,
@@ -68,7 +68,7 @@ function renderDialog(
   const onApply = overrides.onApply ?? vi.fn(async () => fakeAudioStatus());
   const activeProbe = overrides.probe ?? probe;
   const view = render(
-    <AudioSettingsDialog
+    <AudioSettingsDialogView
       audio={
         overrides.audio ??
         fakeAudioStatus({
@@ -189,7 +189,7 @@ describe('AudioSettingsDialog', () => {
 
     const refreshedPassiveProbe = { ...passiveProbe, refreshedAtMs: 2 };
     view.rerender(
-      <AudioSettingsDialog
+      <AudioSettingsDialogView
         audio={audio}
         probe={refreshedPassiveProbe}
         safeMode={false}
@@ -209,7 +209,7 @@ describe('AudioSettingsDialog', () => {
 
     const reprobedPassiveProbe = { ...passiveProbe, refreshedAtMs: 3 };
     view.rerender(
-      <AudioSettingsDialog
+      <AudioSettingsDialogView
         audio={audio}
         probe={reprobedPassiveProbe}
         safeMode={false}
@@ -282,7 +282,7 @@ describe('AudioSettingsDialog', () => {
   it('disables Apply while recording is active', async () => {
     const onApply = vi.fn(async () => fakeAudioStatus());
     render(
-      <AudioSettingsDialog
+      <AudioSettingsDialogView
         audio={fakeAudioStatus({
           driver: 'Windows Audio',
           inputDevice: 'Mic',

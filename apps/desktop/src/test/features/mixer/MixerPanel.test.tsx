@@ -1,13 +1,13 @@
-import { TestSessionProvider } from '@/test/support/session-provider';
+import { createTestSessionStore, TestSessionProvider } from '@/test/support/session-provider';
 // @vitest-environment jsdom
 import type { CreativeSession, EffectOwner, MixBus } from '@/model/generated';
 import { canonicalState, defaultSession } from '@/native/browser-defaults';
-import { FakeNativeApi } from '@/test/support/fake-native-api';
+import { createFakeNativeApi } from '@/test/support/fake-native-api';
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
-import { MixerPanel } from '@/features/mixer/MixerPanel';
+import { MixerPanelView } from '@/features/mixer/MixerPanel';
 import { ToastStack } from '@/shared/ui/ToastStack';
 
 afterEach(cleanup);
@@ -29,7 +29,7 @@ it('edits Group and Send routes, commits their controls, and opens Bus and Maste
     midiInput: {},
     effects: [],
   });
-  const api = new FakeNativeApi();
+  const api = createFakeNativeApi();
   const receipt = () => ({
     canonical: canonicalState(structuredClone(session)),
     createdEntityIds: {},
@@ -92,9 +92,12 @@ it('edits Group and Send routes, commits their controls, and opens Bus and Maste
   function Harness() {
     const [current, setCurrent] = useState<CreativeSession>(structuredClone(session));
     const [owner, setOwner] = useState<EffectOwner | null>(null);
+    const [store] = useState(() =>
+      createTestSessionStore(api, { applyCanonical: (state) => setCurrent(state.session) }),
+    );
     return (
-      <TestSessionProvider api={api} applyCanonicalState={(state) => setCurrent(state.session)}>
-        <MixerPanel
+      <TestSessionProvider api={api} store={store}>
+        <MixerPanelView
           session={current}
           selectedTrackId={null}
           selectedOwner={owner}

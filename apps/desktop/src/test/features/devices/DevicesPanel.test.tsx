@@ -1,8 +1,8 @@
-import { TestSessionProvider } from '@/test/support/session-provider';
+import { createTestSessionStore, TestSessionProvider } from '@/test/support/session-provider';
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { Profiler, useState } from 'react';
+import { Profiler, useRef, useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type {
   AutomationTarget,
@@ -14,9 +14,9 @@ import type {
   Track,
 } from '@/model/generated';
 import { canonicalState, defaultSession } from '@/native/browser-defaults';
-import { FakeNativeApi } from '@/test/support/fake-native-api';
+import { createFakeNativeApi, type FakeNativeApi } from '@/test/support/fake-native-api';
 import { resolveDeviceTarget } from '@/features/devices/device-target';
-import { DevicesPanel } from '@/features/devices/DevicesPanel';
+import { DevicesPanelView } from '@/features/devices/DevicesPanel';
 
 afterEach(cleanup);
 const effect = {
@@ -79,7 +79,7 @@ function runtimeApi(
     channels: 0,
   },
 ) {
-  return new FakeNativeApi({
+  return createFakeNativeApi({
     responses: {
       inspectDevice: {
         id: effect.id,
@@ -123,13 +123,17 @@ function Harness({
   const initial = initialSession ?? defaultSession();
   if (!initialSession) initial.arrangement.tracks = [structuredClone(initialTrack)];
   const [session, setSession] = useState(initial);
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
+  const [store] = useState(() =>
+    createTestSessionStore(api, {
+      applyCanonical: (canonical) => setSession(canonical.session),
+      readCanonical: () => canonicalState(sessionRef.current),
+    }),
+  );
   return (
-    <TestSessionProvider
-      api={api}
-      applyCanonicalState={(canonical) => setSession(canonical.session)}
-      getCanonicalState={() => canonicalState(session)}
-    >
-      <DevicesPanel
+    <TestSessionProvider api={api} store={store}>
+      <DevicesPanelView
         sessionId={session.sessionId}
         automationLanes={session.arrangement.automationLanes}
         arrangement={session.arrangement}
@@ -313,13 +317,13 @@ describe('DevicesPanel', () => {
       onReplaceMissingPlugin: async () => undefined,
       onRescanMissingPlugins: async () => undefined,
     };
-    const { rerender } = render(<DevicesPanel {...props} />, {
+    const { rerender } = render(<DevicesPanelView {...props} />, {
       wrapper: ({ children }) => <TestSessionProvider api={api}>{children}</TestSessionProvider>,
     });
     fireEvent.click(screen.getByRole('button', { name: 'Test Effect' }));
     await waitFor(() => expect(api.listDeviceParameters).toHaveBeenCalled());
     rerender(
-      <DevicesPanel
+      <DevicesPanelView
         {...props}
         target={{ ...props.target, track: { ...track, effects: [] }, effects: [] }}
       />,
@@ -327,7 +331,7 @@ describe('DevicesPanel', () => {
     await act(async () => resolve(parameters));
     expect(screen.queryByLabelText('Level')).not.toBeInTheDocument();
     api.listDeviceParameters = vi.fn().mockRejectedValue(new Error('Inspection unavailable'));
-    rerender(<DevicesPanel {...props} />);
+    rerender(<DevicesPanelView {...props} />);
     fireEvent.click(screen.getByRole('button', { name: 'Test Effect' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Inspection unavailable');
     expect(screen.getByRole('button', { name: 'Test Effect' })).toBeInTheDocument();

@@ -1,4 +1,4 @@
-import { TestSessionProvider } from '@/test/support/session-provider';
+import { createTestSessionStore, TestSessionProvider } from '@/test/support/session-provider';
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest';
@@ -7,29 +7,25 @@ import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TransportControls } from '@/features/transport/TransportControls';
 import { canonicalState, defaultSession } from '@/native/browser-defaults';
-import { FakeNativeApi, fakeAudioStatus } from '@/test/support/fake-native-api';
+import {
+  createFakeNativeApi,
+  type FakeNativeApi,
+  fakeAudioStatus,
+} from '@/test/support/fake-native-api';
 
 afterEach(cleanup);
 
 function Harness({ api }: { api: FakeNativeApi }) {
   const initial = defaultSession();
   const [session, setSession] = useState(initial);
+  const [store] = useState(() =>
+    createTestSessionStore(api, { applyCanonical: (canonical) => setSession(canonical.session) }),
+  );
   return (
-    <TestSessionProvider
-      api={api}
-      applyCanonicalState={(canonical) => setSession(canonical.session)}
-    >
+    <TestSessionProvider api={api} store={store}>
       <TransportControls
         session={session}
         recordingActive={api.audio.recording.active}
-        positionTick={0}
-        transportPlaying={false}
-        transportStarting={false}
-        transportPaused={false}
-        onPlay={() => undefined}
-        onPause={() => undefined}
-        onStop={() => undefined}
-        onGoToStart={() => undefined}
         recordingCommandPending={false}
         onToggleRecording={() => undefined}
       />
@@ -39,7 +35,7 @@ function Harness({ api }: { api: FakeNativeApi }) {
 
 describe('TransportControls', () => {
   it('commits BPM and meter changes from the Arrange transport', async () => {
-    const api = new FakeNativeApi({
+    const api = createFakeNativeApi({
       bootstrapState: { canonical: canonicalState(defaultSession()) },
       audio: fakeAudioStatus(),
     });
@@ -59,7 +55,7 @@ describe('TransportControls', () => {
 
   it('chooses the metronome sound from the metronome context menu', async () => {
     // Arrange
-    const api = new FakeNativeApi({
+    const api = createFakeNativeApi({
       bootstrapState: { canonical: canonicalState(defaultSession()) },
       audio: fakeAudioStatus(),
     });
