@@ -6,6 +6,8 @@ import { type TimelineTool } from '@/features/timeline/model/timeline-layout';
 import { timelineObjectEndTick } from '@/model/clip-time';
 import { snapGridTicks, type SnapGrid } from '@/model/clip-grid';
 import { isEditableTypingTarget } from '@/shared/input';
+import { idsInClientRect } from '@/shared/rect-selection';
+import { usePointerGesture } from '@/shared/usePointerGesture';
 import { useClipInteractions } from './useClipInteractions';
 import { useSessionContext } from '@/shared/session/session-context';
 import type { SessionCommit } from '@/shared/session/commit';
@@ -38,6 +40,7 @@ export function useTimelineEditor(options: UseTimelineEditorOptions) {
   const { arrangement } = session;
   const { timebase } = arrangement;
   const { api, commit: sessionCommit } = useSessionContext();
+  const startGesture = usePointerGesture();
   const [message, setMessage] = useState('');
   const commit: EditorCommit = useCallback(
     (operation) => {
@@ -150,26 +153,25 @@ export function useTimelineEditor(options: UseTimelineEditorOptions) {
         height: Math.abs(pointer.clientY - originY),
       });
     const finish = (pointer: PointerEvent) => {
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', finish);
-      const left = Math.min(originX, pointer.clientX);
-      const right = Math.max(originX, pointer.clientX);
-      const top = Math.min(originY, pointer.clientY);
-      const bottom = Math.max(originY, pointer.clientY);
-      const nextIds = [...timeline.querySelectorAll<HTMLElement>('[data-clip-id]')]
-        .filter((element) => {
-          const rect = element.getBoundingClientRect();
-          return (
-            rect.right >= left && rect.left <= right && rect.bottom >= top && rect.top <= bottom
-          );
-        })
-        .map((element) => element.dataset.clipId!)
-        .filter(Boolean);
+      const nextIds = idsInClientRect(
+        timeline,
+        '[data-clip-id]',
+        (element) => element.dataset.clipId,
+        {
+          left: Math.min(originX, pointer.clientX),
+          right: Math.max(originX, pointer.clientX),
+          top: Math.min(originY, pointer.clientY),
+          bottom: Math.max(originY, pointer.clientY),
+        },
+      );
       setSelectedClipIds(event.ctrlKey ? [...new Set([...selectedClipIds, ...nextIds])] : nextIds);
       setMarquee(null);
     };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', finish);
+    startGesture(event, {
+      onMove: move,
+      onEnd: finish,
+      onCancel: () => setMarquee(null),
+    });
   };
 
   useEffect(() => {

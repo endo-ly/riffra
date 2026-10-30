@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import type { Ref } from 'react';
 import type { MidiNote } from '@/model/generated';
 import { midiNoteName } from '@/shared/midi';
+import { usePointerGesture } from '@/shared/usePointerGesture';
 import styles from './MidiEditorPanel.module.css';
 
 const VELOCITY_DRAG_THRESHOLD = 3;
@@ -26,6 +27,7 @@ interface MidiVelocityLaneProps {
 }
 
 export function MidiVelocityLane(props: MidiVelocityLaneProps) {
+  const startGesture = usePointerGesture();
   const [preview, setPreview] = useState<Record<string, number>>({});
   const previewGestureRef = useRef(0);
 
@@ -63,7 +65,6 @@ export function MidiVelocityLane(props: MidiVelocityLaneProps) {
       props.onVelocityChange?.(values[note.id] ?? note.velocity);
     };
     let dragging = false;
-    let finish: (pointer: PointerEvent) => void = () => undefined;
     const move = (pointer: PointerEvent) => {
       if (!dragging) {
         if (Math.abs(pointer.clientY - originY) < VELOCITY_DRAG_THRESHOLD) return;
@@ -71,16 +72,7 @@ export function MidiVelocityLane(props: MidiVelocityLaneProps) {
       }
       updatePreview(pointer.clientY);
     };
-    const cancel = () => {
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', finish);
-      window.removeEventListener('pointercancel', cancel);
-      clearPreview();
-    };
-    finish = (pointer) => {
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', finish);
-      window.removeEventListener('pointercancel', cancel);
+    const finish = (pointer: PointerEvent) => {
       if (!dragging) {
         clearPreview();
         return;
@@ -101,9 +93,7 @@ export function MidiVelocityLane(props: MidiVelocityLaneProps) {
       }
       void Promise.resolve(operation).then(clearPreview, clearPreview);
     };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', finish);
-    window.addEventListener('pointercancel', cancel);
+    startGesture(event, { onMove: move, onEnd: finish, onCancel: clearPreview });
   };
 
   return (

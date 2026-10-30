@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useRef, type CSSProperties, type ReactNode } from 'react';
 import { ResizeHandle } from '@/shared/ui/ResizeHandle';
+import { usePointerGesture } from '@/shared/usePointerGesture';
 import styles from './LeftColumn.module.css';
 
 const PROPERTIES_HEIGHT = { min: 160, browserMin: 180, handle: 5 } as const;
@@ -43,28 +44,7 @@ export function LeftColumn({
   collapsed = false,
 }: LeftColumnProps) {
   const columnRef = useRef<HTMLElement>(null);
-  const [resize, setResize] = useState<{ startY: number; startHeight: number } | null>(null);
-
-  useEffect(() => {
-    if (!resize) return;
-    const onPointerMove = (event: PointerEvent) => {
-      const availableHeight = columnRef.current?.clientHeight ?? 0;
-      const nextHeight = resolvePropertiesHeight(
-        resize.startHeight + resize.startY - event.clientY,
-        availableHeight,
-      );
-      onPropertiesHeightChange(nextHeight);
-    };
-    const stopResize = () => setResize(null);
-    window.addEventListener('pointermove', onPointerMove);
-    window.addEventListener('pointerup', stopResize);
-    window.addEventListener('pointercancel', stopResize);
-    return () => {
-      window.removeEventListener('pointermove', onPointerMove);
-      window.removeEventListener('pointerup', stopResize);
-      window.removeEventListener('pointercancel', stopResize);
-    };
-  }, [onPropertiesHeightChange, resize]);
+  const startGesture = usePointerGesture();
 
   const resizeBy = (delta: number) => {
     const availableHeight = columnRef.current?.clientHeight ?? 0;
@@ -102,7 +82,18 @@ export function LeftColumn({
           const startHeight =
             propertiesHeight ??
             effectivePropertiesHeight(propertiesHeight, columnRef.current?.clientHeight ?? 0);
-          setResize({ startY: event.clientY, startHeight });
+          const startY = event.clientY;
+          startGesture(event, {
+            onMove: (pointer) => {
+              const availableHeight = columnRef.current?.clientHeight ?? 0;
+              const nextHeight = resolvePropertiesHeight(
+                startHeight + startY - pointer.clientY,
+                availableHeight,
+              );
+              onPropertiesHeightChange(nextHeight);
+            },
+            onEnd: () => undefined,
+          });
         }}
         onKeyDown={(event) => {
           if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {

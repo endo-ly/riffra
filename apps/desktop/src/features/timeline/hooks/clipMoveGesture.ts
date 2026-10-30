@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef } from 'react';
+import type { PointerEvent as ReactPointerEvent } from 'react';
+import type { usePointerGesture } from '@/shared/usePointerGesture';
 import type { TrackKind } from '@/model/generated';
 import {
   buildClipMovesFromDelta,
@@ -8,86 +9,8 @@ import {
   type TrackRowBounds,
 } from '@/features/timeline/model/clip-interactions';
 
-interface PointerGestureHandlers {
-  onMove: (event: PointerEvent) => void;
-  onEnd: (event: PointerEvent) => void;
-  onCancel?: () => void;
-}
-
-function bindPointerGesture(
-  element: HTMLElement,
-  handlers: PointerGestureHandlers,
-  onDisposed: () => void,
-): () => void {
-  let active = true;
-  const teardown = () => {
-    if (!active) return;
-    active = false;
-    element.removeEventListener('pointermove', handlers.onMove);
-    element.removeEventListener('pointerup', finish);
-    element.removeEventListener('pointercancel', cancel);
-    element.removeEventListener('lostpointercapture', cancel);
-  };
-  const finish = (event: PointerEvent) => {
-    teardown();
-    try {
-      handlers.onEnd(event);
-    } finally {
-      onDisposed();
-    }
-  };
-  const cancel = () => {
-    teardown();
-    try {
-      handlers.onCancel?.();
-    } finally {
-      onDisposed();
-    }
-  };
-  element.addEventListener('pointermove', handlers.onMove);
-  element.addEventListener('pointerup', finish);
-  element.addEventListener('pointercancel', cancel);
-  element.addEventListener('lostpointercapture', cancel);
-  return () => {
-    teardown();
-    try {
-      handlers.onCancel?.();
-    } finally {
-      onDisposed();
-    }
-  };
-}
-
-export function usePointerGesture() {
-  const activeGestureRef = useRef<(() => void) | null>(null);
-  useEffect(
-    () => () => {
-      activeGestureRef.current?.();
-      activeGestureRef.current = null;
-    },
-    [],
-  );
-  return useCallback((element: HTMLElement, handlers: PointerGestureHandlers) => {
-    activeGestureRef.current?.();
-    let cleanup: (() => void) | null = null;
-    const onDisposed = () => {
-      if (activeGestureRef.current === cleanup) activeGestureRef.current = null;
-    };
-    cleanup = bindPointerGesture(element, handlers, onDisposed);
-    activeGestureRef.current = cleanup;
-  }, []);
-}
-
-interface ClipMoveStartEvent {
-  clientX: number;
-  clientY: number;
-  pointerId: number;
-  altKey: boolean;
-  currentTarget: HTMLElement;
-}
-
 interface ClipMoveGestureOptions<T extends MoveableClip> {
-  event: ClipMoveStartEvent;
+  event: ReactPointerEvent<HTMLElement>;
   clip: T;
   selected: readonly T[];
   kind: TrackKind;
@@ -99,7 +22,7 @@ interface ClipMoveGestureOptions<T extends MoveableClip> {
   trackAcceptsKind: (trackId: string, kind: TrackKind) => boolean;
   setSnapGuide: (tick: number | null) => void;
   setMessage: (message: string) => void;
-  startGesture: (element: HTMLElement, handlers: PointerGestureHandlers) => void;
+  startGesture: ReturnType<typeof usePointerGesture>;
   onDuplicate: (anchor: number) => void;
   onMove: (moves: ClipMove[]) => void;
 }
@@ -163,7 +86,6 @@ export function bindClipMoveGesture<T extends MoveableClip>(
   let horizontalOriginX = originX;
   let previousX = originX;
   let previousY = originY;
-  element.setPointerCapture?.(event.pointerId);
 
   const move = (pointer: PointerEvent) => {
     const horizontalDelta = pointer.clientX - originX;
@@ -236,7 +158,7 @@ export function bindClipMoveGesture<T extends MoveableClip>(
     onMove(targetMoves);
   };
 
-  startGesture(element, {
+  startGesture(event, {
     onMove: move,
     onEnd: finish,
     onCancel: () => {

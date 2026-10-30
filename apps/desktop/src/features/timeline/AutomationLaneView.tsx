@@ -9,6 +9,7 @@ import type {
 } from '@/model/generated';
 import { automationTargetKey, automationValueAt, type AutomationOption } from '@/model/automation';
 import { isEditableTypingTarget } from '@/shared/input';
+import { usePointerGesture } from '@/shared/usePointerGesture';
 import { useAutomationValueDisplay } from '@/shared/useAutomationValueDisplay';
 import styles from './Timeline.module.css';
 
@@ -39,8 +40,8 @@ interface AutomationLaneViewProps {
 export function AutomationLaneView(props: AutomationLaneViewProps) {
   const { min, max, unit: label, name, staticValue: baseValue } = props.option;
   const { formatValue, previewScope } = props;
+  const startGesture = usePointerGesture();
   const interpolation = props.lane?.interpolation ?? (props.option.discrete ? 'step' : 'linear');
-  const cancelDrag = useRef<(() => void) | null>(null);
   const pendingPreview = useRef<{
     value: number | null;
     token: number;
@@ -69,15 +70,13 @@ export function AutomationLaneView(props: AutomationLaneViewProps) {
     pendingPreview.current = { value, token, onPreview: props.onPreview };
     drainPreview.current();
   };
-  useEffect(() => {
-    return () => cancelDrag.current?.();
-  }, [previewScope]);
+  useEffect(() => startGesture.cancel(), [previewScope, startGesture]);
   const [points, setPoints] = useState(props.lane?.points ?? []);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   useEffect(() => {
-    cancelDrag.current?.();
+    startGesture.cancel();
     setPoints(props.lane?.points ?? []);
-  }, [props.lane]);
+  }, [props.lane, startGesture]);
 
   const effectiveValue =
     baseValue === undefined
@@ -118,7 +117,6 @@ export function AutomationLaneView(props: AutomationLaneViewProps) {
   const movePoint = (event: React.PointerEvent<HTMLButtonElement>, pointId: string) => {
     event.preventDefault();
     event.stopPropagation();
-    cancelDrag.current?.();
     setSelectedId(pointId);
     event.currentTarget.parentElement?.focus();
     const lane = event.currentTarget.parentElement;
@@ -158,35 +156,19 @@ export function AutomationLaneView(props: AutomationLaneViewProps) {
       );
     };
     const finish = () => {
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', finish);
-      window.removeEventListener('pointercancel', cancel);
-      window.removeEventListener('keydown', key);
-      cancelDrag.current = null;
       void Promise.resolve(props.onCommit(preview, interpolation)).finally(() =>
         queuePreview(null, previewToken),
       );
     };
     const cancel = () => {
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', finish);
-      window.removeEventListener('pointercancel', cancel);
-      window.removeEventListener('keydown', key);
-      cancelDrag.current = null;
       setPoints(props.lane?.points ?? []);
       queuePreview(null, previewToken);
     };
-    const key = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        cancel();
-      }
-    };
-    cancelDrag.current = cancel;
-    window.addEventListener('keydown', key);
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', finish);
-    window.addEventListener('pointercancel', cancel);
+    startGesture(
+      event,
+      { onMove: move, onEnd: finish, onCancel: cancel },
+      { cancelOnEscape: true },
+    );
   };
 
   return (

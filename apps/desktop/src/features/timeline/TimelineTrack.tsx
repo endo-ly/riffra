@@ -23,6 +23,7 @@ import { resolveTrackColor } from '@/model/track-color';
 import { formatGainDb, formatPan } from '@/shared/audio/mix-format';
 import { Icon } from '@/shared/ui/primitives';
 import controls from '@/shared/ui/controls.module.css';
+import { usePointerGesture } from '@/shared/usePointerGesture';
 import styles from './Timeline.module.css';
 
 interface TimelineTrackProps {
@@ -79,6 +80,7 @@ interface PendingTrackValues {
 
 export function TimelineTrack(props: TimelineTrackProps) {
   const { api } = useSessionContext();
+  const startGesture = usePointerGesture();
   const detailsRef = useRef<HTMLDetailsElement>(null);
   const [dragOver, setDragOver] = useState(false);
   const [renaming, setRenaming] = useState(false);
@@ -143,31 +145,29 @@ export function TimelineTrack(props: TimelineTrackProps) {
   const showVolume = props.trackSize !== 'compact';
   const showPan = props.trackSize === 'large';
 
-  const onResizePointerDown = (event: React.PointerEvent) => {
+  const onResizePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     event.preventDefault();
     event.stopPropagation();
-    if (!props.onSetTrackSize) return;
+    const setTrackSize = props.onSetTrackSize;
+    if (!setTrackSize) return;
     const sizes: TrackSize[] = ['compact', 'normal', 'large'];
     const startIndex = sizes.indexOf(props.trackSize);
     const startY = event.clientY;
     let lastIndex = startIndex;
-    const onMove = (e: PointerEvent) => {
-      const delta = e.clientY - startY;
-      const targetIndex = Math.max(
-        0,
-        Math.min(sizes.length - 1, startIndex + Math.round(delta / 25)),
-      );
-      if (targetIndex !== lastIndex) {
-        lastIndex = targetIndex;
-        props.onSetTrackSize!(sizes[targetIndex]);
-      }
-    };
-    const onUp = () => {
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onUp);
-    };
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp);
+    startGesture(event, {
+      onMove: (pointer) => {
+        const delta = pointer.clientY - startY;
+        const targetIndex = Math.max(
+          0,
+          Math.min(sizes.length - 1, startIndex + Math.round(delta / 25)),
+        );
+        if (targetIndex !== lastIndex) {
+          lastIndex = targetIndex;
+          setTrackSize(sizes[targetIndex]);
+        }
+      },
+      onEnd: () => undefined,
+    });
   };
 
   const activeMonitoring = pendingTrackValues.monitoring ?? props.track.monitoring;

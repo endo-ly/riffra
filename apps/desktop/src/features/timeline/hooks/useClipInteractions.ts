@@ -9,6 +9,7 @@ import type {
 } from '@/model/generated';
 import { useSessionContext } from '@/shared/session/session-context';
 import { ticksToFrames } from '@/model/timebase';
+import { usePointerGesture } from '@/shared/usePointerGesture';
 import { clipDurationTicks, midiClipDurationTicks } from '@/model/clip-time';
 import type { TimelineTool } from '@/features/timeline/model/timeline-layout';
 import {
@@ -23,7 +24,6 @@ import {
   readTrackRows,
   restoreClipElementStyle,
   restoreFadeHandleStyle,
-  usePointerGesture,
 } from './clipMoveGesture';
 
 interface ClipInteractionOptions {
@@ -238,7 +238,6 @@ export function useClipInteractions(options: ClipInteractionOptions) {
     (event: React.PointerEvent<HTMLSpanElement>, clip: MidiClip, side: 'left' | 'right') => {
       event.stopPropagation();
       const element = event.currentTarget.parentElement as HTMLButtonElement;
-      const handle = event.currentTarget;
       const originX = event.clientX;
       const originStart = clip.startTick;
       const originDuration = midiClipDurationTicks(clip);
@@ -246,7 +245,6 @@ export function useClipInteractions(options: ClipInteractionOptions) {
       const originWidth = element.style.width;
       let startTick = originStart;
       let durationTicks = originDuration;
-      handle.setPointerCapture?.(event.pointerId);
       const move = (pointer: PointerEvent) => {
         const result = calculateMidiTrim(
           clip,
@@ -268,7 +266,7 @@ export function useClipInteractions(options: ClipInteractionOptions) {
         if (startTick === originStart && durationTicks === originDuration) return;
         void commit(commands.trimMidiClip(clip.id, startTick, durationTicks));
       };
-      startGesture(handle, {
+      startGesture(event, {
         onMove: move,
         onEnd: finish,
         onCancel: () => restoreClipElementStyle(element, originLeft, originWidth, setSnapGuide),
@@ -285,7 +283,6 @@ export function useClipInteractions(options: ClipInteractionOptions) {
         return;
       }
       const element = event.currentTarget.parentElement as HTMLButtonElement;
-      const handle = event.currentTarget;
       const originX = event.clientX;
       const originStart = clip.startTick;
       const originRange = clip.sourceRange;
@@ -295,7 +292,6 @@ export function useClipInteractions(options: ClipInteractionOptions) {
       let startTick = originStart;
       let range = originRange;
       let duration = clip.timelineDuration.frames;
-      handle.setPointerCapture?.(event.pointerId);
       const move = (pointer: PointerEvent) => {
         const result = calculateAudioTrim(
           clip,
@@ -327,7 +323,7 @@ export function useClipInteractions(options: ClipInteractionOptions) {
           void commit(commands.trimAudioClip(clip.id, startTick, range));
         }
       };
-      startGesture(handle, {
+      startGesture(event, {
         onMove: move,
         onEnd: finish,
         onCancel: () => restoreClipElementStyle(element, originLeft, originWidth, setSnapGuide),
@@ -429,7 +425,6 @@ export function useClipInteractions(options: ClipInteractionOptions) {
       const origin = side === 'in' ? clip.fadeIn.frames : clip.fadeOut.frames;
       const originLeft = handle.style.left;
       let frames = origin;
-      handle.setPointerCapture?.(event.pointerId);
       const move = (pointer: PointerEvent) => {
         const delta = ticksToFrames(
           (pointer.clientX - originX) / pixelsPerTick,
@@ -449,7 +444,7 @@ export function useClipInteractions(options: ClipInteractionOptions) {
           commands.updateAudioClip(clip.id, side === 'in' ? { fadeIn: value } : { fadeOut: value }),
         );
       };
-      startGesture(handle, {
+      startGesture(event, {
         onMove: move,
         onEnd: finish,
         onCancel: () => restoreFadeHandleStyle(handle, originLeft),

@@ -16,6 +16,7 @@ import { PropertiesPanel } from '@/features/inspector/PropertiesPanel';
 import { BrowserPanel } from '@/features/library/BrowserPanel';
 import { MissingDependencies } from '@/features/project/MissingDependencies';
 import { ResizeHandle } from '@/shared/ui/ResizeHandle';
+import { usePointerGesture } from '@/shared/usePointerGesture';
 import { AudioSettingsDialog } from '@/features/audio/AudioSettingsDialog';
 import { ConfirmDialog } from '@/shared/ui/ConfirmDialog';
 import surface from '@/shared/ui/Surface.module.css';
@@ -76,12 +77,10 @@ function LeftColumnResizeHandle(props: {
 export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}) {
   const [leftColumnWidth, setLeftColumnWidth] = useState<number>(LEFT_COLUMN_WIDTH.default);
   const [propertiesHeight, setPropertiesHeight] = useState<number | null>(null);
-  const [panelResize, setPanelResize] = useState<{
-    startX: number;
-    startWidth: number;
-  } | null>(null);
+  const [isPanelResizing, setIsPanelResizing] = useState(false);
   const [audioSettingsOpen, setAudioSettingsOpen] = useState(false);
   const [restoreCandidate, setRestoreCandidate] = useState<string | null>(null);
+  const startPanelResizeGesture = usePointerGesture();
   const {
     hostConnectionState,
     localHosts,
@@ -166,29 +165,17 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
   const liveFeedbackSuspected = useAudioFeedbackSuspected();
   const appUpdater = useAppUpdater({ api: api });
 
-  useEffect(() => {
-    if (!panelResize) return;
-    const onPointerMove = (event: PointerEvent) => {
-      const delta = event.clientX - panelResize.startX;
-      setLeftColumnWidth(adjustLeftColumnWidth(panelResize.startWidth, delta));
-    };
-    const stopResize = () => setPanelResize(null);
-    window.addEventListener('pointermove', onPointerMove);
-    window.addEventListener('pointerup', stopResize);
-    window.addEventListener('pointercancel', stopResize);
-    return () => {
-      window.removeEventListener('pointermove', onPointerMove);
-      window.removeEventListener('pointerup', stopResize);
-      window.removeEventListener('pointercancel', stopResize);
-    };
-  }, [panelResize]);
-
   const startPanelResize = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
     event.preventDefault();
-    setPanelResize({
-      startX: event.clientX,
-      startWidth: leftColumnWidth,
+    const startX = event.clientX;
+    const startWidth = leftColumnWidth;
+    setIsPanelResizing(true);
+    startPanelResizeGesture(event, {
+      onMove: (pointer) =>
+        setLeftColumnWidth(adjustLeftColumnWidth(startWidth, pointer.clientX - startX)),
+      onEnd: () => setIsPanelResizing(false),
+      onCancel: () => setIsPanelResizing(false),
     });
   };
 
@@ -293,7 +280,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
   return (
     <SessionProvider value={sessionContext}>
       <main
-        className={clsx(shellStyles.appShell, panelResize && shellStyles.isPanelResizing)}
+        className={clsx(shellStyles.appShell, isPanelResizing && shellStyles.isPanelResizing)}
         style={shellStyle}
       >
         <GlobalControlBar

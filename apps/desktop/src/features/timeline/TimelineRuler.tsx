@@ -7,6 +7,7 @@ import type {
 import { timelineGridDensity, TRACK_HEADER_WIDTH } from '@/features/timeline/model/timeline-layout';
 import { formatClock } from '@/model/time-format';
 import { meterSegment } from '@/model/timebase';
+import { usePointerGesture } from '@/shared/usePointerGesture';
 import styles from './Timeline.module.css';
 
 type TimelineRange = 'loop' | 'punch';
@@ -39,6 +40,7 @@ interface TimelineRulerProps {
 }
 
 export function TimelineRuler(props: TimelineRulerProps) {
+  const startGesture = usePointerGesture();
   const bars: { tick: number; bar: number; end: number; beatTicks: number; numerator: number }[] =
     [];
   for (let tick = 0; tick < props.timelineTicks;) {
@@ -247,9 +249,9 @@ export function TimelineRuler(props: TimelineRulerProps) {
               event.stopPropagation();
               props.onSelectMarker(marker.id);
               const handle = event.currentTarget;
+              const originLeft = handle.style.left;
               const originX = event.clientX;
               const originTick = marker.tick;
-              handle.setPointerCapture?.(event.pointerId);
               const move = (pointer: PointerEvent) => {
                 const next = Math.max(
                   0,
@@ -258,16 +260,19 @@ export function TimelineRuler(props: TimelineRulerProps) {
                 handle.style.left = `${next * props.pixelsPerTick}px`;
               };
               const finish = (pointer: PointerEvent) => {
-                handle.removeEventListener('pointermove', move);
-                handle.removeEventListener('pointerup', finish);
                 const next = Math.max(
                   0,
                   Math.round(originTick + (pointer.clientX - originX) / props.pixelsPerTick),
                 );
                 if (next !== originTick) props.onMoveMarker(marker, next);
               };
-              handle.addEventListener('pointermove', move);
-              handle.addEventListener('pointerup', finish);
+              startGesture(event, {
+                onMove: move,
+                onEnd: finish,
+                onCancel: () => {
+                  handle.style.left = originLeft;
+                },
+              });
             }}
             onDoubleClick={(event) => {
               event.stopPropagation();

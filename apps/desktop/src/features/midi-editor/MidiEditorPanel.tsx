@@ -24,6 +24,8 @@ import { ticksPerBar, ticksPerBeat } from '@/model/timebase';
 import type { SnapGrid } from '@/model/clip-grid';
 import { encodeNoteOff, encodeNoteOn, isBlackKey, midiNoteName } from '@/shared/midi';
 import { isEditableTypingTarget } from '@/shared/input';
+import { idsInClientRect } from '@/shared/rect-selection';
+import { usePointerGesture } from '@/shared/usePointerGesture';
 import { toast } from '@/shared/toasts';
 import { ContextMenu, type ContextMenuItem } from '@/shared/ui/ContextMenu';
 import {
@@ -121,6 +123,7 @@ function pitchRowTop(pitch: number, rowHeight: number) {
 }
 
 export function MidiEditorPanel(props: MidiEditorPanelProps) {
+  const startGesture = usePointerGesture();
   const { clip } = props;
   const instrumentSettings = props.instrumentMidi?.settings ?? null;
   const keyswitchFor = (note: number) =>
@@ -688,13 +691,14 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
   }, [selectedVelocity]);
 
   useEffect(() => {
+    startGesture.cancel();
     setSelectedNoteIds([]);
     setDragging(null);
     dragGestureRef.current += 1;
     setMarquee(null);
     setDrawPreview(null);
     setNoteContextMenu(null);
-  }, [clipId, hasClip]);
+  }, [clipId, hasClip, startGesture]);
 
   useEffect(() => {
     if (!hasClip || clipId === undefined) {
@@ -892,8 +896,6 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
       previewNotes,
       awaitingCanonical: false,
     });
-    const handle = event.currentTarget;
-    handle.setPointerCapture?.(event.pointerId);
     const updatePreview = (pointer: PointerEvent): MidiNote => {
       const deltaTicks = (pointer.clientX - originX) / pixelsPerTick;
       const free = pointer.altKey;
@@ -969,18 +971,10 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
           : current,
       );
     };
-    let finish: (pointer: PointerEvent) => void = () => undefined;
-    let cancel: () => void = () => undefined;
-    const cleanup = () => {
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', finish);
-      window.removeEventListener('pointercancel', cancel);
-    };
     const clearDragging = () => {
       setDragging((current) => (current?.gestureId === gestureId ? null : current));
     };
-    finish = (pointer) => {
-      cleanup();
+    const finish = (pointer: PointerEvent) => {
       moved ||= travelled(pointer);
       preview = moved ? updatePreview(pointer) : note;
       previewNotes = buildPreviewNotes(preview);
@@ -1047,13 +1041,7 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
       );
       void Promise.resolve(operation).then(clearDragging, clearDragging);
     };
-    cancel = () => {
-      cleanup();
-      clearDragging();
-    };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', finish);
-    window.addEventListener('pointercancel', cancel);
+    startGesture(event, { onMove: move, onEnd: finish, onCancel: clearDragging });
   };
 
   return (
@@ -1291,11 +1279,7 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
                         width: Math.abs(pointer.clientX - originX),
                         height: Math.abs(pointer.clientY - originY),
                       });
-                let cancel: () => void = () => undefined;
                 const finish = (pointer: PointerEvent) => {
-                  window.removeEventListener('pointermove', move);
-                  window.removeEventListener('pointerup', finish);
-                  window.removeEventListener('pointercancel', cancel);
                   const width = Math.abs(pointer.clientX - originX);
                   const height = Math.abs(pointer.clientY - originY);
                   if (draw) {
@@ -1312,37 +1296,27 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
                   } else if (width < 4 && height < 4) {
                     setSelectedNoteIds([]);
                   } else {
-                    const left = Math.min(originX, pointer.clientX);
-                    const right = Math.max(originX, pointer.clientX);
-                    const top = Math.min(originY, pointer.clientY);
-                    const bottom = Math.max(originY, pointer.clientY);
-                    const ids = [...lane.querySelectorAll<HTMLElement>('[data-note-id]')]
-                      .filter((element) => {
-                        const rect = element.getBoundingClientRect();
-                        return (
-                          rect.right >= left &&
-                          rect.left <= right &&
-                          rect.bottom >= top &&
-                          rect.top <= bottom
-                        );
-                      })
-                      .map((element) => element.dataset.noteId!)
-                      .filter(Boolean);
+                    const ids = idsInClientRect(
+                      lane,
+                      '[data-note-id]',
+                      (element) => element.dataset.noteId,
+                      {
+                        left: Math.min(originX, pointer.clientX),
+                        right: Math.max(originX, pointer.clientX),
+                        top: Math.min(originY, pointer.clientY),
+                        bottom: Math.max(originY, pointer.clientY),
+                      },
+                    );
                     setSelectedNoteIds(append ? [...new Set([...selectedNoteIds, ...ids])] : ids);
                   }
                   setMarquee(null);
                   setDrawPreview(null);
                 };
-                cancel = () => {
-                  window.removeEventListener('pointermove', move);
-                  window.removeEventListener('pointerup', finish);
-                  window.removeEventListener('pointercancel', cancel);
+                const cancel = () => {
                   setMarquee(null);
                   setDrawPreview(null);
                 };
-                window.addEventListener('pointermove', move);
-                window.addEventListener('pointerup', finish);
-                window.addEventListener('pointercancel', cancel);
+                startGesture(event, { onMove: move, onEnd: finish, onCancel: cancel });
               }}
               onDoubleClick={(event) => {
                 if ((event.target as HTMLElement).closest('[data-note-id]')) return;

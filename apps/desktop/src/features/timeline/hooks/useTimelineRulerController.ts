@@ -1,17 +1,11 @@
 import type { EditorCommit } from './useTimelineEditor';
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type MutableRefObject,
-  type PointerEvent,
-} from 'react';
+import { useCallback, useEffect, useState, type MutableRefObject, type PointerEvent } from 'react';
 import type { CreativeSession, Marker } from '@/model/generated';
 import { useSessionContext } from '@/shared/session/session-context';
 import { HostConnectionChangedError } from '@/native/invoke';
 import { tickToMusicalPosition } from '@/model/time-format';
 import { isEditableTypingTarget } from '@/shared/input';
+import { usePointerGesture } from '@/shared/usePointerGesture';
 
 type RangeKind = 'loop' | 'punch';
 
@@ -53,13 +47,13 @@ export function useTimelineRulerController({
   setMessage,
 }: TimelineRulerControllerOptions) {
   const { api } = useSessionContext();
+  const startGesture = usePointerGesture();
   const [selectedMarkerId, setSelectedMarkerId] = useState<string | null>(null);
   const [selectedRange, setSelectedRange] = useState<RangeKind | null>(null);
   const [markerRename, setMarkerRename] = useState<{ markerId: string; name: string } | null>(null);
   const [timeSelection, setTimeSelection] = useState<TimeSelection | null>(null);
   const [loopPreview, setLoopPreview] = useState<LoopPreview | null>(null);
   const [punchPreview, setPunchPreview] = useState<PunchPreview | null>(null);
-  const gestureCleanupRef = useRef<(() => void) | null>(null);
 
   const clearRulerSelection = useCallback(() => {
     setTimeSelection(null);
@@ -218,27 +212,15 @@ export function useTimelineRulerController({
           );
         }
       };
-      const finish = () => {
-        gestureCleanupRef.current?.();
-        if (seeking) setTimeSelection(null);
-      };
-      const cancel = () => {
-        gestureCleanupRef.current?.();
-        setTimeSelection(null);
-      };
-      const cleanup = () => {
-        window.removeEventListener('pointermove', handle);
-        window.removeEventListener('pointerup', finish);
-        window.removeEventListener('pointercancel', cancel);
-        if (gestureCleanupRef.current === cleanup) gestureCleanupRef.current = null;
-      };
-      gestureCleanupRef.current?.();
-      gestureCleanupRef.current = cleanup;
-      window.addEventListener('pointermove', handle);
-      window.addEventListener('pointerup', finish);
-      window.addEventListener('pointercancel', cancel);
+      startGesture(event, {
+        onMove: handle,
+        onEnd: () => {
+          if (seeking) setTimeSelection(null);
+        },
+        onCancel: () => setTimeSelection(null),
+      });
     },
-    [api, pixelsPerTick, seekLocally, setMessage, snapTick],
+    [api, pixelsPerTick, seekLocally, setMessage, snapTick, startGesture],
   );
 
   const dragRangeHandle = useCallback(
@@ -266,7 +248,6 @@ export function useTimelineRulerController({
       const move = (pointer: globalThis.PointerEvent) =>
         applyPreview(pointer.clientX, pointer.altKey);
       const finish = (pointer: globalThis.PointerEvent) => {
-        gestureCleanupRef.current?.();
         const next = computeNext(pointer.clientX, pointer.altKey);
         if (next === origin) {
           clearPreview();
@@ -284,24 +265,19 @@ export function useTimelineRulerController({
             : api.updateTimelinePunchRange(true, position(startTick), position(endTick));
         void commit(operation).finally(clearPreview);
       };
-      const cancel = () => {
-        gestureCleanupRef.current?.();
-        clearPreview();
-      };
-      const cleanup = () => {
-        window.removeEventListener('pointermove', move);
-        window.removeEventListener('pointerup', finish);
-        window.removeEventListener('pointercancel', cancel);
-        if (gestureCleanupRef.current === cleanup) gestureCleanupRef.current = null;
-      };
-      gestureCleanupRef.current?.();
-      gestureCleanupRef.current = cleanup;
-      window.addEventListener('pointermove', move);
-      window.addEventListener('pointerup', finish);
-      window.addEventListener('pointercancel', cancel);
+      startGesture(event, { onMove: move, onEnd: finish, onCancel: clearPreview });
       applyPreview(event.clientX, event.altKey);
     },
-    [api, arrangement.loopRange, arrangement.punchRange, commit, pixelsPerTick, position, snapTick],
+    [
+      api,
+      arrangement.loopRange,
+      arrangement.punchRange,
+      commit,
+      pixelsPerTick,
+      position,
+      snapTick,
+      startGesture,
+    ],
   );
 
   const dragLoopHandle = useCallback(
@@ -378,8 +354,6 @@ export function useTimelineRulerController({
     document.addEventListener('click', onClick);
     return () => document.removeEventListener('click', onClick);
   }, [timeSelection]);
-
-  useEffect(() => () => gestureCleanupRef.current?.(), []);
 
   return {
     selectedMarkerId,
