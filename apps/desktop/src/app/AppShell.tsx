@@ -1,5 +1,5 @@
 import { useSession } from '@/shared/session/session-context';
-import { selectHostReady } from '@/shared/session/selectors';
+import { selectActiveProjectId, selectHostReady } from '@/shared/session/selectors';
 import { useEffect, useState } from 'react';
 import { useAppShortcuts } from '@/app/useAppShortcuts';
 import { useSessionRuntime } from '@/app/runtime/useSessionRuntime';
@@ -28,18 +28,16 @@ export function AppShell() {
   const [audioSettingsOpen, setAudioSettingsOpen] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
   useAppShortcuts(setCommandOpen);
-  const project = useSession((state) => state.project);
-  const missing = useSession((state) => state.missing);
-  const hostConnectionState = useSession((state) => state.host.connection);
+  const sessionReady = useSession((state) => Boolean(state.project.boot?.canonical.session));
+  const activeProjectId = useSession(selectActiveProjectId);
+  const bootstrapError = useSession((state) => state.project.bootstrapError);
+  const bootstrapLoading = useSession((state) => state.project.bootstrapLoading);
+  const retryBootstrap = useSession((state) => state.project.bootstrap);
+  const exportProject = useSession((state) => state.project.exportPackage);
+  const importProject = useSession((state) => state.project.importPackage);
+  const missingCount = useSession((state) => state.missing.items.length);
+  const hostReason = useSession((state) => state.host.connection.reason);
   const hostConnected = useSession(selectHostReady);
-  const boot = project.boot;
-  const session = boot?.canonical.session ?? null;
-  const projectState = boot?.projectState ?? null;
-  const bootstrapError = project.bootstrapError;
-  const bootstrapLoading = project.bootstrapLoading;
-  const retryBootstrap = project.bootstrap;
-  const missingDependencies = missing.items;
-  const { exportPackage: exportProject, importPackage: importProject } = project;
   const applyBrowserItem = useBrowserPlacement();
   const appUpdater = useAppUpdater();
 
@@ -52,12 +50,12 @@ export function AppShell() {
 
   const sessionSelector = <ProjectHostSelector />;
 
-  if (!boot || !session)
+  if (!sessionReady)
     return (
       <BootScreen
         selector={sessionSelector}
         connected={hostConnected}
-        reason={hostConnectionState.reason}
+        reason={hostReason}
         error={bootstrapError}
         loading={bootstrapLoading}
         onRetry={retryBootstrap}
@@ -104,7 +102,7 @@ export function AppShell() {
 
       <ShellNotices appUpdater={appUpdater} />
 
-      {missingDependencies.length > 0 && (
+      {missingCount > 0 && (
         <div className={!hostConnected ? styles.hostDisconnected : undefined}>
           <MissingDependencies />
         </div>
@@ -120,7 +118,7 @@ export function AppShell() {
       >
         <section className={shellStyles.workspace}>
           <ProjectBoundRegion>
-            <EditorWorkspace key={projectState?.activeProjectId ?? 'no-project'} />
+            <EditorWorkspace key={activeProjectId ?? 'no-project'} />
           </ProjectBoundRegion>
         </section>
       </LeftColumn>

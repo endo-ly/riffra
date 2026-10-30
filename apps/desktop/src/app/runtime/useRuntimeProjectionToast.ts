@@ -3,13 +3,10 @@ import { useSession } from '@/shared/session/session-context';
 import { clearToast, showToast } from '@/shared/toasts';
 
 export function useRuntimeProjectionToast() {
-  const runtime = useSession((state) => state.runtime);
-  const {
-    projection: runtimeProjectionStatus,
-    projectionFailure: runtimeProjectionFailure,
-    projectionRetrying: runtimeProjectionRetrying,
-    retryProjection: onRetryRuntimeProjection,
-  } = runtime;
+  const runtimeProjectionStatus = useSession((state) => state.runtime.projection);
+  const runtimeProjectionFailure = useSession((state) => state.runtime.projectionFailure);
+  const runtimeProjectionRetrying = useSession((state) => state.runtime.projectionRetrying);
+  const onRetryRuntimeProjection = useSession((state) => state.runtime.retryProjection);
   // Runtime projection status, rather than Arrangement revision, is the source
   // of truth for playback health. Marker and other authoring-only edits still
   // advance the canonical revision without requiring a new audio graph.
