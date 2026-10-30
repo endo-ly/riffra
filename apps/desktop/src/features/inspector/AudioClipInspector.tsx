@@ -6,14 +6,14 @@ import { MIX_GAIN_DB, MIX_PAN } from '@/model/mix-range';
 import { formatGainDb, formatPan } from '@/shared/audio/mix-format';
 import { useSessionContext } from '@/shared/session/session-context';
 import { usePreviewedValue } from '@/shared/session/usePreviewedValue';
-import type { ContextMenuItem } from '@/shared/ui/ContextMenu';
 import { Icon } from '@/shared/ui/primitives';
+import type { ContextMenuItem } from '@/shared/ui/ContextMenu';
+import { MenuButton } from '@/shared/ui/MenuButton';
 import clsx from 'clsx';
 import { useEffect, useState, type CSSProperties } from 'react';
 import { resolveTrackColorById } from '@/model/track-color';
 import { ClipToggles } from './ClipToggles';
 import styles from './Inspector.module.css';
-import { InspectorMenu } from './InspectorMenu';
 import { MixValueField } from './MixValueField';
 import { MusicalTimeField } from './MusicalTimeField';
 
@@ -135,7 +135,7 @@ export function AudioClipInspector(props: AudioClipInspectorProps) {
               commit(api.updateAudioClip(clip.id, { loopEnabled: !clip.loopEnabled }))
             }
           />
-          <InspectorMenu label="Clip actions" items={menuItems} />
+          <MenuButton label="Clip actions" items={menuItems} />
         </div>
       </div>
 

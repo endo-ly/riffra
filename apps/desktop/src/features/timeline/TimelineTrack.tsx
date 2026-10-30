@@ -1,5 +1,5 @@
 import type { EditorCommit } from './hooks/useTimelineEditor';
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 import type {
   AudioAnalysis,
   AudioClip,
@@ -25,6 +25,8 @@ import { isBrowserItemDrag } from '@/features/timeline/hooks/useTimelineDrop';
 import { resolveTrackColor } from '@/model/track-color';
 import { formatGainDb, formatPan } from '@/shared/audio/mix-format';
 import { Icon } from '@/shared/ui/primitives';
+import type { ContextMenuItem } from '@/shared/ui/ContextMenu';
+import { MenuButton } from '@/shared/ui/MenuButton';
 import { usePointerGesture } from '@/shared/usePointerGesture';
 import styles from './Timeline.module.css';
 
@@ -86,7 +88,6 @@ export function TimelineTrack(props: TimelineTrackProps) {
   const gain = useChannelMixValue(props.track, 'gainDb', { sessionId: props.sessionId });
   const pan = useChannelMixValue(props.track, 'pan', { sessionId: props.sessionId });
   const startGesture = usePointerGesture();
-  const detailsRef = useRef<HTMLDetailsElement>(null);
   const [dragOver, setDragOver] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [dropHint, setDropHint] = useState<'before' | 'after' | null>(null);
@@ -125,18 +126,6 @@ export function TimelineTrack(props: TimelineTrackProps) {
       });
     });
   };
-
-  useEffect(() => {
-    const onClick = (event: MouseEvent) => {
-      const details = detailsRef.current;
-      if (!details) return;
-      if (details.open && !details.contains(event.target as Node)) {
-        details.removeAttribute('open');
-      }
-    };
-    document.addEventListener('click', onClick);
-    return () => document.removeEventListener('click', onClick);
-  }, []);
 
   const audioItems = props.timeline.items.filter(
     (item): item is TimelineAudioItem => item.kind === 'audio',
@@ -182,41 +171,13 @@ export function TimelineTrack(props: TimelineTrackProps) {
   const monitoringClass =
     activeMonitoring === 'auto' ? styles.monAuto : activeMonitoring === 'on' ? styles.monOn : '';
 
-  const closeMenu = () => detailsRef.current?.removeAttribute('open');
-  const trackMenuItems: ReactNode[] = [
-    <button
-      key="devices"
-      onClick={() => {
-        closeMenu();
-        props.onOpenDevices();
-      }}
-    >
-      Open Devices
-    </button>,
+  const trackMenuItems: ContextMenuItem[] = [
+    { label: 'Open Devices', onClick: props.onOpenDevices },
+    { separator: true },
+    { label: 'Duplicate', onClick: props.onDuplicate },
+    { separator: true },
+    { label: 'Delete', danger: true, onClick: props.onDelete },
   ];
-  trackMenuItems.push(
-    <hr key="separator-actions" className={styles.menuSeparator} />,
-    <button
-      key="duplicate"
-      onClick={() => {
-        closeMenu();
-        props.onDuplicate();
-      }}
-    >
-      Duplicate
-    </button>,
-    <hr key="separator-delete" className={styles.menuSeparator} />,
-    <button
-      key="delete"
-      className={styles.deleteTrack}
-      onClick={() => {
-        closeMenu();
-        props.onDelete();
-      }}
-    >
-      Delete
-    </button>,
-  );
 
   return (
     <div
@@ -239,7 +200,7 @@ export function TimelineTrack(props: TimelineTrackProps) {
         className={styles.trackHeader}
         data-drop={dropHint ?? undefined}
         onClick={(event) => {
-          if (!(event.target as HTMLElement).closest('button, input, details, summary')) {
+          if (!(event.target as HTMLElement).closest('button, input')) {
             props.onSelectTrack();
           }
         }}
@@ -366,12 +327,7 @@ export function TimelineTrack(props: TimelineTrackProps) {
             </button>
           )}
         </div>
-        <details ref={detailsRef} className={styles.trackMenu}>
-          <summary aria-label={`${props.track.name} track menu`}>
-            <Icon name="more" />
-          </summary>
-          <div>{trackMenuItems}</div>
-        </details>
+        <MenuButton label={`${props.track.name} track menu`} items={trackMenuItems} />
         {showVolume && (
           <label className={styles.trackControl}>
             <span>VOL</span>

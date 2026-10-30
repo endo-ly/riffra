@@ -1,4 +1,4 @@
-import type { InstrumentCollection } from '@/model/generated';
+import type { InstrumentCollection, PluginEntry } from '@/model/generated';
 
 interface InstrumentSearchable {
   id?: string;
@@ -47,6 +47,15 @@ export function matchesInstrumentQuery(
   const normalized = query.trim().toLocaleLowerCase();
   if (!normalized) return true;
   return searchableValues(item, collections).some((value) =>
+    value.toLocaleLowerCase().includes(normalized),
+  );
+}
+
+/** Returns whether a plug-in's name or vendor matches a case-insensitive query. */
+export function matchesPluginQuery(plugin: Pick<PluginEntry, 'name' | 'vendor'>, query: string) {
+  const normalized = query.trim().toLocaleLowerCase();
+  if (!normalized) return true;
+  return [plugin.name, plugin.vendor ?? ''].some((value) =>
     value.toLocaleLowerCase().includes(normalized),
   );
 }

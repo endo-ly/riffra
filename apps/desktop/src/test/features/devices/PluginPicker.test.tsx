@@ -5,7 +5,7 @@ import { FakeNativeApi } from '@/test/support/fake-native-api';
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { InstrumentPicker } from '@/features/devices/InstrumentPicker';
+import { PluginPicker } from '@/features/devices/PluginPicker';
 
 afterEach(cleanup);
 
@@ -51,17 +51,19 @@ const plugins = [
   },
 ];
 
-describe('InstrumentPicker', () => {
-  it('routes built-in, user, and VST3 selections to their distinct callbacks', () => {
+describe('PluginPicker', () => {
+  it('routes library and external instrument selections to their distinct callbacks', () => {
     const onSelectInstrument = vi.fn();
-    const onSelectVst3 = vi.fn();
+    const onSelectPlugin = vi.fn();
     render(
       <TestSessionProvider api={new FakeNativeApi()}>
-        <InstrumentPicker
-          instruments={instruments}
+        <PluginPicker
+          title="Choose Instrument"
+          role="instrument"
           plugins={plugins}
+          instruments={instruments}
           onSelectInstrument={onSelectInstrument}
-          onSelectVst3={onSelectVst3}
+          onSelectPlugin={onSelectPlugin}
           onClose={vi.fn()}
         />
       </TestSessionProvider>,
@@ -78,7 +80,33 @@ describe('InstrumentPicker', () => {
     expect(onSelectInstrument).toHaveBeenCalledWith(instruments[1].id);
 
     fireEvent.click(screen.getByRole('button', { name: 'External Keys — Example Vendor' }));
-    expect(onSelectVst3).toHaveBeenCalledWith(plugins[0]);
+    expect(onSelectPlugin).toHaveBeenCalledWith(plugins[0]);
     expect(screen.queryByRole('button', { name: 'External Reverb — Example Vendor' })).toBeNull();
+  });
+
+  it('filters plug-ins by name or vendor and omits instrument sections for effect selection', () => {
+    const onSelectPlugin = vi.fn();
+    render(
+      <TestSessionProvider api={new FakeNativeApi()}>
+        <PluginPicker
+          title="Add Effect"
+          role="effect"
+          plugins={plugins}
+          onSelectPlugin={onSelectPlugin}
+          onClose={vi.fn()}
+        />
+      </TestSessionProvider>,
+    );
+
+    expect(screen.queryByText('Instruments')).not.toBeInTheDocument();
+    expect(screen.queryByText('External Instruments')).not.toBeInTheDocument();
+    fireEvent.change(screen.getByPlaceholderText('Search plugins...'), {
+      target: { value: 'example vendor' },
+    });
+    const reverb = screen.getByRole('button', { name: 'External Reverb — Example Vendor' });
+    fireEvent.click(reverb);
+
+    expect(onSelectPlugin).toHaveBeenCalledWith(plugins[1]);
+    expect(screen.queryByRole('button', { name: 'External Keys — Example Vendor' })).toBeNull();
   });
 });

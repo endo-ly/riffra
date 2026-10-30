@@ -1339,13 +1339,13 @@ describe('WorkspaceArrange', () => {
 
     // Act
     fireEvent.click(screen.getByLabelText('Instrument Delete track menu'));
-    fireEvent.click(screen.getByRole('button', { name: 'Open Devices' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Open Devices' }));
     expect(screen.getByRole('region', { name: 'Arrange lower area' })).toHaveAttribute(
       'data-view',
       'devices',
     );
     fireEvent.click(screen.getByLabelText('Instrument Delete track menu'));
-    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
 
     // Assert
     expect(screen.getByText(/This also removes 1 Clip from the Timeline/)).toBeInTheDocument();
@@ -1400,7 +1400,11 @@ describe('WorkspaceArrange', () => {
 
     // Act
     fireEvent.click(screen.getByLabelText('Guitar track menu'));
-    fireEvent.click(screen.getByRole('button', { name: 'Open Devices' }));
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    fireEvent.mouseDown(document.body);
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText('Guitar track menu'));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Open Devices' }));
 
     // Assert
     expect(screen.getByRole('region', { name: 'Arrange lower area' })).toHaveAttribute(
