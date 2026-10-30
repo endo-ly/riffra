@@ -5,6 +5,7 @@ import { TimelineRuler } from '@/features/timeline/TimelineRuler';
 import { TimelineToolbar } from '@/features/timeline/TimelineToolbar';
 import { TimelineTrackList } from '@/features/timeline/TimelineTrackList';
 import { TimelineOverlays } from './TimelineOverlays';
+import { RecordingPreview } from './RecordingPreview';
 import { TimelinePlayhead } from '@/features/timeline/TimelinePlayhead';
 import { formatMusicalPosition } from '@/model/time-format';
 import {
@@ -35,9 +36,18 @@ export interface TimelineLiveInputControls {
 export function TimelineView({ liveInput }: { liveInput: TimelineLiveInputControls }) {
   const { api } = useSessionContext();
   const session = useSession((state) => state.project.boot!.canonical.session);
-  const workspace = useSession((state) => state.workspace);
-  const transport = useSession((state) => state.transport);
-  const runtime = useSession((state) => state.runtime);
+  const selection = useSession((state) => state.workspace.selection);
+  const setSelection = useSession((state) => state.workspace.setSelection);
+  const trackTargets = useSession((state) => state.workspace.automation.trackTargets);
+  const lowerView = useSession((state) => state.workspace.lower.view);
+  const openMidiEditor = useSession((state) => state.workspace.openMidiEditor);
+  const toggleTrackAutomation = useSession((state) => state.workspace.toggleTrackAutomation);
+  const togglePlaySurface = useSession((state) => state.workspace.togglePlaySurface);
+  const toggleMixer = useSession((state) => state.workspace.toggleMixer);
+  const openDevices = useSession((state) => state.workspace.openDevices);
+  const transportStatus = useSession((state) => state.transport.status);
+  const playhead = useSession((state) => state.transport.playhead);
+  const activeDiagnostics = useSession((state) => state.runtime.projection.activeDiagnostics);
   const hostGeneration = useSession((state) => state.host.connection.generation);
   const [tool, setTool] = useState<TimelineTool>('select');
   const [snap, setSnap] = useState<SnapGrid>('1/16');
@@ -45,7 +55,6 @@ export function TimelineView({ liveInput }: { liveInput: TimelineLiveInputContro
   const [rulerMode, setRulerMode] = useState<'bars' | 'time'>('bars');
   const { arrangement } = session;
   const { timebase } = arrangement;
-  const { status: transportStatus, displayTick, playhead } = transport;
   const previewScope = `${hostGeneration}:${session.sessionId}`;
   const previewAutomation = (
     target: AutomationTarget,
@@ -69,12 +78,12 @@ export function TimelineView({ liveInput }: { liveInput: TimelineLiveInputContro
   );
   const editor = useTimelineEditor({
     session,
-    selection: workspace.selection,
-    setSelection: workspace.setSelection,
+    selection,
+    setSelection,
     tool,
     snap,
     pixelsPerTick,
-    displayTick,
+    displayTickRef: playhead,
     analyses,
     onSplitToolUsed: () => setTool('select'),
   });
@@ -83,22 +92,21 @@ export function TimelineView({ liveInput }: { liveInput: TimelineLiveInputContro
     pixelsPerTick,
     snapTick: editor.snapTick,
   });
-  const selectedTrackId = workspace.selection.kind === 'track' ? workspace.selection.trackId : null;
+  const selectedTrackId = selection.kind === 'track' ? selection.trackId : null;
   const ruler = useTimelineRulerController({
     arrangement,
     commit: editor.commit,
     snapTick: editor.snapTick,
     pixelsPerTick,
     displayTickRef: playhead,
-    selectedClipCount:
-      workspace.selection.kind === 'clips' ? workspace.selection.clipIds.length : 0,
+    selectedClipCount: selection.kind === 'clips' ? selection.clipIds.length : 0,
   });
   const { clearSelectedRange, clearTimeSelection, handleKeyboard: handleRulerKeyboard } = ruler;
   // Selecting Tracks or Clips anywhere, including the Inspector and the Mixer,
   // releases the Loop and Punch range selection the ruler holds.
   useEffect(() => {
     clearSelectedRange();
-  }, [workspace.selection, clearSelectedRange]);
+  }, [selection, clearSelectedRange]);
   useTimelineShortcuts({
     handleRulerKeyboard,
     handleEditorKeyboard: editor.handleKeyboard,
@@ -116,22 +124,21 @@ export function TimelineView({ liveInput }: { liveInput: TimelineLiveInputContro
     arrangement,
     editor,
     ruler,
-    lower: { openMidiEditor: (clip) => workspace.openMidiEditor(clip.id) },
+    lower: { openMidiEditor: (clip) => openMidiEditor(clip.id) },
     snap,
     timebase,
-    displayTick,
+    displayTickRef: playhead,
     onOpenDevices: (trackId) => {
-      workspace.setSelection({ kind: 'track', trackId });
-      workspace.openDevices();
+      setSelection({ kind: 'track', trackId });
+      openDevices();
     },
     addTrack: trackOperations.addTrack,
     deleteTrack: trackOperations.deleteTrack,
     trackClipCounts: trackOperations.clipCounts,
     createEmptyMidiClip: trackOperations.createEmptyMidiClip,
   });
-  const unavailableClipIds = runtime.projection.activeDiagnostics?.unavailableClipIds ?? [];
-  const automationOpen =
-    selectedTrackId !== null && Boolean(workspace.automation.trackTargets[selectedTrackId]);
+  const unavailableClipIds = activeDiagnostics?.unavailableClipIds ?? [];
+  const automationOpen = selectedTrackId !== null && Boolean(trackTargets[selectedTrackId]);
 
   return (
     <>
@@ -147,12 +154,12 @@ export function TimelineView({ liveInput }: { liveInput: TimelineLiveInputContro
         automationAvailable={selectedTrackId !== null}
         automationOpen={automationOpen}
         onToggleAutomation={() => {
-          if (selectedTrackId) workspace.toggleTrackAutomation(selectedTrackId);
+          if (selectedTrackId) toggleTrackAutomation(selectedTrackId);
         }}
-        playSurfaceOpen={workspace.lower.view === 'playSurface'}
-        onTogglePlaySurface={workspace.togglePlaySurface}
-        mixerOpen={workspace.lower.view === 'mixer'}
-        onToggleMixer={workspace.toggleMixer}
+        playSurfaceOpen={lowerView === 'playSurface'}
+        onTogglePlaySurface={togglePlaySurface}
+        mixerOpen={lowerView === 'mixer'}
+        onToggleMixer={toggleMixer}
         computerKeyboardOn={liveInput.on}
         computerKeyboardRange={liveInput.rangeLabel}
         computerKeyboardBlockedReason={liveInput.blockedReason}
@@ -219,25 +226,7 @@ export function TimelineView({ liveInput }: { liveInput: TimelineLiveInputContro
             className={styles.timelineGrid}
             style={{ width: timelineWidth, backgroundImage: gridBackground } as CSSProperties}
           />
-          {transportStatus && transportStatus.recordingPhase !== 'idle' && (
-            <div
-              className={styles.recordingPreview}
-              style={{
-                left: TRACK_HEADER_WIDTH + transportStatus.recordingStartTick * pixelsPerTick,
-                width:
-                  Math.max(1, displayTick - transportStatus.recordingStartTick) * pixelsPerTick,
-              }}
-            >
-              {transportStatus.recordingPhase.toUpperCase()} ·{' '}
-              {transportStatus.armedTrackIds
-                .map(
-                  (trackId) =>
-                    arrangement.tracks.find((track) => track.id === trackId)?.name ?? trackId,
-                )
-                .join(' · ')}{' '}
-              · PASS {transportStatus.recordingPassOrdinal}
-            </div>
-          )}
+          <RecordingPreview pixelsPerTick={pixelsPerTick} tracks={arrangement.tracks} />
           <TimelinePlayhead pixelsPerTick={pixelsPerTick} />
           {ruler.timeSelection && (
             <div

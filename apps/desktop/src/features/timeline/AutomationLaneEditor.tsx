@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type MutableRefObject } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type {
   AutomationInterpolation,
   AutomationPoint,
@@ -7,7 +7,7 @@ import type {
   DeviceParameterInfo,
   EffectOwner,
 } from '@/model/generated';
-import { useSessionContext } from '@/shared/session/session-context';
+import { useSession, useSessionContext } from '@/shared/session/session-context';
 import { errorText } from '@/shared/errors';
 import {
   automationDevices,
@@ -23,8 +23,6 @@ interface Props {
   warnings: readonly string[];
   timelineWidth: number;
   pixelsPerTick: number;
-  playheadTick: number;
-  playheadTickRef: MutableRefObject<number>;
   previewScope: string;
   snapTick: (tick: number, temporaryOff?: boolean) => number;
   onTarget: (target: AutomationTarget) => void;
@@ -43,6 +41,8 @@ interface Props {
 
 export function AutomationLaneEditor(props: Props) {
   const { api } = useSessionContext();
+  const displayTick = useSession((state) => state.transport.displayTick);
+  const playhead = useSession((state) => state.transport.playhead);
   const ownerCandidate = automationOwner(props.session.arrangement, props.target);
   const ownerKind = ownerCandidate?.kind ?? null;
   const ownerId = ownerCandidate && 'id' in ownerCandidate ? ownerCandidate.id : null;
@@ -130,8 +130,8 @@ export function AutomationLaneEditor(props: Props) {
       }
       timelineWidth={props.timelineWidth}
       pixelsPerTick={props.pixelsPerTick}
-      playheadTick={props.playheadTick}
-      playheadTickRef={props.playheadTickRef}
+      playheadTick={displayTick}
+      playheadTickRef={playhead}
       previewScope={props.previewScope}
       snapTick={props.snapTick}
       onTarget={props.onTarget}

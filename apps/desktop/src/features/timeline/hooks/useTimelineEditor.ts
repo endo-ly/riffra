@@ -1,5 +1,5 @@
 import { snapToBar } from '@/model/timebase';
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import type { AudioAnalysis, CreativeSession } from '@/model/generated';
 import type { EditorSelection } from '../../../model/editor-selection';
 import { type TimelineTool } from '@/features/timeline/model/timeline-layout';
@@ -21,13 +21,13 @@ interface UseTimelineEditorOptions {
   tool: TimelineTool;
   snap: SnapGrid;
   pixelsPerTick: number;
-  displayTick: number;
+  displayTickRef: MutableRefObject<number>;
   analyses: Record<string, AudioAnalysis | null>;
   onSplitToolUsed?: () => void;
 }
 
 export function useTimelineEditor(options: UseTimelineEditorOptions) {
-  const { session, selection, setSelection, tool, snap, pixelsPerTick, displayTick, analyses } =
+  const { session, selection, setSelection, tool, snap, pixelsPerTick, displayTickRef, analyses } =
     options;
   const selectedClipIds = useMemo(
     () => (selection.kind === 'clips' ? selection.clipIds : []),
@@ -202,7 +202,7 @@ export function useTimelineEditor(options: UseTimelineEditorOptions) {
           pasteTimelineClips(
             clipboardRef.current.audioIds,
             clipboardRef.current.midiIds,
-            snapTick(displayTick),
+            snapTick(displayTickRef.current),
           ),
         ).then((next) => {
           if (next)
@@ -236,8 +236,8 @@ export function useTimelineEditor(options: UseTimelineEditorOptions) {
         const midiTargets = arrangement.midiClips.filter((clip) =>
           selectedClipIds.includes(clip.id),
         );
-        for (const clip of audioTargets) void splitClip(clip, displayTick);
-        for (const clip of midiTargets) void splitMidiClip(clip, displayTick);
+        for (const clip of audioTargets) void splitClip(clip, displayTickRef.current);
+        for (const clip of midiTargets) void splitMidiClip(clip, displayTickRef.current);
       } else if (selectedClipIds.length && event.key === 'Delete') {
         event.preventDefault();
         void commit(
@@ -259,7 +259,7 @@ export function useTimelineEditor(options: UseTimelineEditorOptions) {
       arrangement.audioClips,
       arrangement.midiClips,
       commit,
-      displayTick,
+      displayTickRef,
       pasteTimelineClips,
       removeTimelineClips,
       selectedClipIds,

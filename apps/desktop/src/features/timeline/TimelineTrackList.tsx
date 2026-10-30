@@ -47,8 +47,6 @@ export function TimelineTrackList(props: TimelineTrackListProps) {
   const automationWarnings = useSession(
     (state) => state.audio.status.diagnostics.automationWarnings,
   );
-  const displayTick = useSession((state) => state.transport.displayTick);
-  const playhead = useSession((state) => state.transport.playhead);
   const [emptyDragOver, setEmptyDragOver] = useState(false);
   const [newTrackDragOver, setNewTrackDragOver] = useState(false);
   const { sessionId } = session;
@@ -67,8 +65,6 @@ export function TimelineTrackList(props: TimelineTrackListProps) {
       target={target}
       timelineWidth={timelineWidth}
       pixelsPerTick={pixelsPerTick}
-      playheadTick={displayTick}
-      playheadTickRef={playhead}
       previewScope={props.previewScope}
       snapTick={editor.snapTick}
       onPreview={props.previewAutomation}

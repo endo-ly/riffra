@@ -16,8 +16,20 @@ import type { TransportStatus } from '@/model/generated';
 import { canonicalState, defaultSession } from '@/native/browser-defaults';
 import { toAssetId } from '@/model/asset-id';
 import { createFakeNativeApi, type FakeNativeApi } from '@/test/support/fake-native-api';
+import type { TimelineTrack } from '@/features/timeline/TimelineTrack';
 import { TRACK_HEADER_WIDTH } from '@/features/timeline/model/timeline-layout';
 import { offGridAudioMoveSession, renderWorkspace } from '@/test/support/workspace';
+
+const trackRenders = vi.hoisted(() => ({ count: 0 }));
+vi.mock('@/features/timeline/TimelineTrack', async (importOriginal) => {
+  const original = await importOriginal<{ TimelineTrack: typeof TimelineTrack }>();
+  return {
+    TimelineTrack: (props: Parameters<typeof TimelineTrack>[0]) => {
+      trackRenders.count += 1;
+      return original.TimelineTrack(props);
+    },
+  };
+});
 
 afterEach(cleanup);
 
@@ -101,6 +113,24 @@ function mergeMidiClip(
 }
 
 describe('TimelineView', () => {
+  it('does not re-render the track rows when only the playhead moves', async () => {
+    // Arrange
+    const session = defaultSession();
+    session.arrangement.tracks.push(mergeTrack('track:audio', 'audio'));
+    session.arrangement.audioClips.push(mergeAudioClip('clip:audio', 0, 0));
+    const api = createFakeNativeApi();
+    const { store } = renderWorkspace(api, { session });
+    await act(() => Promise.resolve());
+    trackRenders.count = 0;
+
+    // Act
+    act(() => store.getState().transport.seekLocally(1_920));
+
+    // Assert
+    expect(store.getState().transport.displayTick).toBe(1_920);
+    expect(trackRenders.count).toBe(0);
+  });
+
   it.each(['next', 'previous'] as const)(
     'merges adjacent Audio clips with the %s clip into the previous clip',
     async (direction) => {
