@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type {
   HostConnectionState,
@@ -46,7 +46,7 @@ interface ProjectHostSelectorProps {
   onRenameProject?: (name: string) => Promise<unknown>;
 }
 
-/** Viewport position of the open panel, taken from the trigger when it opens. */
+/** Viewport position of the open panel. */
 interface PanelAnchor {
   left: number;
   top: number;
@@ -96,7 +96,10 @@ export function ProjectHostSelectorView(props: ProjectHostSelectorProps) {
   const discardNameDraftRef = useRef(false);
   const { onRefresh, onSwitch } = props;
   const open = anchor !== null;
-  const close = () => setAnchor(null);
+  const close = () => {
+    if (panelRef.current?.contains(document.activeElement)) triggerRef.current?.focus();
+    setAnchor(null);
+  };
 
   const hostLabel = getHostLabel(props.state, props.hosts);
   const projects = props.projectState?.projects ?? [];
@@ -133,13 +136,50 @@ export function ProjectHostSelectorView(props: ProjectHostSelectorProps) {
       setAnchor(null);
     };
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setAnchor(null);
+      if (event.key === 'Escape') {
+        setAnchor(null);
+        triggerRef.current?.focus();
+      }
     };
     window.addEventListener('mousedown', onPointerDown);
     window.addEventListener('keydown', onKeyDown);
     return () => {
       window.removeEventListener('mousedown', onPointerDown);
       window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open]);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    const reposition = () => {
+      const trigger = triggerRef.current;
+      const panel = panelRef.current;
+      if (!trigger || !panel) return;
+      const bounds = trigger.getBoundingClientRect();
+      const margin = 4;
+      const width = Math.min(320, Math.max(0, window.innerWidth - margin * 2));
+      const height = Math.min(panel.scrollHeight, Math.max(0, window.innerHeight - margin * 2));
+      const below = window.innerHeight - bounds.bottom - margin;
+      const above = bounds.top - margin;
+      const top =
+        below < height && above > below ? bounds.top - margin - height : bounds.bottom + margin;
+      const next = {
+        left: Math.max(margin, Math.min(bounds.left, window.innerWidth - width - margin)),
+        top: Math.max(margin, Math.min(top, window.innerHeight - height - margin)),
+      };
+      setAnchor((current) =>
+        current && current.left === next.left && current.top === next.top ? current : next,
+      );
+    };
+    reposition();
+    window.addEventListener('resize', reposition);
+    window.addEventListener('scroll', reposition, true);
+    const observer = new ResizeObserver(reposition);
+    if (panelRef.current) observer.observe(panelRef.current);
+    return () => {
+      window.removeEventListener('resize', reposition);
+      window.removeEventListener('scroll', reposition, true);
+      observer.disconnect();
     };
   }, [open]);
 
@@ -188,7 +228,6 @@ export function ProjectHostSelectorView(props: ProjectHostSelectorProps) {
         {props.state.mode === 'disconnected' && (
           <button
             type="button"
-            role="menuitem"
             className={styles.textButton}
             disabled={hostBusy}
             onClick={() => void props.onReconnect()}
@@ -198,7 +237,6 @@ export function ProjectHostSelectorView(props: ProjectHostSelectorProps) {
         )}
         <button
           type="button"
-          role="menuitem"
           className={styles.textButton}
           disabled={hostBusy}
           onClick={() => {
@@ -213,7 +251,6 @@ export function ProjectHostSelectorView(props: ProjectHostSelectorProps) {
         </button>
         <button
           type="button"
-          role="menuitem"
           className={styles.textButton}
           disabled={hostBusy || refreshing}
           onClick={refreshSelector}
@@ -224,7 +261,6 @@ export function ProjectHostSelectorView(props: ProjectHostSelectorProps) {
       <div role="group" aria-label="Hosts">
         <button
           type="button"
-          role="menuitem"
           className={styles.row}
           aria-current={props.state.mode === 'embedded' || undefined}
           disabled={hostBusy}
@@ -241,7 +277,6 @@ export function ProjectHostSelectorView(props: ProjectHostSelectorProps) {
           return (
             <button
               type="button"
-              role="menuitem"
               className={styles.row}
               key={host.instanceId}
               title={host.dataRoot}
@@ -299,7 +334,6 @@ export function ProjectHostSelectorView(props: ProjectHostSelectorProps) {
           />
           <button
             type="button"
-            role="menuitem"
             className={controls.smallButton}
             disabled={projectActionsDisabled}
             onClick={() => {
@@ -356,7 +390,6 @@ export function ProjectHostSelectorView(props: ProjectHostSelectorProps) {
             return (
               <button
                 type="button"
-                role="menuitem"
                 className={styles.row}
                 key={project.projectId}
                 title={project.error ?? undefined}
@@ -381,7 +414,6 @@ export function ProjectHostSelectorView(props: ProjectHostSelectorProps) {
       <div className={styles.actions}>
         <button
           type="button"
-          role="menuitem"
           className={`${controls.smallButton} ${controls.accent}`}
           disabled={projectActionsDisabled}
           onClick={() => closeOnSuccess(props.onCreateProject?.())}
@@ -391,7 +423,6 @@ export function ProjectHostSelectorView(props: ProjectHostSelectorProps) {
         </button>
         <button
           type="button"
-          role="menuitem"
           className={controls.smallButton}
           disabled={projectActionsDisabled}
           onClick={() => {
@@ -404,7 +435,6 @@ export function ProjectHostSelectorView(props: ProjectHostSelectorProps) {
         </button>
         <button
           type="button"
-          role="menuitem"
           className={controls.smallButton}
           title="Import Score YAML"
           disabled={projectActionsDisabled}
@@ -428,6 +458,7 @@ export function ProjectHostSelectorView(props: ProjectHostSelectorProps) {
         className={styles.trigger}
         aria-label={`${projectName ? 'Project' : 'Host'}: ${projectName ?? hostLabel}`}
         aria-expanded={open}
+        aria-haspopup="dialog"
         title={props.state.dataRoot ?? hostLabel}
         onClick={(event) => {
           const bounds = event.currentTarget.getBoundingClientRect();
@@ -464,7 +495,8 @@ export function ProjectHostSelectorView(props: ProjectHostSelectorProps) {
           <div
             ref={panelRef}
             className={styles.panel}
-            role="menu"
+            role="dialog"
+            aria-label="Project and Host"
             style={{ left: anchor.left, top: anchor.top }}
           >
             {props.projectState && projectSection}

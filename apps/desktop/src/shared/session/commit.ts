@@ -2,17 +2,19 @@ import type { ArrangementMutationResult, CanonicalState } from '@/model/generate
 import { HostConnectionChangedError } from '@/native/invoke';
 import { errorText } from '@/shared/errors';
 import { toast } from '@/shared/toasts';
+import type { CanonicalAcceptance } from './slices/project';
 
 type SessionMutation = Pick<ArrangementMutationResult, 'canonical' | 'projection'>;
-type ApplyCanonicalState = (canonical: CanonicalState) => void;
+type ApplyCanonicalState = (canonical: CanonicalState) => CanonicalAcceptance;
 
 export function applyMutation(
   result: SessionMutation,
   applyCanonicalState: ApplyCanonicalState,
   onError: (message: string) => void,
-): void {
-  applyCanonicalState(result.canonical);
+): boolean {
+  if (applyCanonicalState(result.canonical) === 'rejected') return false;
   if (result.projection.state === 'failed') onError(result.projection.message);
+  return true;
 }
 
 export type SessionCommit = <T extends SessionMutation>(
@@ -30,7 +32,6 @@ export function createSessionCommit(applyCanonicalState: ApplyCanonicalState): S
       if (!(error instanceof HostConnectionChangedError)) onError(errorText(error));
       return null;
     }
-    applyMutation(result, applyCanonicalState, onError);
-    return result;
+    return applyMutation(result, applyCanonicalState, onError) ? result : null;
   };
 }

@@ -27,18 +27,22 @@ export function acceptBootstrap(store: ProjectStore, next: BootstrapState): Proj
   };
 }
 
+export type CanonicalAcceptance = 'applied' | 'already-current' | 'rejected';
+
 export function acceptCanonical(
   store: ProjectStore,
   canonical: CanonicalState,
-): ProjectStore | null {
+): { result: CanonicalAcceptance; store: ProjectStore } {
   const boot = store.boot;
   if (
     !boot ||
     canonical.projectId !== boot.projectState.activeProjectId ||
-    canonical.sequence <= boot.canonical.sequence
+    canonical.projectId !== boot.canonical.projectId ||
+    canonical.sequence < boot.canonical.sequence
   )
-    return null;
-  return { ...store, boot: { ...boot, canonical } };
+    return { result: 'rejected', store };
+  if (canonical.sequence === boot.canonical.sequence) return { result: 'already-current', store };
+  return { result: 'applied', store: { ...store, boot: { ...boot, canonical } } };
 }
 
 export function acceptActivation(
@@ -112,7 +116,7 @@ export interface ProjectSlice extends ProjectStore {
   bootstrap(): Promise<void>;
   reset(): void;
   acceptBootstrap(state: BootstrapState): void;
-  acceptCanonical(state: CanonicalState): void;
+  acceptCanonical(state: CanonicalState): CanonicalAcceptance;
   acceptActivation(state: ProjectActivationResult): boolean;
   replaceList(state: ProjectState): void;
   refreshList(): Promise<ProjectState | null>;
@@ -226,7 +230,9 @@ export function createProjectSlice(
       acceptPlugins(state.pluginCatalog);
     },
     acceptCanonical: (state) => {
-      accept(acceptCanonical(get(), state));
+      const next = acceptCanonical(get(), state);
+      if (next.result === 'applied') update(next.store);
+      return next.result;
     },
     acceptActivation: (state) => accept(acceptActivation(get(), state)),
     replaceList: (state) => {

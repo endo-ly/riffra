@@ -6,7 +6,7 @@ import { createSessionCommit } from '@/shared/session/commit';
 
 describe('session commit', () => {
   it('reports a failed projection and returns the result even when canonical state was already accepted', async () => {
-    const apply = vi.fn(() => false);
+    const apply = vi.fn(() => 'already-current' as const);
     const onError = vi.fn();
     const result: ArrangementMutationResult = {
       canonical: canonicalState(defaultSession()),
@@ -18,9 +18,22 @@ describe('session commit', () => {
     expect(onError).toHaveBeenCalledWith('native rejected');
   });
 
+  it('ignores rejected responses and their projection errors', async () => {
+    const onError = vi.fn();
+    const result: ArrangementMutationResult = {
+      canonical: canonicalState(defaultSession()),
+      createdEntityIds: {},
+      projection: { state: 'failed', message: 'native rejected' },
+    };
+    expect(
+      await createSessionCommit(() => 'rejected')(Promise.resolve(result), { onError }),
+    ).toBeNull();
+    expect(onError).not.toHaveBeenCalled();
+  });
+
   it('silences a changed Host and reports other command failures', async () => {
     const onError = vi.fn();
-    const commit = createSessionCommit(vi.fn());
+    const commit = createSessionCommit(vi.fn(() => 'applied' as const));
     expect(await commit(Promise.reject(new HostConnectionChangedError()), { onError })).toBeNull();
     expect(onError).not.toHaveBeenCalled();
     expect(await commit(Promise.reject(new Error('failed')), { onError })).toBeNull();

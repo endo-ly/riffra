@@ -76,6 +76,24 @@ describe('project', () => {
     vi.restoreAllMocks();
   });
 
+  it('keeps recovery information when the restoration response is stale', async () => {
+    const api = createFakeNativeApi();
+    const recovery = { recoveredFromGeneration: true, recoveryCandidates: [] };
+    const store = createSessionStore(api);
+    store.getState().project.acceptBootstrap({ ...api.bootstrapState, recovery });
+    const canonical = api.bootstrapState.canonical;
+    store.getState().project.acceptCanonical({ ...canonical, sequence: canonical.sequence + 2 });
+    api.setResponse('restoreRecoveryGeneration', () => ({
+      canonical: { ...canonical, sequence: canonical.sequence + 1 },
+      createdEntityIds: {},
+      projection: { state: 'failed', message: 'stale projection' },
+    }));
+    const toastSpy = vi.spyOn(toasts, 'toast');
+    await store.getState().project.restoreRecovery('recovery');
+    expect(store.getState().project.boot?.recovery).toEqual(recovery);
+    expect(toastSpy).not.toHaveBeenCalled();
+  });
+
   it('accepts an activation event before the matching command response', async () => {
     const api = createFakeNativeApi();
     const next = activation('01900000-0000-7000-8000-000000000002');
