@@ -172,6 +172,10 @@ export function ProjectHostSelectorView(props: ProjectHostSelectorProps) {
       );
     };
     reposition();
+    const panel = panelRef.current;
+    if (panel && !panel.contains(document.activeElement)) {
+      (panel.querySelector<HTMLButtonElement>('button:not(:disabled)') ?? panel).focus();
+    }
     window.addEventListener('resize', reposition);
     window.addEventListener('scroll', reposition, true);
     const observer = new ResizeObserver(reposition);
@@ -496,6 +500,7 @@ export function ProjectHostSelectorView(props: ProjectHostSelectorProps) {
             ref={panelRef}
             className={styles.panel}
             role="dialog"
+            tabIndex={-1}
             aria-label="Project and Host"
             style={{ left: anchor.left, top: anchor.top }}
           >

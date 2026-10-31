@@ -94,6 +94,18 @@ describe('ProjectHostSelector', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
+  it('focuses Host controls when no Project is loaded', async () => {
+    const user = userEvent.setup();
+    renderSelector(embedded, { projectState: null });
+    const trigger = screen.getByRole('button', { name: 'Host: Local Desktop' });
+    await user.click(trigger);
+    expect(screen.getByRole('button', { name: 'Connect…' })).toHaveFocus();
+    await user.tab();
+    expect(screen.getByRole('button', { name: 'Refresh' })).toHaveFocus();
+    await user.keyboard('{Escape}');
+    expect(trigger).toHaveFocus();
+  });
+
   it('shows the Project, its actions, and verified local Host candidates', () => {
     const onRefresh = vi.fn().mockResolvedValue(undefined);
     renderSelector(embedded, { onRefresh });
@@ -101,6 +113,7 @@ describe('ProjectHostSelector', () => {
     fireEvent.click(screen.getByRole('button', { name: /Project: Untitled Project/ }));
 
     expect(screen.getByRole('textbox', { name: 'Project name' })).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Search Projects' })).toHaveFocus();
     expect(screen.getByRole('button', { name: 'Import…' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Export…' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /project-a/i })).toBeInTheDocument();

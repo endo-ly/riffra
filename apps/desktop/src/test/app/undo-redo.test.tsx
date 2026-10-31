@@ -3,13 +3,25 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createFakeNativeApi, type FakeNativeApi } from '@/test/support/fake-native-api';
 import App from '@/app/App';
 import { canonicalState, defaultSession } from '@/native/browser-defaults';
 import type { CreativeSession, ProjectState } from '@/model/generated';
 
-afterEach(cleanup);
+beforeEach(() => {
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe = vi.fn();
+      disconnect = vi.fn();
+    },
+  );
+});
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 function renderApp(fake: FakeNativeApi) {
   return render(<App api={fake} />);

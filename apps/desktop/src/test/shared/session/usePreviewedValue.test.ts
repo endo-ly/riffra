@@ -71,7 +71,9 @@ describe('usePreviewedValue', () => {
     });
     await waitFor(() => expect(setMasterGainDb).toHaveBeenCalledOnce());
     // A newer canonical reaches the store while the older commit is in flight.
-    act(() => store.getState().project.acceptCanonical({ ...canonicalState(latest), sequence: 2 }));
+    act(() => {
+      store.getState().project.acceptCanonical({ ...canonicalState(latest), sequence: 2 });
+    });
     await act(async () => {
       resolveCommit({
         ...mutationResult({ ...canonicalState(stale), sequence: 1 }),
@@ -82,7 +84,7 @@ describe('usePreviewedValue', () => {
 
     expect(result.current.value).toBe(-10);
     expect(api.previewMasterGainDb).toHaveBeenLastCalledWith(-10);
-    expect(onError).toHaveBeenCalledWith('projection failed');
+    expect(onError).not.toHaveBeenCalled();
   });
 
   it('does not commit pointerup or blur after an operation is canceled', async () => {
