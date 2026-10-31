@@ -3,7 +3,7 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { HostConnectionState, LocalHostInfo } from '@/model/generated';
 
 import type { HostConnectionBootstrap } from '@/native/api/host-connection';
@@ -15,7 +15,19 @@ vi.mock('@/native/dialog', () => ({
   openHostDataRoot: vi.fn().mockResolvedValue(null),
 }));
 
-afterEach(() => cleanup());
+beforeEach(() => {
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe = vi.fn();
+      disconnect = vi.fn();
+    },
+  );
+});
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 const embedded: HostConnectionState = {
   mode: 'embedded',
@@ -55,6 +67,45 @@ function renderSelector(state: HostConnectionState = embedded, overrides = {}) {
 }
 
 describe('ProjectHostSelector', () => {
+  it('positions the dialog within the viewport and restores focus on Escape', async () => {
+    const user = userEvent.setup();
+    renderSelector();
+    const trigger = screen.getByRole('button', { name: /Project: Untitled Project/ });
+    vi.spyOn(trigger, 'getBoundingClientRect').mockReturnValue({
+      left: 950,
+      top: 700,
+      bottom: 730,
+    } as DOMRect);
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(300);
+    await user.click(trigger);
+    const dialog = screen.getByRole('dialog', { name: 'Project and Host' });
+    expect(dialog.style.left).toBe('700px');
+    expect(dialog.style.top).toBe('396px');
+    vi.spyOn(trigger, 'getBoundingClientRect').mockReturnValue({
+      left: 20,
+      top: 10,
+      bottom: 40,
+    } as DOMRect);
+    fireEvent.scroll(window);
+    expect(dialog.style.left).toBe('20px');
+    expect(dialog.style.top).toBe('44px');
+    await user.keyboard('{Escape}');
+    expect(trigger).toHaveFocus();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('focuses Host controls when no Project is loaded', async () => {
+    const user = userEvent.setup();
+    renderSelector(embedded, { projectState: null });
+    const trigger = screen.getByRole('button', { name: 'Host: Local Desktop' });
+    await user.click(trigger);
+    expect(screen.getByRole('button', { name: 'Connect…' })).toHaveFocus();
+    await user.tab();
+    expect(screen.getByRole('button', { name: 'Refresh' })).toHaveFocus();
+    await user.keyboard('{Escape}');
+    expect(trigger).toHaveFocus();
+  });
+
   it('shows the Project, its actions, and verified local Host candidates', () => {
     const onRefresh = vi.fn().mockResolvedValue(undefined);
     renderSelector(embedded, { onRefresh });
@@ -62,9 +113,10 @@ describe('ProjectHostSelector', () => {
     fireEvent.click(screen.getByRole('button', { name: /Project: Untitled Project/ }));
 
     expect(screen.getByRole('textbox', { name: 'Project name' })).toBeInTheDocument();
-    expect(screen.getByRole('menuitem', { name: 'Import…' })).toBeInTheDocument();
-    expect(screen.getByRole('menuitem', { name: 'Export…' })).toBeInTheDocument();
-    expect(screen.getByRole('menuitem', { name: /project-a/i })).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Search Projects' })).toHaveFocus();
+    expect(screen.getByRole('button', { name: 'Import…' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Export…' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /project-a/i })).toBeInTheDocument();
     expect(screen.getByText(/PID 18420 · Ready/)).toBeInTheDocument();
     expect(onRefresh).toHaveBeenCalledOnce();
   });
@@ -88,7 +140,7 @@ describe('ProjectHostSelector', () => {
     renderSelector(embedded, { projectState });
     const listedNames = () =>
       within(screen.getByRole('group', { name: 'Projects' }))
-        .getAllByRole('menuitem')
+        .getAllByRole('button')
         .map((item) => item.querySelector('span')?.textContent);
 
     await user.click(screen.getByRole('button', { name: /Project: Gamma/ }));
@@ -128,7 +180,7 @@ describe('ProjectHostSelector', () => {
     renderSelector(embedded, { onImportProject });
 
     await user.click(screen.getByRole('button', { name: /Project: Untitled Project/ }));
-    await user.click(screen.getByRole('menuitem', { name: 'Import…' }));
+    await user.click(screen.getByRole('button', { name: 'Import…' }));
 
     expect(onImportProject).toHaveBeenCalledOnce();
   });
@@ -159,7 +211,7 @@ describe('ProjectHostSelector', () => {
     await user.type(nameInput, 'My Project');
     await user.click(document.body);
 
-    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(onRenameProject).toHaveBeenCalledOnce();
     expect(onRenameProject).toHaveBeenCalledWith('My Project');
   });
@@ -170,16 +222,16 @@ describe('ProjectHostSelector', () => {
     renderSelector(embedded, { onSwitch, error: 'Host switch failed' });
 
     await user.click(screen.getByRole('button', { name: /Project: Untitled Project/ }));
-    await user.click(screen.getByRole('menuitem', { name: /project-a/i }));
+    await user.click(screen.getByRole('button', { name: /project-a/i }));
 
     await waitFor(() =>
       expect(onSwitch).toHaveBeenCalledWith({ type: 'registration', instanceId: 'host-a' }),
     );
-    expect(screen.getByRole('menu')).toBeInTheDocument();
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
     expect(screen.getByText('Host switch failed')).toBeInTheDocument();
 
     vi.mocked(openHostDataRoot).mockResolvedValueOnce('D:\\Music\\offline-host');
-    await user.click(screen.getByRole('menuitem', { name: 'Connect…' }));
+    await user.click(screen.getByRole('button', { name: 'Connect…' }));
 
     await waitFor(() =>
       expect(onSwitch).toHaveBeenCalledWith({
@@ -187,7 +239,7 @@ describe('ProjectHostSelector', () => {
         dataRoot: 'D:\\Music\\offline-host',
       }),
     );
-    expect(screen.getByRole('menu')).toBeInTheDocument();
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
     expect(screen.getByText('Host switch failed')).toBeInTheDocument();
   });
 
@@ -215,12 +267,12 @@ describe('ProjectHostSelector', () => {
     });
 
     await user.click(screen.getByRole('button', { name: /Project: Untitled Project/ }));
-    await user.click(screen.getByRole('menuitem', { name: /Unreadable Project/ }));
+    await user.click(screen.getByRole('button', { name: /Unreadable Project/ }));
 
     await waitFor(() =>
       expect(onOpenProject).toHaveBeenCalledWith(projectState.projects[1].projectId),
     );
-    expect(screen.getByRole('menu')).toBeInTheDocument();
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
     expect(
       screen.getByText('Project opening failed: audio definition schema is unsupported.'),
     ).toBeInTheDocument();
@@ -241,10 +293,10 @@ describe('ProjectHostSelector', () => {
       />,
     );
 
-    await user.click(screen.getByRole('menuitem', { name: 'New Project' }));
+    await user.click(screen.getByRole('button', { name: 'New Project' }));
 
     await waitFor(() => expect(onCreateProject).toHaveBeenCalledOnce());
-    expect(screen.getByRole('menu')).toBeInTheDocument();
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
     expect(screen.getByText('Project creation failed: disk full')).toBeInTheDocument();
   });
 
@@ -254,9 +306,9 @@ describe('ProjectHostSelector', () => {
     renderSelector(embedded, { onSwitch });
 
     await user.click(screen.getByRole('button', { name: /Project: Untitled Project/ }));
-    await user.click(screen.getByRole('menuitem', { name: /project-a/i }));
+    await user.click(screen.getByRole('button', { name: /project-a/i }));
 
-    await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   });
 
   it('offers reconnect when the active Host is disconnected', async () => {
@@ -281,7 +333,7 @@ describe('ProjectHostSelector', () => {
     );
 
     fireEvent.click(screen.getByRole('button', { name: /Project: Untitled Project/ }));
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Reconnect' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Reconnect' }));
 
     await waitFor(() => expect(reconnect).toHaveBeenCalledOnce());
     expect(screen.getAllByText('Host event connection closed').length).toBeGreaterThan(0);
