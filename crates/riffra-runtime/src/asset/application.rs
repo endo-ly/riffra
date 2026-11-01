@@ -167,7 +167,12 @@ mod tests {
         let root = test_root("valid");
         let source = root.join("source").join("take.mid");
         std::fs::create_dir_all(source.parent().unwrap()).unwrap();
-        std::fs::write(&source, minimal_smf(480)).unwrap();
+        let mut bytes = minimal_smf(480);
+        let lyric = [0, 0xff, 0x05, 1, 0xff];
+        bytes.splice(22..22, lyric);
+        let length = (bytes.len() - 22) as u32;
+        bytes[18..22].copy_from_slice(&length.to_be_bytes());
+        std::fs::write(&source, bytes).unwrap();
 
         let id = import_midi_asset(&root, &source.to_string_lossy(), None).unwrap();
         let asset = load(&root, &id).unwrap().unwrap();

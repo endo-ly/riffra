@@ -362,7 +362,9 @@ mod tests {
         arrangement
             .tracks
             .push(Track::instrument("instrument".into(), "Instrument".into()));
-        arrangement.add_midi_clip(midi_clip("instrument")).unwrap();
+        let mut clip = midi_clip("instrument");
+        clip.notes[0].lyric = Some("き".into());
+        arrangement.add_midi_clip(clip).unwrap();
 
         arrangement
             .trim_midi_clip("midi-clip:1", TimelineTick(1_200), 960)
@@ -372,6 +374,7 @@ mod tests {
         assert_eq!(clip.start_tick, TimelineTick(1_200));
         assert_eq!(clip.duration_ticks, 960);
         assert_eq!(clip.notes[0].start_tick, TimelineTick(0));
+        assert_eq!(clip.notes[0].lyric.as_deref(), Some("き"));
         assert_eq!(clip.events[0].tick, TimelineTick(480));
     }
 

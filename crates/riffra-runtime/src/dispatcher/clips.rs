@@ -92,10 +92,64 @@ impl HostDispatcher<'_> {
 #[cfg(test)]
 mod tests {
     use crate::dispatcher::Dispatcher;
-    use crate::test_support::{command, mutated_session};
+    use crate::test_support::{command, mutated_session, output_value};
     use riffra_host::now_ms;
     use serde_json::json;
     use std::fs;
+
+    #[test]
+    fn imports_midi_with_invalid_lyrics_using_project_ppq() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-midi-ppq-{}",
+            riffra_control::new_instance_id()
+        ));
+        let store = riffra_host::ProjectStore::new(&root);
+        let mut initialized = store.initialize().unwrap();
+        initialized.loaded.session.arrangement.timebase.ppq = 3360;
+        initialized
+            .storage
+            .save(&initialized.loaded.session)
+            .unwrap();
+        let track = [
+            0, 0xff, 5, 1, 0xff, 0, 0x90, 60, 100, 0x83, 0x60, 0x80, 60, 0, 0, 0xff, 0x2f, 0,
+        ];
+        let mut bytes = b"MThd\0\0\0\x06\0\0\0\x01\x01\xe0MTrk".to_vec();
+        bytes.extend_from_slice(&(track.len() as u32).to_be_bytes());
+        bytes.extend_from_slice(&track);
+        let path = root.join("voice.mid");
+        fs::write(&path, bytes).unwrap();
+        let dispatcher = Dispatcher::open(
+            root.clone(),
+            crate::test_support::prepare_built_in_resource_root(&root),
+        )
+        .unwrap();
+        let imported = dispatcher
+            .dispatch(command("asset.import-midi", json!({"path":path})), None)
+            .unwrap();
+        let asset_id = output_value(&imported);
+        let placed = dispatcher
+            .dispatch(
+                command(
+                    "midi-clip.add-asset",
+                    json!({"assetId":asset_id,"name":"Voice"}),
+                ),
+                None,
+            )
+            .unwrap();
+        let session = mutated_session(&placed);
+        let clip = &session.arrangement.midi_clips[0];
+        assert_eq!(clip.duration_ticks, 3360);
+        assert_eq!(
+            (
+                clip.notes[0].start_tick.0,
+                clip.notes[0].duration_ticks,
+                clip.notes[0].lyric.as_deref()
+            ),
+            (0, 3360, None)
+        );
+        drop(dispatcher);
+        let _ = fs::remove_dir_all(root);
+    }
 
     #[test]
     fn clearing_midi_notes_preserves_clip_and_is_undoable() {

@@ -682,9 +682,49 @@ mod tests {
         let store = SessionStore::new(&root, TEST_PROJECT_ID);
         let mut session = CreativeSession::new(now_ms());
         session.project_name = Some("Clean".into());
+        session
+            .arrangement
+            .tracks
+            .push(Track::instrument("voice".into(), "Voice".into()));
+        session.arrangement.midi_clips.push(riffra_core::MidiClip {
+            id: "clip".into(),
+            name: "Voice".into(),
+            track_id: "voice".into(),
+            asset_id: None,
+            start_tick: TimelineTick(0),
+            duration_ticks: 960,
+            notes: vec![
+                riffra_core::MidiNote {
+                    id: "one".into(),
+                    note: 60,
+                    start_tick: TimelineTick(0),
+                    duration_ticks: 240,
+                    velocity: 100,
+                    channel: 1,
+                    lyric: Some("き".into()),
+                },
+                riffra_core::MidiNote {
+                    id: "two".into(),
+                    note: 62,
+                    start_tick: TimelineTick(240),
+                    duration_ticks: 240,
+                    velocity: 100,
+                    channel: 1,
+                    lyric: None,
+                },
+            ],
+            events: vec![],
+            instrument_control_events: vec![],
+            muted: false,
+            loop_enabled: false,
+            recording_take_id: None,
+        });
         store.save(&session).unwrap();
         let loaded = store.load_existing().unwrap();
         assert_eq!(loaded.session.project_name.as_deref(), Some("Clean"));
+        let notes = &loaded.session.arrangement.midi_clips[0].notes;
+        assert_eq!(notes[0].lyric.as_deref(), Some("き"));
+        assert_eq!(notes[1].lyric, None);
         let summary = store.summary().unwrap();
         assert_eq!(summary.name, "Clean");
         assert_eq!(summary.updated_at_ms, session.updated_at_ms);

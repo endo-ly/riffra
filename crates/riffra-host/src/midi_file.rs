@@ -1,7 +1,7 @@
-//! Pure Standard MIDI File parsing.
+//! Standard MIDI File parsing and encoding.
 
 use riffra_core::{MidiEvent, MidiEventKind, MidiNote, TimelineTick};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 /// Parses an SMF into project-tick duration, notes, and non-note events.
 ///
@@ -45,7 +45,7 @@ pub fn parse_smf(
     let mut lyrics = Vec::new();
     let mut last_tick = 0_u64;
     for track_index in 0..track_count {
-        let mut note_starts: HashMap<(u8, u8), usize> = HashMap::new();
+        let mut note_starts: HashMap<(u8, u8), VecDeque<usize>> = HashMap::new();
         if bytes.get(cursor..cursor.saturating_add(4)) != Some(b"MTrk".as_slice()) {
             return Err("MIDI track header is missing.".into());
         }
@@ -61,13 +61,14 @@ pub fn parse_smf(
         let mut tick = 0_u64;
         let mut running_status = 0_u8;
         let mut event_order = 0_usize;
+        let track_bytes = &bytes[..track_end];
         while cursor < track_end {
             event_order += 1;
             tick = tick
-                .checked_add(read_vlq(bytes, &mut cursor)?)
+                .checked_add(read_vlq(track_bytes, &mut cursor)?)
                 .ok_or("MIDI tick overflowed.")?;
             last_tick = last_tick.max(convert_tick(tick)?);
-            let first = *bytes
+            let first = *track_bytes
                 .get(cursor)
                 .ok_or_else(|| "MIDI event is truncated.".to_string())?;
             let status = if first & 0x80 != 0 {
@@ -83,11 +84,11 @@ pub fn parse_smf(
             };
 
             if status == 0xff {
-                let meta_type = *bytes
+                let meta_type = *track_bytes
                     .get(cursor)
                     .ok_or_else(|| "MIDI meta event is truncated.".to_string())?;
                 cursor += 1;
-                let length = read_vlq(bytes, &mut cursor)? as usize;
+                let length = read_vlq(track_bytes, &mut cursor)? as usize;
                 let data_start = cursor;
                 cursor = cursor
                     .checked_add(length)
@@ -95,16 +96,15 @@ pub fn parse_smf(
                 if cursor > track_end {
                     return Err("MIDI meta event is truncated.".into());
                 }
-                if meta_type == 0x05 {
-                    let lyric = std::str::from_utf8(&bytes[data_start..cursor]).map_err(|_| {
-                        format!("invalid UTF-8 lyric in track {track_index} at tick {tick}")
-                    })?;
+                if meta_type == 0x05
+                    && let Ok(lyric) = std::str::from_utf8(&track_bytes[data_start..cursor])
+                {
                     lyrics.push((track_index, tick, event_order, lyric.to_owned()));
                 }
                 continue;
             }
             if status == 0xf0 || status == 0xf7 {
-                let length = read_vlq(bytes, &mut cursor)? as usize;
+                let length = read_vlq(track_bytes, &mut cursor)? as usize;
                 cursor = cursor
                     .checked_add(length)
                     .ok_or_else(|| "MIDI system event length overflowed.".to_string())?;
@@ -116,14 +116,14 @@ pub fn parse_smf(
 
             let channel = (status & 0x0f) + 1;
             let kind = status >> 4;
-            let data1 = *bytes
+            let data1 = *track_bytes
                 .get(cursor)
                 .ok_or_else(|| "MIDI channel event is truncated.".to_string())?;
             cursor += 1;
             let data2 = if matches!(kind, 0xc | 0xd) {
                 0
             } else {
-                let value = *bytes
+                let value = *track_bytes
                     .get(cursor)
                     .ok_or_else(|| "MIDI channel event is truncated.".to_string())?;
                 cursor += 1;
@@ -132,7 +132,10 @@ pub fn parse_smf(
             let project_tick = convert_tick(tick)?;
             match kind {
                 0x8 | 0x9 if kind == 0x8 || data2 == 0 => {
-                    if let Some(index) = note_starts.remove(&(channel, data1)) {
+                    if let Some(index) = note_starts
+                        .get_mut(&(channel, data1))
+                        .and_then(VecDeque::pop_front)
+                    {
                         let start = notes[index].start_tick.0;
                         let end = project_tick
                             .max(start.checked_add(1).ok_or("MIDI note end overflowed.")?);
@@ -152,7 +155,10 @@ pub fn parse_smf(
                         channel,
                     });
                     note_positions.push((track_index, tick, event_order, index));
-                    note_starts.insert((channel, data1), index);
+                    note_starts
+                        .entry((channel, data1))
+                        .or_default()
+                        .push_back(index);
                 }
                 0xb => events.push(MidiEvent {
                     id: format!("event:cc:{channel}:{project_tick}:{data1}"),
@@ -182,7 +188,7 @@ pub fn parse_smf(
             }
         }
         let track_end_tick = convert_tick(tick)?;
-        for (_, index) in note_starts {
+        for index in note_starts.into_values().flatten() {
             let start = notes[index].start_tick.0;
             let end = track_end_tick.max(start.checked_add(1).ok_or("MIDI note end overflowed.")?);
             notes[index].duration_ticks = end - start;
@@ -190,49 +196,45 @@ pub fn parse_smf(
         cursor = track_end;
     }
 
-    // Match against source ticks before any PPQ conversion can merge positions.
-    let mut by_track_tick: HashMap<(u16, u64), Vec<usize>> = HashMap::new();
-    let mut by_tick: HashMap<u64, Vec<usize>> = HashMap::new();
+    // Count and XOR unassigned indices to find a unique candidate in constant time.
+    // Source ticks remain distinct even when PPQ conversion merges positions.
+    let mut by_track_tick: HashMap<(u16, u64), (usize, usize)> = HashMap::new();
+    let mut by_tick: HashMap<u64, (usize, usize)> = HashMap::new();
     let mut by_order = HashMap::new();
+    let mut note_tracks = Vec::with_capacity(notes.len());
     for (track, tick, order, index) in note_positions {
-        by_track_tick.entry((track, tick)).or_default().push(index);
-        by_tick.entry(tick).or_default().push(index);
+        let local = by_track_tick.entry((track, tick)).or_default();
+        local.0 += 1;
+        local.1 ^= index;
+        let global = by_tick.entry(tick).or_default();
+        global.0 += 1;
+        global.1 ^= index;
         by_order.insert((track, tick, order), index);
+        note_tracks.push(track);
     }
-    let mut pending = std::collections::HashSet::new();
-    let mut remaining = Vec::new();
     for (track, tick, order, lyric) in lyrics {
         let key = (track, tick);
-        if !pending.contains(&key)
-            && let Some(&index) = by_order.get(&(track, tick, order + 1))
-            && notes[index].lyric.is_none()
-        {
+        let local = by_track_tick.get(&key).copied().unwrap_or_default();
+        let global = by_tick.get(&tick).copied().unwrap_or_default();
+        let adjacent = by_order
+            .get(&(track, tick, order + 1))
+            .copied()
+            .filter(|index| notes[*index].lyric.is_none());
+        let index = adjacent.or(match (local, global) {
+            ((1, index), _) | ((0, _), (1, index)) => Some(index),
+            _ => None,
+        });
+        if let Some(index) = index {
             notes[index].lyric = Some(lyric);
-        } else {
-            pending.insert(key);
-            remaining.push((track, tick, lyric));
+            let local = by_track_tick
+                .get_mut(&(note_tracks[index], tick))
+                .expect("note group exists");
+            local.0 -= 1;
+            local.1 ^= index;
+            let global = by_tick.get_mut(&tick).expect("note tick exists");
+            global.0 -= 1;
+            global.1 ^= index;
         }
-    }
-    let mut next_local: HashMap<(u16, u64), usize> = HashMap::new();
-    for (track, tick, lyric) in remaining {
-        let key = (track, tick);
-        let error = || format!("lyric in track {track} at tick {tick} has no unique note");
-        let index = if let Some(local) = by_track_tick.get(&key) {
-            let cursor = next_local.entry(key).or_default();
-            while *cursor < local.len() && notes[local[*cursor]].lyric.is_some() {
-                *cursor += 1;
-            }
-            let index = *local.get(*cursor).ok_or_else(error)?;
-            *cursor += 1;
-            index
-        } else {
-            let candidates = by_tick.get(&tick).ok_or_else(error)?;
-            if candidates.len() != 1 || notes[candidates[0]].lyric.is_some() {
-                return Err(error());
-            }
-            candidates[0]
-        };
-        notes[index].lyric = Some(lyric);
     }
 
     let duration = notes
@@ -362,10 +364,14 @@ pub fn encode_smf(
         ));
     }
     let mut performance = Vec::new();
+    let mut note_ranges = Vec::new();
     for (clip, offset) in clips {
         for note in &clip.notes {
             if note.note > 127 || note.velocity == 0 || note.velocity > 127 {
                 return Err("note pitch or velocity cannot be represented in SMF".into());
+            }
+            if note.duration_ticks == 0 {
+                return Err(format!("MIDI note '{}' has zero duration", note.id));
             }
             let tick = offset
                 .checked_add(note.start_tick.0)
@@ -378,6 +384,7 @@ pub fn encode_smf(
                 .checked_sub(1)
                 .filter(|value| *value < 16)
                 .ok_or("invalid MIDI channel")?;
+            note_ranges.push((channel, note.note, tick, finish, &clip.id, &note.id));
             let mut on = Vec::new();
             if let Some(lyric) = &note.lyric {
                 on.extend_from_slice(&[0xff, 0x05]);
@@ -407,6 +414,19 @@ pub fn encode_smf(
                 MidiEventKind::ChannelPressure => vec![0xd0 | channel, event.data1],
             };
             performance.push((tick, 1, bytes));
+        }
+    }
+    note_ranges.sort_unstable_by_key(|(channel, pitch, start, end, _, _)| {
+        (*channel, *pitch, *start, *end)
+    });
+    for pair in note_ranges.windows(2) {
+        let (channel, pitch, _, previous_end, previous_clip, previous_note) = pair[0];
+        let (next_channel, next_pitch, next_start, _, next_clip, next_note) = pair[1];
+        if channel == next_channel && pitch == next_pitch && next_start < previous_end {
+            return Err(format!(
+                "overlapping MIDI notes '{previous_note}' in clip '{previous_clip}' and '{next_note}' in clip '{next_clip}' (channel {}, pitch {pitch}) cannot be exported",
+                channel + 1
+            ));
         }
     }
     let mut output = b"MThd\0\0\0\x06\0\x01\0\x02".to_vec();
@@ -486,6 +506,37 @@ mod tests {
         bytes
     }
 
+    fn smf_tracks(ppq: u16, tracks: &[&[u8]]) -> Vec<u8> {
+        let mut bytes = b"MThd\0\0\0\x06\0\x01".to_vec();
+        bytes.extend_from_slice(&(tracks.len() as u16).to_be_bytes());
+        bytes.extend_from_slice(&ppq.to_be_bytes());
+        for track in tracks {
+            bytes.extend_from_slice(b"MTrk");
+            bytes.extend_from_slice(&(track.len() as u32).to_be_bytes());
+            bytes.extend_from_slice(track);
+        }
+        bytes
+    }
+
+    fn clock_events(bytes: &[u8]) -> Vec<(u64, u8, Vec<u8>)> {
+        let mut cursor = 22;
+        let mut tick = 0;
+        let mut events = Vec::new();
+        loop {
+            tick += super::read_vlq(bytes, &mut cursor).unwrap();
+            assert_eq!(bytes[cursor], 0xff);
+            let kind = bytes[cursor + 1];
+            cursor += 2;
+            let length = super::read_vlq(bytes, &mut cursor).unwrap() as usize;
+            if kind == 0x2f {
+                break;
+            }
+            events.push((tick, kind, bytes[cursor..cursor + length].to_vec()));
+            cursor += length;
+        }
+        events
+    }
+
     #[test]
     fn parses_valid_smf() {
         for (source, target, expected) in [
@@ -531,6 +582,20 @@ mod tests {
                 .all(|note| note.start_tick.0 == 0 && note.duration_ticks == 960)
         );
         assert_ne!(notes[0].id, notes[1].id);
+
+        let track = [
+            0, 0x90, 60, 100, 0x81, 0x70, 0x90, 60, 80, 120, 0x80, 60, 0, 0x81, 0x70, 0x90, 60, 0,
+            0, 0x90, 62, 90, 120, 0xff, 0x2f, 0,
+        ];
+        let (duration, notes, _) = parse_smf(&smf_tracks(960, &[&track]), Some(960)).unwrap();
+        assert_eq!(duration, 720);
+        assert_eq!(
+            notes
+                .iter()
+                .map(|n| (n.note, n.start_tick.0, n.duration_ticks))
+                .collect::<Vec<_>>(),
+            vec![(60, 0, 360), (60, 240, 360), (62, 600, 120)]
+        );
     }
 
     #[test]
@@ -553,7 +618,51 @@ mod tests {
         let mut invalid = bytes.clone();
         let index = invalid.iter().position(|byte| *byte == 0xe3).unwrap();
         invalid[index] = 0xff;
-        assert!(parse_smf(&invalid, None).unwrap_err().contains("UTF-8"));
+        let (_, notes, _) = parse_smf(&invalid, None).unwrap();
+        assert_eq!(notes.len(), 2);
+        assert!(notes.iter().all(|note| note.lyric.is_none()));
+
+        // A controller between the lyric and the only Note On still leaves one candidate.
+        let single = [
+            0, 0xff, 5, 1, b'a', 0, 0xb0, 1, 20, 0, 0x90, 60, 100, 1, 0x80, 60, 0, 0, 0xff, 0x2f, 0,
+        ];
+        let (_, notes, events) = parse_smf(&smf_tracks(480, &[&single]), None).unwrap();
+        assert_eq!(notes[0].lyric.as_deref(), Some("a"));
+        assert_eq!(events.len(), 1);
+
+        // An intervening controller and two candidate notes make the lyric ambiguous.
+        let ambiguous = [
+            0, 0xff, 5, 1, b'a', 0, 0xb0, 1, 20, 0, 0x90, 60, 100, 0, 0x90, 64, 100, 1, 0x80, 60,
+            0, 0, 0x80, 64, 0, 0, 0xff, 0x2f, 0,
+        ];
+        let (_, notes, _) = parse_smf(&smf_tracks(480, &[&ambiguous]), None).unwrap();
+        assert_eq!(notes.len(), 2);
+        assert!(notes.iter().all(|note| note.lyric.is_none()));
+
+        let unmatched = [
+            0, 0xff, 5, 1, b'a', 1, 0x90, 60, 100, 1, 0x80, 60, 0, 0, 0xff, 0x2f, 0,
+        ];
+        let (_, notes, _) = parse_smf(&smf_tracks(480, &[&unmatched]), None).unwrap();
+        assert_eq!(notes[0].lyric, None);
+
+        // A skipped lyric does not prevent an adjacent lyric from identifying a chord note.
+        let mixed = [
+            0, 0xff, 5, 1, b'a', 0, 0xff, 5, 1, b'b', 0, 0x90, 60, 100, 0, 0x90, 64, 100, 1, 0x80,
+            60, 0, 0, 0x80, 64, 0, 0, 0xff, 0x2f, 0,
+        ];
+        let (_, notes, _) = parse_smf(&smf_tracks(480, &[&mixed]), None).unwrap();
+        assert_eq!(
+            (notes[0].lyric.as_deref(), notes[1].lyric.as_deref()),
+            (Some("b"), None)
+        );
+
+        // An already assigned note is never overwritten by a second lyric.
+        let duplicate = [
+            0, 0xff, 5, 1, b'a', 0, 0x90, 60, 100, 0, 0xff, 5, 1, b'b', 1, 0x80, 60, 0, 0, 0xff,
+            0x2f, 0,
+        ];
+        let (_, notes, _) = parse_smf(&smf_tracks(480, &[&duplicate]), None).unwrap();
+        assert_eq!(notes[0].lyric.as_deref(), Some("a"));
     }
 
     #[test]
@@ -570,8 +679,9 @@ mod tests {
         let mut ambiguous = bytes.clone();
         ambiguous[11] = 3;
         ambiguous.extend_from_slice(&minimal_smf(480)[14..]);
-        let error = parse_smf(&ambiguous, None).unwrap_err();
-        assert!(error.contains("track 1 at tick 0"));
+        let (_, notes, _) = parse_smf(&ambiguous, None).unwrap();
+        assert_eq!(notes.len(), 2);
+        assert!(notes.iter().all(|note| note.lyric.is_none()));
     }
 
     #[test]
@@ -608,20 +718,47 @@ mod tests {
             start_tick: TimelineTick(0),
             duration_ticks: 1920,
             notes: vec![note(60, None), note(64, Some("き".into()))],
-            events: vec![MidiEvent {
-                id: "cc".into(),
-                kind: MidiEventKind::ControlChange,
-                tick: TimelineTick(250),
-                channel: 2,
-                data1: 64,
-                data2: 127,
-            }],
+            events: vec![
+                MidiEvent {
+                    id: "cc".into(),
+                    kind: MidiEventKind::ControlChange,
+                    tick: TimelineTick(250),
+                    channel: 2,
+                    data1: 64,
+                    data2: 127,
+                },
+                MidiEvent {
+                    id: "bend".into(),
+                    kind: MidiEventKind::PitchBend,
+                    tick: TimelineTick(251),
+                    channel: 3,
+                    data1: 12,
+                    data2: 65,
+                },
+                MidiEvent {
+                    id: "pressure".into(),
+                    kind: MidiEventKind::ChannelPressure,
+                    tick: TimelineTick(252),
+                    channel: 4,
+                    data1: 55,
+                    data2: 0,
+                },
+            ],
             instrument_control_events: vec![],
             muted: false,
             loop_enabled: false,
             recording_take_id: None,
         };
         let bytes = super::encode_smf(&timebase, &[(&clip, 0)], 0, None).unwrap();
+        assert_eq!(
+            clock_events(&bytes),
+            vec![
+                (0, 0x51, vec![0x07, 0xa1, 0x20]),
+                (0, 0x58, vec![4, 2, 24, 8]),
+                (960, 0x51, vec![0x0a, 0x2c, 0x2b]),
+                (960, 0x58, vec![3, 2, 24, 8]),
+            ]
+        );
         let (_, notes, events) = parse_smf(&bytes, Some(timebase.ppq)).unwrap();
         assert_eq!(
             notes
@@ -635,16 +772,6 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![(60, None, 120, 240), (64, Some("き"), 120, 240)]
         );
-        assert!(
-            bytes
-                .windows(6)
-                .any(|window| window == [0xff, 0x58, 4, 3, 2, 24])
-        );
-        assert!(
-            bytes
-                .windows(6)
-                .any(|window| window == [0xff, 0x51, 3, 0x0a, 0x2c, 0x2b])
-        );
         assert_eq!(
             (
                 events[0].tick.0,
@@ -654,12 +781,76 @@ mod tests {
             ),
             (250, 2, 64, 127)
         );
-        let clip_bytes = super::encode_smf(&timebase, &[(&clip, 0)], 960, Some(1920)).unwrap();
-        assert!(
-            clip_bytes
-                .windows(7)
-                .any(|window| window == [0, 0xff, 0x51, 3, 0x0a, 0x2c, 0x2b])
+        assert_eq!(
+            (
+                events[1].kind,
+                events[1].tick.0,
+                events[1].channel,
+                events[1].data1,
+                events[1].data2
+            ),
+            (MidiEventKind::PitchBend, 251, 3, 12, 65)
         );
+        assert_eq!(
+            (
+                events[2].kind,
+                events[2].tick.0,
+                events[2].channel,
+                events[2].data1
+            ),
+            (MidiEventKind::ChannelPressure, 252, 4, 55)
+        );
+        let clip_bytes = super::encode_smf(&timebase, &[(&clip, 0)], 960, Some(1920)).unwrap();
+        assert_eq!(
+            clock_events(&clip_bytes),
+            vec![
+                (0, 0x51, vec![0x0a, 0x2c, 0x2b]),
+                (0, 0x58, vec![3, 2, 24, 8]),
+            ]
+        );
+        let mut other = clip.clone();
+        other.id = "other".into();
+        other.notes.truncate(1);
+        other.notes[0].id = "overlap".into();
+        let error =
+            super::encode_smf(&timebase, &[(&clip, 0), (&other, 100)], 0, None).unwrap_err();
+        assert!(error.contains("note:60") && error.contains("overlap"));
+        other.notes[0].start_tick = TimelineTick(360);
+        let adjacent = super::encode_smf(&timebase, &[(&clip, 0), (&other, 0)], 0, None).unwrap();
+        let (_, notes, _) = parse_smf(&adjacent, None).unwrap();
+        let same_pitch: Vec<_> = notes
+            .iter()
+            .filter(|note| note.note == 60)
+            .map(|note| (note.start_tick.0, note.duration_ticks))
+            .collect();
+        assert_eq!(same_pitch, [(120, 240), (360, 240)]);
+        other.notes[0].start_tick = TimelineTick(120);
+        other.notes[0].channel = 2;
+        assert!(super::encode_smf(&timebase, &[(&clip, 0), (&other, 0)], 0, None).is_ok());
+        other.notes[0].channel = 1;
+        other.notes.push(clip.notes[0].clone());
+        assert!(super::encode_smf(&timebase, &[(&other, 0)], 0, None).is_err());
+        timebase.ppq = 3360;
+        let bytes = super::encode_smf(&timebase, &[(&clip, 0)], 0, None).unwrap();
+        assert_eq!(u16::from_be_bytes([bytes[12], bytes[13]]), 3360);
+        let (_, notes, _) = parse_smf(&bytes, Some(3360)).unwrap();
+        assert_eq!(
+            (
+                notes[1].start_tick.0,
+                notes[1].duration_ticks,
+                notes[1].channel,
+                notes[1].velocity
+            ),
+            (120, 240, 1, 100)
+        );
+        assert_eq!(notes[1].lyric.as_deref(), Some("き"));
+        let mut vlq = Vec::new();
+        assert!(super::encode_vlq(0x0fff_ffff, &mut vlq).is_ok());
+        assert!(super::encode_vlq(0x1000_0000, &mut vlq).is_err());
+        assert!(super::encode_smf(&timebase, &[(&clip, 0x1000_0000)], 0, None).is_err());
+        let mut silent = clip.clone();
+        silent.notes[0].velocity = 0;
+        assert!(super::encode_smf(&timebase, &[(&silent, 0)], 0, None).is_err());
         timebase.ppq = 32768;
         assert!(super::encode_smf(&timebase, &[(&clip, 0)], 0, None).is_err());
     }
@@ -667,5 +858,9 @@ mod tests {
     #[test]
     fn rejects_malformed_smf() {
         assert!(parse_smf(b"not midi", None).is_err());
+        let next = [0, 0xff, 0x2f, 0];
+        for truncated in [&[0, 0x90, 60][..], &[0, 0xff, 5, 4, b'a'][..]] {
+            assert!(parse_smf(&smf_tracks(480, &[truncated, &next]), None).is_err());
+        }
     }
 }
