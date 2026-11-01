@@ -3,4 +3,11 @@
 /**
  * Partial update for one MIDI note.
  */
-export type MidiNotePatch = { note?: number | null, startTick?: number, durationTicks?: number | null, velocity?: number | null, channel?: number | null, };
+export type MidiNotePatch = {
+  lyric?: string | null;
+  note?: number | null;
+  startTick?: number;
+  durationTicks?: number | null;
+  velocity?: number | null;
+  channel?: number | null;
+};

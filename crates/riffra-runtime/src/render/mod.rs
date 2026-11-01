@@ -1644,6 +1644,7 @@ pub(super) mod tests {
             start_tick: TimelineTick(0),
             duration_ticks: 3_840,
             notes: vec![riffra_core::MidiNote {
+                lyric: None,
                 id: "midi-note".into(),
                 note: 48,
                 start_tick: TimelineTick(0),

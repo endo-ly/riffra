@@ -67,6 +67,7 @@ pub enum ControlOutput {
     ProjectState(ProjectState),
     ProjectActivation(ProjectActivationResult),
     ProjectExport(ProjectExport),
+    MidiExport(MidiExport),
     InstrumentLibrary(Vec<InstrumentLibraryItem>),
     InstrumentLibraryItem(InstrumentLibraryItem),
     InstrumentCategories(Vec<String>),

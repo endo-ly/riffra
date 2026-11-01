@@ -179,6 +179,8 @@ export type { MidiClipUpdateParams } from './MidiClipUpdateParams';
 export type { MidiDeviceInfo } from './MidiDeviceInfo';
 export type { MidiEvent } from './MidiEvent';
 export type { MidiEventKind } from './MidiEventKind';
+export type { MidiExport } from './MidiExport';
+export type { MidiExportParams } from './MidiExportParams';
 export type { MidiInputParams } from './MidiInputParams';
 export type { MidiInputRoute } from './MidiInputRoute';
 export type { MidiNote } from './MidiNote';

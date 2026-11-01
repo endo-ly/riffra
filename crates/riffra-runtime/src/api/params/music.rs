@@ -55,6 +55,13 @@ pub struct MusicalNoteListParams {
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(optional_fields = nullable)]
 pub struct MusicalNoteUpdateParams {
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "riffra_core::application::deserialize_present_option"
+    )]
+    #[ts(optional, type = "string | null")]
+    pub lyric: Option<Option<String>>,
     pub clip_id: String,
     pub note_id: String,
     pub pitch: Option<MusicalPitch>,
@@ -174,4 +181,14 @@ pub struct RegionUpdateParams {
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct RegionIdParams {
     pub region_id: String,
+}
+
+/// Selects a Clip or Track for Standard MIDI File export.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[ts(optional_fields = nullable)]
+pub struct MidiExportParams {
+    pub clip_id: Option<String>,
+    pub track_id: Option<String>,
+    pub output: std::path::PathBuf,
 }

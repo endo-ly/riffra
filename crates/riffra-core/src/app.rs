@@ -400,6 +400,7 @@ mod tests {
                 track_id: None,
                 duration_ticks: 960,
                 notes: vec![MidiNote {
+                    lyric: None,
                     id: "adapter:temporary".into(),
                     note: 60,
                     start_tick: TimelineTick(0),
@@ -483,6 +484,7 @@ mod tests {
             .insert_midi_notes_with_created_ids(
                 "midi-clip:missing",
                 vec![crate::application::MidiNoteInput {
+                    lyric: None,
                     pitch: 60,
                     start_tick: TimelineTick(0),
                     duration_ticks: 480,
@@ -502,6 +504,7 @@ mod tests {
                 &clip_id,
                 vec![
                     crate::application::MidiNoteInput {
+                        lyric: None,
                         pitch: 60,
                         start_tick: TimelineTick(0),
                         duration_ticks: 480,
@@ -509,6 +512,7 @@ mod tests {
                         channel: 1,
                     },
                     crate::application::MidiNoteInput {
+                        lyric: None,
                         pitch: 64,
                         start_tick: TimelineTick(480),
                         duration_ticks: 480,
@@ -606,6 +610,7 @@ mod tests {
             .insert_midi_notes_with_created_ids(
                 &clip_id,
                 vec![crate::application::MidiNoteInput {
+                    lyric: None,
                     pitch: 60,
                     start_tick: TimelineTick(0),
                     duration_ticks: 1_920,
@@ -635,6 +640,7 @@ mod tests {
             .insert_midi_notes_with_created_ids(
                 &clip_id,
                 vec![crate::application::MidiNoteInput {
+                    lyric: None,
                     pitch: 64,
                     start_tick: TimelineTick(1_920),
                     duration_ticks: 480,
@@ -842,7 +848,17 @@ mod tests {
 
         let with_note = core
             .application(&storage)
-            .add_midi_note_with_created_ids("midi:1", TimelineTick(0), 60, 480, 100, 1)
+            .insert_midi_notes_with_created_ids(
+                "midi:1",
+                vec![crate::application::MidiNoteInput {
+                    start_tick: TimelineTick(0),
+                    pitch: 60,
+                    duration_ticks: 480,
+                    velocity: 100,
+                    channel: 1,
+                    lyric: None,
+                }],
+            )
             .unwrap();
         let note_id = with_note.session.arrangement.midi_clips[0].notes[0]
             .id
@@ -1109,11 +1125,31 @@ mod tests {
             })
             .unwrap();
         core.application(&storage)
-            .add_midi_note_with_created_ids("midi:1", TimelineTick(0), 60, 480, 100, 1)
+            .insert_midi_notes_with_created_ids(
+                "midi:1",
+                vec![crate::application::MidiNoteInput {
+                    start_tick: TimelineTick(0),
+                    pitch: 60,
+                    duration_ticks: 480,
+                    velocity: 100,
+                    channel: 1,
+                    lyric: None,
+                }],
+            )
             .unwrap();
         let with_second = core
             .application(&storage)
-            .add_midi_note_with_created_ids("midi:1", TimelineTick(480), 64, 240, 40, 1)
+            .insert_midi_notes_with_created_ids(
+                "midi:1",
+                vec![crate::application::MidiNoteInput {
+                    start_tick: TimelineTick(480),
+                    pitch: 64,
+                    duration_ticks: 240,
+                    velocity: 40,
+                    channel: 1,
+                    lyric: None,
+                }],
+            )
             .unwrap();
         let ids: Vec<String> = with_second.session.arrangement.midi_clips[0]
             .notes
@@ -1165,10 +1201,30 @@ mod tests {
             })
             .unwrap();
         core.application(&storage)
-            .add_midi_note_with_created_ids("midi:1", TimelineTick(0), 60, 480, 100, 1)
+            .insert_midi_notes_with_created_ids(
+                "midi:1",
+                vec![crate::application::MidiNoteInput {
+                    start_tick: TimelineTick(0),
+                    pitch: 60,
+                    duration_ticks: 480,
+                    velocity: 100,
+                    channel: 1,
+                    lyric: None,
+                }],
+            )
             .unwrap();
         core.application(&storage)
-            .add_midi_note_with_created_ids("midi:1", TimelineTick(480), 64, 240, 40, 1)
+            .insert_midi_notes_with_created_ids(
+                "midi:1",
+                vec![crate::application::MidiNoteInput {
+                    start_tick: TimelineTick(480),
+                    pitch: 64,
+                    duration_ticks: 240,
+                    velocity: 40,
+                    channel: 1,
+                    lyric: None,
+                }],
+            )
             .unwrap();
 
         let transformed = core
@@ -1207,7 +1263,17 @@ mod tests {
             })
             .unwrap();
         core.application(&storage)
-            .add_midi_note_with_created_ids("midi:1", TimelineTick(0), 120, 480, 20, 1)
+            .insert_midi_notes_with_created_ids(
+                "midi:1",
+                vec![crate::application::MidiNoteInput {
+                    start_tick: TimelineTick(0),
+                    pitch: 120,
+                    duration_ticks: 480,
+                    velocity: 20,
+                    channel: 1,
+                    lyric: None,
+                }],
+            )
             .unwrap();
 
         let transformed = core
@@ -1246,7 +1312,17 @@ mod tests {
             })
             .unwrap();
         core.application(&storage)
-            .add_midi_note_with_created_ids("midi:1", TimelineTick(0), 60, 480, 100, 1)
+            .insert_midi_notes_with_created_ids(
+                "midi:1",
+                vec![crate::application::MidiNoteInput {
+                    start_tick: TimelineTick(0),
+                    pitch: 60,
+                    duration_ticks: 480,
+                    velocity: 100,
+                    channel: 1,
+                    lyric: None,
+                }],
+            )
             .unwrap();
 
         let error = core

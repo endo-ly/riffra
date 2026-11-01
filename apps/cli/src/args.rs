@@ -968,6 +968,9 @@ pub enum MidiNoteCommand {
 
 #[derive(Debug, Args)]
 pub struct MidiNoteAddArgs {
+    /// Lyric assigned to the Note.
+    #[arg(long)]
+    pub lyric: Option<String>,
     /// Id of the MIDI Clip that receives the Note.
     #[arg(long)]
     pub clip_id: String,
@@ -1006,6 +1009,8 @@ pub struct MidiNoteBulkArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum MusicCommand {
+    /// Export one MIDI Clip or Track as a Standard MIDI File.
+    ExportMidi(MidiExportArgs),
     /// Create and resize MIDI Clips using absolute musical bar:beat positions rather than raw ticks.
     ///
     /// Use this for arrangement-absolute placement in musical coordinates. Use `midi-clip` for
@@ -1037,6 +1042,20 @@ pub enum MusicCommand {
         #[command(subcommand)]
         command: MusicPhraseCommand,
     },
+}
+
+#[derive(Debug, Args)]
+#[command(group(clap::ArgGroup::new("scope").required(true).args(["clip_id", "track_id"])))]
+pub struct MidiExportArgs {
+    /// MIDI Clip to export.
+    #[arg(long)]
+    pub clip_id: Option<String>,
+    /// Track whose MIDI Clips will be exported.
+    #[arg(long)]
+    pub track_id: Option<String>,
+    /// Destination MIDI file.
+    #[arg(long)]
+    pub output: PathBuf,
 }
 
 #[derive(Debug, Subcommand)]
@@ -1239,7 +1258,7 @@ pub struct MusicalNoteBulkArgs {
     /// Id of the MIDI Clip that receives the Notes.
     #[arg(long)]
     pub clip_id: String,
-    /// Inline JSON array of notes; each element is an object with pitch (note name such as C4), position (arrangement-absolute bar:beat), duration (whole-note fraction such as 1/8), and optional velocity (0..=127, default 100) and channel (1..=16, default 1). Mutually exclusive with --notes-file and --stdin.
+    /// Inline JSON array of notes; each element is an object with pitch (note name such as C4), position (arrangement-absolute bar:beat), duration (whole-note fraction such as 1/8), and optional lyric, velocity (0..=127, default 100) and channel (1..=16, default 1). Mutually exclusive with --notes-file and --stdin.
     #[arg(long, alias = "notes")]
     pub notes_json: Option<String>,
     /// Path to a JSON file containing an array of musical notes; mutually exclusive with --notes-json and --stdin.
@@ -1284,6 +1303,12 @@ pub struct MusicalNoteGetArgs {
 
 #[derive(Debug, Args)]
 pub struct MusicalNoteUpdateArgs {
+    /// Set the lyric assigned to the Note.
+    #[arg(long, conflicts_with = "clear_lyric")]
+    pub lyric: Option<String>,
+    /// Remove the Note lyric.
+    #[arg(long)]
+    pub clear_lyric: bool,
     /// Id of the MIDI Clip containing the Note.
     #[arg(long)]
     pub clip_id: String,
@@ -3082,6 +3107,7 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
         },
         CliCommand::MidiNote { command } => match command {
             MidiNoteCommand::Add(args) => Canonical::MidiNoteAdd(MidiNoteAddParams {
+                lyric: args.lyric,
                 clip_id: args.clip_id,
                 pitch: args.pitch,
                 start_tick: args.start_tick,
@@ -3149,6 +3175,12 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
             }
         },
         CliCommand::Music { command } => match command {
+            MusicCommand::ExportMidi(args) => Project::MusicExportMidi(MidiExportParams {
+                clip_id: args.clip_id,
+                track_id: args.track_id,
+                output: args.output,
+            })
+            .into(),
             MusicCommand::MidiClip { command } => match command {
                 MusicMidiClipCommand::Create(args) => {
                     Canonical::MusicMidiClipCreate(MusicalMidiClipCreateParams {
@@ -3195,6 +3227,11 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
                 }
                 MusicNoteCommand::Update(args) => {
                     Canonical::MusicNoteUpdate(MusicalNoteUpdateParams {
+                        lyric: if args.clear_lyric {
+                            Some(None)
+                        } else {
+                            args.lyric.map(Some)
+                        },
                         clip_id: args.clip_id,
                         note_id: args.note_id,
                         pitch: optional_text("/pitch", args.pitch)?,
@@ -4677,6 +4714,53 @@ mod tests {
 
     #[test]
     fn music_commands_preserve_musical_input_without_calculating_ticks() {
+        let clear = Cli::try_parse_from([
+            "riffra",
+            "music",
+            "note",
+            "update",
+            "--clip-id",
+            "c",
+            "--note-id",
+            "n",
+            "--clear-lyric",
+        ])
+        .unwrap();
+        assert_eq!(wire(clear).params["lyric"], serde_json::Value::Null);
+        assert!(
+            Cli::try_parse_from([
+                "riffra",
+                "music",
+                "note",
+                "update",
+                "--clip-id",
+                "c",
+                "--note-id",
+                "n",
+                "--clear-lyric",
+                "--lyric",
+                "き"
+            ])
+            .is_err()
+        );
+        assert!(
+            Cli::try_parse_from(["riffra", "music", "export-midi", "--output", "voice.mid"])
+                .is_err()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "riffra",
+                "music",
+                "export-midi",
+                "--output",
+                "voice.mid",
+                "--clip-id",
+                "c",
+                "--track-id",
+                "t"
+            ])
+            .is_err()
+        );
         let cli = Cli::try_parse_from([
             "riffra",
             "--data-root",

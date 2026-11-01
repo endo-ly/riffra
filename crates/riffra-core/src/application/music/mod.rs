@@ -22,6 +22,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Deserialize, Serialize, ts_rs::TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MusicalMidiNoteInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub lyric: Option<String>,
     pub pitch: MusicalPitch,
     pub position: MusicalPosition,
     pub duration: MusicalDuration,
@@ -45,6 +48,9 @@ pub struct MusicalMidiNoteInput {
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct MusicalMidiNoteView {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub lyric: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
     pub pitch: MusicalPitch,
@@ -125,6 +131,9 @@ pub enum MusicalNoteListNoteView {
 #[derive(Clone, Debug, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct RawMidiNoteView {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub lyric: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
     pub pitch: u8,
@@ -189,6 +198,12 @@ mod optional_non_null {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MusicalMidiNotePatch {
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "super::deserialize_present_option"
+    )]
+    pub lyric: Option<Option<String>>,
     pub pitch: Option<MusicalPitch>,
     pub position: Option<MusicalPosition>,
     pub duration: Option<MusicalDuration>,
@@ -262,6 +277,7 @@ pub fn list_musical_notes(
                     |note| -> Result<MusicalNoteListNoteView, ApplicationError> {
                         if request.raw {
                             Ok(MusicalNoteListNoteView::Raw(RawMidiNoteView {
+                                lyric: note.lyric.clone(),
                                 id: request.include_ids.then(|| note.id.clone()),
                                 pitch: note.note,
                                 absolute_tick: clip
@@ -352,8 +368,9 @@ pub fn list_regions(session: &CreativeSession) -> Vec<MusicalRegionView> {
         .collect()
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct ResolvedMidiNoteInput {
+    lyric: Option<String>,
     pitch: u8,
     absolute_start_tick: TimelineTick,
     duration_ticks: u64,
@@ -619,6 +636,7 @@ where
             && patch.duration.is_none()
             && patch.velocity.is_none()
             && patch.channel.is_none()
+            && patch.lyric.is_none()
         {
             return Err(ApplicationError::InvalidCommand(
                 "at least one musical note field is required".into(),
@@ -636,6 +654,7 @@ where
             })?
             .start_tick;
         let raw_patch = MidiNotePatch {
+            lyric: patch.lyric,
             note: patch.pitch.map(MusicalPitch::midi_pitch),
             start_tick: patch
                 .position
@@ -802,6 +821,7 @@ fn resolve_musical_note(
         ));
     }
     Ok(ResolvedMidiNoteInput {
+        lyric: input.lyric,
         pitch: input.pitch.midi_pitch(),
         absolute_start_tick: timebase.musical_position_to_tick(input.position)?,
         duration_ticks: timebase.musical_duration_to_ticks(input.duration)?,
@@ -820,6 +840,7 @@ fn musical_note_view(
         ApplicationError::InvalidCommand("MIDI note position is too large".into())
     })?;
     Ok(MusicalMidiNoteView {
+        lyric: note.lyric.clone(),
         id: include_id.then(|| note.id.clone()),
         pitch: MusicalPitch::from_midi_pitch(note.note)?,
         position: timebase.tick_to_musical_position(TimelineTick(absolute_start)),
@@ -938,6 +959,7 @@ fn insert_resolved_midi_notes_in_arrangement(
                     )
                 })?;
             Ok(MidiNote {
+                lyric: input.lyric,
                 id: next_id("note"),
                 note: input.pitch,
                 start_tick: TimelineTick(start_tick),
@@ -1069,6 +1091,7 @@ mod tests {
                 &clip_id,
                 vec![
                     MusicalMidiNoteInput {
+                        lyric: None,
                         pitch: "C4".parse().unwrap(),
                         position: "5:1".parse().unwrap(),
                         duration: "1/8".parse().unwrap(),
@@ -1076,6 +1099,7 @@ mod tests {
                         channel: None,
                     },
                     MusicalMidiNoteInput {
+                        lyric: None,
                         pitch: "Bb4".parse().unwrap(),
                         position: "6:3+1/3".parse().unwrap(),
                         duration: "1/12".parse().unwrap(),
@@ -1083,6 +1107,7 @@ mod tests {
                         channel: Some(2),
                     },
                     MusicalMidiNoteInput {
+                        lyric: None,
                         pitch: "A4".parse().unwrap(),
                         position: "12:4".parse().unwrap(),
                         duration: "1/8".parse().unwrap(),
@@ -1112,6 +1137,7 @@ mod tests {
                 .insert_musical_notes_with_created_ids(
                     &clip_id,
                     vec![MusicalMidiNoteInput {
+                        lyric: None,
                         pitch: "C4".parse().unwrap(),
                         position: "4:4".parse().unwrap(),
                         duration: "1/8".parse().unwrap(),
@@ -1122,6 +1148,32 @@ mod tests {
                 .is_err()
         );
         assert_eq!(storage.0.lock().unwrap().len(), 3);
+
+        let ids = notes.iter().map(|note| note.id.clone()).collect::<Vec<_>>();
+        let edits = ids[..2]
+            .iter()
+            .zip(["き", "み"])
+            .map(|(id, lyric)| MidiNoteUpdate {
+                note_id: id.clone(),
+                patch: MidiNotePatch {
+                    lyric: Some(Some(lyric.into())),
+                    ..Default::default()
+                },
+            })
+            .collect();
+        let session = core
+            .application(&storage)
+            .update_midi_notes(&clip_id, edits)
+            .unwrap();
+        assert_eq!(
+            session.arrangement.midi_clips[0].notes[0].lyric.as_deref(),
+            Some("き")
+        );
+        assert_eq!(
+            session.arrangement.midi_clips[0].notes[1].lyric.as_deref(),
+            Some("み")
+        );
+        assert_eq!(storage.0.lock().unwrap().len(), 4);
     }
 
     #[test]
@@ -1147,6 +1199,7 @@ mod tests {
             .insert_musical_notes_with_created_ids(
                 &clip_id,
                 vec![MusicalMidiNoteInput {
+                    lyric: Some("き".into()),
                     pitch: "C4".parse().unwrap(),
                     position: "2:1".parse().unwrap(),
                     duration: "1/4".parse().unwrap(),
@@ -1179,6 +1232,24 @@ mod tests {
         assert_eq!(note.position.to_string(), "2:1");
         assert_eq!(note.duration.to_string(), "1/4");
         assert_eq!(note.channel, 2);
+        assert_eq!(note.lyric.as_deref(), Some("き"));
+        let raw = core
+            .application(&storage)
+            .list_musical_notes(MusicalNoteListRequest {
+                scope: MusicalNoteScope {
+                    clip_id: Some(clip_id.clone()),
+                    track_id: None,
+                },
+                start: None,
+                end: None,
+                include_ids: true,
+                raw: true,
+            })
+            .unwrap();
+        let MusicalNoteListNoteView::Raw(note) = &raw.clips[0].notes[0] else {
+            panic!("expected raw note view");
+        };
+        assert_eq!(note.lyric.as_deref(), Some("き"));
 
         core.application(&storage)
             .update_musical_note(
@@ -1201,6 +1272,24 @@ mod tests {
             .unwrap();
         assert_eq!(fetched.position.to_string(), "3:1");
         assert_eq!(fetched.duration.to_string(), "1/2");
+        assert_eq!(fetched.lyric.as_deref(), Some("き"));
+        for lyric in [Some(Some("み".into())), Some(None)] {
+            core.application(&storage)
+                .update_musical_note(
+                    &clip_id,
+                    &note_id,
+                    MusicalMidiNotePatch {
+                        lyric: lyric.clone(),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            let fetched = core
+                .application(&storage)
+                .get_musical_note(&clip_id, &note_id)
+                .unwrap();
+            assert_eq!(fetched.lyric, lyric.unwrap());
+        }
         core.application(&storage)
             .remove_musical_note(&clip_id, &note_id)
             .unwrap();
@@ -1259,6 +1348,7 @@ mod tests {
                 &first_clip,
                 vec![
                     MusicalMidiNoteInput {
+                        lyric: None,
                         pitch: "C4".parse().unwrap(),
                         position: "2:1".parse().unwrap(),
                         duration: "1/4".parse().unwrap(),
@@ -1266,6 +1356,7 @@ mod tests {
                         channel: Some(1),
                     },
                     MusicalMidiNoteInput {
+                        lyric: None,
                         pitch: "C4".parse().unwrap(),
                         position: "4:4".parse().unwrap(),
                         duration: "1/4".parse().unwrap(),
@@ -1279,6 +1370,7 @@ mod tests {
             .insert_musical_notes_with_created_ids(
                 &second_clip,
                 vec![MusicalMidiNoteInput {
+                    lyric: None,
                     pitch: "D2".parse().unwrap(),
                     position: "6:1".parse().unwrap(),
                     duration: "1/4".parse().unwrap(),

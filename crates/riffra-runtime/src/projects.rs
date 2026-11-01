@@ -108,3 +108,48 @@ impl From<riffra_host::RecoveryCandidate> for RecoveryCandidate {
         }
     }
 }
+
+pub(crate) fn export_midi(
+    session: &CreativeSession,
+    params: &crate::api::params::MidiExportParams,
+) -> Result<crate::api::output::MidiExport, String> {
+    let arrangement = &session.arrangement;
+    let (clips, origin, end) = match (&params.clip_id, &params.track_id) {
+        (Some(id), None) => {
+            let clip = arrangement
+                .midi_clips
+                .iter()
+                .find(|clip| &clip.id == id)
+                .ok_or_else(|| format!("midi clip '{id}' is not registered"))?;
+            let end = clip
+                .start_tick
+                .0
+                .checked_add(clip.duration_ticks)
+                .ok_or("clip end overflow")?;
+            (vec![(clip, 0)], clip.start_tick.0, Some(end))
+        }
+        (None, Some(id)) => {
+            if !arrangement.tracks.iter().any(|track| &track.id == id) {
+                return Err(format!("track '{id}' is not registered"));
+            }
+            (
+                arrangement
+                    .midi_clips
+                    .iter()
+                    .filter(|clip| &clip.track_id == id)
+                    .map(|clip| (clip, clip.start_tick.0))
+                    .collect(),
+                0,
+                None,
+            )
+        }
+        _ => return Err("select exactly one MIDI clip or track".into()),
+    };
+    let bytes = riffra_host::encode_smf(&arrangement.timebase, &clips, origin, end)?;
+    std::fs::write(&params.output, bytes)
+        .map_err(|error| format!("could not write MIDI file: {error}"))?;
+    Ok(crate::api::output::MidiExport {
+        path: params.output.to_string_lossy().into_owned(),
+        note_count: clips.iter().map(|(clip, _)| clip.notes.len()).sum(),
+    })
+}

@@ -68,6 +68,7 @@ where
                 .notes
                 .into_iter()
                 .map(|note| ResolvedMidiNoteInput {
+                    lyric: None,
                     pitch: note.pitch,
                     absolute_start_tick: note.start_tick,
                     duration_ticks: note.duration_ticks,
@@ -205,6 +206,7 @@ fn resolve_phrase_pattern_in_arrangement(
                     &mut notes,
                     available_notes,
                     ResolvedMidiNoteInput {
+                        lyric: None,
                         pitch: u8::try_from(pitch).expect("pitch was checked above"),
                         absolute_start_tick: TimelineTick(onset),
                         duration_ticks,
@@ -392,6 +394,7 @@ mod tests {
         let midi_clip = &mut session.arrangement.midi_clips[0];
         midi_clip.notes = (0..crate::domain::arrangement::MAX_MIDI_NOTES_PER_CLIP - 1)
             .map(|index| MidiNote {
+                lyric: None,
                 id: format!("note:{index}"),
                 note: 60,
                 start_tick: TimelineTick(0),

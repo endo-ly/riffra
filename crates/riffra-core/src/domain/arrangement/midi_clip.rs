@@ -8,6 +8,9 @@ use ts_rs::TS;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MidiNote {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub lyric: Option<String>,
     pub id: String,
     pub note: u8,
     #[ts(type = "number")]
@@ -283,6 +286,7 @@ mod tests {
             start_tick: TimelineTick(960),
             duration_ticks: 1_920,
             notes: vec![MidiNote {
+                lyric: None,
                 id: "note:1".into(),
                 note: 60,
                 start_tick: TimelineTick(240),
@@ -323,6 +327,7 @@ mod tests {
                 &original_clip.id,
                 MidiClipPatch {
                     notes: Some(vec![MidiNote {
+                        lyric: None,
                         id: "note:replacement".into(),
                         note: 64,
                         start_tick: TimelineTick(0),

@@ -58,3 +58,11 @@ pub struct ProjectExport {
     pub exported_at_ms: u64,
     pub asset_count: usize,
 }
+
+/// Result of exporting MIDI to a file.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct MidiExport {
+    pub path: String,
+    pub note_count: usize,
+}

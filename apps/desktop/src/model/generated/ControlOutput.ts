@@ -27,6 +27,7 @@ import type { InstrumentLibraryItem } from './InstrumentLibraryItem';
 import type { InstrumentMidiInspection } from './InstrumentMidiInspection';
 import type { LibraryAsset } from './LibraryAsset';
 import type { MidiClip } from './MidiClip';
+import type { MidiExport } from './MidiExport';
 import type { MissingDependency } from './MissingDependency';
 import type { MixBus } from './MixBus';
 import type { MixdownSettings } from './MixdownSettings';
@@ -89,6 +90,7 @@ export type ControlOutput =
   | { type: 'projectState'; value: ProjectState }
   | { type: 'projectActivation'; value: ProjectActivationResult }
   | { type: 'projectExport'; value: ProjectExport }
+  | { type: 'midiExport'; value: MidiExport }
   | { type: 'instrumentLibrary'; value: Array<InstrumentLibraryItem> }
   | { type: 'instrumentLibraryItem'; value: InstrumentLibraryItem }
   | { type: 'instrumentCategories'; value: Array<string> }

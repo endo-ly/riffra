@@ -171,6 +171,7 @@ export function useNoteDrag({
             originNotes.map((candidate) => {
               const next = previewNotes[candidate.id];
               return {
+                ...(next.lyric === undefined ? {} : { lyric: next.lyric }),
                 pitch: next.note,
                 startTick: next.startTick,
                 durationTicks: next.durationTicks,

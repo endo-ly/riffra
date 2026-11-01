@@ -53,7 +53,8 @@ impl HostDispatcher<'_> {
         }
         let bytes = std::fs::read(&asset.content_location)
             .map_err(|error| format!("MIDI Asset could not be read: {error}"))?;
-        let (duration_ticks, notes, events) = riffra_host::parse_smf(&bytes)?;
+        let ppq = application.get_session()?.arrangement.timebase.ppq;
+        let (duration_ticks, notes, events) = riffra_host::parse_smf(&bytes, Some(ppq))?;
         self.created(
             application.add_midi_asset_clip_with_created_ids(MidiAssetClipPlacement {
                 asset_id,

@@ -49,6 +49,7 @@ pub(super) fn prepare_command(command: &mut ControlCommand) -> Result<(), String
                 }
             }
             ProjectCommand::ProjectExport(params) => resolve_path(&mut params.output)?,
+            ProjectCommand::MusicExportMidi(params) => resolve_path(&mut params.output)?,
             _ => {}
         },
         ControlCommand::Runtime(command) => match command {
@@ -170,6 +171,12 @@ mod tests {
                 json!({"output":"exports/song.riffra"}),
                 "/output",
                 "exports/song.riffra",
+            ),
+            (
+                "music.export-midi",
+                json!({"clipId":"clip:1","output":"exports/voice.mid"}),
+                "/output",
+                "exports/voice.mid",
             ),
             (
                 "project.import-score",

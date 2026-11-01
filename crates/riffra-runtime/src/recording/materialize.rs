@@ -88,6 +88,7 @@ fn midi_clip_from_recorded_file(
                 if let Some((note_start, velocity)) = open_notes.remove(&(channel, event.data1)) {
                     let end = tick.max(note_start + 1);
                     notes.push(MidiNote {
+                        lyric: None,
                         id: format!("note:recorded:{index}"),
                         note: event.data1,
                         start_tick: TimelineTick(note_start),
@@ -131,6 +132,7 @@ fn midi_clip_from_recorded_file(
     for ((channel, note), (note_start, velocity)) in open_notes {
         let end = last_tick.max(note_start + 1);
         notes.push(MidiNote {
+            lyric: None,
             id: format!("note:recorded:open:{channel}:{note}"),
             note,
             start_tick: TimelineTick(note_start),
@@ -224,6 +226,7 @@ pub(super) fn slice_recorded_midi(
             let overlap_start = note_start.max(segment.relative_start_tick);
             let overlap_end = note_end.min(segment.relative_end_tick);
             (overlap_end > overlap_start).then(|| MidiNote {
+                lyric: note.lyric.clone(),
                 id: format!("{}:{}", note.id, clip_id),
                 note: note.note,
                 start_tick: TimelineTick(overlap_start - segment.relative_start_tick),

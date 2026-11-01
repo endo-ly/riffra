@@ -1973,6 +1973,7 @@ mod tests {
                 .into_iter()
                 .enumerate()
                 .map(|(index, tick)| MidiNote {
+                    lyric: None,
                     id: format!("note:{index}"),
                     note: 60,
                     start_tick: TimelineTick(tick),
@@ -2401,6 +2402,7 @@ mod tests {
             start_tick: TimelineTick(960),
             duration_ticks: 3840,
             notes: vec![MidiNote {
+                lyric: None,
                 id: "note".into(),
                 note: 60,
                 velocity: 100,

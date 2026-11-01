@@ -3,4 +3,11 @@
 /**
  * Identity-free MIDI note data accepted by a Core insertion operation.
  */
-export type MidiNoteInput = { pitch: number, startTick: number, durationTicks: number, velocity: number, channel: number, };
+export type MidiNoteInput = {
+  lyric?: string;
+  pitch: number;
+  startTick: number;
+  durationTicks: number;
+  velocity: number;
+  channel: number;
+};

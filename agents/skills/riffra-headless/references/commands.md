@@ -63,7 +63,9 @@ Protocol上のparamsキーはCLIフラグと対応する(`--notes-json` など �
 
 ### 音楽操作
 
-NoteとMIDI Clipの通常編集には `music note` / `music midi-clip` を使う。`position` はClip内部の相対位置ではなくArrangement全体の絶対位置である。複数Noteは1回の `music note insert` で渡す。
+NoteとMIDI Clipの通常編集には `music note` / `music midi-clip` を使う。`position` はClip内部の相対位置ではなくArrangement全体の絶対位置である。複数Noteは1回の `music note insert` で渡す。各Noteの `lyric` に歌詞を指定でき、`music note update --lyric` で変更、`--clear-lyric` で削除する。一括変更は `midi-note update-many` のpatchに `lyric` を指定し、`null` で削除する。
+
+`music export-midi --clip-id <id> --output <path>` はClip内のNoteとMIDIイベントをClip先頭から書き出す。`--track-id` を指定するとTrack内の全MIDI Clipをプロジェクト上の位置で書き出す。歌詞とプロジェクトのテンポ・拍子もSMFに含まれる。
 
 ```powershell
 riffra --attach music note list --track-id track:drums --start 5:1 --end 13:1

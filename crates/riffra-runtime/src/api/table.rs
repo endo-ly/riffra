@@ -346,6 +346,7 @@ control_commands! {
         ProjectRename = "project.rename" (ProjectRenameParams) -> ProjectState, project;
         ProjectImport = "project.import" (ProjectImportParams) -> ProjectActivation, project;
         ProjectImportScore = "project.import-score" (ProjectImportScoreParams) -> ProjectActivation, project;
+        MusicExportMidi = "music.export-midi" (MidiExportParams) -> MidiExport, project;
         ProjectExport = "project.export" (ProjectExportParams) -> ProjectExport, project;
     }
     runtime {
