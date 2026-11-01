@@ -491,6 +491,7 @@ mod tests {
             duration_ticks: 960,
             notes: vec![
                 super::super::MidiNote {
+                    lyric: None,
                     id: "note-low".into(),
                     note: 50,
                     start_tick: crate::TimelineTick(0),
@@ -499,6 +500,7 @@ mod tests {
                     channel: 1,
                 },
                 super::super::MidiNote {
+                    lyric: None,
                     id: "note-high".into(),
                     note: 120,
                     start_tick: crate::TimelineTick(120),
@@ -507,6 +509,7 @@ mod tests {
                     channel: 1,
                 },
                 super::super::MidiNote {
+                    lyric: None,
                     id: "keyswitch".into(),
                     note: 24,
                     start_tick: crate::TimelineTick(240),
@@ -515,6 +518,7 @@ mod tests {
                     channel: 1,
                 },
                 super::super::MidiNote {
+                    lyric: None,
                     id: "note-keyswitch-collision".into(),
                     note: 12,
                     start_tick: crate::TimelineTick(360),

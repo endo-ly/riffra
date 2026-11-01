@@ -629,13 +629,16 @@ impl HostDispatcher<'_> {
                 application,
             ),
             CanonicalCommand::MidiNoteAdd(params) => self.created(
-                application.add_midi_note_with_created_ids(
+                application.insert_midi_notes_with_created_ids(
                     &params.clip_id,
-                    TimelineTick(params.start_tick),
-                    params.pitch,
-                    params.duration_ticks,
-                    params.velocity,
-                    params.channel,
+                    vec![riffra_core::application::MidiNoteInput {
+                        start_tick: TimelineTick(params.start_tick),
+                        pitch: params.pitch,
+                        duration_ticks: params.duration_ticks,
+                        velocity: params.velocity,
+                        channel: params.channel,
+                        lyric: params.lyric,
+                    }],
                 )?,
                 application,
             ),
@@ -736,6 +739,7 @@ impl HostDispatcher<'_> {
             ),
             CanonicalCommand::MusicNoteUpdate(params) => {
                 let patch = MusicalMidiNotePatch {
+                    lyric: params.lyric,
                     pitch: params.pitch,
                     position: params.position,
                     duration: params.duration,
@@ -747,6 +751,7 @@ impl HostDispatcher<'_> {
                     && patch.duration.is_none()
                     && patch.velocity.is_none()
                     && patch.channel.is_none()
+                    && patch.lyric.is_none()
                 {
                     return Err(DispatchError::invalid_request(
                         "at least one musical note field is required",

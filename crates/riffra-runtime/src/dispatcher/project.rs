@@ -84,6 +84,9 @@ impl HostDispatcher<'_> {
                     .map_err(|error| error.to_string())?;
                 return self.activate_project(writer, &summary.project_id);
             }
+            ProjectCommand::MusicExportMidi(params) => ControlOutput::MidiExport(
+                crate::projects::export_midi(&canonical.session, &params)?,
+            ),
             ProjectCommand::ProjectExport(params) => {
                 ControlOutput::ProjectExport(crate::projects::export(
                     &self.data_root,
@@ -141,6 +144,81 @@ mod tests {
     use crate::test_support::{command as request, output_value};
     use riffra_host::ProjectStore;
     use serde_json::{Value, json};
+
+    #[test]
+    fn midi_export_uses_clip_or_track_origin() {
+        use crate::test_support::mutated_session;
+        let root = std::env::temp_dir().join(format!(
+            "riffra-midi-export-{}",
+            riffra_control::new_instance_id()
+        ));
+        let dispatcher = Dispatcher::open(
+            root.clone(),
+            crate::test_support::prepare_built_in_resource_root(&root),
+        )
+        .unwrap();
+        let track = dispatcher
+            .dispatch(
+                request("track.add", json!({"name":"Voice","kind":"instrument"})),
+                None,
+            )
+            .unwrap();
+        let track_id = mutated_session(&track).arrangement.tracks[0].id.clone();
+        let clip = dispatcher
+            .dispatch(
+                request(
+                    "midi-clip.create",
+                    json!({"trackId":track_id,"startTick":960,"durationTicks":1920,"name":"Voice"}),
+                ),
+                None,
+            )
+            .unwrap();
+        let clip_id = mutated_session(&clip).arrangement.midi_clips[0].id.clone();
+        dispatcher.dispatch(request("midi-note.add", json!({"clipId":clip_id,"pitch":60,"startTick":240,"durationTicks":480,"velocity":100,"channel":1,"lyric":"き"})), None).unwrap();
+        for (scope, expected) in [
+            (json!({"clipId":clip_id}), 240),
+            (json!({"trackId":track_id}), 1200),
+        ] {
+            let path = root.join(format!("{expected}.mid"));
+            let mut params = scope;
+            params["output"] = json!(path);
+            let output = dispatcher
+                .dispatch(request("music.export-midi", params), None)
+                .unwrap();
+            assert_eq!(output_value(&output)["noteCount"], 1);
+            let (_, notes, _) =
+                riffra_host::parse_smf(&std::fs::read(&path).unwrap(), None).unwrap();
+            assert_eq!(notes[0].start_tick.0, expected);
+            assert_eq!(notes[0].lyric.as_deref(), Some("き"));
+        }
+        let second = dispatcher.dispatch(request("midi-clip.create", json!({"trackId":track_id,"startTick":1200,"durationTicks":1920,"name":"Second"})), None).unwrap();
+        let second_id = mutated_session(&second).arrangement.midi_clips[1]
+            .id
+            .clone();
+        dispatcher.dispatch(request("midi-note.add", json!({"clipId":second_id,"pitch":60,"startTick":100,"durationTicks":240,"velocity":100,"channel":1})), None).unwrap();
+        let path = root.join("1200.mid");
+        let existing = std::fs::read(&path).unwrap();
+        let result = dispatcher.dispatch(
+            request(
+                "music.export-midi",
+                json!({"trackId":track_id,"output":path}),
+            ),
+            None,
+        );
+        assert!(result.is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), existing);
+
+        dispatcher.dispatch(request("midi-note.add", json!({"clipId":clip_id,"pitch":60,"startTick":300,"durationTicks":240,"velocity":100,"channel":1})), None).unwrap();
+        let path = root.join("overlap.mid");
+        let result = dispatcher.dispatch(
+            request("music.export-midi", json!({"clipId":clip_id,"output":path})),
+            None,
+        );
+        assert!(result.is_err());
+        assert!(!path.exists());
+        drop(dispatcher);
+        let _ = std::fs::remove_dir_all(root);
+    }
 
     #[test]
     fn project_commands_keep_containers_independent_and_switch_the_active_session() {

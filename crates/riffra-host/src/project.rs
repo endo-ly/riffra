@@ -1177,7 +1177,7 @@ mod tests {
         assert!(restored_asset.content_location.ends_with(".mid"));
         let restored_bytes = fs::read(&restored_asset.content_location).unwrap();
         assert_eq!(restored_bytes, midi_bytes);
-        let (_, notes, events) = parse_smf(&restored_bytes).unwrap();
+        let (_, notes, events) = parse_smf(&restored_bytes, None).unwrap();
         assert_eq!(notes.len(), 1);
         assert!(events.is_empty());
         let _ = fs::remove_dir_all(root);

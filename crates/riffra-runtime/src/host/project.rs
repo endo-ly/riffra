@@ -23,6 +23,12 @@ pub(super) fn dispatch(
             ControlOutput::ProjectState(project_state(state)?),
             current.sequence,
         )),
+        ProjectCommand::MusicExportMidi(params) => Ok((
+            ControlOutput::MidiExport(
+                projects::export_midi(&current.session, &params).map_err(command_error)?,
+            ),
+            current.sequence,
+        )),
         ProjectCommand::ProjectExport(params) => Ok((
             ControlOutput::ProjectExport(
                 projects::export(
@@ -494,6 +500,47 @@ mod tests {
         )
         .unwrap();
         (host, data_root)
+    }
+
+    #[test]
+    fn attached_host_exports_midi_from_canonical_state() {
+        let (host, data_root) = open_safe_host("midi-export");
+        let project_id = host.bootstrap().unwrap().project_state.active_project_id;
+        let request = |command: &str, params| {
+            host.dispatch_control(
+                ControlRequest::new("midi-test", command, params, None)
+                    .with_expected_project_id(project_id.clone()),
+            )
+        };
+        assert!(request("track.add", json!({"name":"Voice","kind":"instrument"})).ok);
+        let track_id = host.canonical_state().unwrap().session.arrangement.tracks[0]
+            .id
+            .clone();
+        assert!(
+            request(
+                "midi-clip.create",
+                json!({"trackId":track_id,"startTick":960,"durationTicks":1920,"name":"Voice"})
+            )
+            .ok
+        );
+        let clip_id = host
+            .canonical_state()
+            .unwrap()
+            .session
+            .arrangement
+            .midi_clips[0]
+            .id
+            .clone();
+        assert!(request("midi-note.add", json!({"clipId":clip_id,"pitch":60,"startTick":120,"durationTicks":240,"velocity":100,"channel":1,"lyric":"み"})).ok);
+        let path = data_root.join("voice.mid");
+        let response = request("music.export-midi", json!({"clipId":clip_id,"output":path}));
+        assert!(response.ok, "{:?}", response.error);
+        let (_, notes, _) = riffra_host::parse_smf(&std::fs::read(path).unwrap(), None).unwrap();
+        assert_eq!(notes[0].lyric.as_deref(), Some("み"));
+        assert_eq!(notes[0].start_tick.0, 120);
+        host.shutdown();
+        drop(host);
+        let _ = std::fs::remove_dir_all(data_root);
     }
 
     #[test]

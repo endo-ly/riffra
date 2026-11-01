@@ -688,6 +688,7 @@ mod tests {
             duration_ticks: 7_680,
             notes: vec![
                 MidiNote {
+                    lyric: None,
                     id: "note:inside".into(),
                     note: 60,
                     start_tick: TimelineTick(3_000),
@@ -696,6 +697,7 @@ mod tests {
                     channel: 1,
                 },
                 MidiNote {
+                    lyric: None,
                     id: "note:outside".into(),
                     note: 62,
                     start_tick: TimelineTick(7_000),
@@ -882,6 +884,7 @@ mod tests {
                 start_tick: TimelineTick(index * 960),
                 duration_ticks: 960,
                 notes: vec![MidiNote {
+                    lyric: None,
                     id: format!("note:{index}"),
                     note: 60,
                     start_tick: TimelineTick(0),

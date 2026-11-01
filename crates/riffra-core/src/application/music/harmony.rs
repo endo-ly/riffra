@@ -375,6 +375,7 @@ where
                                     &mut notes,
                                     available_notes,
                                     ResolvedMidiNoteInput {
+                                        lyric: None,
                                         pitch: pitch.midi_pitch(),
                                         absolute_start_tick: TimelineTick(note_start),
                                         duration_ticks: note_end - note_start,
@@ -395,6 +396,7 @@ where
                             &mut notes,
                             available_notes,
                             ResolvedMidiNoteInput {
+                                lyric: None,
                                 pitch: pitch.midi_pitch(),
                                 absolute_start_tick: TimelineTick(common_start),
                                 duration_ticks: common_end - common_start,

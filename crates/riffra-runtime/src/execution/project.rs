@@ -530,6 +530,7 @@ mod tests {
             start_tick: riffra_core::TimelineTick(120),
             duration_ticks: 960,
             notes: vec![MidiNote {
+                lyric: None,
                 id: "note:ignored".into(),
                 note: 60,
                 start_tick: riffra_core::TimelineTick(0),

@@ -87,6 +87,9 @@ pub struct MidiClipTrimParams {
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MidiNoteAddParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub lyric: Option<String>,
     pub clip_id: String,
     pub pitch: u8,
     pub start_tick: u64,

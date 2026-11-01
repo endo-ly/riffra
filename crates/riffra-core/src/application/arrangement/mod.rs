@@ -698,55 +698,6 @@ where
         Ok(ApplicationMutation::one(session, "midiClips", duplicate_id))
     }
 
-    /// Adds one MIDI note and returns its Core-allocated identity.
-    pub fn add_midi_note_with_created_ids(
-        &mut self,
-        clip_id: &str,
-        start_tick: TimelineTick,
-        pitch: u8,
-        duration_ticks: u64,
-        velocity: u8,
-        channel: u8,
-    ) -> Result<ApplicationMutation, ApplicationError> {
-        if pitch > 127 {
-            return Err(ApplicationError::InvalidCommand(
-                "midi pitch must be between 0 and 127".into(),
-            ));
-        }
-        if velocity > 127 {
-            return Err(ApplicationError::InvalidCommand(
-                "midi velocity must be between 0 and 127".into(),
-            ));
-        }
-        if !(1..=16).contains(&channel) {
-            return Err(ApplicationError::InvalidCommand(
-                "midi channel must be between 1 and 16".into(),
-            ));
-        }
-        if duration_ticks == 0 {
-            return Err(ApplicationError::InvalidCommand(
-                "midi note duration must be positive".into(),
-            ));
-        }
-        let id = next_id("note");
-        let session = self.commit_arrangement(|arrangement| {
-            arrangement
-                .insert_midi_notes(
-                    clip_id,
-                    vec![MidiNote {
-                        id: id.clone(),
-                        note: pitch,
-                        start_tick,
-                        duration_ticks,
-                        velocity,
-                        channel,
-                    }],
-                )
-                .map_err(Into::into)
-        })?;
-        Ok(ApplicationMutation::one(session, "midiNotes", id))
-    }
-
     /// Inserts multiple MIDI notes as one atomic edit and returns their
     /// Core-allocated identities.
     ///
@@ -789,6 +740,7 @@ where
         let notes = inputs
             .into_iter()
             .map(|input| MidiNote {
+                lyric: input.lyric,
                 id: next_id("note"),
                 note: input.pitch,
                 start_tick: input.start_tick,
@@ -850,6 +802,9 @@ where
                             update.note_id
                         ))
                     })?;
+                if let Some(lyric) = update.patch.lyric {
+                    note.lyric = lyric;
+                }
                 if let Some(pitch) = update.patch.note {
                     note.note = pitch;
                 }

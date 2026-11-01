@@ -84,6 +84,13 @@ pub struct SessionSettingsPatch {
 #[ts(optional_fields = nullable)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MidiNotePatch {
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_present_option"
+    )]
+    #[ts(optional, type = "string | null")]
+    pub lyric: Option<Option<String>>,
     pub note: Option<u8>,
     #[ts(optional, type = "number")]
     pub start_tick: Option<TimelineTick>,
@@ -104,6 +111,9 @@ pub struct MidiNoteUpdate {
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, ts_rs::TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MidiNoteInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub lyric: Option<String>,
     pub pitch: u8,
     #[ts(type = "number")]
     pub start_tick: TimelineTick,
@@ -501,4 +511,37 @@ fn apply_audio_source_to_clip(clip: &mut AudioClip, source: &TakeAudioSource) {
     clip.fade_in.sample_rate = source.sample_rate;
     clip.fade_out.sample_rate = source.sample_rate;
     clip.normalize_fields();
+}
+
+/// Deserializes an explicitly present nullable field.
+///
+/// # Errors
+/// Returns the deserializer's error when the value cannot be decoded.
+pub fn deserialize_present_option<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de>,
+{
+    <Option<T> as serde::Deserialize>::deserialize(deserializer).map(Some)
+}
+
+#[cfg(test)]
+mod lyric_patch_tests {
+    use super::MidiNotePatch;
+
+    #[test]
+    fn distinguishes_missing_null_and_text() {
+        for (json, expected) in [
+            (r#"{}"#, None),
+            (r#"{"lyric":null}"#, Some(None)),
+            (r#"{"lyric":"き"}"#, Some(Some("き".to_owned()))),
+        ] {
+            let patch: MidiNotePatch = serde_json::from_str(json).unwrap();
+            assert_eq!(patch.lyric, expected);
+            assert_eq!(
+                serde_json::to_value(patch).unwrap().get("lyric").is_some(),
+                expected.is_some()
+            );
+        }
+    }
 }

@@ -129,6 +129,7 @@ export type ControlCommandResults = {
   'project.rename': OutputValue<'projectState'>;
   'project.import': OutputValue<'projectActivation'>;
   'project.import-score': OutputValue<'projectActivation'>;
+  'music.export-midi': OutputValue<'midiExport'>;
   'project.export': OutputValue<'projectExport'>;
   'host.status': OutputValue<'hostStatus'>;
   'host.info': OutputValue<'hostInfo'>;

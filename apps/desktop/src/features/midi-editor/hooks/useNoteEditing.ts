@@ -121,6 +121,7 @@ export function useNoteEditing(options: NoteEditingOptions) {
     clipboardRef.current = {
       notes: selectedNotes.map((note) => ({
         pitch: note.note,
+        ...(note.lyric === undefined ? {} : { lyric: note.lyric }),
         relativeStartTick: note.startTick - anchor,
         durationTicks: note.durationTicks,
         velocity: note.velocity,

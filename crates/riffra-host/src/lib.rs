@@ -20,7 +20,7 @@ pub use asset::{
 };
 pub use audio_file::{WavMetadata, parse_wav, read_wav_metadata, read_wav_structure};
 pub use data_root::DataRootLease;
-pub use midi_file::parse_smf;
+pub use midi_file::{encode_smf, parse_smf};
 pub use project::{ProjectExport, export as export_project, import as import_project};
 pub use project_store::{
     ProjectInitialization, ProjectStore, ProjectSummary, WorkspaceState, validate_project_id,

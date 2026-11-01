@@ -2092,6 +2092,7 @@ mod tests {
             start_tick: TimelineTick(0),
             duration_ticks: 1_920,
             notes: vec![MidiNote {
+                lyric: None,
                 id: "note".into(),
                 note: 60,
                 start_tick: TimelineTick(900),

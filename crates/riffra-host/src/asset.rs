@@ -805,7 +805,7 @@ pub fn import_midi_bytes(data_root: &Path, name: &str, bytes: &[u8]) -> Result<A
     if name.trim().is_empty() {
         return Err("MIDI asset name must not be empty.".into());
     }
-    crate::midi_file::parse_smf(bytes)?;
+    crate::midi_file::parse_smf(bytes, None)?;
     let destination = unique_import_destination_with_ext(data_root, name, "mid")?;
     fs::write(&destination, bytes)
         .map_err(|error| format!("MIDI file could not be imported: {error}"))?;

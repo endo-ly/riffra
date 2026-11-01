@@ -270,6 +270,7 @@ fn build_session(
                 } => {
                     validate_note(&instrument.report, *note, *velocity)?;
                     clip.notes.push(MidiNote {
+                        lyric: None,
                         id: format!("score:note:{index}:{order}"),
                         note: *note,
                         start_tick: TimelineTick(*tick),

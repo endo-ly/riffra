@@ -238,6 +238,11 @@ export function NoteLane({
           return (
             <span
               key={note.id}
+              title={
+                visibleNote.lyric == null
+                  ? midiNoteName(visibleNote.note)
+                  : `${visibleNote.lyric} (${midiNoteName(visibleNote.note)})`
+              }
               data-note-id={note.id}
               data-midi-warning={warnedNoteIds.has(note.id) || undefined}
               className={`${styles.note} ${preview ? styles.dragging : ''} ${selectedNoteIds.includes(note.id) ? styles.selected : ''}`}
@@ -268,7 +273,9 @@ export function NoteLane({
             >
               {visibleNote.durationTicks * pixelsPerTick >= NOTE_LABEL_MIN_WIDTH &&
                 rowHeight >= NOTE_LABEL_MIN_HEIGHT && (
-                  <span className={styles.noteLabel}>{midiNoteName(visibleNote.note)}</span>
+                  <span className={styles.noteLabel}>
+                    {visibleNote.lyric ?? midiNoteName(visibleNote.note)}
+                  </span>
                 )}
               <i
                 className={styles.resizeStart}

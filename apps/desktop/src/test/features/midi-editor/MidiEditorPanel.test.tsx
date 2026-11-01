@@ -14,7 +14,7 @@ import { renderWorkspace } from '@/test/support/workspace';
 
 afterEach(cleanup);
 
-function setup(startTick: number) {
+function setup(startTick: number, lyric?: string) {
   const clip: MidiClip = {
     instrumentControlEvents: [],
     id: 'clip:1',
@@ -23,7 +23,15 @@ function setup(startTick: number) {
     startTick,
     durationTicks: 3840,
     notes: [
-      { id: 'note:1', note: 60, startTick: 100, durationTicks: 200, velocity: 96, channel: 1 },
+      {
+        id: 'note:1',
+        note: 60,
+        startTick: 100,
+        durationTicks: 200,
+        velocity: 96,
+        channel: 1,
+        ...(lyric === undefined ? {} : { lyric }),
+      },
     ],
     events: [],
     muted: false,
@@ -125,10 +133,14 @@ describe('MidiEditorPanel', () => {
 
   it('snaps creation, drawing, movement and right-edge resizing to the visible beat lines', () => {
     // Arrange
-    const { lane, addMidiNote, updateMidiNote, updateMidiNotes, insertMidiNotes, playhead } =
-      setup(2160);
+    const { lane, addMidiNote, updateMidiNote, updateMidiNotes, insertMidiNotes, playhead } = setup(
+      2160,
+      'き',
+    );
     fireEvent.change(screen.getByLabelText('Snap'), { target: { value: '1/4' } });
     const note = lane.querySelector<HTMLElement>('[data-note-id="note:1"]')!;
+    expect(note).toHaveAttribute('title', 'き (C4)');
+    expect(note).toHaveTextContent('き');
 
     // Act / Assert: double-click and Draw use the same boundaries.
     fireEvent.doubleClick(lane, { clientX: 70, clientY: 804 });
@@ -166,7 +178,7 @@ describe('MidiEditorPanel', () => {
     fireEvent.keyDown(screen.getByLabelText('MIDI Editor'), { key: 'c', ctrlKey: true });
     fireEvent.keyDown(screen.getByLabelText('MIDI Editor'), { key: 'v', ctrlKey: true });
     expect(insertMidiNotes).toHaveBeenLastCalledWith('clip:1', [
-      { pitch: 60, startTick: 720, durationTicks: 200, velocity: 96, channel: 1 },
+      { pitch: 60, startTick: 720, durationTicks: 200, velocity: 96, channel: 1, lyric: 'き' },
     ]);
   });
 
@@ -175,6 +187,8 @@ describe('MidiEditorPanel', () => {
     const { lane, addMidiNote, updateMidiNote, insertMidiNotes } = setup(2160);
     fireEvent.change(screen.getByLabelText('Snap'), { target: { value: '1/4' } });
     const note = lane.querySelector<HTMLElement>('[data-note-id="note:1"]')!;
+    expect(note).toHaveAttribute('title', 'C4');
+    expect(note).toHaveTextContent('C4');
     const resizeStart = note.querySelector<HTMLElement>('[class*="resizeStart"]')!;
 
     // Act
