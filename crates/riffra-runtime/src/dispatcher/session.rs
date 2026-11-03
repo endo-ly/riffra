@@ -1051,6 +1051,39 @@ mod tests {
         assert_eq!(after_failure.sequence, replaced_state.sequence);
         assert_eq!(output_value(&after_failure), output_value(&replaced_state));
 
+        let batch = |clip_to_end| {
+            command(
+                "session.apply",
+                json!({"operations":[
+                    {"command":"midi-note.clear","params":{"trackName":"Lead","clipName":"Verse"}},
+                    {"command":"music.note.insert","params":{"trackName":"Lead","clipName":"Verse","clipToEnd":clip_to_end,"notes":[{"pitch":"C4","position":"4:4+1/2","duration":"1/4"}]}}
+                ]}),
+            )
+        };
+        let error = dispatcher
+            .dispatch(batch(false), None)
+            .unwrap_err()
+            .protocol_error();
+        assert_eq!(error.details.as_ref().unwrap()["operationIndex"], 1);
+        assert!(
+            error.details.as_ref().unwrap()["cause"]
+                .as_str()
+                .unwrap()
+                .contains("end exceeds the clip")
+        );
+        let unchanged = dispatcher
+            .dispatch(command("session.get", json!({})), None)
+            .unwrap();
+        assert_eq!(output_value(&unchanged), output_value(&replaced_state));
+        dispatcher.dispatch(batch(true), None).unwrap();
+        let clipped = dispatcher
+            .dispatch(command("session.get", json!({})), None)
+            .unwrap();
+        assert_eq!(
+            output_value(&clipped)["arrangement"]["midiClips"][0]["notes"][0]["durationTicks"],
+            480
+        );
+
         let _ = fs::remove_dir_all(root);
     }
 

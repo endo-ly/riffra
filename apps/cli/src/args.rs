@@ -1258,6 +1258,9 @@ pub struct MusicalNoteBulkArgs {
     /// Id of the MIDI Clip that receives the Notes.
     #[arg(long)]
     pub clip_id: String,
+    /// Shorten notes that extend past the clip end; notes must still start inside the clip.
+    #[arg(long)]
+    pub clip_to_end: bool,
     /// Inline JSON array of notes; each element is an object with pitch (note name such as C4), position (arrangement-absolute bar:beat), duration (whole-note fraction such as 1/8), and optional lyric, velocity (0..=127, default 100) and channel (1..=16, default 1). Mutually exclusive with --notes-file and --stdin.
     #[arg(long, alias = "notes")]
     pub notes_json: Option<String>,
@@ -3252,6 +3255,7 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
                 MusicNoteCommand::Insert(args) => {
                     Canonical::MusicNoteInsert(MusicalNoteInsertParams {
                         clip_id: args.clip_id,
+                        clip_to_end: args.clip_to_end,
                         notes: note_input(args.notes_json, args.notes_file, args.stdin)?,
                     })
                     .into()
@@ -4835,9 +4839,24 @@ mod tests {
             request.params,
             json!({
                 "clipId":"midi-clip:1",
+                "clipToEnd":false,
                 "notes":[{"pitch":"C4","position":"5:1","duration":"1/8"}]
             })
         );
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "--attach",
+            "music",
+            "note",
+            "insert",
+            "--clip-id",
+            "midi-clip:1",
+            "--clip-to-end",
+            "--notes-json",
+            r#"[{"pitch":"C4","position":"5:1","duration":"1/8"}]"#,
+        ])
+        .unwrap();
+        assert_eq!(wire(cli).params["clipToEnd"], true);
 
         let cli = Cli::try_parse_from([
             "riffra",

@@ -627,7 +627,7 @@ mod tests {
             .application(&storage)
             .duplicate_midi_notes_with_created_ids(&clip_id, vec![note_id], 1_920)
             .unwrap_err();
-        assert!(duplicated.to_string().contains("invalid note"));
+        assert!(duplicated.to_string().contains("start is outside the clip"));
         let unchanged = core.snapshot();
         assert_eq!(
             unchanged.session.arrangement.midi_clips[0].duration_ticks,
@@ -649,7 +649,7 @@ mod tests {
                 }],
             )
             .unwrap_err();
-        assert!(pasted.to_string().contains("invalid note"));
+        assert!(pasted.to_string().contains("start is outside the clip"));
         let unchanged = core.snapshot();
         assert_eq!(
             unchanged.session.arrangement.midi_clips[0].duration_ticks,
