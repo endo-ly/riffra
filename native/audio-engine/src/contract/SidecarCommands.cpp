@@ -449,16 +449,23 @@ bool decodeCommand(const juce::var& value, SidecarCommandSpec& output, juce::Str
         return true;
     }
     if (type == "setPluginState") {
-        auto fields = reader({"type", "owner", "deviceId", "state"});
+        auto fields = reader({"type", "owner", "deviceId", "state", "expectedState"});
         SetPluginStateCommand command;
-        juce::var state;
+        juce::var state, expected;
         if (!fields.string("type", ignoredType) ||
             !decodeDevice(fields, command.owner, command.deviceId, error) ||
-            !fields.object("state", state) || !fields.finish())
+            !fields.object("state", state) || !fields.value("expectedState", expected) ||
+            !fields.finish())
             return false;
         juce::String stateError;
         if (!decodePluginState(state, command.state, stateError))
             return fail(error, field("state"), stateError);
+        if (!expected.isVoid()) {
+            PluginStateSpec value;
+            if (!decodePluginState(expected, value, stateError))
+                return fail(error, field("expectedState"), stateError);
+            command.expectedState = std::move(value);
+        }
         output = std::move(command);
         return true;
     }

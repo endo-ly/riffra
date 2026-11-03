@@ -186,7 +186,8 @@ public:
     bool setDeviceProgram(const EffectOwnerSpec& deviceOwner, const juce::String& deviceId,
                           int programIndex, juce::String& error);
     bool setDevicePersistedState(const EffectOwnerSpec& deviceOwner, const juce::String& deviceId,
-                                 const PluginStateSpec& persistedState, juce::String& error);
+                                 const PluginStateSpec& persistedState, juce::String& error,
+                                 const std::optional<PluginStateSpec>& expectedState = {});
     [[nodiscard]] std::optional<DeviceStatusSpec> deviceStatus(const EffectOwnerSpec& deviceOwner,
                                                                const juce::String& deviceId,
                                                                juce::String& error) const;

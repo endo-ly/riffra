@@ -126,6 +126,7 @@ struct SetPluginStateCommand final {
     EffectOwnerSpec owner;
     juce::String deviceId;
     PluginStateSpec state;
+    std::optional<PluginStateSpec> expectedState;
 };
 
 struct SetDeviceProgramCommand final {

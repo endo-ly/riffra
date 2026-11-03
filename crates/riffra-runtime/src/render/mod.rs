@@ -276,7 +276,7 @@ fn render_timeline_with_renderer(
     for track in &session.arrangement.tracks {
         if !vocal::reaches_mix(session, track, options.track_id.as_deref())
             || vocal::singing_ranges(session, track, plan.start_tick, plan.end_tick).is_empty()
-            || !vocal::is_voisona(data_root, track)?
+            || !crate::voisona::is_target(data_root, track)?
         {
             continue;
         }
@@ -771,7 +771,7 @@ fn render_stems_with_renderer(
         .map_err(|e| format!("stem {} ({}) measurement failed: {e}", track.name, track.id))?;
         warnings.extend(plan.dependency_warnings.iter().cloned());
         warnings.extend(automation_warnings.iter().cloned());
-        if vocal::is_voisona(data_root, track)? {
+        if crate::voisona::is_target(data_root, track)? {
             warnings.extend(vocal::silent_singing_warnings(
                 session,
                 track,

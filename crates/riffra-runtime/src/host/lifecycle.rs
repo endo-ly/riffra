@@ -113,6 +113,7 @@ impl DawHost {
             lifecycle: HostLifecycle::new(),
             shutdown_requested: AtomicBool::new(false),
             plugin_persistence_commands: Mutex::new(None),
+            voisona_status: Arc::new(super::voisona::SyncStatus::default()),
         });
         if let Err(error) = audio.set_restart_preferences(preferences) {
             audio.force_shutdown();
@@ -136,9 +137,26 @@ impl DawHost {
             audio.force_shutdown();
             return Err(HostError::State(error.to_string()));
         }
-        if let Ok(canonical) = state.canonical() {
-            library::index::refresh(&state.data_root, &canonical.project_id, &canonical.session);
-        }
+        let canonical = match state.canonical() {
+            Ok(canonical) => canonical,
+            Err(error) => {
+                audio.force_shutdown();
+                return Err(HostError::State(error.to_string()));
+            }
+        };
+        library::index::refresh(&state.data_root, &canonical.project_id, &canonical.session);
+        let voisona_sync = match super::voisona::Coordinator::start(
+            Arc::downgrade(&state),
+            state.voisona_status.clone(),
+            canonical,
+            &state.data_root,
+        ) {
+            Ok(sync) => sync,
+            Err(error) => {
+                audio.force_shutdown();
+                return Err(HostError::State(error));
+            }
+        };
         let plugin_persistence = persistence::PluginStatePersistenceCoordinator::start(
             Arc::downgrade(&state),
             state.event_hub.subscribe_plugin_persistence(),
@@ -151,6 +169,7 @@ impl DawHost {
         let control = match ControlServer::start(Arc::clone(&state), identity.clone()) {
             Ok(control) => control,
             Err(error) => {
+                voisona_sync.shutdown();
                 plugin_persistence.shutdown();
                 audio.force_shutdown();
                 return Err(HostError::Control(error));
@@ -163,6 +182,7 @@ impl DawHost {
             control: Mutex::new(Some(control)),
             startup: Mutex::new(startup),
             plugin_persistence: Mutex::new(Some(plugin_persistence)),
+            voisona_sync: Mutex::new(Some(Box::new(voisona_sync))),
         })
     }
 
@@ -170,6 +190,11 @@ impl DawHost {
     pub fn shutdown(&self) {
         self.state.lifecycle.request_shutdown();
         self.state.audio.cancel_waits_for_shutdown();
+        if let Ok(mut sync) = self.voisona_sync.lock()
+            && let Some(sync) = sync.take()
+        {
+            (*sync).shutdown();
+        }
         self.state.lifecycle.close();
         if !self.state.safe_mode
             && self.state.audio.sidecar_is_ready()

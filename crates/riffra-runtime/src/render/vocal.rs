@@ -6,8 +6,6 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 
-const VOISONA_IDENTIFIER: &str = "VST3-VoiSona Song Editor-3fac6da4-dd045f83";
-
 pub(super) fn reaches_mix(
     session: &CreativeSession,
     track: &Track,
@@ -39,29 +37,6 @@ pub(super) fn reaches_mix(
                     && (!has_solo || solo || (bus.solo && selected.is_none()))
             })
     })
-}
-
-pub(super) fn is_voisona(data_root: &Path, track: &Track) -> Result<bool, String> {
-    let Some(instrument) = track
-        .instrument
-        .as_ref()
-        .filter(|instrument| !instrument.bypassed)
-    else {
-        return Ok(false);
-    };
-    let Some(plugin) = instrument
-        .as_vst3()
-        .filter(|plugin| !plugin.disabled_placeholder)
-    else {
-        return Ok(false);
-    };
-    let catalog = crate::plugins::load(data_root)
-        .map_err(|error| format!("plugin catalog could not be read: {error}"))?;
-    Ok(catalog.iter().any(|entry| {
-        entry.path == plugin.path
-            && entry.scan_state == crate::api::output::PluginScanState::Validated
-            && entry.identifier.as_deref() == Some(VOISONA_IDENTIFIER)
-    }))
 }
 
 pub(super) fn silent_singing_warnings(

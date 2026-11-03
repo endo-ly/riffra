@@ -600,15 +600,25 @@ bool TimelineEngine::setDeviceParameter(const EffectOwnerSpec& deviceOwner,
 bool TimelineEngine::setDevicePersistedState(const EffectOwnerSpec& deviceOwner,
                                              const juce::String& deviceId,
                                              const PluginStateSpec& persistedState,
-                                             juce::String& error) {
+                                             juce::String& error,
+                                             const std::optional<PluginStateSpec>& expectedState) {
     auto* rack = findDevice(deviceOwner, deviceId);
     if (rack == nullptr) {
         error = "Channel Device was not found.";
         return false;
     }
     const HostEditScope edit(rack->hostEditInProgress);
-    const auto applied = juce::MessageManager::callSync(
-        [&] { return rack->applyPersistedState(persistedState, error); });
+    const auto applied = juce::MessageManager::callSync([&] {
+        if (expectedState.has_value()) {
+            const auto actual = rack->persistedState(error);
+            if (!actual.has_value()) return false;
+            if (*actual != *expectedState) {
+                error = "Plugin state changed while preparing the update.";
+                return false;
+            }
+        }
+        return rack->applyPersistedState(persistedState, error);
+    });
     return applied.value_or(false) && synchronizeDeviceParameters(*rack, error);
 }
 

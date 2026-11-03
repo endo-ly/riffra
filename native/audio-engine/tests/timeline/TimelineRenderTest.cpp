@@ -954,7 +954,14 @@ TEST(MixerRoutingTest, AlignsRealVstPathsAndReusesDevicesOnlyWhenProjectedStateM
             EXPECT_NEAR(state->parameterValues[0], 0.75f, 0.001f);
             ASSERT_TRUE(state->stateData.has_value());
             ASSERT_TRUE(engine.setDeviceParameter(owner, id, 0, 0.25f, error));
-            ASSERT_TRUE(engine.setDevicePersistedState(owner, id, *state, error)) << error;
+            EXPECT_FALSE(engine.setDevicePersistedState(owner, id, *state, error, *state));
+            EXPECT_TRUE(error.contains("changed"));
+            error.clear();
+            const auto currentState = engine.devicePersistedState(owner, id, error);
+            ASSERT_TRUE(currentState.has_value());
+            EXPECT_NEAR(currentState->parameterValues[0], 0.25f, 0.001f);
+            ASSERT_TRUE(engine.setDevicePersistedState(owner, id, *state, error, *currentState))
+                << error;
             EXPECT_NEAR(engine.devicePersistedState(owner, id, error)->parameterValues[0], 0.75f,
                         0.001f);
             ASSERT_TRUE(engine.setDeviceBypassed(owner, id, true, error));

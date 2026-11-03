@@ -31,6 +31,7 @@ mod session;
 mod startup;
 #[cfg(test)]
 pub(crate) mod test_support;
+mod voisona;
 
 pub use api::output::{
     ArrangementMutationResult, ArrangementProjectionOutcome, AudioAccessMode, AudioChannelInfo,

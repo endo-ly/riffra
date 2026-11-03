@@ -114,6 +114,7 @@ pub(crate) enum SidecarCommand {
         owner: riffra_core::EffectOwner,
         device_id: String,
         state: GraphPluginState,
+        expected_state: Option<GraphPluginState>,
     },
     SetDeviceProgram {
         owner: riffra_core::EffectOwner,

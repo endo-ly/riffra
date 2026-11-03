@@ -37,6 +37,7 @@ pub(crate) struct HostState {
     pub(super) shutdown_requested: AtomicBool,
     pub(super) plugin_persistence_commands:
         Mutex<Option<std::sync::mpsc::Sender<super::persistence::PluginPersistenceCommand>>>,
+    pub(super) voisona_status: Arc<super::voisona::SyncStatus>,
 }
 
 impl HostState {
@@ -50,6 +51,14 @@ impl HostState {
 
     pub(super) fn canonical(&self) -> Result<CanonicalState, HostError> {
         Ok(self.project.read().canonical.clone())
+    }
+
+    pub(crate) fn canonical_version(&self) -> Result<(String, u64), HostError> {
+        let snapshot = self.project.read();
+        Ok((
+            snapshot.canonical.project_id.clone(),
+            snapshot.canonical.sequence,
+        ))
     }
 
     pub(super) fn capture_startup_target(&self) -> Result<crate::startup::StartupTarget, String> {
@@ -135,6 +144,7 @@ impl HostState {
             lifecycle: super::lifecycle::HostLifecycle::new(),
             shutdown_requested: AtomicBool::new(false),
             plugin_persistence_commands: Mutex::new(None),
+            voisona_status: Arc::new(super::voisona::SyncStatus::default()),
         })
     }
 }

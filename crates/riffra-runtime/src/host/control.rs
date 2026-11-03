@@ -506,6 +506,8 @@ impl HostState {
                 ));
             }
             RuntimeCommand::TransportPlay(_) => {
+                drop(writer.take());
+                let current = self.wait_for_voisona_render(current)?;
                 self.ensure_transport_online()?;
                 let outcome = self
                     .runtime
@@ -1123,9 +1125,11 @@ impl HostState {
             }
 
             RuntimeCommand::RenderStart(params) => {
+                drop(writer.take());
                 ControlOutput::Job(Some(self.start_render(current, params.options)?))
             }
             RuntimeCommand::RenderStems(params) => {
+                drop(writer.take());
                 ControlOutput::Job(Some(self.start_render_stems(current, params)?))
             }
             RuntimeCommand::RenderExport(params) => ControlOutput::RenderExport(
@@ -1347,6 +1351,7 @@ impl HostState {
         current: CanonicalState,
         options: Option<RenderOptions>,
     ) -> Result<BackgroundJobStatus, ProtocolError> {
+        let current = self.wait_for_voisona_render(current)?;
         let session = current.session;
         let project_id = current.project_id;
         let options = options.unwrap_or_default();
@@ -1383,6 +1388,47 @@ impl HostState {
         })
         .map_err(|error| command_error(format!("render job could not start: {error}")))?;
         jobs::to_background_status(status).map_err(command_error)
+    }
+
+    fn wait_for_voisona_render(
+        &self,
+        current: CanonicalState,
+    ) -> Result<CanonicalState, ProtocolError> {
+        let catalog = crate::voisona::load_catalog(&self.data_root).map_err(command_error)?;
+        if !current
+            .session
+            .arrangement
+            .tracks
+            .iter()
+            .any(|track| crate::voisona::is_target_in(&catalog, track))
+        {
+            return Ok(current);
+        }
+        let synchronized = self
+            .voisona_status
+            .wait(self, &current)
+            .map_err(command_error)?;
+        let mut original = current.session.clone();
+        let mut latest = synchronized.session.clone();
+        original.arrangement.revision = latest.arrangement.revision;
+        for session in [&mut original, &mut latest] {
+            for track in &mut session.arrangement.tracks {
+                if let Some(plugin) = track
+                    .instrument
+                    .as_mut()
+                    .and_then(|instrument| instrument.as_vst3_mut())
+                {
+                    plugin.state_data = None;
+                    plugin.parameter_values.clear();
+                }
+            }
+        }
+        if original != latest {
+            return Err(command_error(
+                "project changed while waiting for VoiSona synchronization; retry the render",
+            ));
+        }
+        Ok(synchronized)
     }
 
     fn start_analysis_measure(
@@ -1428,6 +1474,7 @@ impl HostState {
         current: CanonicalState,
         params: crate::api::params::RenderStemsParams,
     ) -> Result<BackgroundJobStatus, ProtocolError> {
+        let current = self.wait_for_voisona_render(current)?;
         let selection =
             render::select_stem_tracks(&current.session, params.all_tracks, &params.track_ids)
                 .map_err(command_error)?;

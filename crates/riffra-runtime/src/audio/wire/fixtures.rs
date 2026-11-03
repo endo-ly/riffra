@@ -160,6 +160,7 @@ fn command_samples() -> Vec<SidecarCommand> {
             owner: riffra_core::EffectOwner::Track { id: track() },
             device_id: device(),
             state: plugin_state(),
+            expected_state: None,
         },
         SidecarCommand::SetDeviceProgram {
             owner: riffra_core::EffectOwner::Track { id: track() },

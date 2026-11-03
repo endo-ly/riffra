@@ -7,6 +7,7 @@ mod persistence;
 mod plugin_scan;
 mod project;
 mod state;
+mod voisona;
 
 pub use events::{
     HostEvent, HostEventHub, HostEventSink, HostEventSubscription, NoopHostEventSink,
@@ -90,6 +91,7 @@ pub struct DawHost {
     control: Mutex<Option<ControlServer>>,
     startup: Mutex<Option<std::thread::JoinHandle<()>>>,
     plugin_persistence: Mutex<Option<persistence::PluginStatePersistenceCoordinator>>,
+    voisona_sync: Mutex<Option<Box<voisona::Coordinator>>>,
 }
 
 impl DawHost {

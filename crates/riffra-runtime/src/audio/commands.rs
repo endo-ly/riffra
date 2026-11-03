@@ -440,6 +440,25 @@ impl AudioSupervisor {
                 owner: owner.clone(),
                 device_id: device_id.into(),
                 state,
+                expected_state: None,
+            },
+            TRACK_DEVICE_COMMAND_TIMEOUT,
+        )
+    }
+
+    pub(crate) fn compare_and_set_plugin_state(
+        &self,
+        owner: &riffra_core::EffectOwner,
+        device_id: &str,
+        expected_state: GraphPluginState,
+        state: GraphPluginState,
+    ) -> NativeAudioResult<()> {
+        self.request_ack(
+            SidecarCommand::SetPluginState {
+                owner: owner.clone(),
+                device_id: device_id.into(),
+                state,
+                expected_state: Some(expected_state),
             },
             TRACK_DEVICE_COMMAND_TIMEOUT,
         )

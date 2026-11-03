@@ -138,7 +138,7 @@ void AudioCommandDispatcher::handle(const SetPluginStateCommand& command,
         [this, command, pending] {
             juce::String deviceError;
             const auto changed = context.timelineEngine.setDevicePersistedState(
-                command.owner, command.deviceId, command.state, deviceError);
+                command.owner, command.deviceId, command.state, deviceError, command.expectedState);
 
             if (changed)
                 pending->respond(DeviceAckSpec{});
