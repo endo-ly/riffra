@@ -193,7 +193,7 @@ Instrumentの割り当ては `instrument apply`(`builtin:<presetId>` または `
 riffra --attach instrument midi set --track-id track:01j... --settings-json '{"transposeSemitones":12,"playableNotes":{"type":"range","start":36,"end":84},"keyswitches":[{"note":24,"name":"C0"}]}'
 ```
 
-User Instrumentは `instrument save` で登録し、応答のIDを割当へ渡す。定義から素材への参照を保つため、定義JSONと相対パスの素材を同じパッケージ構成で用意する。複数Trackへまとめて割り当てるときは、`session apply` に `instrument.apply` を含める。
+User Instrumentは `instrument save` で登録し、応答のIDを割当へ渡す。定義が参照するサンプルなどの素材は登録時にパッケージへコピーされ、元のファイルから独立して利用できる。複数Trackへまとめて割り当てるときは、`session apply` に `instrument.apply` を含める。
 
 ### Missing 復旧
 
