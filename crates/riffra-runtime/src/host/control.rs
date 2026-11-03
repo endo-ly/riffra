@@ -1408,22 +1408,11 @@ impl HostState {
             .voisona_status
             .wait(self, &current)
             .map_err(command_error)?;
-        let mut original = current.session.clone();
-        let mut latest = synchronized.session.clone();
-        original.arrangement.revision = latest.arrangement.revision;
-        for session in [&mut original, &mut latest] {
-            for track in &mut session.arrangement.tracks {
-                if let Some(plugin) = track
-                    .instrument
-                    .as_mut()
-                    .and_then(|instrument| instrument.as_vst3_mut())
-                {
-                    plugin.state_data = None;
-                    plugin.parameter_values.clear();
-                }
-            }
-        }
-        if original != latest {
+        if !crate::voisona::sessions_match_except_voisona_state(
+            current.session.clone(),
+            synchronized.session.clone(),
+            &catalog,
+        ) {
             return Err(command_error(
                 "project changed while waiting for VoiSona synchronization; retry the render",
             ));
