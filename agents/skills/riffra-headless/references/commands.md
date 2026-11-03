@@ -42,6 +42,8 @@ riffra --attach --expected-sequence 2 music note insert --clip-id midi-clip:01j.
 
 複数の正準Mutationを事前に決めている場合は、CLI側でIDを受け渡すスクリプトを書かずに `session apply` へJSONLを渡す。Batchの適用規則、`trackName` / `clipName` の名前解決、含められるコマンドの一覧は `riffra session apply --help` が正本である。Mixer周りも `busName`、`returnBusName`、ownerの `owner.name` で指定でき、同じBatch内で追加したTrackとBusを参照できる。
 
+デバイスを1件作る操作に `bind` で名前を付けると、後続操作のデバイスIDには `@名前` を使える。名前はそのBatchの中だけで有効で、同じ名前を再利用できない。Batch内のパラメーター設定には正規化値 `value` を使う。
+
 `--replace` はProjectの同一性を保ち、Sessionを初期状態に戻してからJSONLを適用する。録音素材ファイルは残る。
 
 ```powershell
@@ -53,6 +55,8 @@ riffra --attach session apply --file ./song.jsonl --include-created-ids
 {"command":"track.add","params":{"name":"Lead","kind":"instrument"}}
 {"command":"music.midi-clip.create","params":{"trackName":"Lead","name":"Verse","start":"1:1","end":"9:1"}}
 {"command":"music.note.insert","params":{"trackName":"Lead","clipName":"Verse","notes":[{"pitch":"C4","position":"1:1","duration":"1/8"}]}}
+{"command":"effect.add","params":{"owner":{"kind":"track","name":"Lead"},"pluginPath":"C:/Plugins/Effect.vst3"},"bind":"effect"}
+{"command":"device.parameter.set","params":{"owner":{"kind":"track","name":"Lead"},"deviceId":"@effect","parameterIndex":0,"value":0.45}}
 ```
 
 既存ClipのNoteだけをまとめて置き換えるには、音楽座標なら同じBatchに `midi-note.clear` と `music.note.insert` をこの順で含める。raw MIDI値でよければ `midi-clip.update` の `patch.notes` へNote配列を渡す。

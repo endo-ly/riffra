@@ -270,7 +270,7 @@ pub enum SessionCommand {
     Inspect(SessionInspectArgs),
     /// Apply a batch of operations from a JSON Lines file as one atomic mutation.
     ///
-    /// Each operation holds `command` and `params`; requestId and expectedSequence are not operation fields.
+    /// Each operation holds `command`, `params`, and an optional `bind`; requestId and expectedSequence are not operation fields.
     ///
     /// Operations run in order, and the project changes only if all succeed.
     /// Later operations can reference Tracks and Clips created earlier in the batch.
@@ -279,6 +279,8 @@ pub enum SessionCommand {
     /// Batch operations may resolve `trackName` instead of `trackId`, and `clipName` instead of
     /// `clipId`. Specifying both forms fails. Zero matches or multiple matches fail. `clipName`
     /// also requires `trackId` or `trackName` and resolves only within that Track.
+    /// An operation that creates exactly one device may bind its ID with `bind`; later device ID
+    /// fields can use `@name`. Device parameter changes in a batch use normalized `value`.
     ///
     /// Only these commands may appear in a batch: session.settings.update; track.add, track.update,
     /// track.remove, track.duplicate, track.reorder, track.audio-input.set, track.audio-input.clear,
@@ -297,7 +299,8 @@ pub enum SessionCommand {
     /// instrument-event.update, instrument-event.remove;
     /// loop-range.set, punch-range.set; automation.set, automation.clear; instrument.apply,
     /// instrument.midi.set, instrument.vst3.set, plugin.state.import,
-    /// instrument.clear; effect.add, effect.remove, effect.reorder; device.bypass,
+    /// instrument.clear; mixer.bus.add/update/remove, mixer.output.set, mixer.send.add/update/remove,
+    /// mixer.sidechain.add/update/remove; effect.add, effect.remove, effect.reorder; device.bypass,
     /// device.parameter.set. instrument.apply accepts `builtin:` and `user:` instruments;
     /// User Instrument assignments create Project-owned package snapshots atomically with the batch.
     ///
@@ -5500,7 +5503,8 @@ mod tests {
             &path,
             br#"{"command":"track.add","params":{"name":"Lead","kind":"instrument"}}
 
-{"command":"music.midi-clip.create","params":{"trackName":"Lead","name":"Verse","start":"1:1","end":"5:1"}}"#,
+{"command":"music.midi-clip.create","params":{"trackName":"Lead","name":"Verse","start":"1:1","end":"5:1"}}
+{"command":"effect.add","params":{"owner":{"kind":"track","name":"Lead"},"pluginPath":"effect.vst3"},"bind":"fx"}"#,
         )
         .unwrap();
         let cli = Cli::try_parse_from([
@@ -5515,8 +5519,9 @@ mod tests {
         .unwrap();
         let request = wire(cli);
         assert_eq!(request.name, "session.apply");
-        assert_eq!(request.params["operations"].as_array().unwrap().len(), 2);
+        assert_eq!(request.params["operations"].as_array().unwrap().len(), 3);
         assert_eq!(request.params["operations"][0]["command"], "track.add");
+        assert_eq!(request.params["operations"][2]["bind"], "fx");
         assert_eq!(request.params["includeCreatedIds"], true);
         assert_eq!(request.params["replace"], true);
         let _ = std::fs::remove_file(path);

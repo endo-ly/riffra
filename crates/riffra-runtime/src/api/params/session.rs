@@ -25,4 +25,18 @@ pub struct BatchOperation {
     pub command: String,
     #[ts(type = "unknown")]
     pub params: Value,
+    /// Names exactly one device created by this operation for later references.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_bind"
+    )]
+    #[ts(as = "Option<String>", optional)]
+    pub bind: Option<Value>,
+}
+
+fn deserialize_bind<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Value>, D::Error> {
+    Value::deserialize(deserializer).map(Some)
 }

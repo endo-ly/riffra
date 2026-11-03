@@ -6,4 +6,11 @@
  * Operations may reference Tracks and Clips by `trackName` / `clipName`,
  * which the batch resolves to IDs before decoding the command.
  */
-export type BatchOperation = { command: string, params: unknown, };
+export type BatchOperation = {
+  command: string;
+  params: unknown;
+  /**
+   * Names exactly one device created by this operation for later references.
+   */
+  bind?: string;
+};
