@@ -2606,9 +2606,8 @@ pub enum RenderCommand {
     /// cannot be combined with `loop-range`; --start and --end must be provided together. --track-id
     /// renders only that Track as a stem. --normalize applies peak normalization. --expected-sequence
     /// is the sequence precondition for the project state being rendered. Success returns a Job;
-    /// under an attached one-shot, use `job wait` to follow it to a terminal state. `job wait`
-    /// without --timeout-ms waits until a terminal state, and only a supplied --timeout-ms ends
-    /// the wait early.
+    /// use --wait to return its terminal state, or `job wait` to follow it later. `job wait`
+    /// without --timeout-ms waits until a terminal state.
     /// --out copies the completed WAV to an absolute path without replacing an existing file.
     Start(RenderStartArgs),
     /// Render several Tracks to aligned WAV stems under one job and directory.
@@ -2627,6 +2626,9 @@ pub enum RenderCommand {
 
 #[derive(Debug, Args)]
 pub struct RenderStartArgs {
+    /// Wait for the Job to finish; failure or cancellation exits non-zero (requires --attach).
+    #[arg(long)]
+    pub wait: bool,
     /// Render range: `entire-arrangement` (default) or `loop-range`; supplying --start and --end switches to a time-selection render, which cannot be combined with `loop-range`.
     #[arg(long, default_value = "entire-arrangement", value_parser = ["entire-arrangement", "loop-range"])]
     pub range: String,
@@ -2649,6 +2651,9 @@ pub struct RenderStartArgs {
 
 #[derive(Debug, Args)]
 pub struct RenderStemsArgs {
+    /// Wait for the Job to finish; failure or cancellation exits non-zero (requires --attach).
+    #[arg(long)]
+    pub wait: bool,
     /// Render each Track that contains at least one unmuted Clip.
     #[arg(long)]
     pub all_tracks: bool,
@@ -2689,7 +2694,7 @@ pub struct RenderCleanArgs {
 #[derive(Debug, Subcommand)]
 pub enum JobCommand {
     /// Read one background Job's state by id; requires a running Riffra Host accessed with --attach.
-    Get(JobIdArgs),
+    Get(JobLookupArgs),
     /// Cancel one background Job by id; requires a running Riffra Host accessed with --attach.
     Cancel(JobIdArgs),
     /// Poll a background Job until it reaches a terminal state; requires --attach and cannot be combined with --data-root or --expected-sequence.
@@ -2707,10 +2712,36 @@ pub struct JobIdArgs {
 }
 
 #[derive(Debug, Args)]
+pub struct JobLookupArgs {
+    /// Id of the background Job (or use --id).
+    #[arg(
+        value_name = "JOB_ID",
+        required_unless_present = "id",
+        conflicts_with = "id"
+    )]
+    pub job_id: Option<String>,
+    /// Id of the background Job.
+    #[arg(long, required_unless_present = "job_id")]
+    pub id: Option<String>,
+}
+
+impl JobLookupArgs {
+    pub fn id(&self) -> &str {
+        self.job_id
+            .as_deref()
+            .or(self.id.as_deref())
+            .expect("clap requires a job ID")
+    }
+
+    pub fn into_id(self) -> String {
+        self.job_id.or(self.id).expect("clap requires a job ID")
+    }
+}
+
+#[derive(Debug, Args)]
 pub struct JobWaitArgs {
-    /// Id of the background Job to wait for.
-    #[arg(long)]
-    pub id: String,
+    #[command(flatten)]
+    pub job: JobLookupArgs,
     /// Maximum time to wait in milliseconds; omit to wait until the Job reaches a terminal state.
     #[arg(long)]
     pub timeout_ms: Option<u64>,
@@ -3767,7 +3798,7 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
             }
         },
         CliCommand::Job { command } => match command {
-            JobCommand::Get(args) => Runtime::JobGet(IdParams { id: args.id }).into(),
+            JobCommand::Get(args) => Runtime::JobGet(IdParams { id: args.into_id() }).into(),
             JobCommand::Cancel(args) => Runtime::JobCancel(IdParams { id: args.id }).into(),
             JobCommand::Wait(_) => {
                 return Err("job wait is handled locally by an attached one-shot CLI".into());

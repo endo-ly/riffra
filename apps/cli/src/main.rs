@@ -17,6 +17,7 @@ use riffra_control::{
     LocalHostRegistry,
 };
 use riffra_runtime::Dispatcher;
+use riffra_runtime::api::output::{BackgroundJobStatus, ControlOutput};
 use riffra_runtime::api::params::EmptyParams;
 use riffra_runtime::api::{CanonicalCommand, ControlCommand, RuntimeCommand};
 use std::io;
@@ -122,9 +123,21 @@ fn run(cli: Cli) -> Result<(), RunFailure> {
     let job_wait = match cli.command.as_ref() {
         Some(CliCommand::Job {
             command: args::JobCommand::Wait(args),
-        }) => Some((args.id.clone(), args.timeout_ms)),
+        }) => Some((args.job.id().to_owned(), args.timeout_ms)),
         _ => None,
     };
+    let render_wait = match cli.command.as_ref() {
+        Some(CliCommand::Render {
+            command: args::RenderCommand::Start(args),
+        }) => args.wait,
+        Some(CliCommand::Render {
+            command: args::RenderCommand::Stems(args),
+        }) => args.wait,
+        _ => false,
+    };
+    if render_wait && !attach {
+        return Err("render --wait requires --attach".into());
+    }
     if is_host_list {
         if interactive {
             return Err("host list cannot be combined with --interactive".into());
@@ -176,14 +189,7 @@ fn run(cli: Cli) -> Result<(), RunFailure> {
             return Err("job wait cannot be combined with --expected-sequence".into());
         }
         let attached = AttachedBackend::from_discovery(select_host(host_id.as_deref())?);
-        let waited = attached.wait_for_job(&job_id, timeout_ms)?;
-        if !waited.response.ok {
-            return Err(RunFailure::Protocol(Box::new(waited.response)));
-        }
-        if !waited.completed {
-            return Err(RunFailure::Job(Box::new(waited.response)));
-        }
-        return write_response(&waited.response).map_err(RunFailure::Local);
+        return wait_and_write_job(&attached, &job_id, timeout_ms);
     }
     let command = if interactive {
         if expected_sequence.is_some() {
@@ -218,6 +224,20 @@ fn run(cli: Cli) -> Result<(), RunFailure> {
             expected_sequence,
             None,
         )?;
+        if render_wait && response.ok {
+            let job_id = match response
+                .result
+                .clone()
+                .and_then(|result| ControlOutput::try_from(result).ok())
+            {
+                Some(ControlOutput::Job(Some(
+                    BackgroundJobStatus::Render { id, .. }
+                    | BackgroundJobStatus::RenderStems { id, .. },
+                ))) => id,
+                _ => return Err("render response did not contain a job".into()),
+            };
+            return wait_and_write_job(&attached, &job_id, None);
+        }
         let response = annotate_batch_error(response, batch_operation_lines.as_deref());
         let response = save_plugin_state_response(plugin_state_output.as_deref(), response)?;
         let response = compact_agent_response(response);
@@ -266,6 +286,21 @@ fn run(cli: Cli) -> Result<(), RunFailure> {
         return write_audio_diagnostics(&response, json).map_err(RunFailure::Local);
     }
     write_response(&compact_agent_response(response)).map_err(RunFailure::Local)
+}
+
+fn wait_and_write_job(
+    attached: &AttachedBackend,
+    job_id: &str,
+    timeout_ms: Option<u64>,
+) -> Result<(), RunFailure> {
+    let waited = attached.wait_for_job(job_id, timeout_ms)?;
+    if !waited.response.ok {
+        return Err(RunFailure::Protocol(Box::new(waited.response)));
+    }
+    if !waited.completed {
+        return Err(RunFailure::Job(Box::new(waited.response)));
+    }
+    write_response(&waited.response).map_err(RunFailure::Local)
 }
 
 fn annotate_batch_error(

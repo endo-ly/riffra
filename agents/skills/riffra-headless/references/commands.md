@@ -229,7 +229,7 @@ riffra --data-root ./riffra-data serve --safe-mode
 
 ### レンダリング(非同期ジョブ)
 
-`render start` の `--expected-sequence` はRender対象のCanonical snapshotを固定する。ConflictならWAVを作成せず、最新状態をInspectしてからRenderし直す。応答は `type: "job"` のジョブIDで、ワンショットは `job wait`(無指定ならterminal stateまで待機)、interactiveは `job get` の繰り返しで追跡し、停止には `job cancel` を使う。出力はDataRootの `renders/` 配下へ書き出される。`plugin scan-start` と `analysis measure` も同じ非同期ジョブである。`ok: true` は状態取得の成功を表し、Job自体の成功は `state: "completed"` で判断する。
+`render start` の `--expected-sequence` はRender対象のCanonical snapshotを固定する。ConflictならWAVを作成せず、最新状態をInspectしてからRenderし直す。ワンショットでは `render start --wait` または `render stems --wait` で完了結果を待てる。非同期の応答は `type: "job"` のジョブIDを返し、ワンショットは `job wait JOB_ID`、interactiveは `job get` の繰り返しで追跡する。待機のタイムアウトは `job wait --timeout-ms` で指定でき、無指定なら終了まで待つ。停止には `job cancel` を使う。出力はDataRootの `renders/` 配下へ書き出される。`plugin scan-start` と `analysis measure` も同じ非同期ジョブである。`ok: true` は状態取得の成功を表し、Job自体の成功は `state: "completed"` で判断する。
 
 Stem Render(`render stems`)は一度の要求で複数Trackを同じ時間基準のWAVへ書き出す。全WAVで開始Tick、終了Tick、Sample Rate、フレーム数を揃え、個別の正規化とMasteringは行わない。共有する非線形Effectでは、Stemの合計と全体Mixが一致しない場合がある。StemとMasteringの設計上の扱いは[音声エンジンの設計](../../../../docs/audio-engine.md)を参照。
 
