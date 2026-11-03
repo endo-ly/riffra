@@ -30,7 +30,14 @@ struct ScoreClip {
     start_tick: u64,
     duration_ticks: u64,
     notes: Vec<ScoreNote>,
+    muted: bool,
     loop_enabled: bool,
+}
+
+#[derive(Clone, Debug)]
+struct PlannedNote {
+    note: Note,
+    expression_from: Option<(String, String)>,
 }
 
 /// The Score-relevant part of one Track, kept without the rest of the project.
@@ -43,6 +50,14 @@ pub(crate) struct TrackScore {
 
 impl TrackScore {
     pub(crate) fn from_session(session: &CreativeSession, track_id: &str) -> Self {
+        let midi = session
+            .arrangement
+            .tracks
+            .iter()
+            .find(|track| track.id == track_id)
+            .and_then(|track| track.instrument.as_ref())
+            .map(|instrument| instrument.midi.clone())
+            .unwrap_or_default();
         Self {
             timebase: session.arrangement.timebase.clone(),
             clips: session
@@ -58,14 +73,17 @@ impl TrackScore {
                     notes: clip
                         .notes
                         .iter()
-                        .map(|note| ScoreNote {
-                            id: note.id.clone(),
-                            pitch: note.note,
-                            start_tick: note.start_tick.0,
-                            duration_ticks: note.duration_ticks,
-                            lyric: note.lyric.clone(),
+                        .filter_map(|note| {
+                            midi.output_note(note.note).map(|pitch| ScoreNote {
+                                id: note.id.clone(),
+                                pitch,
+                                start_tick: note.start_tick.0,
+                                duration_ticks: note.duration_ticks,
+                                lyric: note.lyric.clone(),
+                            })
                         })
                         .collect(),
+                    muted: clip.muted,
                     loop_enabled: clip.loop_enabled,
                 })
                 .collect(),
@@ -142,7 +160,7 @@ fn loop_iterations(clip: &ScoreClip, end_tick: u64) -> Result<u64, String> {
     Ok(iterations)
 }
 
-fn notes(score: &TrackScore) -> Result<BTreeMap<(String, String), Note>, String> {
+fn notes(score: &TrackScore) -> Result<BTreeMap<(String, String), PlannedNote>, String> {
     let ppq = score.timebase.ppq;
     let mut result = BTreeMap::new();
     for clip in &score.clips {
@@ -169,27 +187,37 @@ fn notes(score: &TrackScore) -> Result<BTreeMap<(String, String), Note>, String>
                 let start = iteration_start
                     .checked_add(note.start_tick)
                     .ok_or("VoiSona note start overflow")?;
-                let end = start
-                    .checked_add(note.duration_ticks)
-                    .ok_or("VoiSona note end overflow")?;
                 let start_clock = clock(start, ppq)?;
-                let duration = clock(end, ppq)? - start_clock;
-                if duration <= 0 {
-                    return Err(format!(
-                        "VoiSona note '{}' is shorter than one score tick",
-                        note.id
-                    ));
-                }
-                let value = Note {
-                    clock: start_clock,
-                    duration,
-                    pitch: note.pitch,
-                    lyric: note.lyric.clone().unwrap_or_default(),
+                let duration = if clip.muted {
+                    0
+                } else {
+                    let end = start
+                        .checked_add(note.duration_ticks)
+                        .ok_or("VoiSona note end overflow")?;
+                    let duration = clock(end, ppq)? - start_clock;
+                    if duration <= 0 {
+                        return Err(format!(
+                            "VoiSona note '{}' is shorter than one score tick",
+                            note.id
+                        ));
+                    }
+                    duration
                 };
                 let key = if clip.loop_enabled && iteration > 0 {
                     (format!("{}#{iteration}", clip.id), note.id.clone())
                 } else {
                     (clip.id.clone(), note.id.clone())
+                };
+                let expression_from = (clip.loop_enabled && iteration > 0)
+                    .then(|| (clip.id.clone(), note.id.clone()));
+                let value = PlannedNote {
+                    note: Note {
+                        clock: start_clock,
+                        duration,
+                        pitch: note.pitch,
+                        lyric: note.lyric.clone().unwrap_or_default(),
+                    },
+                    expression_from,
                 };
                 if result.insert(key, value).is_some() {
                     return Err("duplicate VoiSona note ID".into());
@@ -200,8 +228,13 @@ fn notes(score: &TrackScore) -> Result<BTreeMap<(String, String), Note>, String>
     Ok(result)
 }
 
-pub(crate) fn has_notes(session: &CreativeSession, track_id: &str) -> Result<bool, String> {
-    Ok(!notes(&TrackScore::from_session(session, track_id))?.is_empty())
+pub(crate) fn has_sounding_notes(
+    session: &CreativeSession,
+    track_id: &str,
+) -> Result<bool, String> {
+    Ok(notes(&TrackScore::from_session(session, track_id))?
+        .values()
+        .any(|planned| planned.note.duration > 0))
 }
 
 fn integer(node: &Node, name: &str) -> Result<i32, String> {
@@ -230,6 +263,29 @@ fn lyric(node: &Node) -> Result<String, String> {
     std::str::from_utf8(content)
         .map(str::to_owned)
         .map_err(|_| "VoiSona note has invalid lyric".into())
+}
+
+fn note_key(clip_id: &str, note_id: &str) -> String {
+    format!("{clip_id}\u{1f}{note_id}")
+}
+
+fn read_note_id(node: &Node) -> Option<String> {
+    let bytes = &node
+        .properties
+        .iter()
+        .find(|(key, _)| key == "RiffraNoteId")?
+        .1;
+    let [5, content @ .., 0] = bytes.as_slice() else {
+        return None;
+    };
+    std::str::from_utf8(content).ok().map(str::to_owned)
+}
+
+fn set_note_id(node: &mut Node, key: &(String, String)) {
+    let mut value = vec![5];
+    value.extend_from_slice(note_key(&key.0, &key.1).as_bytes());
+    value.push(0);
+    set(node, "RiffraNoteId", value);
 }
 
 fn read_note(node: &Node) -> Result<Note, String> {
@@ -436,14 +492,69 @@ fn update_note(node: &mut Node, note: &Note) {
     set(node, "Lyric", value);
 }
 
+fn apply_note(node: &mut Node, note: &Note) -> Result<(), String> {
+    if let Ok(old_clock) = integer(node, "Clock") {
+        let offset = note
+            .clock
+            .checked_sub(old_clock)
+            .ok_or("VoiSona expression time is out of range")?;
+        if offset != 0 {
+            for child in &mut node.children {
+                shift_expression_times(child, offset)?;
+            }
+        }
+    }
+    if !node.properties.iter().any(|(key, _)| key == "Syllabic") {
+        set_int(node, "Syllabic", 0);
+    }
+    update_note(node, note);
+    Ok(())
+}
+
+fn copy_expression(source: &Node, target: &mut Node, clock_offset: i32) -> Result<(), String> {
+    for (name, value) in &source.properties {
+        if !matches!(
+            name.as_str(),
+            "Clock" | "Duration" | "PitchStep" | "PitchOctave" | "Lyric"
+        ) {
+            set(target, name, value.clone());
+        }
+    }
+    for child in &source.children {
+        let mut child = child.clone();
+        shift_expression_times(&mut child, clock_offset)?;
+        target.children.push(child);
+    }
+    Ok(())
+}
+
+fn shift_expression_times(node: &mut Node, clock_offset: i32) -> Result<(), String> {
+    for (name, value) in &mut node.properties {
+        if !matches!(name.as_str(), "Clock" | "StartTime") {
+            continue;
+        }
+        if let [1, a, b, c, d] = value.as_slice() {
+            let current = i32::from_le_bytes([*a, *b, *c, *d]);
+            let shifted = current
+                .checked_add(clock_offset)
+                .ok_or("VoiSona expression time is out of range")?;
+            *value = vec![1];
+            value.extend_from_slice(&shifted.to_le_bytes());
+        }
+    }
+    for child in &mut node.children {
+        shift_expression_times(child, clock_offset)?;
+    }
+    Ok(())
+}
+
 pub(crate) fn update_score(
     encoded: &str,
     previous: &TrackScore,
     current: &TrackScore,
 ) -> Result<Option<String>, String> {
-    let old = notes(previous)?;
+    let mut old = notes(previous)?;
     let new = notes(current)?;
-    let notes_unchanged = old == new;
     let mut state = PluginState::parse(encoded)?;
     let song = state
         .root
@@ -457,32 +568,76 @@ pub(crate) fn update_score(
         .iter_mut()
         .find(|node| node.name == "Score")
         .ok_or("VoiSona score state is missing")?;
-    let mut available = score
+    let available = score
         .children
         .iter()
         .filter(|node| node.name == "Note")
-        .map(|node| Ok((read_note(node)?, node.clone())))
+        .map(|node| Ok((read_note(node)?, node.clone(), read_note_id(node))))
         .collect::<Result<Vec<_>, String>>()?;
-    let mut sources = BTreeMap::<Note, Vec<(String, String)>>::new();
-    for (id, note) in old {
-        sources.entry(note).or_default().push(id);
+    if available.is_empty() && old.values().all(|planned| planned.note.duration == 0) {
+        old.clear();
     }
-    let mut mapped = BTreeMap::new();
-    for (note, ids) in sources {
-        let matches = available
+    let notes_equal = old.len() == new.len()
+        && old
             .iter()
-            .enumerate()
-            .filter(|(_, (candidate, _))| candidate == &note)
-            .map(|(index, _)| index)
-            .collect::<Vec<_>>();
+            .zip(new.iter())
+            .all(|((old_key, old), (new_key, new))| old_key == new_key && old.note == new.note);
+    let mut available_ids = BTreeMap::new();
+    for (index, (_, _, id)) in available.iter().enumerate() {
+        if let Some(id) = id
+            && available_ids.insert(id.as_str(), index).is_some()
+        {
+            return Err("VoiSona score contains duplicate note IDs".into());
+        }
+    }
+    let ids_current = old.len() == available.len()
+        && old.iter().all(|(key, planned)| {
+            let expected = note_key(&key.0, &key.1);
+            available_ids
+                .get(expected.as_str())
+                .is_some_and(|index| available[*index].0 == planned.note)
+        });
+    let notes_unchanged = notes_equal && ids_current;
+    let mut used = vec![false; available.len()];
+    let mut mapped = BTreeMap::new();
+    let mut remaining = BTreeMap::new();
+    for (key, planned) in old {
+        let expected = note_key(&key.0, &key.1);
+        let Some(index) = available_ids.get(expected.as_str()).copied() else {
+            remaining.insert(key, planned);
+            continue;
+        };
+        if used[index] {
+            return Err("VoiSona score contains duplicate note IDs".into());
+        }
+        if available[index].0 != planned.note {
+            return Err("VoiSona score notes do not match the project".into());
+        }
+        used[index] = true;
+        if new.contains_key(&key) {
+            mapped.insert(key, available[index].1.clone());
+        }
+    }
+    let mut remaining_available = BTreeMap::<Note, Vec<usize>>::new();
+    for (index, (note, _, _)) in available.iter().enumerate() {
+        if !used[index] {
+            remaining_available
+                .entry(note.clone())
+                .or_default()
+                .push(index);
+        }
+    }
+    let mut sources = BTreeMap::<Note, Vec<(String, String)>>::new();
+    for (id, planned) in remaining {
+        sources.entry(planned.note).or_default().push(id);
+    }
+    for (note, ids) in sources {
+        let matches = remaining_available.remove(&note).unwrap_or_default();
         if matches.len() != ids.len() {
             return Err("VoiSona score notes do not match the project".into());
         }
         let surviving = ids.iter().filter(|id| new.contains_key(*id)).count();
         if surviving == 0 {
-            for index in matches.into_iter().rev() {
-                available.remove(index);
-            }
             continue;
         }
         if surviving < ids.len() {
@@ -495,11 +650,11 @@ pub(crate) fn update_score(
             ));
         }
         if ids.len() > 1 {
-            let first = new.get(&ids[0]).expect("surviving note exists");
-            if ids
-                .iter()
-                .any(|id| new.get(id).is_some_and(|candidate| candidate != first))
-            {
+            let first = &new.get(&ids[0]).expect("surviving note exists").note;
+            if ids.iter().any(|id| {
+                new.get(id)
+                    .is_some_and(|candidate| &candidate.note != first)
+            }) {
                 let (clip, note_id) = &ids[0];
                 return Err(format!(
                     "VoiSona notes in clip '{clip}' cannot be matched uniquely: the saved \
@@ -508,28 +663,48 @@ pub(crate) fn update_score(
             }
         }
         for (id, index) in ids.into_iter().rev().zip(matches.into_iter().rev()) {
-            mapped.insert(id, available.remove(index).1);
+            mapped.insert(id, available[index].1.clone());
         }
     }
-    if !available.is_empty() {
+    if !remaining_available.is_empty() {
         return Err("VoiSona score contains notes that do not match the project".into());
     }
     if notes_unchanged && !timebase_changed {
         return Ok(None);
     }
-    let mut output = Vec::new();
-    for (id, note) in new {
-        let mut node = mapped.remove(&id).unwrap_or_else(|| Node {
+    let mut output = BTreeMap::new();
+    for (id, planned) in &new {
+        if let Some(mut node) = mapped.remove(id) {
+            apply_note(&mut node, &planned.note)?;
+            set_note_id(&mut node, id);
+            output.insert(id.clone(), node);
+        }
+    }
+    for (id, planned) in &new {
+        if output.contains_key(id) {
+            continue;
+        }
+        let mut node = Node {
             name: "Note".into(),
             properties: vec![],
             children: vec![],
-        });
-        if !node.properties.iter().any(|(key, _)| key == "Syllabic") {
-            set_int(&mut node, "Syllabic", 0);
+        };
+        if let Some(source_id) = &planned.expression_from
+            && let Some(source) = new.get(source_id)
+            && let Some(source_node) = output.get(source_id)
+        {
+            let offset = planned
+                .note
+                .clock
+                .checked_sub(source.note.clock)
+                .ok_or("VoiSona expression time is out of range")?;
+            copy_expression(source_node, &mut node, offset)?;
         }
-        update_note(&mut node, &note);
-        output.push(node);
+        apply_note(&mut node, &planned.note)?;
+        set_note_id(&mut node, id);
+        output.insert(id.clone(), node);
     }
+    let mut output = output.into_values().collect::<Vec<_>>();
     output.sort_by_key(|node| integer(node, "Clock").unwrap_or_default());
     score.children.retain(|node| node.name != "Note");
     score.children.extend(output);
@@ -539,7 +714,7 @@ pub(crate) fn update_score(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use riffra_core::{MidiClip, MidiNote, TimelineTick, Track};
+    use riffra_core::{MidiClip, MidiNote, TimelineTick, Track, TrackInstrument};
 
     fn note(id: &str, pitch: u8, start: u64, duration: u64, lyric: &str) -> MidiNote {
         MidiNote {
@@ -607,6 +782,19 @@ mod tests {
         node
     }
 
+    fn score_note_with_id(
+        clock: i32,
+        duration: i32,
+        pitch: u8,
+        lyric: &str,
+        clip_id: &str,
+        note_id: &str,
+    ) -> Node {
+        let mut node = score_note(clock, duration, pitch, lyric);
+        set_note_id(&mut node, &(clip_id.into(), note_id.into()));
+        node
+    }
+
     fn state(notes: Vec<Node>) -> Node {
         let mut tempo = fresh_map_node("Sound");
         set_int(&mut tempo, "Clock", 0);
@@ -657,6 +845,7 @@ mod tests {
             },
         );
         set(&mut note, "Accent", vec![2]);
+        set_note_id(&mut note, &("clip".into(), "note".into()));
         let encoded = PluginState::for_test(state(vec![note])).encode().unwrap();
         let before = session("あ", 60, 960);
         assert!(
@@ -771,7 +960,97 @@ mod tests {
     }
 
     #[test]
-    fn muting_a_clip_keeps_its_saved_notes() {
+    fn applies_instrument_midi_transpose_to_the_voisona_score() {
+        let mut transposed = session("あ", 60, 480);
+        transposed.arrangement.tracks[0].instrument = Some(
+            TrackInstrument::vst3("voice".into(), "VoiSona".into(), "C:/VoiSona.vst3".into())
+                .unwrap(),
+        );
+        transposed.arrangement.tracks[0]
+            .instrument
+            .as_mut()
+            .unwrap()
+            .midi
+            .transpose_semitones = 12;
+        let encoded = PluginState::for_test(state(vec![score_note_with_id(
+            0, 480, 72, "あ", "clip", "note",
+        )]))
+        .encode()
+        .unwrap();
+        assert!(
+            update_score(&encoded, &score(&transposed), &score(&transposed))
+                .unwrap()
+                .is_none()
+        );
+
+        let mut original = transposed.clone();
+        original.arrangement.tracks[0]
+            .instrument
+            .as_mut()
+            .unwrap()
+            .midi
+            .transpose_semitones = 0;
+        let output = update_score(&encoded, &score(&transposed), &score(&original))
+            .unwrap()
+            .unwrap();
+        let parsed = PluginState::parse(&output).unwrap();
+        assert_eq!(
+            read_note(&parsed.root.children[0].children[2].children[0]).unwrap(),
+            Note {
+                clock: 0,
+                duration: 480,
+                pitch: 60,
+                lyric: "あ".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn muted_notes_can_be_added_to_an_empty_score() {
+        let mut session = session("あ", 60, 480);
+        session.arrangement.midi_clips[0].muted = true;
+        let encoded = PluginState::for_test(state(vec![])).encode().unwrap();
+
+        let output = update_score(&encoded, &score(&session), &score(&session))
+            .unwrap()
+            .unwrap();
+        let parsed = PluginState::parse(&output).unwrap();
+        let note = &parsed.root.children[0].children[2].children[0];
+        assert_eq!(read_note(note).unwrap().duration, 0);
+    }
+
+    #[test]
+    fn moving_a_note_moves_its_timed_expression() {
+        let mut node = fresh_map_node("Note");
+        update_note(
+            &mut node,
+            &Note {
+                clock: 0,
+                duration: 480,
+                pitch: 60,
+                lyric: "ら".into(),
+            },
+        );
+        let mut expression = fresh_map_node("Expression");
+        set_int(&mut expression, "Clock", 0);
+        set_int(&mut expression, "Value", 7);
+        node.children.push(expression);
+        let encoded = PluginState::for_test(state(vec![node])).encode().unwrap();
+        let before = session("ら", 60, 480);
+        let mut moved = before.clone();
+        moved.arrangement.midi_clips[0].notes[0].start_tick = TimelineTick(960);
+
+        let output = update_score(&encoded, &score(&before), &score(&moved))
+            .unwrap()
+            .unwrap();
+        let parsed = PluginState::parse(&output).unwrap();
+        let note = &parsed.root.children[0].children[2].children[0];
+        assert_eq!(integer(note, "Clock").unwrap(), 960);
+        assert_eq!(integer(&note.children[0], "Clock").unwrap(), 960);
+    }
+
+    #[test]
+    fn muting_a_clip_silences_its_note_and_preserves_its_expression() {
         let mut node = fresh_map_node("Note");
         update_note(
             &mut node,
@@ -788,20 +1067,124 @@ mod tests {
         let mut muted = before.clone();
         muted.arrangement.midi_clips[0].muted = true;
 
-        assert!(
-            update_score(&encoded, &score(&before), &score(&muted))
-                .unwrap()
-                .is_none()
+        let output = update_score(&encoded, &score(&before), &score(&muted))
+            .unwrap()
+            .unwrap();
+        let parsed = PluginState::parse(&output).unwrap();
+        let note = &parsed.root.children[0].children[2].children[0];
+        assert_eq!(
+            read_note(note).unwrap(),
+            Note {
+                clock: 0,
+                duration: 0,
+                pitch: 60,
+                lyric: "あ".into(),
+            }
         );
-        assert!(
-            update_score(&encoded, &score(&muted), &score(&before))
+        assert_eq!(
+            note.properties
+                .iter()
+                .find(|(key, _)| key == "Accent")
                 .unwrap()
-                .is_none()
+                .1,
+            [2]
+        );
+
+        let output = update_score(&output, &score(&muted), &score(&before))
+            .unwrap()
+            .unwrap();
+        let parsed = PluginState::parse(&output).unwrap();
+        let note = &parsed.root.children[0].children[2].children[0];
+        assert_eq!(
+            read_note(note).unwrap(),
+            Note {
+                clock: 0,
+                duration: 960,
+                pitch: 60,
+                lyric: "あ".into(),
+            }
+        );
+        assert_eq!(
+            note.properties
+                .iter()
+                .find(|(key, _)| key == "Accent")
+                .unwrap()
+                .1,
+            [2]
         );
     }
 
     #[test]
-    fn identical_notes_in_separate_clips_are_matched_as_a_multiset() {
+    fn muting_one_of_two_identical_notes_keeps_both_notes() {
+        let mut session = session_with(vec![
+            clip("first", 0, vec![note("a", 60, 0, 480, "あ")]),
+            clip("second", 0, vec![note("b", 60, 0, 480, "あ")]),
+        ]);
+        let encoded = PluginState::for_test(state(vec![
+            score_note_with_id(0, 480, 60, "あ", "first", "a"),
+            score_note_with_id(0, 480, 60, "あ", "second", "b"),
+        ]))
+        .encode()
+        .unwrap();
+        session.arrangement.midi_clips[0].muted = true;
+
+        let output = update_score(
+            &encoded,
+            &score(&session_with(vec![
+                clip("first", 0, vec![note("a", 60, 0, 480, "あ")]),
+                clip("second", 0, vec![note("b", 60, 0, 480, "あ")]),
+            ])),
+            &score(&session),
+        )
+        .unwrap()
+        .unwrap();
+        let parsed = PluginState::parse(&output).unwrap();
+        let mut durations = parsed.root.children[0].children[2]
+            .children
+            .iter()
+            .filter(|node| node.name == "Note")
+            .map(|node| integer(node, "Duration").unwrap())
+            .collect::<Vec<_>>();
+        durations.sort_unstable();
+        assert_eq!(durations, [0, 480]);
+    }
+
+    #[test]
+    fn identical_notes_in_separate_clips_are_matched_by_note_id() {
+        let session = session_with(vec![
+            clip("first", 0, vec![note("a", 60, 0, 480, "あ")]),
+            clip("second", 0, vec![note("b", 60, 0, 480, "あ")]),
+        ]);
+        let encoded = PluginState::for_test(state(vec![
+            score_note_with_id(0, 480, 60, "あ", "first", "a"),
+            score_note_with_id(0, 480, 60, "あ", "second", "b"),
+        ]))
+        .encode()
+        .unwrap();
+
+        assert!(
+            update_score(&encoded, &score(&session), &score(&session))
+                .unwrap()
+                .is_none()
+        );
+
+        let mut removed = session.clone();
+        removed.arrangement.midi_clips.pop();
+        let output = update_score(&encoded, &score(&session), &score(&removed))
+            .unwrap()
+            .unwrap();
+        let parsed = PluginState::parse(&output).unwrap();
+        let notes = parsed.root.children[0].children[2]
+            .children
+            .iter()
+            .filter(|node| node.name == "Note")
+            .collect::<Vec<_>>();
+        assert_eq!(notes.len(), 1);
+        assert_eq!(read_note_id(notes[0]).as_deref(), Some("first\u{1f}a"));
+    }
+
+    #[test]
+    fn legacy_duplicate_notes_without_ids_cannot_be_matched_after_removal() {
         let session = session_with(vec![
             clip("first", 0, vec![note("a", 60, 0, 480, "あ")]),
             clip("second", 0, vec![note("b", 60, 0, 480, "あ")]),
@@ -812,12 +1195,6 @@ mod tests {
         ]))
         .encode()
         .unwrap();
-
-        assert!(
-            update_score(&encoded, &score(&session), &score(&session))
-                .unwrap()
-                .is_none()
-        );
 
         let mut removed = session.clone();
         removed.arrangement.midi_clips.pop();
@@ -876,7 +1253,7 @@ mod tests {
     }
 
     #[test]
-    fn enabling_a_loop_keeps_the_first_note_expression() {
+    fn enabling_a_loop_copies_note_expression_to_every_iteration() {
         let mut node = fresh_map_node("Note");
         update_note(
             &mut node,
@@ -888,6 +1265,10 @@ mod tests {
             },
         );
         set(&mut node, "Accent", vec![2]);
+        let mut expression = fresh_map_node("Expression");
+        set_int(&mut expression, "Clock", 0);
+        set_int(&mut expression, "Value", 7);
+        node.children.push(expression);
         let encoded = PluginState::for_test(state(vec![node])).encode().unwrap();
         let before = session("ら", 60, 480);
         let mut current = before.clone();
@@ -906,20 +1287,21 @@ mod tests {
             .filter(|node| node.name == "Note")
             .collect::<Vec<_>>();
         assert_eq!(notes.len(), 3);
-        assert_eq!(
-            notes[0]
-                .properties
-                .iter()
-                .find(|(key, _)| key == "Accent")
-                .unwrap()
-                .1,
-            [2]
-        );
-        assert!(
-            notes[1..]
-                .iter()
-                .all(|note| { !note.properties.iter().any(|(key, _)| key == "Accent") })
-        );
+        for note in &notes {
+            assert_eq!(
+                note.properties
+                    .iter()
+                    .find(|(key, _)| key == "Accent")
+                    .unwrap()
+                    .1,
+                [2]
+            );
+        }
+        let clocks = notes
+            .iter()
+            .map(|note| integer(&note.children[0], "Clock").unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(clocks, [0, 1_920, 3_840]);
     }
 
     #[test]

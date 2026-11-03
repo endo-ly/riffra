@@ -1,5 +1,5 @@
 use super::HostState;
-use crate::voisona::TrackScore;
+use crate::voisona::{SyncedPluginState, TrackScore};
 use riffra_core::{CanonicalState, EffectOwner};
 use std::{
     collections::HashMap,
@@ -21,6 +21,7 @@ struct Progress {
     generation: u64,
     complete: bool,
     error: Option<String>,
+    changes: Vec<SyncedPluginState>,
     stopped: bool,
 }
 
@@ -72,6 +73,7 @@ impl Coordinator {
             .spawn(move || {
                 let mut project = initial.project_id;
                 let mut handled: Option<SyncKey> = None;
+                let mut changes = Vec::new();
                 while !stopping.load(Ordering::Acquire) {
                     let Some(host) = host.upgrade() else { break };
                     let key = match SyncKey::current(&host) {
@@ -90,6 +92,7 @@ impl Coordinator {
                             }
                         };
                         project = key.project.clone();
+                        changes.clear();
                         baselines = match track_baselines(&host.data_root, &current) {
                             Ok(baselines) => baselines,
                             Err(error) => {
@@ -111,12 +114,18 @@ impl Coordinator {
                             break;
                         }
                     };
-                    match synchronize(&host, &current, key.generation, &mut baselines) {
+                    match synchronize(
+                        &host,
+                        &current,
+                        key.generation,
+                        &mut baselines,
+                        &mut changes,
+                    ) {
                         Ok(SyncOutcome::Pending | SyncOutcome::Updated) => {}
                         Ok(SyncOutcome::Complete) => {
                             let generation = key.generation;
                             handled = Some(key);
-                            status.finish(&current, generation, None);
+                            status.finish(&current, generation, None, std::mem::take(&mut changes));
                         }
                         Err(error) => {
                             tracing::error!(
@@ -127,7 +136,8 @@ impl Coordinator {
                             );
                             let generation = key.generation;
                             handled = Some(key);
-                            status.finish(&current, generation, Some(error));
+                            changes.clear();
+                            status.finish(&current, generation, Some(error), Vec::new());
                         }
                     }
                     drop(host);
@@ -193,14 +203,26 @@ fn track_baselines(
         .collect())
 }
 
+pub(super) struct WaitResult {
+    pub(super) canonical: CanonicalState,
+    pub(super) changes: Vec<SyncedPluginState>,
+}
+
 impl SyncStatus {
-    fn finish(&self, current: &CanonicalState, generation: u64, error: Option<String>) {
+    fn finish(
+        &self,
+        current: &CanonicalState,
+        generation: u64,
+        error: Option<String>,
+        changes: Vec<SyncedPluginState>,
+    ) {
         let mut progress = self.progress.lock().expect("VoiSona sync lock poisoned");
         progress.project = current.project_id.clone();
         progress.sequence = current.sequence;
         progress.generation = generation;
         progress.complete = true;
         progress.error = error;
+        progress.changes = changes;
         self.changed.notify_all();
     }
 
@@ -214,7 +236,7 @@ impl SyncStatus {
         &self,
         host: &HostState,
         requested: &CanonicalState,
-    ) -> Result<CanonicalState, String> {
+    ) -> Result<WaitResult, String> {
         let deadline = Instant::now() + WAIT_TIMEOUT;
         let mut progress = self
             .progress
@@ -238,7 +260,10 @@ impl SyncStatus {
                     if let Some(error) = &progress.error {
                         return Err(error.clone());
                     }
-                    return Ok(current);
+                    return Ok(WaitResult {
+                        canonical: current,
+                        changes: progress.changes.clone(),
+                    });
                 }
             }
             if progress.stopped {
@@ -270,6 +295,7 @@ fn synchronize(
     current: &CanonicalState,
     generation: u64,
     baselines: &mut HashMap<String, TrackBaseline>,
+    changes: &mut Vec<SyncedPluginState>,
 ) -> Result<SyncOutcome, String> {
     let catalog = crate::voisona::load_catalog(&host.data_root)?;
     let targets = current
@@ -326,7 +352,7 @@ fn synchronize(
             .get_plugin_state(&owner, &instrument.id)
             .map_err(|error| format!("VoiSona track {} ({}): {error}", track.name, track.id))?;
         let Some(encoded) = before.state_data.as_deref() else {
-            if crate::voisona::has_notes(&current.session, &track.id)? {
+            if crate::voisona::has_sounding_notes(&current.session, &track.id)? {
                 return Err(format!(
                     "VoiSona track {} ({}): plugin has no configured voice state",
                     track.name, track.id
@@ -380,6 +406,12 @@ fn synchronize(
         });
         match persisted {
             Ok(committed) => {
+                changes.push(SyncedPluginState {
+                    owner: owner.clone(),
+                    device_id: instrument.id.clone(),
+                    before: before.clone(),
+                    after: applied.clone(),
+                });
                 baselines.insert(
                     track.id.clone(),
                     TrackBaseline::from_session(&current.session, track),

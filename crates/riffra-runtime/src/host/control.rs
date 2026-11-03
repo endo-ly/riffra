@@ -1408,16 +1408,16 @@ impl HostState {
             .voisona_status
             .wait(self, &current)
             .map_err(command_error)?;
-        if !crate::voisona::sessions_match_except_voisona_state(
+        if !crate::voisona::sessions_match_with_sync_changes(
             current.session.clone(),
-            synchronized.session.clone(),
-            &catalog,
+            synchronized.canonical.session.clone(),
+            &synchronized.changes,
         ) {
             return Err(command_error(
                 "project changed while waiting for VoiSona synchronization; retry the render",
             ));
         }
-        Ok(synchronized)
+        Ok(synchronized.canonical)
     }
 
     fn start_analysis_measure(
