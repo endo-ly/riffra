@@ -187,7 +187,7 @@ Built-in instrumentはparameter、state、preset、editorをサポートしな�
 
 手動操作では `name` でParameterを特定し、離散値は `choices` の表示から目的の状態を選んでその `value` を渡す。Continuousの表示が空の場合も、値をPlugin固有の単位へ変換して推測しない。Automationは `automatable: true` かつ `parameterId` が非nullのParameterを選ぶ。Defaultへの復元には `defaultValue` を渡す。
 
-`device parameter set` の応答は、`mutation`に正準変更、`parameter`に対象の読み戻し値、`changedParameters`に値が変わったほかのParameterをindex順で返す。`--display` はLive HostのPluginに文字列からの変換を依頼し、表示へ戻した結果が入力と等価な場合だけ適用する。`session apply` 内では正規化値だけを正準状態へ書き、`--display` は使えない。
+`device parameter set` の応答は、`mutation`に正準変更、`parameter`に対象の読み戻し値、`changedParameters`に値が変わったほかのParameterをindex順で返す。`--display` はLive HostのPluginに文字列からの変換を依頼し、表示へ戻した結果が入力と等価な場合に適用する。数値表示には `--nearest` を併用でき、単位が一致する範囲で最も近い適用可能な表示値を選ぶ。適用値は応答の `parameter.value` と `displayValue` で確認できる。`session apply` 内では正規化値だけを正準状態へ書き、`--display` は使えない。
 
 `effect add` は Effect Chain の末尾へ追加し、応答の `createdEntityIds.devices` に新しい Device ID を返す。
 

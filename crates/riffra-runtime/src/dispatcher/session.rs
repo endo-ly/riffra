@@ -235,6 +235,11 @@ fn batch_operation(
         });
     }
     if let CanonicalCommand::DeviceParameterSet(params) = command {
+        if params.nearest {
+            return Err(DispatchError::CommandFailed(
+                "session apply requires a normalized value for device parameters".into(),
+            ));
+        }
         let value = match (params.value, params.display) {
             (Some(value), None) => value,
             (None, Some(_)) => {

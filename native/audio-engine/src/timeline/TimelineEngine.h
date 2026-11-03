@@ -181,7 +181,8 @@ public:
                            bool bypassed, juce::String& error) noexcept;
     bool setDeviceParameter(const EffectOwnerSpec& deviceOwner, const juce::String& deviceId,
                             int parameterIndex, std::optional<float> value, juce::String& error,
-                            const std::optional<juce::String>& display = {}) noexcept;
+                            const std::optional<juce::String>& display = {},
+                            bool nearest = false) noexcept;
     bool setDeviceProgram(const EffectOwnerSpec& deviceOwner, const juce::String& deviceId,
                           int programIndex, juce::String& error);
     bool setDevicePersistedState(const EffectOwnerSpec& deviceOwner, const juce::String& deviceId,

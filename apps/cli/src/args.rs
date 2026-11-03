@@ -2109,6 +2109,9 @@ pub struct DeviceParameterSetArgs {
         required_unless_present = "value"
     )]
     pub display: Option<String>,
+    /// Use the closest numeric display value supported by the plugin.
+    #[arg(long, requires = "display", conflicts_with = "value")]
+    pub nearest: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -3602,6 +3605,7 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
                         parameter_index: args.parameter_index,
                         value: args.value,
                         display: args.display,
+                        nearest: args.nearest,
                     })
                     .into()
                 }
@@ -5673,9 +5677,28 @@ mod tests {
                 "1",
                 "--display",
                 "-60.00 dB",
+                "--nearest",
             ])
             .unwrap(),
         );
         assert_eq!(display.params["display"], "-60.00 dB");
+        assert_eq!(display.params["nearest"], true);
+        assert!(
+            Cli::try_parse_from([
+                "riffra",
+                "device",
+                "parameter",
+                "set",
+                "--master",
+                "--device-id",
+                "fx",
+                "--parameter-index",
+                "1",
+                "--value",
+                "0.5",
+                "--nearest"
+            ])
+            .is_err()
+        );
     }
 }

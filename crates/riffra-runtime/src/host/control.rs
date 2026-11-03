@@ -271,6 +271,7 @@ impl HostState {
                     params.parameter_index,
                     params.value,
                     params.display,
+                    params.nearest,
                 )
                 .map_err(|error| error.protocol_error())?;
                 let sequence = result.mutation.canonical.sequence;

@@ -2,6 +2,7 @@
   "command": {
     "deviceId": "device-1",
     "display": null,
+    "nearest": false,
     "owner": {
       "id": "track-1",
       "kind": "track"

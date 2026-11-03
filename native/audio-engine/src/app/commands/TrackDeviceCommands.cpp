@@ -58,7 +58,7 @@ void AudioCommandDispatcher::handle(const SetDeviceParameterCommand& command,
             juce::String deviceError;
             const auto changed = context.timelineEngine.setDeviceParameter(
                 command.owner, command.deviceId, static_cast<int>(command.parameterIndex),
-                command.value, deviceError, command.display);
+                command.value, deviceError, command.display, command.nearest);
 
             if (changed)
                 pending->respond(DeviceAckSpec{});

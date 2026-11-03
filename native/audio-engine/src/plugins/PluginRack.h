@@ -239,7 +239,7 @@ private:
     [[nodiscard]] bool canQueueParameterValue(int index, juce::String& error) const noexcept;
     [[nodiscard]] bool hasQueuedParameterChanges() const noexcept;
     std::optional<float> parameterValueForText(int index, const juce::String& text,
-                                               juce::String& error) const;
+                                               juce::String& error, bool nearest = false) const;
     [[nodiscard]] std::optional<juce::String> parameterDisplayValue(int index, float value,
                                                                     juce::String& error) const;
     bool allocateParameterQueue(std::size_t count, juce::String& error) noexcept;

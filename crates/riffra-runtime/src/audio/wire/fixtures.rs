@@ -126,6 +126,7 @@ fn command_samples() -> Vec<SidecarCommand> {
             parameter_index: 2,
             value: Some(0.5),
             display: None,
+            nearest: false,
         },
         SidecarCommand::GetDeviceStatus {
             owner: riffra_core::EffectOwner::Track { id: track() },
