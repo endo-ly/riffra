@@ -1,4 +1,5 @@
 use super::HostState;
+use crate::voisona::TrackScore;
 use riffra_core::{CanonicalState, EffectOwner};
 use std::{
     collections::HashMap,
@@ -149,10 +150,33 @@ impl Coordinator {
     }
 }
 
+struct TrackBaseline {
+    instrument_id: String,
+    plugin_path: String,
+    score: TrackScore,
+}
+
+impl TrackBaseline {
+    fn from_session(session: &riffra_core::CreativeSession, track: &riffra_core::Track) -> Self {
+        let instrument = track
+            .instrument
+            .as_ref()
+            .expect("VoiSona track has an instrument");
+        let plugin = instrument
+            .as_vst3()
+            .expect("VoiSona track has a VST3 instrument");
+        Self {
+            instrument_id: instrument.id.clone(),
+            plugin_path: plugin.path.clone(),
+            score: TrackScore::from_session(session, &track.id),
+        }
+    }
+}
+
 fn track_baselines(
     data_root: &std::path::Path,
     initial: &CanonicalState,
-) -> Result<HashMap<String, CanonicalState>, String> {
+) -> Result<HashMap<String, TrackBaseline>, String> {
     let catalog = crate::voisona::load_catalog(data_root)?;
     Ok(initial
         .session
@@ -160,7 +184,12 @@ fn track_baselines(
         .tracks
         .iter()
         .filter(|track| crate::voisona::is_voisona_track_in(&catalog, track))
-        .map(|track| (track.id.clone(), initial.clone()))
+        .map(|track| {
+            (
+                track.id.clone(),
+                TrackBaseline::from_session(&initial.session, track),
+            )
+        })
         .collect())
 }
 
@@ -240,7 +269,7 @@ fn synchronize(
     host: &HostState,
     current: &CanonicalState,
     generation: u64,
-    baselines: &mut HashMap<String, CanonicalState>,
+    baselines: &mut HashMap<String, TrackBaseline>,
 ) -> Result<SyncOutcome, String> {
     let catalog = crate::voisona::load_catalog(&host.data_root)?;
     let targets = current
@@ -278,26 +307,16 @@ fn synchronize(
         let existed = baselines.contains_key(&track.id);
         let mut previous = baselines
             .get(&track.id)
-            .cloned()
-            .unwrap_or_else(|| current.clone());
-        let same_device = previous
-            .session
-            .arrangement
-            .tracks
-            .iter()
-            .find(|candidate| candidate.id == track.id)
-            .and_then(|candidate| candidate.instrument.as_ref())
-            .is_some_and(|old| {
-                old.id == instrument.id
-                    && old.as_vst3().map(|plugin| &plugin.path)
-                        == instrument.as_vst3().map(|plugin| &plugin.path)
-            });
+            .map(|baseline| baseline.score.clone())
+            .unwrap_or_else(|| TrackScore::from_session(&current.session, &track.id));
+        let same_device = baselines.get(&track.id).is_some_and(|baseline| {
+            baseline.instrument_id == instrument.id
+                && instrument
+                    .as_vst3()
+                    .is_some_and(|plugin| baseline.plugin_path == plugin.path)
+        });
         if !existed || !same_device {
-            previous
-                .session
-                .arrangement
-                .midi_clips
-                .retain(|clip| clip.track_id != track.id);
+            previous.clear_clips();
         }
         let owner = EffectOwner::Track {
             id: track.id.clone(),
@@ -313,14 +332,20 @@ fn synchronize(
                     track.name, track.id
                 ));
             }
-            baselines.insert(track.id.clone(), current.clone());
+            baselines.insert(
+                track.id.clone(),
+                TrackBaseline::from_session(&current.session, track),
+            );
             continue;
         };
-        let changed =
-            crate::voisona::update_score(encoded, &previous.session, &current.session, &track.id)
-                .map_err(|error| format!("VoiSona track {} ({}): {error}", track.name, track.id))?;
+        let current_score = TrackScore::from_session(&current.session, &track.id);
+        let changed = crate::voisona::update_score(encoded, &previous, &current_score)
+            .map_err(|error| format!("VoiSona track {} ({}): {error}", track.name, track.id))?;
         let Some(encoded) = changed else {
-            baselines.insert(track.id.clone(), current.clone());
+            baselines.insert(
+                track.id.clone(),
+                TrackBaseline::from_session(&current.session, track),
+            );
             continue;
         };
         let mut writer = host.project.write();
@@ -355,7 +380,10 @@ fn synchronize(
         });
         match persisted {
             Ok(committed) => {
-                baselines.insert(track.id.clone(), current.clone());
+                baselines.insert(
+                    track.id.clone(),
+                    TrackBaseline::from_session(&current.session, track),
+                );
                 host.publish_commit(committed);
                 return Ok(SyncOutcome::Updated);
             }
