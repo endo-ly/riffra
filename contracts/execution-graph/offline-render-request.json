@@ -380,7 +380,8 @@
   },
   "output": {
     "kind": "mixdown",
-    "destination": "renders/song.wav"
+    "destination": "renders/song.wav",
+    "vocals": []
   },
   "startTick": 0,
   "endTick": 7680,

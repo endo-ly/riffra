@@ -14,6 +14,7 @@ use std::{
 mod history;
 mod mastering;
 mod sections;
+mod vocal;
 mod worker;
 
 pub(crate) use history::{delete_render, export_render, list_renders, resolve_measurement_sources};
@@ -33,7 +34,10 @@ pub(crate) struct OfflineRenderRequest {
 }
 
 pub(crate) enum OfflineRenderTarget {
-    Mixdown(PathBuf),
+    Mixdown {
+        destination: PathBuf,
+        vocals: Vec<(String, PathBuf)>,
+    },
     Stems(Vec<(String, PathBuf)>),
 }
 
@@ -41,7 +45,7 @@ pub(crate) enum OfflineRenderTarget {
 impl OfflineRenderRequest {
     fn destination(&self) -> &Path {
         match &self.output {
-            OfflineRenderTarget::Mixdown(path) => path,
+            OfflineRenderTarget::Mixdown { destination, .. } => destination,
             OfflineRenderTarget::Stems(_) => panic!("expected mixdown"),
         }
     }
@@ -49,7 +53,7 @@ impl OfflineRenderRequest {
     fn stem_outputs(&self) -> &[(String, PathBuf)] {
         match &self.output {
             OfflineRenderTarget::Stems(outputs) => outputs,
-            OfflineRenderTarget::Mixdown(_) => panic!("expected stems"),
+            OfflineRenderTarget::Mixdown { .. } => panic!("expected stems"),
         }
     }
 }
@@ -177,6 +181,24 @@ struct PendingOutput<'a> {
     committed: bool,
 }
 
+struct PendingVocalOutputs(Vec<PathBuf>);
+
+impl Drop for PendingVocalOutputs {
+    fn drop(&mut self) {
+        for path in &self.0 {
+            let _ = fs::remove_file(path);
+            for suffix in ["partial", "normalized"] {
+                let _ = fs::remove_file(path.with_file_name(format!(
+                        "{}.{suffix}",
+                        path.file_name()
+                            .expect("vocal output filename")
+                            .to_string_lossy()
+                    )));
+            }
+        }
+    }
+}
+
 impl Drop for PendingOutput<'_> {
     fn drop(&mut self) {
         if self.committed {
@@ -250,11 +272,27 @@ fn render_timeline_with_renderer(
         committed: false,
     };
 
+    let mut vocals = Vec::new();
+    for track in &session.arrangement.tracks {
+        if !vocal::reaches_mix(session, track, options.track_id.as_deref())
+            || vocal::singing_ranges(session, track, plan.start_tick, plan.end_tick).is_empty()
+            || !vocal::is_voisona(data_root, track)?
+        {
+            continue;
+        }
+        let path = directory.join(format!("vocal-diagnostic-{:03}.wav", vocals.len() + 1));
+        vocals.push((track.id.clone(), path));
+    }
+    let _vocal_outputs = PendingVocalOutputs(vocals.iter().map(|(_, path)| path.clone()).collect());
+
     let mut automation_warnings = render(OfflineRenderRequest {
         include_end_events: matches!(options.range, RenderRange::EntireArrangement),
         tail_seconds: plan.tail_seconds,
         graph: plan.graph,
-        output: OfflineRenderTarget::Mixdown(plan.output_path.clone()),
+        output: OfflineRenderTarget::Mixdown {
+            destination: plan.output_path.clone(),
+            vocals: vocals.clone(),
+        },
         start_tick: plan.start_tick,
         end_tick: plan.end_tick,
         sample_rate: plan.sample_rate,
@@ -295,6 +333,22 @@ fn render_timeline_with_renderer(
     )?;
     warnings.extend(plan.dependency_warnings.iter().cloned());
     warnings.append(&mut automation_warnings);
+    for (track_id, path) in &vocals {
+        let track = session
+            .arrangement
+            .tracks
+            .iter()
+            .find(|track| &track.id == track_id)
+            .expect("vocal track belongs to the session");
+        warnings.extend(vocal::silent_singing_warnings(
+            session,
+            track,
+            path,
+            plan.start_tick,
+            plan.end_tick,
+            cancelled,
+        )?);
+    }
 
     let timebase = &session.arrangement.timebase;
     let range_start_ms = (timebase.ticks_to_seconds(plan.start_tick) * 1000.0).round() as u64;
@@ -717,6 +771,16 @@ fn render_stems_with_renderer(
         .map_err(|e| format!("stem {} ({}) measurement failed: {e}", track.name, track.id))?;
         warnings.extend(plan.dependency_warnings.iter().cloned());
         warnings.extend(automation_warnings.iter().cloned());
+        if vocal::is_voisona(data_root, track)? {
+            warnings.extend(vocal::silent_singing_warnings(
+                session,
+                track,
+                output_path,
+                conditions.start_tick,
+                conditions.end_tick,
+                cancelled,
+            )?);
+        }
         completed.push((
             track,
             stem_source_ids(&render_session, &track.id),
@@ -1165,6 +1229,127 @@ pub(super) mod tests {
         assert_eq!(stem_filename(4, "CON"), "stem-004-CON.wav");
         assert_eq!(stem_filename(5, "CON"), "stem-005-CON.wav");
         assert!(stem_filename(6, &"歌".repeat(100)).len() <= 137);
+    }
+
+    #[test]
+    fn vocal_silence_is_reported_for_the_track_in_mixdowns_and_stems() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-vocal-render-{}",
+            riffra_control::new_instance_id()
+        ));
+        let plugin_path = root.join("voice.vst3");
+        fs::create_dir_all(&plugin_path).unwrap();
+        let mut session = session_with_clips();
+        let track = &mut session.arrangement.tracks[0];
+        track.instrument = Some(
+            TrackInstrument::vst3(
+                "voice".into(),
+                "Voice".into(),
+                plugin_path.to_string_lossy().into_owned(),
+            )
+            .unwrap(),
+        );
+        session.arrangement.midi_clips[0].start_tick = TimelineTick(0);
+        session.arrangement.midi_clips[0]
+            .notes
+            .push(riffra_core::MidiNote {
+                id: "note".into(),
+                note: 60,
+                start_tick: TimelineTick(0),
+                duration_ticks: 960,
+                velocity: 100,
+                channel: 1,
+                lyric: Some("あ".into()),
+            });
+        crate::plugins::save(
+            &root,
+            &crate::api::output::ScanReport {
+                root: root.to_string_lossy().into_owned(),
+                started_at_ms: 0,
+                finished_at_ms: 0,
+                plugins: vec![crate::api::output::PluginEntry {
+                    id: "voice".into(),
+                    name: "VoiSona Song Editor".into(),
+                    vendor: None,
+                    version: None,
+                    identifier: Some("VST3-VoiSona Song Editor-3fac6da4-dd045f83".into()),
+                    format: crate::api::output::PluginFormat::Vst3,
+                    role: Some(crate::api::output::PluginRole::Instrument),
+                    path: plugin_path.to_string_lossy().into_owned(),
+                    bundle: true,
+                    modified_at_ms: None,
+                    scan_state: crate::api::output::PluginScanState::Validated,
+                }],
+                issues: Vec::new(),
+            },
+        )
+        .unwrap();
+        let mix = render_timeline_with_renderer(
+            timeline_render_context(
+                &root,
+                empty_catalog(),
+                &session,
+                10,
+                RenderOptions::default(),
+            ),
+            |request| {
+                let OfflineRenderTarget::Mixdown {
+                    destination,
+                    vocals,
+                } = request.output
+                else {
+                    panic!("expected mixdown")
+                };
+                assert_eq!(vocals.len(), 1);
+                fs::write(destination, wav(request.sample_rate, 24000)).unwrap();
+                fs::write(&vocals[0].1, wav(request.sample_rate, 24000)).unwrap();
+                Ok(Vec::new())
+            },
+            None,
+        )
+        .unwrap();
+        assert!(
+            mix.warnings
+                .iter()
+                .any(|warning| warning.contains("no detectable audio"))
+        );
+        assert!(
+            !Path::new(&mix.path)
+                .parent()
+                .unwrap()
+                .join("vocal-diagnostic-001.wav")
+                .exists()
+        );
+        let mut stems = render_stems_with_renderer(
+            StemRenderContext {
+                data_root: &root,
+                built_in_instruments: empty_catalog(),
+                session: &session,
+                project_id: "project",
+                source_sequence: 1,
+                created_at_ms: 11,
+                selection: select_stem_tracks(&session, true, &[]).unwrap(),
+                range: RenderRange::EntireArrangement,
+                output_directory: None,
+            },
+            |request| {
+                for (_, path) in request.stem_outputs() {
+                    fs::write(path, wav(request.sample_rate, 24000)).unwrap();
+                }
+                Ok(Vec::new())
+            },
+            None,
+            |_, _| {},
+        )
+        .unwrap();
+        assert!(
+            stems.result.stems[0]
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("no detectable audio"))
+        );
+        stems.output.commit();
+        fs::remove_dir_all(root).unwrap();
     }
     pub(super) fn session_with_clips() -> CreativeSession {
         let mut session = CreativeSession::new(1);

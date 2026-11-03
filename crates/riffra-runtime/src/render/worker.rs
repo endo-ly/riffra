@@ -90,8 +90,18 @@ impl RenderWorker {
                 tail_seconds: request.tail_seconds,
                 graph: request.graph,
                 output: match request.output {
-                    OfflineRenderTarget::Mixdown(destination) => OfflineRenderOutput::Mixdown {
+                    OfflineRenderTarget::Mixdown {
+                        destination,
+                        vocals,
+                    } => OfflineRenderOutput::Mixdown {
                         destination: destination.to_string_lossy().into_owned(),
+                        vocals: vocals
+                            .into_iter()
+                            .map(|(track_id, destination)| OfflineStemOutput {
+                                track_id,
+                                destination: destination.to_string_lossy().into_owned(),
+                            })
+                            .collect(),
                     },
                     OfflineRenderTarget::Stems(outputs) => OfflineRenderOutput::Stems {
                         outputs: outputs
@@ -260,7 +270,10 @@ mod tests {
             include_end_events: false,
             tail_seconds: 0.0,
             graph: empty_graph(),
-            output: OfflineRenderTarget::Mixdown(destination),
+            output: OfflineRenderTarget::Mixdown {
+                destination,
+                vocals: Vec::new(),
+            },
             start_tick: 0,
             end_tick: 960,
             sample_rate: 48_000,

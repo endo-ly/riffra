@@ -47,6 +47,7 @@ private:
 
     struct Plan final {
         juce::File destination;
+        bool mixdown = false;
         std::vector<OfflineStemOutputSpec> stems;
         double sampleRate = 0.0;
         int blockSize = 0;

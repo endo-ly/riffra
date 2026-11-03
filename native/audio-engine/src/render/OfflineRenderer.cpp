@@ -166,9 +166,10 @@ std::unique_ptr<OfflineRenderer> OfflineRenderer::prepare(const OfflineRenderReq
     auto timelineEngine = std::make_unique<TimelineEngine>(true);
     if (!timelineEngine->loadSnapshot(renderSnapshot, formats, sampleRate, blockSize, error))
         return nullptr;
-    if (!request.stems.empty()) {
+    const auto& captures = request.stems.empty() ? request.vocals : request.stems;
+    if (!captures.empty()) {
         std::vector<juce::String> ids;
-        for (const auto& stem : request.stems) {
+        for (const auto& stem : captures) {
             if (!juce::File(stem.destination).getParentDirectory().createDirectory()) {
                 error = "Stem output directory could not be created: " + stem.destination;
                 return nullptr;
@@ -192,7 +193,8 @@ std::unique_ptr<OfflineRenderer> OfflineRenderer::prepare(const OfflineRenderReq
     const auto automationWarnings =
         status.graph ? status.graph->automationWarnings : std::vector<juce::String>{};
     Plan renderPlan{destination,
-                    request.stems,
+                    request.stems.empty(),
+                    captures,
                     sampleRate,
                     blockSize,
                     startSample,
@@ -243,7 +245,7 @@ bool OfflineRenderer::render(juce::AudioFormatManager& formats, Result& result,
         }
     } outputs;
     auto addOutput = [&](const juce::File& destination) {
-        if (!plan.stems.empty() && destination.exists()) {
+        if (destination != plan.destination && destination.exists()) {
             error = "Stem output already exists: " + destination.getFullPathName();
             return false;
         }
@@ -259,12 +261,11 @@ bool OfflineRenderer::render(juce::AudioFormatManager& formats, Result& result,
         if (output.writer == nullptr) return false;
         return true;
     };
-    if (plan.stems.empty()) {
+    if (plan.mixdown) {
         if (!addOutput(plan.destination)) return false;
-    } else {
-        for (const auto& stem : plan.stems)
-            if (!addOutput(juce::File(stem.destination))) return false;
     }
+    for (const auto& stem : plan.stems)
+        if (!addOutput(juce::File(stem.destination))) return false;
 
     juce::AudioBuffer<float> buffer(2, plan.blockSize);
     // Latency compensation shifts produced audio later in the callback stream, so the write
@@ -278,7 +279,7 @@ bool OfflineRenderer::render(juce::AudioFormatManager& formats, Result& result,
             static_cast<int>(std::min<std::int64_t>(plan.blockSize, plan.processingEnd - position));
         buffer.clear();
         engine->mix(buffer.getArrayOfWritePointers(), 2, count);
-        if (plan.stems.empty())
+        if (plan.mixdown)
             engine->applyMasterGain(buffer.getArrayOfWritePointers(), 2, count, plan.masterGainDb);
         const auto stop = std::min(writeEnd, position + count);
         if (stop > writeBegin) {
@@ -287,7 +288,9 @@ bool OfflineRenderer::render(juce::AudioFormatManager& formats, Result& result,
             const auto writeCount = static_cast<int>(stop - from);
             for (std::size_t i = 0; i < outputs.files.size(); ++i) {
                 auto& output = outputs.files[i];
-                const auto& source = plan.stems.empty() ? buffer : engine->stemBuffer(i);
+                const auto& source = plan.mixdown && i == 0
+                                         ? buffer
+                                         : engine->stemBuffer(i - (plan.mixdown ? 1u : 0u));
                 for (int channel = 0; channel < 2; ++channel)
                     output.peak = std::max(output.peak,
                                            source.getMagnitude(channel, offsetInBlock, writeCount));
@@ -312,9 +315,9 @@ bool OfflineRenderer::render(juce::AudioFormatManager& formats, Result& result,
     }
 
     for (auto& output : outputs.files) {
-        const auto normalizationGain =
-            plan.normalize && output.peak > 0.0f ? 0.98f / output.peak : 1.0f;
-        if (plan.normalize && std::abs(normalizationGain - 1.0f) > 0.000001f) {
+        const auto normalize = plan.normalize && output.destination == plan.destination;
+        const auto normalizationGain = normalize && output.peak > 0.0f ? 0.98f / output.peak : 1.0f;
+        if (normalize && std::abs(normalizationGain - 1.0f) > 0.000001f) {
             if (!normalizeFile(output.partial, output.normalized, formats, normalizationGain,
                                error) ||
                 !output.normalized.moveFileTo(output.destination)) {

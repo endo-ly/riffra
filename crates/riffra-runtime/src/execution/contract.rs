@@ -276,8 +276,13 @@ pub(crate) struct OfflineRenderRequest {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub(crate) enum OfflineRenderOutput {
-    Mixdown { destination: String },
-    Stems { outputs: Vec<OfflineStemOutput> },
+    Mixdown {
+        destination: String,
+        vocals: Vec<OfflineStemOutput>,
+    },
+    Stems {
+        outputs: Vec<OfflineStemOutput>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -645,6 +650,7 @@ mod tests {
                     graph,
                     output: OfflineRenderOutput::Mixdown {
                         destination: "renders/song.wav".into(),
+                        vocals: Vec::new(),
                     },
                     start_tick: 0,
                     end_tick: 7_680,

@@ -363,6 +363,7 @@ struct OfflineRenderRequestSpec final {
     double tailSeconds = 0.0;
     bool includeEndEvents = false;
     std::vector<OfflineStemOutputSpec> stems;
+    std::vector<OfflineStemOutputSpec> vocals;
     bool operator==(const OfflineRenderRequestSpec&) const = default;
 };
 

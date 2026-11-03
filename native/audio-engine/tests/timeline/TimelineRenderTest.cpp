@@ -74,6 +74,42 @@ TEST(TimelineEngineTest, CapturesAlignedPostFaderStemsAcrossSplitBlocks) {
     EXPECT_NEAR(stems[0][560] / stems[1][560], 4.0f * juce::Decibels::decibelsToGain(-6.0f), 0.01f);
 }
 
+TEST(TimelineEngineTest, MixdownAndDiagnosticTrackAreWrittenTogether) {
+    juce::ScopedJuceInitialiser_GUI initialiser;
+    test::TemporaryDirectory directory;
+    const auto source = directory.get().getChildFile("source.wav");
+    ASSERT_TRUE(writePcmWave(source, 48'000, 1, 512, 8'192));
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    auto graph = makeRawAndProcessedClipSnapshot(source, source, 512).graph;
+    OfflineRenderRequestSpec request;
+    request.graph = std::move(graph);
+    request.destination = directory.get().getChildFile("mix.wav").getFullPathName();
+    request.startTick = 0;
+    request.endTick = 960;
+    request.sampleRate = 48'000;
+    request.blockSize = 64;
+    request.vocals.push_back(
+        {"track:audio", directory.get().getChildFile("vocal.wav").getFullPathName()});
+    juce::String error;
+    auto renderer = OfflineRenderer::prepare(request, formats, error);
+    ASSERT_NE(renderer, nullptr) << error;
+    OfflineRenderer::Result result;
+    ASSERT_TRUE(renderer->render(formats, result, error)) << error;
+    auto mix = std::unique_ptr<juce::AudioFormatReader>(
+        formats.createReaderFor(juce::File(request.destination)));
+    auto vocal = std::unique_ptr<juce::AudioFormatReader>(
+        formats.createReaderFor(juce::File(request.vocals[0].destination)));
+    ASSERT_NE(mix, nullptr);
+    ASSERT_NE(vocal, nullptr);
+    EXPECT_EQ(mix->lengthInSamples, vocal->lengthInSamples);
+    juce::AudioBuffer<float> mixBuffer(2, 64), vocalBuffer(2, 64);
+    ASSERT_TRUE(mix->read(&mixBuffer, 0, 64, 0, true, true));
+    ASSERT_TRUE(vocal->read(&vocalBuffer, 0, 64, 0, true, true));
+    EXPECT_GT(vocalBuffer.getMagnitude(0, 0, 64), 0.01f);
+    EXPECT_NEAR(mixBuffer.getSample(0, 20), vocalBuffer.getSample(0, 20), 0.0001f);
+}
+
 TEST(TimelineEngineTest, KeepsProcessedTakesOutOfTheCurrentTrackEffectChain) {
     // Arrange
     test::TemporaryDirectory directory;

@@ -865,15 +865,38 @@ bool decodeOfflineRenderRequest(const juce::var& value, OfflineRenderRequestSpec
     if (!decodeGraph(graph, "request.graph", output.graph, error)) return false;
     output.destination.clear();
     output.stems.clear();
+    output.vocals.clear();
+    const auto decodeOutputs = [&](const juce::Array<juce::var>& values, const char* key,
+                                   std::vector<OfflineStemOutputSpec>& result) {
+        std::set<juce::String> ids, paths;
+        if (output.destination.isNotEmpty()) paths.insert(output.destination);
+        for (int i = 0; i < values.size(); ++i) {
+            const auto path = element(child("request.output", key), i);
+            ContractReader stem(values[i], path, {"trackId", "destination"}, error);
+            OfflineStemOutputSpec entry;
+            if (!stem.string("trackId", entry.trackId) ||
+                !stem.string("destination", entry.destination) || !stem.finish())
+                return false;
+            if (entry.trackId.isEmpty() || entry.destination.isEmpty() ||
+                !ids.insert(entry.trackId).second || !paths.insert(entry.destination).second)
+                return fail(error, path, "track and destination must be nonempty and unique");
+            result.push_back(std::move(entry));
+        }
+        return true;
+    };
     const auto kind = target.getProperty("kind", {}).toString();
     if (kind == "mixdown") {
-        ContractReader targetReader(target, "request.output", {"kind", "destination"}, error);
+        ContractReader targetReader(target, "request.output", {"kind", "destination", "vocals"},
+                                    error);
         juce::String ignored;
+        juce::Array<juce::var> vocals;
         if (!targetReader.string("kind", ignored) ||
-            !targetReader.string("destination", output.destination) || !targetReader.finish())
+            !targetReader.string("destination", output.destination) ||
+            !targetReader.array("vocals", vocals) || !targetReader.finish())
             return false;
         if (output.destination.isEmpty())
             return fail(error, "request.output.destination", "must not be empty");
+        if (!decodeOutputs(vocals, "vocals", output.vocals)) return false;
     } else if (kind == "stems") {
         ContractReader targetReader(target, "request.output", {"kind", "outputs"}, error);
         juce::String ignored;
@@ -882,19 +905,7 @@ bool decodeOfflineRenderRequest(const juce::var& value, OfflineRenderRequestSpec
             !targetReader.finish())
             return false;
         if (stems.isEmpty()) return fail(error, "request.output.outputs", "must not be empty");
-        std::set<juce::String> ids, paths;
-        for (int i = 0; i < stems.size(); ++i) {
-            const auto path = element("request.output.outputs", i);
-            ContractReader stem(stems[i], path, {"trackId", "destination"}, error);
-            OfflineStemOutputSpec entry;
-            if (!stem.string("trackId", entry.trackId) ||
-                !stem.string("destination", entry.destination) || !stem.finish())
-                return false;
-            if (entry.trackId.isEmpty() || entry.destination.isEmpty() ||
-                !ids.insert(entry.trackId).second || !paths.insert(entry.destination).second)
-                return fail(error, path, "track and destination must be nonempty and unique");
-            output.stems.push_back(std::move(entry));
-        }
+        if (!decodeOutputs(stems, "outputs", output.stems)) return false;
     } else {
         return fail(error, "request.output.kind", unknownValue(kind));
     }
