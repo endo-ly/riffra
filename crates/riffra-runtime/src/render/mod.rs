@@ -508,6 +508,27 @@ pub(crate) fn render_stems_with_cancellation(
     )
 }
 
+fn stem_filename(index: usize, name: &str) -> String {
+    // Bound UTF-16 length as well as UTF-8 length so the component stays portable.
+    let mut safe = String::new();
+    for ch in name.chars() {
+        let ch = if ch.is_control()
+            || matches!(ch, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')
+        {
+            '_'
+        } else {
+            ch
+        };
+        if safe.len() + ch.len_utf8() > 120 {
+            break;
+        }
+        safe.push(ch);
+    }
+    let safe = safe.trim_matches(|ch: char| ch == '.' || ch.is_whitespace());
+    let safe = if safe.is_empty() { "Track" } else { safe };
+    format!("stem-{index:03}-{safe}.wav")
+}
+
 fn render_stems_with_renderer(
     context: StemRenderContext<'_>,
     mut render: impl FnMut(OfflineRenderRequest) -> Result<Vec<String>, String>,
@@ -585,7 +606,7 @@ fn render_stems_with_renderer(
             track_id: Some(track.id.clone()),
             output_path: None,
         };
-        let output_path = directory.join(format!("stem-{:03}.wav", index + 1));
+        let output_path = directory.join(stem_filename(index + 1, &track.name));
         let plan = build_render_plan(
             data_root,
             built_in_instruments,
@@ -1078,6 +1099,16 @@ pub(super) mod tests {
         AudioClip, EffectDevice, MidiClip, TimelineLoopRange, TimelineTick, Track, TrackInstrument,
     };
 
+    #[test]
+    fn stem_names_are_portable_and_distinct() {
+        assert_eq!(stem_filename(1, "歌 🎵"), "stem-001-歌 🎵.wav");
+        assert_eq!(stem_filename(2, " a:/\\?*. "), "stem-002-a_____.wav");
+        assert_eq!(stem_filename(3, " ... "), "stem-003-Track.wav");
+        // The numeric prefix also prevents Windows device names from being special.
+        assert_eq!(stem_filename(4, "CON"), "stem-004-CON.wav");
+        assert_eq!(stem_filename(5, "CON"), "stem-005-CON.wav");
+        assert!(stem_filename(6, &"歌".repeat(100)).len() <= 137);
+    }
     pub(super) fn session_with_clips() -> CreativeSession {
         let mut session = CreativeSession::new(1);
         session
