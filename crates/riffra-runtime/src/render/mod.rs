@@ -256,7 +256,6 @@ fn render_timeline_with_renderer(
         created_at_ms,
         &options,
         None,
-        None,
     )?;
     let directory = plan
         .output_path
@@ -626,6 +625,11 @@ fn render_stems_with_renderer(
         .as_deref()
         .map(history::validate_output_directory)
         .transpose()?;
+    let required_tracks = selection
+        .track_ids
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
     let conditions = shared_render_conditions(session, &range)?;
     if cancelled.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire)) {
         return Err("Timeline render was cancelled.".into());
@@ -678,14 +682,14 @@ fn render_stems_with_renderer(
         track_id: None,
         output_path: None,
     };
-    let plan = build_render_plan(
+    let plan = build_render_plan_with_required(
         data_root,
         built_in_instruments,
         &render_session,
         created_at_ms,
         &options,
         Some(&conditions),
-        None,
+        &required_tracks,
     )?;
     let outputs = selected_tracks
         .iter()
@@ -908,7 +912,7 @@ fn stem_source_ids(session: &CreativeSession, track_id: &str) -> Vec<AssetId> {
     for bus in &mut candidate.arrangement.mixer.buses {
         bus.solo = false;
     }
-    let tracks = processing_track_ids(&candidate);
+    let tracks = processing_track_ids_with_required(&candidate, &[track_id]);
     candidate
         .arrangement
         .audio_clips
@@ -935,7 +939,26 @@ fn build_render_plan(
     created_at_ms: u64,
     options: &RenderOptions,
     shared_conditions: Option<&SharedRenderConditions>,
-    output_path: Option<PathBuf>,
+) -> Result<RenderPlan, String> {
+    build_render_plan_with_required(
+        data_root,
+        built_in_instruments,
+        session,
+        created_at_ms,
+        options,
+        shared_conditions,
+        &[],
+    )
+}
+
+fn build_render_plan_with_required(
+    data_root: &Path,
+    built_in_instruments: &BuiltInInstrumentCatalog,
+    session: &CreativeSession,
+    created_at_ms: u64,
+    options: &RenderOptions,
+    shared_conditions: Option<&SharedRenderConditions>,
+    required_tracks: &[&str],
 ) -> Result<RenderPlan, String> {
     let mut render_session = session.clone();
     if let Some(track_id) = options.track_id.as_deref() {
@@ -979,7 +1002,7 @@ fn build_render_plan(
         None => shared_render_conditions(&render_session, &options.range)?,
     };
 
-    let processing_tracks = processing_track_ids(&render_session);
+    let processing_tracks = processing_track_ids_with_required(&render_session, required_tracks);
     let clip_audible = |track_id: &str, muted: bool| !muted && processing_tracks.contains(track_id);
     let audio_clips = render_session
         .arrangement
@@ -1014,7 +1037,8 @@ fn build_render_plan(
     }
     let resources = resolve(data_root, built_in_instruments, &render_session)?;
     let (graph, diagnostics) = project_graph(&render_session, &resources);
-    let dependency_warnings = validate_render_dependencies(&render_session, &diagnostics)?;
+    let dependency_warnings =
+        validate_render_dependencies(&render_session, &diagnostics, required_tracks)?;
 
     Ok(RenderPlan {
         tail_seconds: conditions.tail_seconds,
@@ -1026,19 +1050,24 @@ fn build_render_plan(
         sample_rate: conditions.sample_rate,
         clip_count,
         source_ids,
-        output_path: output_path.unwrap_or_else(|| {
-            data_root
-                .join("renders")
-                .join(format!(
-                    "render-{created_at_ms}-{}",
-                    riffra_control::new_instance_id()
-                ))
-                .join("timeline.wav")
-        }),
+        output_path: data_root
+            .join("renders")
+            .join(format!(
+                "render-{created_at_ms}-{}",
+                riffra_control::new_instance_id()
+            ))
+            .join("timeline.wav"),
     })
 }
 
 fn processing_track_ids(session: &CreativeSession) -> BTreeSet<&str> {
+    processing_track_ids_with_required(session, &[])
+}
+
+fn processing_track_ids_with_required<'a>(
+    session: &'a CreativeSession,
+    forced_tracks: &[&str],
+) -> BTreeSet<&'a str> {
     let arrangement = &session.arrangement;
     let has_solo = arrangement.tracks.iter().any(|track| track.solo)
         || arrangement.mixer.buses.iter().any(|bus| bus.solo);
@@ -1046,6 +1075,9 @@ fn processing_track_ids(session: &CreativeSession) -> BTreeSet<&str> {
         .tracks
         .iter()
         .filter(|track| {
+            if forced_tracks.contains(&track.id.as_str()) {
+                return true;
+            }
             if track.muted {
                 return false;
             }
@@ -1159,6 +1191,7 @@ fn resolve_range(session: &CreativeSession, range: &RenderRange) -> Result<(u64,
 fn validate_render_dependencies(
     session: &CreativeSession,
     diagnostics: &ProjectionDiagnostics,
+    required_tracks: &[&str],
 ) -> Result<Vec<String>, String> {
     if !diagnostics.unavailable_clip_ids.is_empty() {
         return Err(format!(
@@ -1167,7 +1200,7 @@ fn validate_render_dependencies(
         ));
     }
 
-    let audible_tracks = processing_track_ids(session);
+    let audible_tracks = processing_track_ids_with_required(session, required_tracks);
     let midi_source_tracks = session
         .arrangement
         .midi_clips
@@ -1454,7 +1487,7 @@ pub(super) mod tests {
         };
 
         // Act
-        let effect_result = validate_render_dependencies(&session, &effect_diagnostics);
+        let effect_result = validate_render_dependencies(&session, &effect_diagnostics, &[]);
 
         // Assert
         assert_eq!(
@@ -1478,7 +1511,7 @@ pub(super) mod tests {
 
         // Assert
         assert!(
-            validate_render_dependencies(&session, &instrument_diagnostics)
+            validate_render_dependencies(&session, &instrument_diagnostics, &[])
                 .unwrap_err()
                 .contains("Track Instruments: instrument:missing")
         );
@@ -1488,7 +1521,8 @@ pub(super) mod tests {
                 &ProjectionDiagnostics {
                     unavailable_clip_ids: vec!["clip:missing-source".into()],
                     ..ProjectionDiagnostics::default()
-                }
+                },
+                &[],
             )
             .unwrap_err()
             .contains("clip:missing-source")
@@ -1617,7 +1651,6 @@ pub(super) mod tests {
                 ..RenderOptions::default()
             },
             None,
-            None,
         )
         .unwrap();
 
@@ -1646,6 +1679,69 @@ pub(super) mod tests {
             None,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn stem_for_a_track_under_a_muted_group_bus_keeps_its_clips() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-muted-bus-stem-{}",
+            riffra_control::new_instance_id()
+        ));
+        let source = register_source(&root, "target", 48_000, 48_000);
+        let mut session = CreativeSession::new(1);
+        let mut track = Track::audio("target".into(), "Target".into());
+        track.output_bus_id = Some("bus:group".into());
+        session.arrangement.tracks.push(track);
+        session.arrangement.audio_clips.push(AudioClip::full_source(
+            "clip:target".into(),
+            "Target".into(),
+            "target".into(),
+            source,
+            TimelineTick(0),
+            48_000,
+            48_000,
+        ));
+        session.arrangement.mixer.buses.push(riffra_core::MixBus {
+            id: "bus:group".into(),
+            name: "Group".into(),
+            kind: riffra_core::MixBusKind::Group,
+            gain_db: 0.0,
+            pan: 0.0,
+            pan_law: riffra_core::PanLaw::UnityCenterStereo,
+            muted: true,
+            solo: false,
+            effects: Vec::new(),
+        });
+        let selection = select_stem_tracks(&session, true, &[]).unwrap();
+
+        let mut pending = render_stems_with_renderer(
+            StemRenderContext {
+                data_root: &root,
+                built_in_instruments: empty_catalog(),
+                session: &session,
+                project_id: "project-1",
+                source_sequence: 1,
+                created_at_ms: 1,
+                selection,
+                range: RenderRange::EntireArrangement,
+                output_directory: None,
+            },
+            |request| {
+                assert_eq!(request.graph.tracks[0].audio_clips.len(), 1);
+                assert!(request.graph.mixer.buses[0].muted);
+                for (_, path) in request.stem_outputs() {
+                    fs::write(path, wav(request.sample_rate, 128)).unwrap();
+                }
+                Ok(Vec::new())
+            },
+            None,
+            |_, _| {},
+        )
+        .unwrap();
+
+        assert_eq!(pending.result.stems.len(), 1);
+        pending.output.commit();
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -2504,7 +2600,6 @@ pub(super) mod tests {
             1,
             &RenderOptions::default(),
             None,
-            None,
         )
         .unwrap();
         assert!(plan.source_ids.is_empty());
@@ -2552,7 +2647,6 @@ pub(super) mod tests {
                 track_id: Some("instrument".into()),
                 ..Default::default()
             },
-            None,
             None,
         )
         .unwrap();
