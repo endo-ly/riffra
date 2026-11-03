@@ -146,6 +146,7 @@ pub fn validate_report_with_cancel(
                 plugin.name = metadata.name;
                 plugin.vendor = (!metadata.vendor.trim().is_empty()).then_some(metadata.vendor);
                 plugin.version = (!metadata.version.trim().is_empty()).then_some(metadata.version);
+                plugin.identifier = Some(metadata.identifier);
                 plugin.role = Some(if metadata.is_instrument {
                     PluginRole::Instrument
                 } else {

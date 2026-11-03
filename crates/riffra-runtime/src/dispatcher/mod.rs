@@ -866,6 +866,7 @@ mod tests {
                     name: "Synth".into(),
                     vendor: None,
                     version: None,
+                    identifier: None,
                     format: crate::api::output::PluginFormat::Vst3,
                     role: Some(crate::api::output::PluginRole::Instrument),
                     path: plugin_path.to_string_lossy().into_owned(),

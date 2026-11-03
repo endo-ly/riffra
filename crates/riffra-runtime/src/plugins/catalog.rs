@@ -82,6 +82,8 @@ pub fn reuse_cached_scan_results(data_root: &Path, report: &mut ScanReport) {
                 && plugin.modified_at_ms.is_some()
                 && candidate.modified_at_ms == plugin.modified_at_ms
                 && candidate.scan_state != PluginScanState::Discovered
+                && (candidate.identifier.is_some()
+                    || candidate.scan_state != PluginScanState::Validated)
                 && (candidate.role.is_some()
                     || matches!(
                         candidate.scan_state,
@@ -93,6 +95,7 @@ pub fn reuse_cached_scan_results(data_root: &Path, report: &mut ScanReport) {
         plugin.name = previous.name.clone();
         plugin.vendor = previous.vendor.clone();
         plugin.version = previous.version.clone();
+        plugin.identifier = previous.identifier.clone();
         plugin.role = previous.role;
         plugin.scan_state = previous.scan_state;
     }
@@ -225,6 +228,7 @@ mod tests {
                 name: "Test".into(),
                 vendor: None,
                 version: None,
+                identifier: None,
                 format: PluginFormat::Vst3,
                 role: Some(PluginRole::Effect),
                 path: "C:\\VST3\\Test.vst3".into(),
@@ -262,6 +266,7 @@ mod tests {
                 name: "Amp".into(),
                 vendor: Some("Vendor".into()),
                 version: Some("1.0".into()),
+                identifier: None,
                 format: PluginFormat::Vst3,
                 role: Some(PluginRole::Effect),
                 path: plugin_path.to_string_lossy().into_owned(),
@@ -330,6 +335,7 @@ mod tests {
                 name: "Amp (old catalog)".into(),
                 vendor: Some("Vendor".into()),
                 version: Some("1.0".into()),
+                identifier: None,
                 format: PluginFormat::Vst3,
                 role: None,
                 path: plugin_path.to_string_lossy().into_owned(),
@@ -380,6 +386,7 @@ mod tests {
                 name: "Amp (validated)".into(),
                 vendor: Some("Vendor".into()),
                 version: Some("1.0".into()),
+                identifier: Some("VST3-Amp-1234".into()),
                 format: PluginFormat::Vst3,
                 role: Some(PluginRole::Instrument),
                 path: plugin_path.to_string_lossy().into_owned(),
@@ -395,11 +402,27 @@ mod tests {
         discovered.plugins[0].name = "Amp".into();
         discovered.plugins[0].vendor = None;
         discovered.plugins[0].version = None;
+        discovered.plugins[0].identifier = None;
         discovered.plugins[0].scan_state = PluginScanState::Discovered;
         reuse_cached_scan_results(&root, &mut discovered);
 
         assert_eq!(discovered.plugins[0].name, "Amp (validated)");
+        assert_eq!(
+            discovered.plugins[0].identifier.as_deref(),
+            Some("VST3-Amp-1234")
+        );
         assert_eq!(discovered.plugins[0].scan_state, PluginScanState::Validated);
+
+        let mut without_identifier = cached;
+        without_identifier.plugins[0].identifier = None;
+        save(&root, &without_identifier).unwrap();
+        discovered.plugins[0].scan_state = PluginScanState::Discovered;
+        discovered.plugins[0].identifier = None;
+        reuse_cached_scan_results(&root, &mut discovered);
+        assert_eq!(
+            discovered.plugins[0].scan_state,
+            PluginScanState::Discovered
+        );
         let _ = fs::remove_dir_all(root);
     }
 }
