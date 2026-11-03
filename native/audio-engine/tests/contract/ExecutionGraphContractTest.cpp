@@ -94,6 +94,28 @@ TEST(ExecutionGraphContractTest, DecodesRustGeneratedFixtures) {
     EXPECT_EQ(state.parameterValues.size(), 2u);
 }
 
+TEST(ExecutionGraphContractTest, ValidatesDistinctStemOutputs) {
+    auto request = fixture("offline-render-request.json");
+    request.getDynamicObject()->setProperty(
+        "output",
+        juce::JSON::parse(
+            R"({"kind":"stems","outputs":[{"trackId":"a","destination":"a.wav"},{"trackId":"b","destination":"b.wav"}]})"));
+    OfflineRenderRequestSpec decoded;
+    juce::String error;
+    ASSERT_TRUE(decodeOfflineRenderRequest(request, decoded, error)) << error;
+    ASSERT_EQ(decoded.stems.size(), 2u);
+    EXPECT_EQ(decoded.stems[1].trackId, "b");
+
+    request.getDynamicObject()->setProperty(
+        "output",
+        juce::JSON::parse(
+            R"({"kind":"stems","outputs":[{"trackId":"a","destination":"a.wav"},{"trackId":"b","destination":"a.wav"}]})"));
+    OfflineRenderRequestSpec invalid;
+    error.clear();
+    EXPECT_FALSE(decodeOfflineRenderRequest(request, invalid, error));
+    EXPECT_TRUE(error.contains("unique")) << error;
+}
+
 TEST(ExecutionGraphContractTest, RejectsMissingAndUnknownKeysAtEveryObjectDepth) {
     const auto full = fixture("timeline-snapshot-full.json");
     const std::vector<JsonPath> objects{

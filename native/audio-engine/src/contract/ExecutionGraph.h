@@ -346,6 +346,12 @@ struct TimelineSnapshotSpec final {
     bool operator==(const TimelineSnapshotSpec&) const = default;
 };
 
+struct OfflineStemOutputSpec final {
+    juce::String trackId;
+    juce::String destination;
+    bool operator==(const OfflineStemOutputSpec&) const = default;
+};
+
 struct OfflineRenderRequestSpec final {
     ExecutionGraph graph;
     juce::String destination;
@@ -356,6 +362,7 @@ struct OfflineRenderRequestSpec final {
     bool normalize = false;
     double tailSeconds = 0.0;
     bool includeEndEvents = false;
+    std::vector<OfflineStemOutputSpec> stems;
     bool operator==(const OfflineRenderRequestSpec&) const = default;
 };
 

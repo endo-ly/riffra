@@ -366,8 +366,8 @@ export function MixdownDialog(props: Props) {
             </DialogRow>
             {stems && (
               <p className={controls.hint}>
-                Stems retain Group, Return and Master FX without individual loudness mastering.
-                Nonlinear shared FX can make their sum differ from the complete mix.
+                Stems include track effects, volume and pan. Group, Return and Master processing and
+                loudness mastering are excluded.
               </p>
             )}
           </DialogSection>

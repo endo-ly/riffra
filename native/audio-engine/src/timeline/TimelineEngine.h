@@ -244,6 +244,10 @@ public:
     /// output, so plugins that finish preparing while processing can do so before playback.
     void warmUpPluginDevices(int sampleCount) noexcept;
 
+    /// Prepares aligned post-fader track capture for an offline render.
+    bool prepareStemCapture(const std::vector<juce::String>& trackIds, juce::String& error);
+    [[nodiscard]] const juce::AudioBuffer<float>& stemBuffer(std::size_t index) const noexcept;
+
 private:
     friend class TimelineEngineTestPeer;
     friend class AudioRenderPipeline;
@@ -405,6 +409,13 @@ private:
 
     juce::TimeSliceThread readAheadThread{"Riffra timeline read-ahead"};
     bool offlineMode = false;
+    struct StemCapture final {
+        TrackRuntime* track = nullptr;
+        MixRouteDelay delay;
+        juce::AudioBuffer<float> scratch;
+        juce::AudioBuffer<float> output;
+    };
+    std::vector<std::unique_ptr<StemCapture>> stemCaptures;
     std::unique_ptr<TrackProcessingPool> pool;
     ControlGraphRegistry graphRegistry;
     ControlGraphRegistry::Retired retiredGraphs;
