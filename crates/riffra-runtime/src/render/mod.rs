@@ -234,13 +234,15 @@ fn render_timeline_pending<R: Into<OfflineRenderDiagnostics>>(
         .as_deref()
         .map(history::validate_output_file_path)
         .transpose()?;
-    let plan = build_render_plan(
+    let render_session = rendering_session(session, options.track_id.as_deref())?;
+    let plan = build_render_plan_for_session(
         data_root,
         built_in_instruments,
-        session,
+        &render_session,
         created_at_ms,
         &options,
         None,
+        &[],
     )?;
     let directory = plan
         .output_path
@@ -258,13 +260,13 @@ fn render_timeline_pending<R: Into<OfflineRenderDiagnostics>>(
     };
 
     let mut vocals = Vec::new();
-    for track in &session.arrangement.tracks {
-        if !vocal::reaches_mix(session, track, options.track_id.as_deref())
+    for track in &render_session.arrangement.tracks {
+        if !vocal::reaches_mix(&render_session, track, options.track_id.as_deref())
             || !crate::voisona::is_target_in(catalog, track)
         {
             continue;
         }
-        let ranges = vocal::ranges(session, track, plan.start_tick, plan.end_tick)?;
+        let ranges = vocal::ranges(&render_session, track, plan.start_tick, plan.end_tick)?;
         if !ranges.is_empty() {
             vocals.push(VocalDiagnostic {
                 track_id: track.id.clone(),
@@ -692,7 +694,7 @@ fn render_stems_pending<R: Into<OfflineRenderDiagnostics>>(
         track_id: None,
         output_path: None,
     };
-    let plan = build_render_plan_with_required(
+    let plan = build_render_plan_for_session(
         data_root,
         built_in_instruments,
         &render_session,
@@ -712,9 +714,19 @@ fn render_stems_pending<R: Into<OfflineRenderDiagnostics>>(
         })
         .collect::<Vec<_>>();
     let mut vocals = Vec::new();
-    for track in &selected_tracks {
+    for track in render_session
+        .arrangement
+        .tracks
+        .iter()
+        .filter(|track| selection.track_ids.contains(&track.id))
+    {
         if crate::voisona::is_target_in(catalog, track) {
-            let ranges = vocal::ranges(session, track, conditions.start_tick, conditions.end_tick)?;
+            let ranges = vocal::ranges(
+                &render_session,
+                track,
+                conditions.start_tick,
+                conditions.end_tick,
+            )?;
             if !ranges.is_empty() {
                 vocals.push(VocalDiagnostic {
                     track_id: track.id.clone(),
@@ -950,77 +962,68 @@ fn stem_source_ids(session: &CreativeSession, track_id: &str) -> Vec<AssetId> {
         .collect()
 }
 
-fn build_render_plan(
-    data_root: &Path,
-    built_in_instruments: &BuiltInInstrumentCatalog,
+/// Returns the session whose Track states are used for offline audio.
+///
+/// Isolating a Track keeps every Track's plugin graph so independently rendered
+/// stems share the same project-wide PDC baseline. Soloing the selected Track
+/// silences the other Tracks' main outputs and their return Sends while their
+/// Sidechain routes stay audible. The selected Track is rendered even when it
+/// was muted in the project.
+fn rendering_session(
     session: &CreativeSession,
-    created_at_ms: u64,
-    options: &RenderOptions,
-    shared_conditions: Option<&SharedRenderConditions>,
-) -> Result<RenderPlan, String> {
-    build_render_plan_with_required(
-        data_root,
-        built_in_instruments,
-        session,
-        created_at_ms,
-        options,
-        shared_conditions,
-        &[],
-    )
+    isolated_track: Option<&str>,
+) -> Result<CreativeSession, String> {
+    let mut render_session = session.clone();
+    let Some(track_id) = isolated_track else {
+        return Ok(render_session);
+    };
+    if !render_session
+        .arrangement
+        .tracks
+        .iter()
+        .any(|track| track.id == track_id)
+    {
+        return Err(format!("Track is not registered: {track_id}"));
+    }
+    for track in &mut render_session.arrangement.tracks {
+        track.solo = track.id == track_id;
+        if track.id == track_id {
+            track.muted = false;
+        }
+    }
+    for bus in &mut render_session.arrangement.mixer.buses {
+        bus.solo = false;
+    }
+    let required_tracks = processing_track_ids(&render_session)
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<BTreeSet<_>>();
+    render_session
+        .arrangement
+        .audio_clips
+        .retain(|clip| required_tracks.contains(&clip.track_id));
+    render_session
+        .arrangement
+        .midi_clips
+        .retain(|clip| required_tracks.contains(&clip.track_id));
+    Ok(render_session)
 }
 
-fn build_render_plan_with_required(
+fn build_render_plan_for_session(
     data_root: &Path,
     built_in_instruments: &BuiltInInstrumentCatalog,
-    session: &CreativeSession,
+    render_session: &CreativeSession,
     created_at_ms: u64,
     options: &RenderOptions,
     shared_conditions: Option<&SharedRenderConditions>,
     required_tracks: &[&str],
 ) -> Result<RenderPlan, String> {
-    let mut render_session = session.clone();
-    if let Some(track_id) = options.track_id.as_deref() {
-        if !render_session
-            .arrangement
-            .tracks
-            .iter()
-            .any(|track| track.id == track_id)
-        {
-            return Err(format!("Track is not registered: {track_id}"));
-        }
-        // Keep every Track's plugin graph so all independently rendered stems
-        // use the same project-wide PDC baseline. Soloing the selected Track
-        // silences the other Tracks' main outputs and their return Sends while
-        // their Sidechain routes stay audible.
-        for track in &mut render_session.arrangement.tracks {
-            track.solo = track.id == track_id;
-            if track.id == track_id {
-                track.muted = false;
-            }
-        }
-        for bus in &mut render_session.arrangement.mixer.buses {
-            bus.solo = false;
-        }
-        let required_tracks = processing_track_ids(&render_session)
-            .into_iter()
-            .map(str::to_owned)
-            .collect::<BTreeSet<_>>();
-        render_session
-            .arrangement
-            .audio_clips
-            .retain(|clip| required_tracks.contains(&clip.track_id));
-        render_session
-            .arrangement
-            .midi_clips
-            .retain(|clip| required_tracks.contains(&clip.track_id));
-    }
-
     let conditions = match shared_conditions {
         Some(conditions) => *conditions,
-        None => shared_render_conditions(&render_session, &options.range)?,
+        None => shared_render_conditions(render_session, &options.range)?,
     };
 
-    let processing_tracks = processing_track_ids_with_required(&render_session, required_tracks);
+    let processing_tracks = processing_track_ids_with_required(render_session, required_tracks);
     let clip_audible = |track_id: &str, muted: bool| !muted && processing_tracks.contains(track_id);
     let audio_clips = render_session
         .arrangement
@@ -1053,10 +1056,10 @@ fn build_render_plan_with_required(
             ));
         }
     }
-    let resources = resolve(data_root, built_in_instruments, &render_session)?;
-    let (graph, diagnostics) = project_graph(&render_session, &resources);
+    let resources = resolve(data_root, built_in_instruments, render_session)?;
+    let (graph, diagnostics) = project_graph(render_session, &resources);
     let dependency_warnings =
-        validate_render_dependencies(&render_session, &diagnostics, required_tracks)?;
+        validate_render_dependencies(render_session, &diagnostics, required_tracks)?;
 
     Ok(RenderPlan {
         tail_seconds: conditions.tail_seconds,
@@ -1303,12 +1306,7 @@ pub(super) mod tests {
         assert!(stem_filename(6, &"歌".repeat(100)).len() <= 137);
     }
 
-    #[test]
-    fn vocal_silence_is_reported_for_the_track_in_mixdowns_and_stems() {
-        let root = std::env::temp_dir().join(format!(
-            "riffra-vocal-render-{}",
-            riffra_control::new_instance_id()
-        ));
+    fn vocal_session(root: &Path) -> CreativeSession {
         let plugin_path = root.join("voice.vst3");
         fs::create_dir_all(&plugin_path).unwrap();
         let mut session = session_with_clips();
@@ -1336,7 +1334,7 @@ pub(super) mod tests {
                 lyric: Some("あ".into()),
             });
         crate::plugins::save(
-            &root,
+            root,
             &crate::api::output::ScanReport {
                 root: root.to_string_lossy().into_owned(),
                 started_at_ms: 0,
@@ -1358,6 +1356,16 @@ pub(super) mod tests {
             },
         )
         .unwrap();
+        session
+    }
+
+    #[test]
+    fn vocal_silence_is_reported_for_the_track_in_mixdowns_and_stems() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-vocal-render-{}",
+            riffra_control::new_instance_id()
+        ));
+        let session = vocal_session(&root);
         let mix = render_timeline_with_renderer(
             timeline_render_context(
                 &root,
@@ -1432,6 +1440,87 @@ pub(super) mod tests {
         stems.output.commit();
         fs::remove_dir_all(root).unwrap();
     }
+
+    #[test]
+    fn muted_vocal_track_is_diagnosed_when_it_is_explicitly_rendered() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-vocal-muted-render-{}",
+            riffra_control::new_instance_id()
+        ));
+        let mut session = vocal_session(&root);
+        session.arrangement.tracks[0].muted = true;
+
+        let mix = render_timeline_with_renderer(
+            timeline_render_context(
+                &root,
+                empty_catalog(),
+                &session,
+                20,
+                RenderOptions {
+                    track_id: Some("instrument".into()),
+                    ..RenderOptions::default()
+                },
+            ),
+            |request| {
+                let OfflineRenderTarget::Mixdown { destination } = request.output else {
+                    panic!("expected mixdown")
+                };
+                assert_eq!(request.vocal_diagnostics.len(), 1);
+                assert_eq!(request.vocal_diagnostics[0].track_id, "instrument");
+                assert!(!request.vocal_diagnostics[0].ranges.is_empty());
+                fs::write(destination, wav(request.sample_rate, 24000)).unwrap();
+                Ok(OfflineRenderDiagnostics {
+                    automation_warnings: Vec::new(),
+                    silent_vocals: request.vocal_diagnostics,
+                })
+            },
+            None,
+        )
+        .unwrap();
+        assert!(
+            mix.warnings
+                .iter()
+                .any(|warning| warning.contains("no detectable audio"))
+        );
+
+        let mut stems = render_stems_with_renderer(
+            StemRenderContext {
+                data_root: &root,
+                built_in_instruments: empty_catalog(),
+                session: &session,
+                project_id: "project",
+                source_sequence: 1,
+                created_at_ms: 21,
+                selection: select_stem_tracks(&session, false, &["instrument".into()]).unwrap(),
+                range: RenderRange::EntireArrangement,
+                output_directory: None,
+            },
+            |request| {
+                for (_, path) in request.stem_outputs() {
+                    fs::write(path, wav(request.sample_rate, 24000)).unwrap();
+                }
+                assert_eq!(request.vocal_diagnostics.len(), 1);
+                assert_eq!(request.vocal_diagnostics[0].track_id, "instrument");
+                assert!(!request.vocal_diagnostics[0].ranges.is_empty());
+                Ok(OfflineRenderDiagnostics {
+                    automation_warnings: Vec::new(),
+                    silent_vocals: request.vocal_diagnostics,
+                })
+            },
+            None,
+            |_, _| {},
+        )
+        .unwrap();
+        assert!(
+            stems.result.stems[0]
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("no detectable audio"))
+        );
+        stems.output.commit();
+        fs::remove_dir_all(root).unwrap();
+    }
+
     pub(super) fn session_with_clips() -> CreativeSession {
         let mut session = CreativeSession::new(1);
         session
@@ -1457,6 +1546,25 @@ pub(super) mod tests {
 
     fn empty_catalog() -> &'static BuiltInInstrumentCatalog {
         crate::test_support::empty_built_in_catalog()
+    }
+
+    fn render_plan(
+        root: &Path,
+        built_in_instruments: &BuiltInInstrumentCatalog,
+        session: &CreativeSession,
+        created_at_ms: u64,
+        options: &RenderOptions,
+    ) -> Result<RenderPlan, String> {
+        let render_session = rendering_session(session, options.track_id.as_deref())?;
+        build_render_plan_for_session(
+            root,
+            built_in_instruments,
+            &render_session,
+            created_at_ms,
+            options,
+            None,
+            &[],
+        )
     }
 
     fn timeline_render_context<'a>(
@@ -1689,7 +1797,7 @@ pub(super) mod tests {
             .collect();
 
         // Act
-        let plan = build_render_plan(
+        let plan = render_plan(
             &root,
             empty_catalog(),
             &session,
@@ -1698,7 +1806,6 @@ pub(super) mod tests {
                 track_id: Some("target".into()),
                 ..RenderOptions::default()
             },
-            None,
         )
         .unwrap();
 
@@ -2655,13 +2762,12 @@ pub(super) mod tests {
     fn midi_session_data_does_not_invent_an_asset_source() {
         let root = std::env::temp_dir().join("riffra-midi-render-plan");
         let catalog = empty_catalog();
-        let plan = build_render_plan(
+        let plan = render_plan(
             &root,
             catalog,
             &session_with_clips(),
             1,
             &RenderOptions::default(),
-            None,
         )
         .unwrap();
         assert!(plan.source_ids.is_empty());
@@ -2700,7 +2806,7 @@ pub(super) mod tests {
                 }],
             });
         let catalog = empty_catalog();
-        let plan = build_render_plan(
+        let plan = render_plan(
             &root,
             catalog,
             &session,
@@ -2709,7 +2815,6 @@ pub(super) mod tests {
                 track_id: Some("instrument".into()),
                 ..Default::default()
             },
-            None,
         )
         .unwrap();
 
