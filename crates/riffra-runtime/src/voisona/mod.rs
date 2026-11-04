@@ -73,34 +73,41 @@ pub(crate) struct SyncedPluginState {
 /// The plugin states synchronization wrote while completing a wait.
 ///
 /// Consecutive writes to one plugin collapse into a single before/after pair. A
-/// write that does not continue the recorded state marks the history as
-/// discontinuous so a user change between synchronizations cannot be hidden.
+/// write that does not continue the recorded state marks that plugin's history
+/// as discontinuous so a user change between synchronizations cannot be hidden.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct SyncHistory {
-    plugins: Vec<SyncedPluginState>,
+    plugins: Vec<SyncRecord>,
+}
+
+#[derive(Clone, Debug)]
+struct SyncRecord {
+    change: SyncedPluginState,
     discontinuous: bool,
 }
 
 impl SyncHistory {
     /// Records one completed plugin write.
     pub(crate) fn record(&mut self, change: SyncedPluginState) {
-        let Some(existing) = self.plugins.iter_mut().find(|existing| {
-            existing.owner == change.owner && existing.device_id == change.device_id
+        let Some(existing) = self.plugins.iter_mut().find(|entry| {
+            entry.change.owner == change.owner && entry.change.device_id == change.device_id
         }) else {
-            self.plugins.push(change);
+            self.plugins.push(SyncRecord {
+                change,
+                discontinuous: false,
+            });
             return;
         };
-        if graph_states_match(&existing.after, &change.before) {
-            existing.after = change.after;
+        if graph_states_match(&existing.change.after, &change.before) {
+            existing.change.after = change.after;
         } else {
-            self.discontinuous = true;
+            existing.discontinuous = true;
         }
     }
 
     /// Forgets every recorded write.
     pub(crate) fn clear(&mut self) {
         self.plugins.clear();
-        self.discontinuous = false;
     }
 }
 
@@ -204,6 +211,10 @@ fn plugin_state_matches(plugin: &Vst3Plugin, state: &GraphPluginState) -> bool {
     plugin.state_data == state.state_data && plugin.parameter_values == state.parameter_values
 }
 
+fn plugins_match(left: &Vst3Plugin, right: &Vst3Plugin) -> bool {
+    left.state_data == right.state_data && left.parameter_values == right.parameter_values
+}
+
 /// Compares a requested session with the post-sync one, allowing only the
 /// plugin states that synchronization itself wrote to differ.
 pub(crate) fn sessions_match_with_sync_changes(
@@ -211,12 +222,10 @@ pub(crate) fn sessions_match_with_sync_changes(
     mut synchronized: CreativeSession,
     history: &SyncHistory,
 ) -> bool {
-    if history.discontinuous {
-        return false;
-    }
     requested.arrangement.revision = synchronized.arrangement.revision;
     requested.updated_at_ms = synchronized.updated_at_ms;
-    for change in &history.plugins {
+    for entry in &history.plugins {
+        let change = &entry.change;
         let Some(requested_plugin) = plugin(&requested, &change.owner, &change.device_id) else {
             return false;
         };
@@ -224,7 +233,10 @@ pub(crate) fn sessions_match_with_sync_changes(
         let Some(plugin) = plugin_mut(&mut synchronized, &change.owner, &change.device_id) else {
             return false;
         };
-        if !plugin_state_matches(plugin, &change.after) {
+        if plugins_match(plugin, &requested_state) {
+            continue;
+        }
+        if entry.discontinuous || !plugin_state_matches(plugin, &change.after) {
             return false;
         }
         let requested_is_written = plugin_state_matches(&requested_state, &change.before)
@@ -380,6 +392,11 @@ mod tests {
 
         assert!(!sessions_match_with_sync_changes(
             requested,
+            synchronized.clone(),
+            &history,
+        ));
+        assert!(sessions_match_with_sync_changes(
+            synchronized.clone(),
             synchronized,
             &history,
         ));
