@@ -123,7 +123,6 @@ impl UserInstrumentStore {
         if !definition_path.is_file() {
             return Err("instrument definition path is not a file".into());
         }
-        self.inspect(&definition_path)?;
         let (instrument_id, created_at_ms) = match instrument_id {
             Some(instrument_id) => {
                 let existing = self.resolve(&instrument_id)?;
@@ -149,10 +148,12 @@ impl UserInstrumentStore {
             copy_definition_resources(&definition_path, &temporary)?;
             self.inspect(&temporary.join(DEFINITION_FILE_NAME))?;
             write_manifest(&temporary, &manifest)?;
+            let mut resolved = load_package(&temporary, manifest)?;
             install_directory(&temporary, &destination).map_err(|error| {
                 format!("user instrument package could not be installed: {error}")
             })?;
-            self.resolve(&instrument_id)
+            resolved.package_root = destination.clone();
+            Ok(resolved)
         })();
         if result.is_err() && temporary.exists() {
             let _ = fs::remove_dir_all(&temporary);
@@ -307,27 +308,7 @@ impl UserInstrumentStore {
         {
             return Err("user instrument manifest id does not match its package directory".into());
         }
-        let definition_path = safe_relative_path(package_root, &manifest.definition_path)?;
-        if manifest.definition_path != DEFINITION_FILE_NAME {
-            return Err("user instrument manifest must point to definition.json".into());
-        }
-        require_regular_file(&definition_path, "user instrument definition")?;
-        let definition_json = fs::read_to_string(&definition_path)
-            .map_err(|error| format!("user instrument definition could not be read: {error}"))?;
-        let metadata = read_definition_metadata(&definition_json, &manifest.instrument_id)?;
-        validate_package_resources(package_root)?;
-        Ok(ResolvedUserInstrument {
-            manifest,
-            package_root: package_root.to_path_buf(),
-            definition_json,
-            name: metadata.name,
-            author: metadata.author,
-            description: metadata.description,
-            category: metadata.category,
-            tags: metadata.tags,
-            recommended_range: metadata.recommended_range,
-            preview: metadata.preview,
-        })
+        load_package(package_root, manifest)
     }
 
     fn user_root(&self) -> PathBuf {
@@ -350,6 +331,33 @@ impl UserInstrumentStore {
         fs::create_dir(&temporary)?;
         Ok(temporary)
     }
+}
+
+fn load_package(
+    package_root: &Path,
+    manifest: UserInstrumentManifest,
+) -> Result<ResolvedUserInstrument, String> {
+    let definition_path = safe_relative_path(package_root, &manifest.definition_path)?;
+    if manifest.definition_path != DEFINITION_FILE_NAME {
+        return Err("user instrument manifest must point to definition.json".into());
+    }
+    require_regular_file(&definition_path, "user instrument definition")?;
+    let definition_json = fs::read_to_string(&definition_path)
+        .map_err(|error| format!("user instrument definition could not be read: {error}"))?;
+    let metadata = read_definition_metadata(&definition_json, &manifest.instrument_id)?;
+    validate_package_resources(package_root)?;
+    Ok(ResolvedUserInstrument {
+        manifest,
+        package_root: package_root.to_path_buf(),
+        definition_json,
+        name: metadata.name,
+        author: metadata.author,
+        description: metadata.description,
+        category: metadata.category,
+        tags: metadata.tags,
+        recommended_range: metadata.recommended_range,
+        preview: metadata.preview,
+    })
 }
 
 #[derive(Debug, Deserialize)]
@@ -682,8 +690,22 @@ fn package_path_is_link(metadata: &fs::Metadata) -> bool {
 }
 
 fn install_directory(temporary: &Path, destination: &Path) -> io::Result<()> {
+    install_directory_with(
+        temporary,
+        destination,
+        |source, target| fs::rename(source, target),
+        |path| fs::remove_dir_all(path),
+    )
+}
+
+fn install_directory_with(
+    temporary: &Path,
+    destination: &Path,
+    rename: impl Fn(&Path, &Path) -> io::Result<()>,
+    remove_backup: impl FnOnce(&Path) -> io::Result<()>,
+) -> io::Result<()> {
     if !destination.exists() {
-        return fs::rename(temporary, destination);
+        return rename(temporary, destination);
     }
     let parent = destination
         .parent()
@@ -693,12 +715,20 @@ fn install_directory(temporary: &Path, destination: &Path) -> io::Result<()> {
         destination.file_name().unwrap().to_string_lossy(),
         new_instance_id()
     ));
-    fs::rename(destination, &backup)?;
-    if let Err(error) = fs::rename(temporary, destination) {
-        let _ = fs::rename(&backup, destination);
+    rename(destination, &backup)?;
+    if let Err(error) = rename(temporary, destination) {
+        if let Err(restore_error) = rename(&backup, destination) {
+            return Err(io::Error::other(format!(
+                "install failed: {error}; restore failed: {restore_error}; backup retained at {}",
+                backup.display()
+            )));
+        }
         return Err(error);
     }
-    fs::remove_dir_all(backup)
+    if let Err(error) = remove_backup(&backup) {
+        tracing::warn!(path = %backup.display(), %error, "could not remove user instrument backup");
+    }
+    Ok(())
 }
 
 fn canonical_parent_is_inside(parent: &Path, source: &Path) -> Result<bool, String> {
@@ -740,6 +770,80 @@ mod tests {
             .unwrap_err();
         assert!(error.contains("user:<canonical-lowercase-uuid>"));
         assert!(error.contains("omit instrumentId"));
+    }
+
+    #[test]
+    fn installing_a_package_restores_the_previous_package_when_staging_is_missing() {
+        let root = std::env::temp_dir().join(format!("riffra-user-install-{}", new_instance_id()));
+        let destination = root.join("instrument");
+        let staging = root.join("staging");
+        fs::create_dir_all(&destination).unwrap();
+        fs::write(destination.join("definition.json"), b"old").unwrap();
+
+        assert!(install_directory(&staging, &destination).is_err());
+        assert_eq!(
+            fs::read(destination.join("definition.json")).unwrap(),
+            b"old"
+        );
+
+        fs::create_dir(&staging).unwrap();
+        fs::write(staging.join("definition.json"), b"new").unwrap();
+        install_directory(&staging, &destination).unwrap();
+        assert_eq!(
+            fs::read(destination.join("definition.json")).unwrap(),
+            b"new"
+        );
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
+        {
+            fs::create_dir(&staging).unwrap();
+            fs::write(staging.join("definition.json"), b"newer").unwrap();
+            install_directory_with(
+                &staging,
+                &destination,
+                |source, target| fs::rename(source, target),
+                |_| {
+                    Err(io::Error::new(
+                        io::ErrorKind::PermissionDenied,
+                        "test cleanup failure",
+                    ))
+                },
+            )
+            .unwrap();
+            assert_eq!(
+                fs::read(destination.join("definition.json")).unwrap(),
+                b"newer"
+            );
+            let backup = fs::read_dir(&root)
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .find(|path| path != &destination)
+                .unwrap();
+            let old_definition = backup.join("definition.json");
+            assert_eq!(fs::read(&old_definition).unwrap(), b"new");
+            fs::remove_dir_all(backup).unwrap();
+        }
+        let failure = install_directory_with(
+            &staging,
+            &destination,
+            |source, target| {
+                if source == destination {
+                    fs::rename(source, target)
+                } else {
+                    Err(io::Error::other("test rename failure"))
+                }
+            },
+            |path| fs::remove_dir_all(path),
+        )
+        .unwrap_err();
+        let backup = fs::read_dir(&root).unwrap().next().unwrap().unwrap().path();
+        assert!(
+            failure
+                .to_string()
+                .contains(&backup.to_string_lossy().to_string())
+        );
+        assert_eq!(fs::read(backup.join("definition.json")).unwrap(), b"newer");
+        assert!(!destination.exists());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
