@@ -189,6 +189,8 @@ impl DawHost {
     /// Performs the explicit shutdown sequence for the Host.
     pub fn shutdown(&self) {
         self.state.lifecycle.request_shutdown();
+        self.state.jobs.cancel_all();
+        self.state.voisona_status.wake_waiters();
         self.state.audio.cancel_waits_for_shutdown();
         if let Ok(mut sync) = self.voisona_sync.lock()
             && let Some(sync) = sync.take()

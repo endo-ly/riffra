@@ -2,5 +2,16 @@
   "type": "offlineRenderComplete",
   "frames": 96000,
   "sampleRate": 48000,
-  "automationWarnings": []
+  "automationWarnings": [],
+  "silentVocals": [
+    {
+      "trackId": "track-vst",
+      "ranges": [
+        {
+          "startTick": 480,
+          "endTick": 960
+        }
+      ]
+    }
+  ]
 }

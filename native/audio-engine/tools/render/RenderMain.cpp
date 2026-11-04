@@ -69,7 +69,8 @@ int runRenderWorker() {
     if (!rendered) return reject("renderRejected", error);
 
     writeLine(riffra::encodeOfflineRenderComplete(
-        {result.frames, static_cast<std::uint32_t>(result.sampleRate), result.automationWarnings}));
+        {result.frames, static_cast<std::uint32_t>(result.sampleRate), result.automationWarnings,
+         result.silentVocals}));
     return 0;
 }
 

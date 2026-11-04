@@ -850,9 +850,10 @@ bool decodeOfflineRenderRequest(const juce::var& value, OfflineRenderRequestSpec
                                 juce::String& error) {
     ContractReader reader(value, "request",
                           {"graph", "output", "startTick", "endTick", "sampleRate", "blockSize",
-                           "normalize", "tailSeconds", "includeEndEvents"},
+                           "normalize", "tailSeconds", "includeEndEvents", "vocalDiagnostics"},
                           error);
     juce::var graph, target;
+    juce::Array<juce::var> diagnostics;
     if (!reader.object("graph", graph) || !reader.object("output", target) ||
         !reader.unsignedInteger("startTick", output.startTick) ||
         !reader.unsignedInteger("endTick", output.endTick) ||
@@ -860,12 +861,39 @@ bool decodeOfflineRenderRequest(const juce::var& value, OfflineRenderRequestSpec
         !reader.unsigned32("blockSize", output.blockSize) ||
         !reader.number("tailSeconds", output.tailSeconds) ||
         !reader.boolean("includeEndEvents", output.includeEndEvents) ||
-        !reader.boolean("normalize", output.normalize) || !reader.finish())
+        !reader.boolean("normalize", output.normalize) ||
+        !reader.array("vocalDiagnostics", diagnostics) || !reader.finish())
         return false;
     if (!decodeGraph(graph, "request.graph", output.graph, error)) return false;
     output.destination.clear();
     output.stems.clear();
-    output.vocals.clear();
+    output.vocalDiagnostics.clear();
+    std::set<juce::String> diagnosticIds;
+    for (int i = 0; i < diagnostics.size(); ++i) {
+        const auto path = element("request.vocalDiagnostics", i);
+        ContractReader diagnostic(diagnostics[i], path, {"trackId", "ranges"}, error);
+        VocalDiagnosticSpec entry;
+        juce::Array<juce::var> ranges;
+        if (!diagnostic.string("trackId", entry.trackId) || !diagnostic.array("ranges", ranges) ||
+            !diagnostic.finish())
+            return false;
+        if (entry.trackId.isEmpty() || !diagnosticIds.insert(entry.trackId).second ||
+            ranges.isEmpty())
+            return fail(error, path, "track must be unique and ranges must not be empty");
+        for (int j = 0; j < ranges.size(); ++j) {
+            const auto rangePath = element(child(path, "ranges"), j);
+            ContractReader range(ranges[j], rangePath, {"startTick", "endTick"}, error);
+            VocalRangeSpec value;
+            if (!range.unsignedInteger("startTick", value.startTick) ||
+                !range.unsignedInteger("endTick", value.endTick) || !range.finish())
+                return false;
+            if (value.startTick < output.startTick || value.endTick > output.endTick ||
+                value.startTick >= value.endTick)
+                return fail(error, rangePath, "range must be nonempty and inside the render range");
+            entry.ranges.push_back(value);
+        }
+        output.vocalDiagnostics.push_back(std::move(entry));
+    }
     const auto decodeOutputs = [&](const juce::Array<juce::var>& values, const char* key,
                                    std::vector<OfflineStemOutputSpec>& result) {
         std::set<juce::String> ids, paths;
@@ -886,17 +914,13 @@ bool decodeOfflineRenderRequest(const juce::var& value, OfflineRenderRequestSpec
     };
     const auto kind = target.getProperty("kind", {}).toString();
     if (kind == "mixdown") {
-        ContractReader targetReader(target, "request.output", {"kind", "destination", "vocals"},
-                                    error);
+        ContractReader targetReader(target, "request.output", {"kind", "destination"}, error);
         juce::String ignored;
-        juce::Array<juce::var> vocals;
         if (!targetReader.string("kind", ignored) ||
-            !targetReader.string("destination", output.destination) ||
-            !targetReader.array("vocals", vocals) || !targetReader.finish())
+            !targetReader.string("destination", output.destination) || !targetReader.finish())
             return false;
         if (output.destination.isEmpty())
             return fail(error, "request.output.destination", "must not be empty");
-        if (!decodeOutputs(vocals, "vocals", output.vocals)) return false;
     } else if (kind == "stems") {
         ContractReader targetReader(target, "request.output", {"kind", "outputs"}, error);
         juce::String ignored;

@@ -4,7 +4,7 @@ use crate::audio::wire::{OfflineRenderEnvelope, RenderMessage, SIDECAR_PROTOCOL_
 use crate::execution::{
     OfflineRenderOutput, OfflineRenderRequest as OfflineRenderRequestSpec, OfflineStemOutput,
 };
-use crate::render::{OfflineRenderRequest, OfflineRenderTarget};
+use crate::render::{OfflineRenderDiagnostics, OfflineRenderRequest, OfflineRenderTarget};
 use std::{
     io::{Read, Write},
     path::PathBuf,
@@ -79,10 +79,11 @@ impl RenderWorker {
         &self,
         request: OfflineRenderRequest,
         cancelled: Option<&AtomicBool>,
-    ) -> Result<Vec<String>, RenderWorkerError> {
+    ) -> Result<OfflineRenderDiagnostics, RenderWorkerError> {
         if cancelled.is_some_and(|flag| flag.load(Ordering::Acquire)) {
             return Err(RenderWorkerError::Cancelled);
         }
+        let expected_vocals = request.vocal_diagnostics.clone();
         let payload = OfflineRenderEnvelope::RenderTimelineOffline {
             protocol_version: SIDECAR_PROTOCOL_VERSION,
             request: OfflineRenderRequestSpec {
@@ -90,18 +91,8 @@ impl RenderWorker {
                 tail_seconds: request.tail_seconds,
                 graph: request.graph,
                 output: match request.output {
-                    OfflineRenderTarget::Mixdown {
-                        destination,
-                        vocals,
-                    } => OfflineRenderOutput::Mixdown {
+                    OfflineRenderTarget::Mixdown { destination } => OfflineRenderOutput::Mixdown {
                         destination: destination.to_string_lossy().into_owned(),
-                        vocals: vocals
-                            .into_iter()
-                            .map(|(track_id, destination)| OfflineStemOutput {
-                                track_id,
-                                destination: destination.to_string_lossy().into_owned(),
-                            })
-                            .collect(),
                     },
                     OfflineRenderTarget::Stems(outputs) => OfflineRenderOutput::Stems {
                         outputs: outputs
@@ -118,6 +109,7 @@ impl RenderWorker {
                 sample_rate: request.sample_rate,
                 block_size: request.block_size,
                 normalize: request.normalize,
+                vocal_diagnostics: request.vocal_diagnostics,
             },
         };
         let encoded = serde_json::to_vec(&payload).map_err(RenderWorkerError::Encode)?;
@@ -140,7 +132,10 @@ impl RenderWorker {
             .map_err(RenderWorkerError::Write)?;
         drop(input);
         if cancelled.is_none() {
-            return self.handle_output(child.wait_with_output().map_err(RenderWorkerError::Wait)?);
+            return self.handle_output(
+                child.wait_with_output().map_err(RenderWorkerError::Wait)?,
+                &expected_vocals,
+            );
         }
         let mut stdout = child.stdout.take().ok_or_else(|| {
             RenderWorkerError::Wait(std::io::Error::other(
@@ -182,14 +177,21 @@ impl RenderWorker {
             .join()
             .map_err(|_| RenderWorkerError::Wait(std::io::Error::other("stderr reader panicked")))?
             .map_err(RenderWorkerError::Wait)?;
-        self.handle_output(Output {
-            status,
-            stdout,
-            stderr,
-        })
+        self.handle_output(
+            Output {
+                status,
+                stdout,
+                stderr,
+            },
+            &expected_vocals,
+        )
     }
 
-    fn handle_output(&self, output: Output) -> Result<Vec<String>, RenderWorkerError> {
+    fn handle_output(
+        &self,
+        output: Output,
+        expected: &[crate::execution::VocalDiagnostic],
+    ) -> Result<OfflineRenderDiagnostics, RenderWorkerError> {
         let response: RenderMessage = serde_json::from_slice(&output.stdout).map_err(|source| {
             RenderWorkerError::InvalidResponse {
                 error: source,
@@ -202,9 +204,43 @@ impl RenderWorker {
                 frames,
                 sample_rate,
                 automation_warnings,
+                silent_vocals,
             } if output.status.success() => {
+                let mut track_ids = std::collections::HashSet::new();
+                for track in &silent_vocals {
+                    let Some(requested) = expected
+                        .iter()
+                        .find(|entry| entry.track_id == track.track_id)
+                    else {
+                        return Err(RenderWorkerError::Rejected(
+                            "render worker returned an unknown vocal track".into(),
+                        ));
+                    };
+                    let mut ranges = Vec::new();
+                    if !track_ids.insert(&track.track_id)
+                        || track.ranges.iter().any(|range| {
+                            if !requested.ranges.contains(range) || ranges.contains(range) {
+                                return true;
+                            }
+                            ranges.push(range.clone());
+                            false
+                        })
+                    {
+                        return Err(RenderWorkerError::Rejected(
+                            "render worker returned invalid vocal ranges".into(),
+                        ));
+                    }
+                }
+                if track_ids.len() != expected.len() {
+                    return Err(RenderWorkerError::Rejected(
+                        "render worker omitted a vocal track diagnostic".into(),
+                    ));
+                }
                 tracing::info!(frames, sample_rate, "offline render worker completed");
-                Ok(automation_warnings)
+                Ok(OfflineRenderDiagnostics {
+                    automation_warnings,
+                    silent_vocals,
+                })
             }
             RenderMessage::OfflineRenderComplete { .. } => Err(RenderWorkerError::Incomplete {
                 status: output.status.to_string(),
@@ -223,7 +259,7 @@ impl RenderWorker {
         &self,
         request: OfflineRenderRequest,
         cancelled: &AtomicBool,
-    ) -> Result<Vec<String>, String> {
+    ) -> Result<OfflineRenderDiagnostics, String> {
         self.render_with_cancellation(request, Some(cancelled))
             .map_err(|error| error.to_string())
     }
@@ -270,15 +306,13 @@ mod tests {
             include_end_events: false,
             tail_seconds: 0.0,
             graph: empty_graph(),
-            output: OfflineRenderTarget::Mixdown {
-                destination,
-                vocals: Vec::new(),
-            },
+            output: OfflineRenderTarget::Mixdown { destination },
             start_tick: 0,
             end_tick: 960,
             sample_rate: 48_000,
             block_size: 512,
             normalize: false,
+            vocal_diagnostics: Vec::new(),
         }
     }
 

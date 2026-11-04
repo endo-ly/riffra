@@ -271,18 +271,28 @@ pub(crate) struct OfflineRenderRequest {
     pub(crate) sample_rate: u32,
     pub(crate) block_size: u32,
     pub(crate) normalize: bool,
+    pub(crate) vocal_diagnostics: Vec<VocalDiagnostic>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub(crate) enum OfflineRenderOutput {
-    Mixdown {
-        destination: String,
-        vocals: Vec<OfflineStemOutput>,
-    },
-    Stems {
-        outputs: Vec<OfflineStemOutput>,
-    },
+    Mixdown { destination: String },
+    Stems { outputs: Vec<OfflineStemOutput> },
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct VocalRange {
+    pub(crate) start_tick: u64,
+    pub(crate) end_tick: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct VocalDiagnostic {
+    pub(crate) track_id: String,
+    pub(crate) ranges: Vec<VocalRange>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -650,13 +660,19 @@ mod tests {
                     graph,
                     output: OfflineRenderOutput::Mixdown {
                         destination: "renders/song.wav".into(),
-                        vocals: Vec::new(),
                     },
                     start_tick: 0,
                     end_tick: 7_680,
                     sample_rate: 48_000,
                     block_size: 512,
                     normalize: true,
+                    vocal_diagnostics: vec![VocalDiagnostic {
+                        track_id: "track-vst".into(),
+                        ranges: vec![VocalRange {
+                            start_tick: 480,
+                            end_tick: 960,
+                        }],
+                    }],
                 })
                 .unwrap(),
             ),

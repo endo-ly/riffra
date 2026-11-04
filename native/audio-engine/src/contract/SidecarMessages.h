@@ -385,6 +385,7 @@ struct OfflineRenderCompleteSpec final {
     std::uint64_t frames = 0;
     std::uint32_t sampleRate = 0;
     std::vector<juce::String> automationWarnings;
+    std::vector<VocalDiagnosticSpec> silentVocals;
 };
 
 /// Every response `type` written on stdout.

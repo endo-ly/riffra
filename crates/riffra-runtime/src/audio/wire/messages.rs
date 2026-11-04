@@ -459,6 +459,7 @@ pub(crate) enum RenderMessage {
         frames: u64,
         sample_rate: u32,
         automation_warnings: Vec<String>,
+        silent_vocals: Vec<crate::execution::VocalDiagnostic>,
     },
     Error(SidecarError),
 }

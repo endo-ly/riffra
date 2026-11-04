@@ -380,12 +380,22 @@
   },
   "output": {
     "kind": "mixdown",
-    "destination": "renders/song.wav",
-    "vocals": []
+    "destination": "renders/song.wav"
   },
   "startTick": 0,
   "endTick": 7680,
   "sampleRate": 48000,
   "blockSize": 512,
-  "normalize": true
+  "normalize": true,
+  "vocalDiagnostics": [
+    {
+      "trackId": "track-vst",
+      "ranges": [
+        {
+          "startTick": 480,
+          "endTick": 960
+        }
+      ]
+    }
+  ]
 }

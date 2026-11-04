@@ -262,12 +262,12 @@ C++の出力は3つのレーンに分かれる。`control` は順序を保つバ
 
 Hostのrender.start / render.stems Jobはそれぞれ一つのriffra-renderを起動し、Realtimeと同じExecution Graphを渡す。GraphはMixerのMaster Effects・Bus・SendとTrackのoutputBusId、解決済みのプラグインパス・保存状態・接続先IDを含む。Nativeは必須フィールドと実行可能な参照を厳密に検証する。Graphの共有フィクスチャは contracts/execution-graph に置く。
 
-| 項目 | 契約                                                                                                                                                                            |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 起動 | RuntimeBinariesの実行ファイルを使用。配置規則はDesktopとHeadlessで共通                                                                                                          |
-| 要求 | stdinへJSON 1行。renderTimelineOffline、protocolVersion: 4、requestにgraph、出力先、時間範囲、音声形式と処理設定を含む。出力先は単一のMixdownまたはTrack IDと保存先の組のリスト |
-| 応答 | 成功はofflineRenderCompleteのframes・sampleRate、失敗はerror。contracts/sidecar/messages/render.*.jsonで形を固定                                                                |
-| 異常 | プロセス異常終了・応答不一致・デコード失敗はJob失敗として扱い、部分的なWAVを破棄する                                                                                            |
+| 項目 | 契約                                                                                                                                                                             |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 起動 | RuntimeBinariesの実行ファイルを使用。配置規則はDesktopとHeadlessで共通                                                                                                           |
+| 要求 | stdinへJSON 1行。renderTimelineOffline、protocolVersion: 4、requestにgraph、出力先、時間範囲、音声形式と処理設定を含む。出力先は単一のMixdownまたはTrack IDと保存先の組のリスト  |
+| 応答 | 成功はofflineRenderCompleteのframes・sampleRate・オートメーション警告と、指定された発声区間のうち無音だった区間。失敗はerror。contracts/sidecar/messages/render.*.jsonで形を固定 |
+| 異常 | プロセス異常終了・応答不一致・デコード失敗はJob失敗として扱い、部分的なWAVを破棄する                                                                                             |
 
 Hostが範囲・保存先・Asset登録・Manifestを管理し、Native workerはGraphの実行を担当する。`measurements` と `warnings` の意味、ステムとマスタリングの扱いは audio-engine.md「オフラインレンダリング」を参照する。
 

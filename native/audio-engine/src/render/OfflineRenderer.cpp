@@ -166,16 +166,25 @@ std::unique_ptr<OfflineRenderer> OfflineRenderer::prepare(const OfflineRenderReq
     auto timelineEngine = std::make_unique<TimelineEngine>(true);
     if (!timelineEngine->loadSnapshot(renderSnapshot, formats, sampleRate, blockSize, error))
         return nullptr;
-    const auto& captures = request.stems.empty() ? request.vocals : request.stems;
-    if (!captures.empty()) {
-        std::vector<juce::String> ids;
-        for (const auto& stem : captures) {
-            if (!juce::File(stem.destination).getParentDirectory().createDirectory()) {
-                error = "Stem output directory could not be created: " + stem.destination;
-                return nullptr;
-            }
-            ids.push_back(stem.trackId);
+    std::vector<juce::String> ids;
+    for (const auto& stem : request.stems) {
+        if (!juce::File(stem.destination).getParentDirectory().createDirectory()) {
+            error = "Stem output directory could not be created: " + stem.destination;
+            return nullptr;
         }
+        ids.push_back(stem.trackId);
+    }
+    std::vector<std::size_t> diagnosticCaptureIndices;
+    for (const auto& diagnostic : request.vocalDiagnostics) {
+        auto found = std::find(ids.begin(), ids.end(), diagnostic.trackId);
+        if (found == ids.end()) {
+            ids.push_back(diagnostic.trackId);
+            diagnosticCaptureIndices.push_back(ids.size() - 1);
+        } else {
+            diagnosticCaptureIndices.push_back(static_cast<std::size_t>(found - ids.begin()));
+        }
+    }
+    if (!ids.empty()) {
         if (!timelineEngine->prepareStemCapture(ids, error)) return nullptr;
     }
     const auto status = timelineEngine->status();
@@ -194,7 +203,7 @@ std::unique_ptr<OfflineRenderer> OfflineRenderer::prepare(const OfflineRenderReq
         status.graph ? status.graph->automationWarnings : std::vector<juce::String>{};
     Plan renderPlan{destination,
                     request.stems.empty(),
-                    captures,
+                    request.stems,
                     sampleRate,
                     blockSize,
                     startSample,
@@ -205,7 +214,10 @@ std::unique_ptr<OfflineRenderer> OfflineRenderer::prepare(const OfflineRenderReq
                     hostsPlugins(request.graph),
                     request.graph.pluginWarmUpSeconds,
                     latencySamples,
-                    automationWarnings};
+                    automationWarnings,
+                    request.vocalDiagnostics,
+                    std::move(diagnosticCaptureIndices),
+                    timelineTimebase};
     return std::unique_ptr<OfflineRenderer>(
         new OfflineRenderer(std::move(renderPlan), std::move(timelineEngine)));
 }
@@ -274,6 +286,30 @@ bool OfflineRenderer::render(juce::AudioFormatManager& formats, Result& result,
     const auto writeEnd = plan.outputEndSample + plan.latencySamples;
     std::uint64_t writtenFrames = 0;
     std::int64_t position = 0;
+    auto silentVocals = plan.vocalDiagnostics;
+    std::vector<std::vector<bool>> audible;
+    struct SampleRange final {
+        std::int64_t begin, end;
+        std::size_t index;
+    };
+    std::vector<std::vector<SampleRange>> sampleRanges;
+    std::vector<std::vector<SampleRange>> activeRanges(plan.vocalDiagnostics.size());
+    std::vector<std::size_t> nextRange(plan.vocalDiagnostics.size(), 0);
+    for (const auto& diagnostic : plan.vocalDiagnostics) {
+        audible.emplace_back(diagnostic.ranges.size(), false);
+        auto& ranges = sampleRanges.emplace_back();
+        for (std::size_t index = 0; index < diagnostic.ranges.size(); ++index) {
+            const auto& range = diagnostic.ranges[index];
+            ranges.push_back(
+                {plan.diagnosticTimebase.tickToSample(range.startTick, plan.sampleRate) +
+                     plan.latencySamples,
+                 plan.diagnosticTimebase.tickToSample(range.endTick, plan.sampleRate) +
+                     plan.latencySamples,
+                 index});
+        }
+        std::sort(ranges.begin(), ranges.end(),
+                  [](const auto& left, const auto& right) { return left.begin < right.begin; });
+    }
     while (position < plan.processingEnd) {
         const auto count =
             static_cast<int>(std::min<std::int64_t>(plan.blockSize, plan.processingEnd - position));
@@ -286,6 +322,27 @@ bool OfflineRenderer::render(juce::AudioFormatManager& formats, Result& result,
             const auto from = std::max(writeBegin, position);
             const auto offsetInBlock = static_cast<int>(from - position);
             const auto writeCount = static_cast<int>(stop - from);
+            for (std::size_t i = 0; i < plan.vocalDiagnostics.size(); ++i) {
+                const auto& source = engine->stemBuffer(plan.diagnosticCaptureIndices[i]);
+                auto& active = activeRanges[i];
+                const auto& ranges = sampleRanges[i];
+                while (nextRange[i] < ranges.size() && ranges[nextRange[i]].begin < stop)
+                    active.push_back(ranges[nextRange[i]++]);
+                for (const auto& range : active) {
+                    const auto first = std::max(from, range.begin);
+                    const auto last = std::min(stop, range.end);
+                    if (last > first) {
+                        const auto offset = static_cast<int>(first - position);
+                        const auto length = static_cast<int>(last - first);
+                        for (int channel = 0; channel < 2; ++channel)
+                            if (source.getMagnitude(channel, offset, length) > 1.0e-7f)
+                                audible[i][range.index] = true;
+                    }
+                }
+                std::erase_if(active, [&](const auto& range) {
+                    return audible[i][range.index] || range.end <= stop;
+                });
+            }
             for (std::size_t i = 0; i < outputs.files.size(); ++i) {
                 auto& output = outputs.files[i];
                 const auto& source = plan.mixdown && i == 0
@@ -336,6 +393,12 @@ bool OfflineRenderer::render(juce::AudioFormatManager& formats, Result& result,
     result.frames = writtenFrames;
     result.sampleRate = plan.sampleRate;
     result.automationWarnings = plan.automationWarnings;
+    for (std::size_t i = 0; i < silentVocals.size(); ++i) {
+        auto& ranges = silentVocals[i].ranges;
+        for (std::size_t j = ranges.size(); j-- > 0;)
+            if (audible[i][j]) ranges.erase(ranges.begin() + static_cast<std::ptrdiff_t>(j));
+    }
+    result.silentVocals = std::move(silentVocals);
     return true;
 }
 

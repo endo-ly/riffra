@@ -14,6 +14,7 @@ impl HostState {
         report.finished_at_ms = now_ms();
         plugins::save(&self.data_root, &report)
             .map_err(|error| format!("plugin catalog could not be saved: {error}"))?;
+        self.event_hub.notify_plugin_catalog_changed();
         library::sync_plugins(&self.data_root, &report.plugins)?;
         Ok(report)
     }
@@ -26,6 +27,7 @@ impl HostState {
         let registry = self.jobs.clone();
         let data_root = self.data_root.clone();
         let scanner = self.binaries.plugin_scan.clone();
+        let event_hub = Arc::clone(&self.event_hub);
         let Some(cancelled) = registry.cancellation_flag(&id) else {
             return Err("plugin scan job could not be registered".into());
         };
@@ -72,6 +74,7 @@ impl HostState {
                     );
                     return;
                 }
+                event_hub.notify_plugin_catalog_changed();
                 if let Err(error) = library::sync_plugins(&data_root, &report.plugins) {
                     jobs::fail(&registry, &data_root, &job_id, error);
                     return;

@@ -241,25 +241,10 @@ mod tests {
         let encoded = original.encode().unwrap();
         let decoded = PluginState::parse(&encoded).unwrap();
         assert_eq!(decoded.root, original.root);
+        assert_eq!(decoded.prefix, original.prefix);
+        assert_eq!(decoded.suffix, original.suffix);
+        assert_eq!(decoded.tail, original.tail);
         assert_eq!(decoded.encode().unwrap(), encoded);
         assert!(PluginState::parse("invalid").is_err());
-    }
-
-    #[test]
-    #[ignore = "requires a locally saved VoiSona state"]
-    fn round_trips_real_plugin_state() {
-        let path = std::env::var_os("RIFFRA_VOISONA_TEST_STATE").expect("VoiSona state path");
-        let mut json: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
-        let encoded = json["stateData"].as_str().unwrap();
-        let state = PluginState::parse(encoded).unwrap();
-        assert_eq!(
-            PluginState::parse(&state.encode().unwrap()).unwrap().root,
-            state.root
-        );
-        if let Some(output) = std::env::var_os("RIFFRA_VOISONA_TEST_OUTPUT") {
-            json["stateData"] = state.encode().unwrap().into();
-            std::fs::write(output, serde_json::to_vec(&json).unwrap()).unwrap();
-        }
     }
 }

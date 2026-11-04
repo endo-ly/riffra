@@ -192,8 +192,9 @@ std::vector<std::pair<juce::String, juce::var>> messageFixtures() {
                                            true,
                                            "Plugin.vst3"}));
     fixtures.emplace_back("error.json", encodeError(1, error()));
-    fixtures.emplace_back("render.offlineRenderComplete.json",
-                          encodeOfflineRenderComplete({96'000, 48'000, {}}));
+    fixtures.emplace_back(
+        "render.offlineRenderComplete.json",
+        encodeOfflineRenderComplete({96'000, 48'000, {}, {{"track-vst", {{480, 960}}}}}));
     fixtures.emplace_back(
         "render.error.json",
         encodeOfflineRenderError(

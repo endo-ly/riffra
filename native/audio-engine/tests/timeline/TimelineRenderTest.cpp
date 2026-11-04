@@ -74,7 +74,7 @@ TEST(TimelineEngineTest, CapturesAlignedPostFaderStemsAcrossSplitBlocks) {
     EXPECT_NEAR(stems[0][560] / stems[1][560], 4.0f * juce::Decibels::decibelsToGain(-6.0f), 0.01f);
 }
 
-TEST(TimelineEngineTest, MixdownAndDiagnosticTrackAreWrittenTogether) {
+TEST(TimelineEngineTest, MixdownMeasuresVocalRangesWithoutWritingDiagnosticWavs) {
     juce::ScopedJuceInitialiser_GUI initialiser;
     test::TemporaryDirectory directory;
     const auto source = directory.get().getChildFile("source.wav");
@@ -82,15 +82,16 @@ TEST(TimelineEngineTest, MixdownAndDiagnosticTrackAreWrittenTogether) {
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();
     auto graph = makeRawAndProcessedClipSnapshot(source, source, 512).graph;
+    graph.tracks.front().effects.push_back({"fx:latency", RIFFRA_TEST_EFFECT_BUNDLE_PATH, {}});
+    graph.pluginWarmUpSeconds = 0;
     OfflineRenderRequestSpec request;
     request.graph = std::move(graph);
     request.destination = directory.get().getChildFile("mix.wav").getFullPathName();
-    request.startTick = 0;
+    request.startTick = 1;
     request.endTick = 960;
     request.sampleRate = 48'000;
     request.blockSize = 64;
-    request.vocals.push_back(
-        {"track:audio", directory.get().getChildFile("vocal.wav").getFullPathName()});
+    request.vocalDiagnostics.push_back({"track:audio", {{100, 200}, {1, 10}, {5, 15}}});
     juce::String error;
     auto renderer = OfflineRenderer::prepare(request, formats, error);
     ASSERT_NE(renderer, nullptr) << error;
@@ -98,16 +99,25 @@ TEST(TimelineEngineTest, MixdownAndDiagnosticTrackAreWrittenTogether) {
     ASSERT_TRUE(renderer->render(formats, result, error)) << error;
     auto mix = std::unique_ptr<juce::AudioFormatReader>(
         formats.createReaderFor(juce::File(request.destination)));
-    auto vocal = std::unique_ptr<juce::AudioFormatReader>(
-        formats.createReaderFor(juce::File(request.vocals[0].destination)));
     ASSERT_NE(mix, nullptr);
-    ASSERT_NE(vocal, nullptr);
-    EXPECT_EQ(mix->lengthInSamples, vocal->lengthInSamples);
-    juce::AudioBuffer<float> mixBuffer(2, 64), vocalBuffer(2, 64);
+    juce::AudioBuffer<float> mixBuffer(2, 64);
     ASSERT_TRUE(mix->read(&mixBuffer, 0, 64, 0, true, true));
-    ASSERT_TRUE(vocal->read(&vocalBuffer, 0, 64, 0, true, true));
-    EXPECT_GT(vocalBuffer.getMagnitude(0, 0, 64), 0.01f);
-    EXPECT_NEAR(mixBuffer.getSample(0, 20), vocalBuffer.getSample(0, 20), 0.0001f);
+    EXPECT_GT(mixBuffer.getMagnitude(0, 0, 64), 0.01f);
+    ASSERT_EQ(result.silentVocals.size(), 1u);
+    ASSERT_EQ(result.silentVocals[0].ranges.size(), 1u);
+    EXPECT_EQ(result.silentVocals[0].ranges[0].startTick, 100u);
+    EXPECT_EQ(result.silentVocals[0].ranges[0].endTick, 200u);
+    EXPECT_FALSE(directory.get().getChildFile("vocal.wav").exists());
+
+    request.destination.clear();
+    request.stems.push_back(
+        {"track:audio", directory.get().getChildFile("stem.wav").getFullPathName()});
+    auto stemRenderer = OfflineRenderer::prepare(request, formats, error);
+    ASSERT_NE(stemRenderer, nullptr) << error;
+    OfflineRenderer::Result stemResult;
+    ASSERT_TRUE(stemRenderer->render(formats, stemResult, error)) << error;
+    EXPECT_EQ(stemResult.frames, result.frames);
+    EXPECT_EQ(stemResult.silentVocals, result.silentVocals);
 }
 
 TEST(TimelineEngineTest, KeepsProcessedTakesOutOfTheCurrentTrackEffectChain) {

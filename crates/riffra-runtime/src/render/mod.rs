@@ -1,7 +1,7 @@
 use crate::api::output::{ProjectionDiagnostics, RenderResult, RenderStem, RenderStemsResult};
 use crate::api::params::{RenderOptions, RenderRange};
 use crate::asset;
-use crate::execution::{ExecutionGraph, project_graph, resolve};
+use crate::execution::{ExecutionGraph, VocalDiagnostic, project_graph, resolve};
 use crate::instrument::BuiltInInstrumentCatalog;
 use riffra_core::{AssetId, CreativeSession};
 use std::{
@@ -31,14 +31,28 @@ pub(crate) struct OfflineRenderRequest {
     pub(crate) sample_rate: u32,
     pub(crate) block_size: u32,
     pub(crate) normalize: bool,
+    pub(crate) vocal_diagnostics: Vec<VocalDiagnostic>,
 }
 
 pub(crate) enum OfflineRenderTarget {
-    Mixdown {
-        destination: PathBuf,
-        vocals: Vec<(String, PathBuf)>,
-    },
+    Mixdown { destination: PathBuf },
     Stems(Vec<(String, PathBuf)>),
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct OfflineRenderDiagnostics {
+    automation_warnings: Vec<String>,
+    silent_vocals: Vec<VocalDiagnostic>,
+}
+
+#[cfg(test)]
+impl From<Vec<String>> for OfflineRenderDiagnostics {
+    fn from(automation_warnings: Vec<String>) -> Self {
+        Self {
+            automation_warnings,
+            silent_vocals: Vec::new(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -127,18 +141,24 @@ pub(crate) struct StemRenderContext<'a> {
 /// Stem metadata and cleanup guard awaiting atomic job completion.
 pub(crate) struct PendingRenderStems {
     pub(crate) result: RenderStemsResult,
-    pub(crate) output: PendingStemOutput,
+    pub(crate) output: PendingRenderOutput,
+}
+
+pub(crate) struct PendingRenderTimeline {
+    pub(crate) result: RenderResult,
+    pub(crate) output: PendingRenderOutput,
 }
 
 /// Holds generated files and Asset registrations until the owning job completes.
-pub(crate) struct PendingStemOutput {
+pub(crate) struct PendingRenderOutput {
     data_root: PathBuf,
     directory: PathBuf,
     registrations: Vec<(AssetId, PathBuf)>,
+    external_files: Vec<PathBuf>,
     committed: bool,
 }
 
-impl PendingStemOutput {
+impl PendingRenderOutput {
     fn register(&mut self, id: AssetId, path: PathBuf) {
         self.registrations.push((id, path));
     }
@@ -149,10 +169,17 @@ impl PendingStemOutput {
     }
 }
 
-impl Drop for PendingStemOutput {
+impl Drop for PendingRenderOutput {
     fn drop(&mut self) {
         if self.committed {
             return;
+        }
+        for path in &self.external_files {
+            if let Err(error) = fs::remove_file(path)
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                tracing::error!(%error, path = %path.display(), "render export cleanup failed");
+            }
         }
         let mut registrations_removed = true;
         for (id, path) in &self.registrations {
@@ -160,7 +187,7 @@ impl Drop for PendingStemOutput {
                 asset::discard_output_registration(&self.data_root, id, &path.to_string_lossy())
             {
                 registrations_removed = false;
-                tracing::error!(%error, asset_id = %id, "render stem asset cleanup failed");
+                tracing::error!(%error, asset_id = %id, "render asset cleanup failed");
             }
         }
         if !registrations_removed {
@@ -169,53 +196,8 @@ impl Drop for PendingStemOutput {
         if let Err(error) = fs::remove_dir_all(&self.directory)
             && self.directory.exists()
         {
-            tracing::error!(%error, path = %self.directory.display(), "render stem output cleanup failed");
+            tracing::error!(%error, path = %self.directory.display(), "render output cleanup failed");
         }
-    }
-}
-
-struct PendingOutput<'a> {
-    data_root: &'a Path,
-    path: &'a Path,
-    asset_id: Option<AssetId>,
-    committed: bool,
-}
-
-struct PendingVocalOutputs(Vec<PathBuf>);
-
-impl Drop for PendingVocalOutputs {
-    fn drop(&mut self) {
-        for path in &self.0 {
-            let _ = fs::remove_file(path);
-            for suffix in ["partial", "normalized"] {
-                let _ = fs::remove_file(path.with_file_name(format!(
-                        "{}.{suffix}",
-                        path.file_name()
-                            .expect("vocal output filename")
-                            .to_string_lossy()
-                    )));
-            }
-        }
-    }
-}
-
-impl Drop for PendingOutput<'_> {
-    fn drop(&mut self) {
-        if self.committed {
-            return;
-        }
-        if let Some(id) = &self.asset_id
-            && let Err(error) =
-                asset::discard_output_registration(self.data_root, id, &self.path.to_string_lossy())
-        {
-            tracing::error!(%error, "render output registration cleanup failed");
-            return;
-        }
-        let _ = fs::remove_file(self.path);
-        if let Some(directory) = self.path.parent() {
-            let _ = fs::remove_file(directory.join("render.json"));
-        }
-        remove_empty_render_directory(self.path);
     }
 }
 
@@ -223,19 +205,22 @@ pub(crate) fn render_timeline_with_project_cancellation(
     renderer: &RenderWorker,
     context: TimelineRenderContext<'_>,
     cancelled: &AtomicBool,
-) -> Result<RenderResult, String> {
-    render_timeline_with_renderer(
+    catalog: &[crate::api::output::PluginEntry],
+) -> Result<PendingRenderTimeline, String> {
+    render_timeline_pending(
         context,
         |request| renderer.render_timeline_offline_cancellable(request, cancelled),
         Some(cancelled),
+        catalog,
     )
 }
 
-fn render_timeline_with_renderer(
+fn render_timeline_pending<R: Into<OfflineRenderDiagnostics>>(
     context: TimelineRenderContext<'_>,
-    render: impl FnOnce(OfflineRenderRequest) -> Result<Vec<String>, String>,
+    render: impl FnOnce(OfflineRenderRequest) -> Result<R, String>,
     cancelled: Option<&AtomicBool>,
-) -> Result<RenderResult, String> {
+    catalog: &[crate::api::output::PluginEntry],
+) -> Result<PendingRenderTimeline, String> {
     let TimelineRenderContext {
         data_root,
         built_in_instruments,
@@ -264,40 +249,45 @@ fn render_timeline_with_renderer(
     fs::create_dir_all(directory.parent().expect("render folder has a parent"))
         .and_then(|()| fs::create_dir(directory))
         .map_err(|error| format!("render output folder could not be created: {error}"))?;
-    let mut pending = PendingOutput {
-        data_root,
-        path: &plan.output_path,
-        asset_id: None,
+    let mut pending = PendingRenderOutput {
+        data_root: data_root.to_owned(),
+        directory: directory.to_owned(),
+        registrations: Vec::new(),
+        external_files: Vec::new(),
         committed: false,
     };
 
     let mut vocals = Vec::new();
     for track in &session.arrangement.tracks {
         if !vocal::reaches_mix(session, track, options.track_id.as_deref())
-            || vocal::singing_ranges(session, track, plan.start_tick, plan.end_tick).is_empty()
-            || !crate::voisona::is_target(data_root, track)?
+            || !crate::voisona::is_target_in(catalog, track)
         {
             continue;
         }
-        let path = directory.join(format!("vocal-diagnostic-{:03}.wav", vocals.len() + 1));
-        vocals.push((track.id.clone(), path));
+        let ranges = vocal::ranges(session, track, plan.start_tick, plan.end_tick)?;
+        if !ranges.is_empty() {
+            vocals.push(VocalDiagnostic {
+                track_id: track.id.clone(),
+                ranges,
+            });
+        }
     }
-    let _vocal_outputs = PendingVocalOutputs(vocals.iter().map(|(_, path)| path.clone()).collect());
 
-    let mut automation_warnings = render(OfflineRenderRequest {
+    let diagnostics = render(OfflineRenderRequest {
         include_end_events: matches!(options.range, RenderRange::EntireArrangement),
         tail_seconds: plan.tail_seconds,
         graph: plan.graph,
         output: OfflineRenderTarget::Mixdown {
             destination: plan.output_path.clone(),
-            vocals: vocals.clone(),
         },
         start_tick: plan.start_tick,
         end_tick: plan.end_tick,
         sample_rate: plan.sample_rate,
         block_size: plan.block_size,
         normalize: options.normalize && session.settings.mixdown.mastering.is_none(),
-    })?;
+        vocal_diagnostics: vocals,
+    })?
+    .into();
     if cancelled.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire)) {
         return Err("Timeline render was cancelled.".into());
     }
@@ -331,23 +321,8 @@ fn render_timeline_with_renderer(
         cancelled,
     )?;
     warnings.extend(plan.dependency_warnings.iter().cloned());
-    warnings.append(&mut automation_warnings);
-    for (track_id, path) in &vocals {
-        let track = session
-            .arrangement
-            .tracks
-            .iter()
-            .find(|track| &track.id == track_id)
-            .expect("vocal track belongs to the session");
-        warnings.extend(vocal::silent_singing_warnings(
-            session,
-            track,
-            path,
-            plan.start_tick,
-            plan.end_tick,
-            cancelled,
-        )?);
-    }
+    warnings.extend(diagnostics.automation_warnings);
+    warnings.extend(vocal::warnings(session, &diagnostics.silent_vocals)?);
 
     let timebase = &session.arrangement.timebase;
     let range_start_ms = (timebase.ticks_to_seconds(plan.start_tick) * 1000.0).round() as u64;
@@ -389,7 +364,7 @@ fn render_timeline_with_renderer(
             provenance_parameters,
         )?
     };
-    pending.asset_id = Some(rendered_asset_id.clone());
+    pending.register(rendered_asset_id.clone(), plan.output_path.clone());
 
     let mut result = RenderResult {
         measurements,
@@ -416,27 +391,24 @@ fn render_timeline_with_renderer(
         .parent()
         .expect("render output always has a parent")
         .join("render.json");
+    if cancelled.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire)) {
+        return Err("timeline render was cancelled".into());
+    }
+    if let Some(output_path) = output_path {
+        history::copy_files_no_clobber(&[(plan.output_path.clone(), output_path.clone())])?;
+        result.exported_path = Some(output_path.to_string_lossy().into_owned());
+        pending.external_files.push(output_path);
+    }
     fs::write(
         manifest,
         serde_json::to_vec_pretty(&result)
             .map_err(|error| format!("Render manifest could not be encoded: {error}"))?,
     )
     .map_err(|error| format!("Render manifest could not be saved: {error}"))?;
-    if cancelled.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire)) {
-        return Err("timeline render was cancelled".into());
-    }
-    pending.committed = true;
-    if let Some(output_path) = output_path {
-        history::copy_files_no_clobber(&[(plan.output_path.clone(), output_path.clone())])?;
-        result.exported_path = Some(output_path.to_string_lossy().into_owned());
-    }
-    Ok(result)
-}
-
-fn remove_empty_render_directory(output_path: &Path) {
-    if let Some(directory) = output_path.parent() {
-        let _ = fs::remove_dir(directory);
-    }
+    Ok(PendingRenderTimeline {
+        result,
+        output: pending,
+    })
 }
 
 /// Resolves a stem selection before the Host creates a background job.
@@ -563,6 +535,40 @@ fn shared_render_conditions(
     })
 }
 
+pub(crate) fn validate_timeline_request(
+    session: &CreativeSession,
+    options: &RenderOptions,
+) -> Result<(), String> {
+    if !matches!(options.range, RenderRange::EntireArrangement) {
+        shared_render_conditions(session, &options.range)?;
+    }
+    if let Some(track_id) = &options.track_id
+        && !session
+            .arrangement
+            .tracks
+            .iter()
+            .any(|track| &track.id == track_id)
+    {
+        return Err(format!("Track is not registered: {track_id}"));
+    }
+    if let Some(path) = &options.output_path {
+        history::validate_output_file_path(path)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_stems_request(
+    session: &CreativeSession,
+    range: &RenderRange,
+    output_directory: Option<&str>,
+) -> Result<(), String> {
+    shared_render_conditions(session, range)?;
+    if let Some(path) = output_directory {
+        history::validate_output_directory(path)?;
+    }
+    Ok(())
+}
+
 /// Renders selected Tracks to one aligned stem set while allowing cancellation
 /// before the result is committed as a completed job.
 ///
@@ -574,12 +580,14 @@ pub(crate) fn render_stems_with_cancellation(
     context: StemRenderContext<'_>,
     cancelled: &AtomicBool,
     progress: impl FnMut(f32, String),
+    catalog: &[crate::api::output::PluginEntry],
 ) -> Result<PendingRenderStems, String> {
-    render_stems_with_renderer(
+    render_stems_pending(
         context,
         |request| renderer.render_timeline_offline_cancellable(request, cancelled),
         Some(cancelled),
         progress,
+        catalog,
     )
 }
 
@@ -604,11 +612,12 @@ fn stem_filename(index: usize, name: &str) -> String {
     format!("stem-{index:03}-{safe}.wav")
 }
 
-fn render_stems_with_renderer(
+fn render_stems_pending<R: Into<OfflineRenderDiagnostics>>(
     context: StemRenderContext<'_>,
-    mut render: impl FnMut(OfflineRenderRequest) -> Result<Vec<String>, String>,
+    mut render: impl FnMut(OfflineRenderRequest) -> Result<R, String>,
     cancelled: Option<&AtomicBool>,
     mut progress: impl FnMut(f32, String),
+    catalog: &[crate::api::output::PluginEntry],
 ) -> Result<PendingRenderStems, String> {
     let StemRenderContext {
         data_root,
@@ -654,10 +663,11 @@ fn render_stems_with_renderer(
     fs::create_dir_all(directory.parent().expect("render directory has a parent"))
         .and_then(|()| fs::create_dir(&directory))
         .map_err(|error| format!("render output folder could not be created: {error}"))?;
-    let mut pending = PendingStemOutput {
+    let mut pending = PendingRenderOutput {
         data_root: data_root.to_owned(),
         directory: directory.clone(),
         registrations: Vec::with_capacity(selected_tracks.len()),
+        external_files: Vec::new(),
         committed: false,
     };
     let mut completed = Vec::with_capacity(selected_tracks.len());
@@ -701,8 +711,20 @@ fn render_stems_with_renderer(
             )
         })
         .collect::<Vec<_>>();
+    let mut vocals = Vec::new();
+    for track in &selected_tracks {
+        if crate::voisona::is_target_in(catalog, track) {
+            let ranges = vocal::ranges(session, track, conditions.start_tick, conditions.end_tick)?;
+            if !ranges.is_empty() {
+                vocals.push(VocalDiagnostic {
+                    track_id: track.id.clone(),
+                    ranges,
+                });
+            }
+        }
+    }
     progress(0.0, format!("rendering {total} stems"));
-    let automation_warnings = render(OfflineRenderRequest {
+    let diagnostics = render(OfflineRenderRequest {
         include_end_events: matches!(&range, RenderRange::EntireArrangement),
         tail_seconds: plan.tail_seconds,
         graph: plan.graph,
@@ -712,8 +734,10 @@ fn render_stems_with_renderer(
         sample_rate: plan.sample_rate,
         block_size: plan.block_size,
         normalize: false,
+        vocal_diagnostics: vocals,
     })
-    .map_err(|e| format!("stem rendering failed: {e}"))?;
+    .map_err(|e| format!("stem rendering failed: {e}"))?
+    .into();
     for (index, track) in selected_tracks.into_iter().enumerate() {
         if cancelled.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire)) {
             return Err("Timeline render was cancelled.".into());
@@ -774,17 +798,8 @@ fn render_stems_with_renderer(
         )
         .map_err(|e| format!("stem {} ({}) measurement failed: {e}", track.name, track.id))?;
         warnings.extend(plan.dependency_warnings.iter().cloned());
-        warnings.extend(automation_warnings.iter().cloned());
-        if crate::voisona::is_target(data_root, track)? {
-            warnings.extend(vocal::silent_singing_warnings(
-                session,
-                track,
-                output_path,
-                conditions.start_tick,
-                conditions.end_tick,
-                cancelled,
-            )?);
-        }
+        warnings.extend(diagnostics.automation_warnings.iter().cloned());
+        warnings.extend(vocal::warnings_for_track(track, &diagnostics.silent_vocals));
         completed.push((
             track,
             stem_source_ids(&render_session, &track.id),
@@ -867,17 +882,10 @@ fn render_stems_with_renderer(
         stems,
         skipped_track_ids: selection.skipped_track_ids,
     };
-    fs::write(
-        directory.join("render.json"),
-        serde_json::to_vec_pretty(&result)
-            .map_err(|error| format!("Render manifest could not be encoded: {error}"))?,
-    )
-    .map_err(|error| format!("Render manifest could not be saved: {error}"))?;
     if cancelled.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire)) {
         return Err("Timeline render was cancelled.".into());
     }
     if let Some(output_directory) = output_directory {
-        pending.commit();
         let copies = result
             .stems
             .iter()
@@ -893,8 +901,18 @@ fn render_stems_with_renderer(
             })
             .collect::<Result<Vec<_>, String>>()?;
         history::copy_files_no_clobber(&copies)?;
+        pending.external_files = copies
+            .into_iter()
+            .map(|(_, destination)| destination)
+            .collect();
         result.exported_directory = Some(output_directory.to_string_lossy().into_owned());
     }
+    fs::write(
+        directory.join("render.json"),
+        serde_json::to_vec_pretty(&result)
+            .map_err(|error| format!("Render manifest could not be encoded: {error}"))?,
+    )
+    .map_err(|error| format!("Render manifest could not be saved: {error}"))?;
     Ok(PendingRenderStems {
         result,
         output: pending,
@@ -1253,6 +1271,27 @@ pub(super) mod tests {
         AudioClip, EffectDevice, MidiClip, TimelineLoopRange, TimelineTick, Track, TrackInstrument,
     };
 
+    fn render_timeline_with_renderer<R: Into<OfflineRenderDiagnostics>>(
+        context: TimelineRenderContext<'_>,
+        render: impl FnOnce(OfflineRenderRequest) -> Result<R, String>,
+        cancelled: Option<&AtomicBool>,
+    ) -> Result<RenderResult, String> {
+        let catalog = crate::voisona::load_catalog(context.data_root)?;
+        let mut pending = render_timeline_pending(context, render, cancelled, &catalog)?;
+        pending.output.commit();
+        Ok(pending.result)
+    }
+
+    fn render_stems_with_renderer<R: Into<OfflineRenderDiagnostics>>(
+        context: StemRenderContext<'_>,
+        render: impl FnMut(OfflineRenderRequest) -> Result<R, String>,
+        cancelled: Option<&AtomicBool>,
+        progress: impl FnMut(f32, String),
+    ) -> Result<PendingRenderStems, String> {
+        let catalog = crate::voisona::load_catalog(context.data_root)?;
+        render_stems_pending(context, render, cancelled, progress, &catalog)
+    }
+
     #[test]
     fn stem_names_are_portable_and_distinct() {
         assert_eq!(stem_filename(1, "歌 🎵"), "stem-001-歌 🎵.wav");
@@ -1283,6 +1322,8 @@ pub(super) mod tests {
             .unwrap(),
         );
         session.arrangement.midi_clips[0].start_tick = TimelineTick(0);
+        session.arrangement.midi_clips[0].loop_enabled = true;
+        session.settings.mixdown.musical_end_tick = 3_840;
         session.arrangement.midi_clips[0]
             .notes
             .push(riffra_core::MidiNote {
@@ -1326,17 +1367,18 @@ pub(super) mod tests {
                 RenderOptions::default(),
             ),
             |request| {
-                let OfflineRenderTarget::Mixdown {
-                    destination,
-                    vocals,
-                } = request.output
-                else {
+                let OfflineRenderTarget::Mixdown { destination } = request.output else {
                     panic!("expected mixdown")
                 };
-                assert_eq!(vocals.len(), 1);
+                assert_eq!(request.vocal_diagnostics.len(), 1);
+                assert_eq!(request.vocal_diagnostics[0].ranges.len(), 2);
                 fs::write(destination, wav(request.sample_rate, 24000)).unwrap();
-                fs::write(&vocals[0].1, wav(request.sample_rate, 24000)).unwrap();
-                Ok(Vec::new())
+                let mut silent_vocals = request.vocal_diagnostics;
+                silent_vocals[0].ranges.remove(0);
+                Ok(OfflineRenderDiagnostics {
+                    automation_warnings: Vec::new(),
+                    silent_vocals,
+                })
             },
             None,
         )
@@ -1344,7 +1386,7 @@ pub(super) mod tests {
         assert!(
             mix.warnings
                 .iter()
-                .any(|warning| warning.contains("no detectable audio"))
+                .any(|warning| warning.contains("[1920, 2880)"))
         );
         assert!(
             !Path::new(&mix.path)
@@ -1369,7 +1411,13 @@ pub(super) mod tests {
                 for (_, path) in request.stem_outputs() {
                     fs::write(path, wav(request.sample_rate, 24000)).unwrap();
                 }
-                Ok(Vec::new())
+                assert_eq!(request.vocal_diagnostics[0].ranges.len(), 2);
+                let mut silent_vocals = request.vocal_diagnostics;
+                silent_vocals[0].ranges.remove(0);
+                Ok(OfflineRenderDiagnostics {
+                    automation_warnings: Vec::new(),
+                    silent_vocals,
+                })
             },
             None,
             |_, _| {},
@@ -1379,7 +1427,7 @@ pub(super) mod tests {
             stems.result.stems[0]
                 .warnings
                 .iter()
-                .any(|warning| warning.contains("no detectable audio"))
+                .any(|warning| warning.contains("[1920, 2880)"))
         );
         stems.output.commit();
         fs::remove_dir_all(root).unwrap();
@@ -1837,6 +1885,8 @@ pub(super) mod tests {
         let mut requests = Vec::new();
         let mut calls = 0;
         let mut stages = Vec::new();
+        let exports = root.join("exports");
+        fs::create_dir_all(&exports).unwrap();
         let pending = render_stems_with_renderer(
             StemRenderContext {
                 data_root: &root,
@@ -1847,7 +1897,7 @@ pub(super) mod tests {
                 created_at_ms: 10,
                 selection,
                 range: RenderRange::EntireArrangement,
-                output_directory: None,
+                output_directory: Some(exports.to_string_lossy().into_owned()),
             },
             |request| {
                 calls += 1;
@@ -1957,6 +2007,9 @@ pub(super) mod tests {
         invalid_params.ranges[0].end_seconds = 1.0;
         assert!(crate::analysis::measurement_sources(&root, &invalid_params).is_err());
         let directory = PathBuf::from(&pending.result.directory);
+        let exported = pending.output.external_files.clone();
+        assert_eq!(exported.len(), 3);
+        assert!(exported.iter().all(|path| path.is_file()));
         let asset_ids = pending
             .result
             .stems
@@ -1973,6 +2026,7 @@ pub(super) mod tests {
             !registry.complete_if_not_cancelled(&job_id, value, "done", move || output.commit(),)
         );
         assert!(!directory.exists());
+        assert!(exported.iter().all(|path| !path.exists()));
         assert!(
             asset_ids
                 .iter()
@@ -2211,6 +2265,7 @@ pub(super) mod tests {
             },
             &AtomicBool::new(false),
             |_, _| {},
+            &crate::voisona::load_catalog(&root).unwrap(),
         )
         .unwrap();
 
@@ -2240,12 +2295,15 @@ pub(super) mod tests {
             frame_counts.insert(metadata.frame_count);
         }
         assert_eq!(frame_counts, BTreeSet::from([pending.result.frames]));
-        let mix = render_timeline_with_project_cancellation(
+        let mut mix = render_timeline_with_project_cancellation(
             &worker,
             timeline_render_context(&root, &catalog, &session, 2, RenderOptions::default()),
             &AtomicBool::new(false),
+            &crate::voisona::load_catalog(&root).unwrap(),
         )
         .unwrap();
+        mix.output.commit();
+        let mix = mix.result;
         let samples = |path: &Path| {
             let bytes = fs::read(path).unwrap();
             let wav = riffra_host::parse_wav(&bytes).unwrap();
@@ -2275,7 +2333,7 @@ pub(super) mod tests {
             maximum_error > 0.001,
             "shared mixer processing unexpectedly appears in stems"
         );
-        let baseline = render_timeline_with_project_cancellation(
+        let mut baseline = render_timeline_with_project_cancellation(
             &worker,
             timeline_render_context(
                 &root,
@@ -2288,8 +2346,11 @@ pub(super) mod tests {
                 },
             ),
             &AtomicBool::new(false),
+            &crate::voisona::load_catalog(&root).unwrap(),
         )
         .unwrap();
+        baseline.output.commit();
+        let baseline = baseline.result;
         let baseline_samples = samples(Path::new(&baseline.path));
         let audio_stem = pending
             .result
@@ -2505,10 +2566,11 @@ pub(super) mod tests {
             serde_json::Map::new(),
         )
         .unwrap();
-        let pending = PendingStemOutput {
+        let pending = PendingRenderOutput {
             data_root: root.clone(),
             directory: directory.clone(),
             registrations: vec![(output_asset.clone(), output_path.clone())],
+            external_files: Vec::new(),
             committed: false,
         };
 
@@ -2766,6 +2828,38 @@ pub(super) mod tests {
             fs::read(&rendered.path).unwrap()
         );
 
+        let cancelled_output = exports.join("cancelled.wav");
+        let pending = render_timeline_pending(
+            timeline_render_context(
+                &root,
+                catalog,
+                &session,
+                4,
+                RenderOptions {
+                    output_path: Some(cancelled_output.to_string_lossy().into_owned()),
+                    ..RenderOptions::default()
+                },
+            ),
+            |request| {
+                fs::write(request.destination(), wav(request.sample_rate, 128)).unwrap();
+                Ok(Vec::new())
+            },
+            None,
+            &crate::voisona::load_catalog(&root).unwrap(),
+        )
+        .unwrap();
+        let cancelled_internal = PathBuf::from(&pending.result.path);
+        let cancelled_asset = pending.result.asset_id.clone();
+        let value = crate::jobs::serialize_result(&pending.result).unwrap();
+        let mut output = pending.output;
+        let registry = crate::jobs::JobRegistry::default();
+        let (id, _) = registry.start(crate::api::output::JobKind::Render);
+        registry.cancel(&id).unwrap();
+        assert!(!registry.complete_if_not_cancelled(&id, value, "done", move || output.commit()));
+        assert!(!cancelled_internal.exists());
+        assert!(!cancelled_output.exists());
+        assert!(asset::load(&root, &cancelled_asset).unwrap().is_none());
+
         let existing_output = exports.join("already-there.wav");
         fs::write(&existing_output, b"preserve existing file").unwrap();
         let failed_copy = render_timeline_with_renderer(
@@ -2810,32 +2904,16 @@ pub(super) mod tests {
             fs::read(&existing_output).unwrap(),
             b"preserve existing file"
         );
-        let failed_render_directory = fs::read_dir(root.join("renders"))
-            .unwrap()
-            .map(|entry| entry.unwrap().path())
-            .find(|path| {
-                path.file_name()
-                    .unwrap()
-                    .to_string_lossy()
-                    .starts_with("render-2-")
-            })
-            .unwrap();
-        assert!(failed_render_directory.join("timeline.wav").is_file());
-        let recovered_output = exports.join("recovered.wav");
-        let recovered = export_render(
-            &root,
-            failed_render_directory
-                .file_name()
+        assert!(
+            !fs::read_dir(root.join("renders"))
                 .unwrap()
-                .to_str()
-                .unwrap(),
-            recovered_output.to_str().unwrap(),
-        )
-        .unwrap();
-        assert_eq!(recovered.file_count, 1);
-        assert_eq!(
-            fs::read(recovered_output).unwrap(),
-            fs::read(failed_render_directory.join("timeline.wav")).unwrap()
+                .map(|entry| entry.unwrap().path())
+                .any(|path| {
+                    path.file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .starts_with("render-2-")
+                })
         );
 
         let stem_directory = exports.join("stems");
@@ -2877,6 +2955,60 @@ pub(super) mod tests {
             fs::read(&internal_stem).unwrap()
         );
         stems.output.commit();
+
+        let mut multi = session.clone();
+        multi.arrangement.tracks[0].name = "First vocal".into();
+        multi
+            .arrangement
+            .tracks
+            .push(Track::instrument("second".into(), "Second vocal".into()));
+        let mut second_clip = multi.arrangement.midi_clips[0].clone();
+        second_clip.id = "second-clip".into();
+        second_clip.track_id = "second".into();
+        multi.arrangement.midi_clips.push(second_clip);
+        let existing_stem = stem_directory.join("stem-002-Second vocal.wav");
+        fs::write(&existing_stem, b"existing").unwrap();
+        let failed = render_stems_with_renderer(
+            StemRenderContext {
+                data_root: &root,
+                built_in_instruments: catalog,
+                session: &multi,
+                project_id: "project-render-export",
+                source_sequence: 5,
+                created_at_ms: 5,
+                selection: select_stem_tracks(&multi, true, &[]).unwrap(),
+                range: RenderRange::EntireArrangement,
+                output_directory: Some(stem_directory.to_string_lossy().into_owned()),
+            },
+            |request| {
+                for (_, path) in request.stem_outputs() {
+                    fs::write(path, wav(request.sample_rate, 128)).unwrap();
+                }
+                Ok(Vec::new())
+            },
+            None,
+            |_, _| {},
+        );
+        assert!(matches!(failed, Err(error) if error.contains("render output already exists")));
+        assert_eq!(fs::read(existing_stem).unwrap(), b"existing");
+        assert!(!stem_directory.join("stem-001-First vocal.wav").exists());
+        assert!(!fs::read_dir(root.join("renders")).unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with("render-5-")
+        }));
+        assert!(
+            crate::library::search(&root, "First vocal stem")
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            crate::library::search(&root, "Second vocal stem")
+                .unwrap()
+                .is_empty()
+        );
         fs::remove_dir_all(root).unwrap();
     }
 }

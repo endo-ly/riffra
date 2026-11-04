@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "contract/ExecutionGraph.h"
+#include "timeline/TimelineTimebase.h"
 
 namespace riffra {
 
@@ -24,6 +25,7 @@ public:
         double sampleRate = 0.0;
         /// Non-fatal diagnostics for automation lanes omitted from the render graph.
         std::vector<juce::String> automationWarnings;
+        std::vector<VocalDiagnosticSpec> silentVocals;
     };
 
     ~OfflineRenderer();
@@ -64,6 +66,9 @@ private:
         double pluginWarmUpSeconds = 2.0;
         std::int64_t latencySamples = 0;
         std::vector<juce::String> automationWarnings;
+        std::vector<VocalDiagnosticSpec> vocalDiagnostics;
+        std::vector<std::size_t> diagnosticCaptureIndices;
+        TimelineTimebase diagnosticTimebase;
     };
 
     OfflineRenderer(Plan renderPlan, std::unique_ptr<TimelineEngine> timelineEngine) noexcept;

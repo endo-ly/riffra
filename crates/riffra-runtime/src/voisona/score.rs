@@ -40,6 +40,8 @@ struct ScoreClip {
 struct PlannedNote {
     note: Note,
     expression_from: Option<(String, String)>,
+    start_tick: u64,
+    end_tick: u64,
 }
 
 /// The Score-relevant part of one Track, kept without the rest of the project.
@@ -222,6 +224,8 @@ fn notes(score: &TrackScore) -> Result<BTreeMap<(String, String), PlannedNote>, 
                         lyric: note.lyric.clone().unwrap_or_default(),
                     },
                     expression_from,
+                    start_tick: start,
+                    end_tick: start.saturating_add(note.duration_ticks),
                 };
                 if result.insert(key, value).is_some() {
                     return Err("duplicate VoiSona note ID".into());
@@ -230,6 +234,35 @@ fn notes(score: &TrackScore) -> Result<BTreeMap<(String, String), PlannedNote>, 
         }
     }
     Ok(result)
+}
+
+/// Returns the render-range intersections of the notes VoiSona will sing.
+///
+/// Uses the same note expansion as score synchronization, so clip loops,
+/// mutes, instrument transpose, MIDI range, and the project PPQ cannot diverge
+/// from the score written to the plugin. Ranges outside the requested render
+/// range are omitted.
+pub(crate) fn singing_ranges(
+    session: &CreativeSession,
+    track: &riffra_core::Track,
+    start_tick: u64,
+    end_tick: u64,
+) -> Result<Vec<(u64, u64)>, String> {
+    if track.muted {
+        return Ok(Vec::new());
+    }
+    let mut ranges = notes(&TrackScore::from_session(session, &track.id))?
+        .into_values()
+        .filter(|planned| planned.note.duration > 0 && !planned.note.lyric.trim().is_empty())
+        .filter_map(|planned| {
+            let start = planned.start_tick.max(start_tick);
+            let end = planned.end_tick.min(end_tick);
+            (start < end).then_some((start, end))
+        })
+        .collect::<Vec<_>>();
+    ranges.sort_unstable();
+    ranges.dedup();
+    Ok(ranges)
 }
 
 pub(crate) fn has_sounding_notes(
@@ -1033,6 +1066,16 @@ mod tests {
             .midi
             .transpose_semitones = 0;
 
+        assert!(
+            singing_ranges(&transposed, &transposed.arrangement.tracks[0], 0, 480)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            singing_ranges(&original, &original.arrangement.tracks[0], 0, 480).unwrap(),
+            [(0, 480)]
+        );
+
         let output = update_score(&encoded, &score(&original), &score(&transposed))
             .unwrap()
             .unwrap();
@@ -1099,6 +1142,7 @@ mod tests {
             },
         );
         let mut expression = fresh_map_node("Expression");
+        set(&mut node, "Accent", vec![2]);
         set_int(&mut expression, "Clock", 0);
         set_int(&mut expression, "Value", 7);
         node.children.push(expression);
@@ -1106,6 +1150,8 @@ mod tests {
         let before = session("ら", 60, 480);
         let mut moved = before.clone();
         moved.arrangement.midi_clips[0].notes[0].start_tick = TimelineTick(960);
+        moved.arrangement.midi_clips[0].notes[0].note = 62;
+        moved.arrangement.midi_clips[0].notes[0].lyric = Some("い".into());
 
         let output = update_score(&encoded, &score(&before), &score(&moved))
             .unwrap()
@@ -1114,6 +1160,16 @@ mod tests {
         let note = &parsed.root.children[0].children[2].children[0];
         assert_eq!(integer(note, "Clock").unwrap(), 960);
         assert_eq!(integer(&note.children[0], "Clock").unwrap(), 960);
+        assert_eq!(read_note(note).unwrap().pitch, 62);
+        assert_eq!(read_note(note).unwrap().lyric, "い");
+        assert_eq!(
+            note.properties
+                .iter()
+                .find(|(key, _)| key == "Accent")
+                .unwrap()
+                .1,
+            [2]
+        );
     }
 
     #[test]
@@ -1276,6 +1332,10 @@ mod tests {
         looping.loop_enabled = true;
         let mut current = session_with(vec![looping]);
         current.settings.mixdown.musical_end_tick = 5_760;
+        assert_eq!(
+            singing_ranges(&current, &current.arrangement.tracks[0], 1_000, 4_000).unwrap(),
+            [(1_920, 2_400), (3_840, 4_000)]
+        );
         let encoded = PluginState::for_test(state(vec![])).encode().unwrap();
 
         let output = update_score(&encoded, &score(&session_with(vec![])), &score(&current))
@@ -1385,58 +1445,5 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
-    }
-
-    #[test]
-    #[ignore = "requires a locally saved VoiSona state with the test note and expression"]
-    fn changes_a_note_without_losing_its_expression() {
-        let path = std::env::var_os("RIFFRA_VOISONA_TEST_STATE").expect("VoiSona state path");
-        let mut json: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
-        let encoded = json["stateData"].as_str().unwrap();
-        let before = PluginState::parse(encoded).unwrap();
-        let updated = update_score(
-            encoded,
-            &score(&session("あ", 60, 960)),
-            &score(&session("い", 62, 480)),
-        )
-        .unwrap()
-        .unwrap();
-        let after = PluginState::parse(&updated).unwrap();
-        let score = |root: &Node| {
-            root.children
-                .iter()
-                .find(|node| node.name == "Song")
-                .unwrap()
-                .children
-                .iter()
-                .find(|node| node.name == "Score")
-                .unwrap()
-                .children
-                .iter()
-                .find(|node| node.name == "Note")
-                .unwrap()
-                .clone()
-        };
-        let old = score(&before.root);
-        let new = score(&after.root);
-        assert_eq!(
-            read_note(&new).unwrap(),
-            Note {
-                clock: 0,
-                duration: 480,
-                pitch: 62,
-                lyric: "い".into()
-            }
-        );
-        assert_eq!(
-            old.properties.iter().find(|(key, _)| key == "Accent"),
-            new.properties.iter().find(|(key, _)| key == "Accent")
-        );
-        assert!(old.properties.iter().any(|(key, _)| key == "Accent"));
-        if let Some(output) = std::env::var_os("RIFFRA_VOISONA_TEST_OUTPUT") {
-            json["stateData"] = updated.into();
-            std::fs::write(output, serde_json::to_vec(&json).unwrap()).unwrap();
-        }
     }
 }

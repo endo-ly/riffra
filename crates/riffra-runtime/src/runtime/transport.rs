@@ -12,6 +12,9 @@ impl TransportOperationId {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum TransportIntent {
     Stopped,
+    SyncPending {
+        operation: TransportOperationId,
+    },
     PlayRequested {
         operation: TransportOperationId,
         required_projection: Option<ProjectionKey>,
@@ -44,6 +47,35 @@ impl Default for TransportController {
 }
 
 impl TransportController {
+    pub(crate) fn request_sync_play(&mut self) -> PlayDecision {
+        self.operation = self.operation.next();
+        self.intent = TransportIntent::SyncPending {
+            operation: self.operation,
+        };
+        PlayDecision {
+            operation: self.operation,
+        }
+    }
+
+    pub(crate) fn finish_sync_play(
+        &mut self,
+        operation: TransportOperationId,
+        projection: ProjectionKey,
+    ) -> bool {
+        if self.intent != (TransportIntent::SyncPending { operation }) {
+            return false;
+        }
+        self.intent = TransportIntent::PlayRequested {
+            operation,
+            required_projection: Some(projection),
+        };
+        true
+    }
+
+    pub(crate) fn sync_play_is_current(&self, operation: TransportOperationId) -> bool {
+        self.intent == (TransportIntent::SyncPending { operation })
+    }
+
     pub(crate) fn request_play(
         &mut self,
         required_projection: Option<ProjectionKey>,
@@ -77,7 +109,9 @@ impl TransportController {
             } if required_projection.is_none_or(|required| required == projection) => {
                 Some(operation)
             }
-            TransportIntent::Stopped | TransportIntent::PlayRequested { .. } => None,
+            TransportIntent::Stopped
+            | TransportIntent::SyncPending { .. }
+            | TransportIntent::PlayRequested { .. } => None,
         }
     }
 
@@ -100,6 +134,10 @@ impl TransportController {
 
     pub(crate) fn record_play_failure(&mut self, operation: TransportOperationId) -> bool {
         if !matches!(
+            self.intent,
+            TransportIntent::SyncPending { operation: requested_operation }
+                if requested_operation == operation
+        ) && !matches!(
             self.intent,
             TransportIntent::PlayRequested {
                 operation: requested_operation,

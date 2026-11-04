@@ -86,6 +86,11 @@ TEST(ExecutionGraphContractTest, DecodesRustGeneratedFixtures) {
         << error.toStdString();
     EXPECT_EQ(render.graph.masterGainDb, -6.0);
     EXPECT_EQ(render.destination, "renders/song.wav");
+    ASSERT_EQ(render.vocalDiagnostics.size(), 1u);
+    EXPECT_EQ(render.vocalDiagnostics[0].trackId, "track-vst");
+    ASSERT_EQ(render.vocalDiagnostics[0].ranges.size(), 1u);
+    EXPECT_EQ(render.vocalDiagnostics[0].ranges[0].startTick, 480u);
+    EXPECT_EQ(render.vocalDiagnostics[0].ranges[0].endTick, 960u);
 
     PluginStateSpec state;
     error.clear();

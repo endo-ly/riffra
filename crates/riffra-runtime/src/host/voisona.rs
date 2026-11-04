@@ -8,18 +8,14 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     thread,
-    time::{Duration, Instant, SystemTime},
+    time::{Duration, Instant},
 };
 
-const POLL_INTERVAL: Duration = Duration::from_millis(50);
 const WAIT_TIMEOUT: Duration = Duration::from_secs(180);
 
 #[derive(Default)]
 struct Progress {
-    project: String,
-    sequence: u64,
-    generation: u64,
-    complete: bool,
+    key: Option<SyncKey>,
     error: Option<String>,
     changes: SyncHistory,
     stopped: bool,
@@ -36,7 +32,10 @@ struct SyncKey {
     project: String,
     sequence: u64,
     generation: u64,
-    catalog: (Option<SystemTime>, u64),
+    catalog: u64,
+    projection_state: crate::api::output::RuntimeProjectionState,
+    projection_operation: u64,
+    audio_environment_revision: u64,
 }
 
 impl SyncKey {
@@ -44,17 +43,22 @@ impl SyncKey {
         let (project, sequence) = host
             .canonical_version()
             .map_err(|error| error.to_string())?;
+        let projection = host.runtime.status();
         Ok(Self {
             project,
             sequence,
-            generation: host.runtime.status().runtime_generation,
-            catalog: crate::voisona::catalog_stamp(&host.data_root),
+            generation: projection.runtime_generation,
+            catalog: host.event_hub.catalog_generation(),
+            projection_state: projection.state,
+            projection_operation: projection.operation_id,
+            audio_environment_revision: projection.audio_environment_revision,
         })
     }
 }
 
 pub(super) struct Coordinator {
     stop: Arc<AtomicBool>,
+    wake: std::sync::mpsc::SyncSender<()>,
     worker: Option<thread::JoinHandle<()>>,
 }
 
@@ -66,6 +70,12 @@ impl Coordinator {
         data_root: &std::path::Path,
     ) -> Result<Self, String> {
         let mut baselines = track_baselines(data_root, &initial)?;
+        let (wake, notifications) = host
+            .upgrade()
+            .ok_or("Host is unavailable")?
+            .event_hub
+            .subscribe_voisona()
+            .ok_or("Host event hub is closed")?;
         let stop = Arc::new(AtomicBool::new(false));
         let stopping = stop.clone();
         let worker = thread::Builder::new()
@@ -104,7 +114,10 @@ impl Coordinator {
                     }
                     if handled.as_ref() == Some(&key) {
                         drop(host);
-                        thread::sleep(POLL_INTERVAL);
+                        if notifications.recv().is_err() {
+                            break;
+                        }
+                        while notifications.try_recv().is_ok() {}
                         continue;
                     }
                     let current = match host.canonical() {
@@ -114,6 +127,9 @@ impl Coordinator {
                             break;
                         }
                     };
+                    if current.project_id != key.project || current.sequence != key.sequence {
+                        continue;
+                    }
                     match synchronize(
                         &host,
                         &current,
@@ -123,9 +139,8 @@ impl Coordinator {
                     ) {
                         Ok(SyncOutcome::Pending | SyncOutcome::Updated) => {}
                         Ok(SyncOutcome::Complete) => {
-                            let generation = key.generation;
-                            handled = Some(key);
-                            status.finish(&current, generation, None, std::mem::take(&mut changes));
+                            handled = Some(key.clone());
+                            status.finish(key, None, std::mem::take(&mut changes));
                         }
                         Err(error) => {
                             tracing::error!(
@@ -134,31 +149,30 @@ impl Coordinator {
                                 %error,
                                 "VoiSona synchronization failed"
                             );
-                            let generation = key.generation;
-                            handled = Some(key);
+                            handled = Some(key.clone());
                             changes.clear();
-                            status.finish(
-                                &current,
-                                generation,
-                                Some(error),
-                                SyncHistory::default(),
-                            );
+                            status.finish(key, Some(error), SyncHistory::default());
                         }
                     }
                     drop(host);
-                    thread::sleep(POLL_INTERVAL);
+                    if notifications.recv().is_err() {
+                        break;
+                    }
+                    while notifications.try_recv().is_ok() {}
                 }
                 status.stop();
             })
             .map_err(|error| format!("VoiSona synchronization worker could not start: {error}"))?;
         Ok(Self {
             stop,
+            wake,
             worker: Some(worker),
         })
     }
 
     pub(super) fn shutdown(mut self) {
         self.stop.store(true, Ordering::Release);
+        let _ = self.wake.try_send(());
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }
@@ -214,18 +228,9 @@ pub(super) struct WaitResult {
 }
 
 impl SyncStatus {
-    fn finish(
-        &self,
-        current: &CanonicalState,
-        generation: u64,
-        error: Option<String>,
-        changes: SyncHistory,
-    ) {
+    fn finish(&self, key: SyncKey, error: Option<String>, changes: SyncHistory) {
         let mut progress = self.progress.lock().expect("VoiSona sync lock poisoned");
-        progress.project = current.project_id.clone();
-        progress.sequence = current.sequence;
-        progress.generation = generation;
-        progress.complete = true;
+        progress.key = Some(key);
         progress.error = error;
         progress.changes = changes;
         self.changed.notify_all();
@@ -237,10 +242,18 @@ impl SyncStatus {
         self.changed.notify_all();
     }
 
+    pub(super) fn wake_waiters(&self) {
+        let _progress = self.progress.lock().expect("VoiSona sync lock poisoned");
+        self.changed.notify_all();
+    }
+
     pub(super) fn wait(
         &self,
         host: &HostState,
         requested: &CanonicalState,
+        generation_at_request: u64,
+        cancelled: Option<&AtomicBool>,
+        play_operation: Option<crate::runtime::TransportOperationId>,
     ) -> Result<WaitResult, String> {
         let deadline = Instant::now() + WAIT_TIMEOUT;
         let mut progress = self
@@ -248,20 +261,33 @@ impl SyncStatus {
             .lock()
             .map_err(|_| "VoiSona sync lock poisoned")?;
         loop {
-            let (project, sequence) = host
-                .canonical_version()
-                .map_err(|error| error.to_string())?;
-            let generation = host.runtime.status().runtime_generation;
-            if project != requested.project_id {
+            if progress.stopped {
+                return Err("VoiSona synchronization is unavailable".into());
+            }
+            if cancelled.is_some_and(|flag| flag.load(Ordering::Acquire)) {
+                return Err("VoiSona synchronization was cancelled".into());
+            }
+            if let Some(operation) = play_operation
+                && !host
+                    .runtime
+                    .sync_play_is_current(operation)
+                    .map_err(|error| error.to_string())?
+            {
+                return Err("VoiSona synchronization was cancelled".into());
+            }
+            let key = SyncKey::current(host)?;
+            let project = &key.project;
+            let sequence = key.sequence;
+            let generation = key.generation;
+            if generation != generation_at_request {
+                return Err("runtime changed while waiting for VoiSona synchronization".into());
+            }
+            if *project != requested.project_id {
                 return Err("project changed while waiting for VoiSona synchronization".into());
             }
-            if progress.complete
-                && progress.project == project
-                && progress.sequence == sequence
-                && progress.generation == generation
-            {
+            if progress.key.as_ref() == Some(&key) {
                 let current = host.canonical().map_err(|error| error.to_string())?;
-                if current.project_id == project && current.sequence == sequence {
+                if current.project_id == *project && current.sequence == sequence {
                     if let Some(error) = &progress.error {
                         return Err(error.clone());
                     }
@@ -270,9 +296,6 @@ impl SyncStatus {
                         changes: progress.changes.clone(),
                     });
                 }
-            }
-            if progress.stopped {
-                return Err("VoiSona synchronization is unavailable".into());
             }
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
@@ -433,4 +456,62 @@ fn synchronize(
         }
     }
     Ok(SyncOutcome::Complete)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pending_synchronization_can_be_cancelled() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-voisona-wait-{}",
+            riffra_control::new_instance_id()
+        ));
+        let host = HostState::for_test(
+            &root,
+            riffra_core::CreativeSession::new(1),
+            crate::AudioSupervisor::offline("test"),
+            true,
+        );
+        let requested = host.canonical().unwrap();
+        let generation = host.runtime.status().runtime_generation;
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let status = Arc::clone(&host.voisona_status);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let worker_host = Arc::clone(&host);
+        let worker_cancelled = Arc::clone(&cancelled);
+        let worker_status = Arc::clone(&status);
+        let worker = thread::spawn(move || {
+            sender.send(()).unwrap();
+            worker_status.wait(
+                &worker_host,
+                &requested,
+                generation,
+                Some(&worker_cancelled),
+                None,
+            )
+        });
+        receiver.recv().unwrap();
+        cancelled.store(true, Ordering::Release);
+        status.wake_waiters();
+        assert!(matches!(worker.join().unwrap(), Err(error) if error.contains("cancelled")));
+        let requested = host.canonical().unwrap();
+        let key = SyncKey::current(&host).unwrap();
+        status.finish(
+            key.clone(),
+            Some("voice synchronization failed".into()),
+            SyncHistory::default(),
+        );
+        assert!(
+            matches!(status.wait(&host, &requested, generation, None, None), Err(error) if error == "voice synchronization failed")
+        );
+        status.finish(key, None, SyncHistory::default());
+        status.stop();
+        assert!(
+            matches!(status.wait(&host, &requested, generation, None, None), Err(error) if error.contains("unavailable"))
+        );
+        drop(host);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

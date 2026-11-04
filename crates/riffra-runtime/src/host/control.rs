@@ -507,8 +507,19 @@ impl HostState {
             }
             RuntimeCommand::TransportPlay(_) => {
                 drop(writer.take());
-                let current = self.wait_for_voisona_render(current)?;
                 self.ensure_transport_online()?;
+                let catalog =
+                    crate::voisona::load_catalog(&self.data_root).map_err(command_error)?;
+                if current
+                    .session
+                    .arrangement
+                    .tracks
+                    .iter()
+                    .any(|track| crate::voisona::is_target_in(&catalog, track))
+                {
+                    self.start_play_after_voisona(current)?;
+                    return Ok((ControlOutput::Ok(()), sequence));
+                }
                 let outcome = self
                     .runtime
                     .request_play_when_ready(riffra_core::ProjectionKey {
@@ -533,11 +544,13 @@ impl HostState {
             RuntimeCommand::TransportPause(_) => {
                 self.ensure_transport_online()?;
                 self.runtime.pause().map_err(runtime_error)?;
+                self.voisona_status.wake_waiters();
                 ControlOutput::Ok(())
             }
             RuntimeCommand::TransportStop(_) => {
                 self.ensure_transport_online()?;
                 self.runtime.stop().map_err(runtime_error)?;
+                self.voisona_status.wake_waiters();
                 ControlOutput::Ok(())
             }
             RuntimeCommand::TransportGoToStart(_) => {
@@ -1166,13 +1179,16 @@ impl HostState {
                     .transpose()
                     .map_err(command_error)?,
             ),
-            RuntimeCommand::JobCancel(params) => ControlOutput::Job(
-                self.jobs
+            RuntimeCommand::JobCancel(params) => ControlOutput::Job({
+                let status = self
+                    .jobs
                     .cancel(&params.id)
                     .map(jobs::to_background_status)
                     .transpose()
-                    .map_err(command_error)?,
-            ),
+                    .map_err(command_error)?;
+                self.voisona_status.wake_waiters();
+                status
+            }),
             RuntimeCommand::AnalysisMeasure(params) => {
                 ControlOutput::Job(Some(self.start_analysis_measure(params)?))
             }
@@ -1346,15 +1362,81 @@ impl HostState {
         })
     }
 
+    fn start_play_after_voisona(
+        self: &Arc<Self>,
+        current: CanonicalState,
+    ) -> Result<(), ProtocolError> {
+        let generation = self.runtime.status().runtime_generation;
+        let operation = self
+            .runtime
+            .request_play_after_sync()
+            .map_err(runtime_error)?;
+        self.voisona_status.wake_waiters();
+        let host = Arc::clone(self);
+        if let Err(error) = std::thread::Builder::new()
+            .name("riffra-voisona-play".into())
+            .spawn(move || {
+                let result =
+                    host.wait_for_voisona_render(current, generation, None, Some(operation));
+                let synchronized = match result {
+                    Ok((current, _)) => current,
+                    Err(error) => {
+                        if let Err(failure) = host.runtime.fail_play_sync(operation, error.message)
+                        {
+                            tracing::warn!(%failure, "could not release pending playback");
+                        }
+                        return;
+                    }
+                };
+                let writer = host.project.write();
+                let latest = writer.project().core.canonical_state();
+                if latest.project_id != synchronized.project_id
+                    || latest.sequence != synchronized.sequence
+                    || host.runtime.status().runtime_generation != generation
+                {
+                    drop(writer);
+                    let _ = host.runtime.fail_play_sync(
+                        operation,
+                        "project or runtime changed while waiting for playback".into(),
+                    );
+                    return;
+                }
+                let key = riffra_core::ProjectionKey {
+                    sequence: synchronized.sequence,
+                    session_revision: synchronized.session.arrangement.revision,
+                };
+                match host.runtime.finish_play_sync(operation, key) {
+                    Ok(Some(crate::runtime::PlayStart::Stalled)) => {
+                        commit::project_committed(
+                            synchronized,
+                            host.runtime.as_ref(),
+                            &host.data_root,
+                            host.built_in_instruments.as_ref(),
+                            host.safe_mode,
+                        );
+                    }
+                    Ok(_) => {}
+                    Err(error) => tracing::warn!(%error, "pending playback could not start"),
+                }
+            })
+        {
+            let _ = self.runtime.fail_play_sync(operation, error.to_string());
+            return Err(command_error(format!(
+                "playback synchronization could not start: {error}"
+            )));
+        }
+        Ok(())
+    }
+
     fn start_render(
-        &self,
+        self: &Arc<Self>,
         current: CanonicalState,
         options: Option<RenderOptions>,
     ) -> Result<BackgroundJobStatus, ProtocolError> {
-        let current = self.wait_for_voisona_render(current)?;
-        let session = current.session;
-        let project_id = current.project_id;
         let options = options.unwrap_or_default();
+        render::validate_timeline_request(&current.session, &options).map_err(command_error)?;
+        let generation = self.runtime.status().runtime_generation;
+        let host = Arc::clone(self);
         let data_root = self.data_root.clone();
         let built_in_instruments = Arc::clone(&self.built_in_instruments);
         let worker = self.render_worker.clone();
@@ -1366,35 +1448,68 @@ impl HostState {
         let job_id = id.clone();
         let worker_jobs = jobs.clone();
         jobs.spawn_worker(&id, "riffra-render-job", move || {
+            worker_jobs.set_running(&job_id, "Waiting for VoiSona synchronization.");
+            let (current, catalog) =
+                match host.wait_for_voisona_render(current, generation, Some(&cancelled), None) {
+                    Ok(current) => current,
+                    Err(error) => {
+                        jobs::fail(&worker_jobs, &data_root, &job_id, error.message);
+                        return;
+                    }
+                };
             worker_jobs.set_running(&job_id, "Rendering the canonical arrangement.");
             match render::render_timeline_with_project_cancellation(
                 &worker,
                 render::TimelineRenderContext {
                     data_root: &data_root,
                     built_in_instruments: built_in_instruments.as_ref(),
-                    session: &session,
-                    project_id: Some(&project_id),
+                    session: &current.session,
+                    project_id: Some(&current.project_id),
                     created_at_ms: riffra_host::now_ms(),
                     options,
                 },
                 cancelled.as_ref(),
+                &catalog,
             ) {
-                Ok(result) => match serde_json::to_value(result) {
-                    Ok(value) => worker_jobs.complete(&job_id, value, "Offline render completed."),
+                Ok(pending) => match serde_json::to_value(&pending.result) {
+                    Ok(value) => {
+                        let mut output = pending.output;
+                        worker_jobs.complete_if_not_cancelled(
+                            &job_id,
+                            value,
+                            "Offline render completed.",
+                            move || output.commit(),
+                        );
+                    }
                     Err(error) => jobs::fail(&worker_jobs, &data_root, &job_id, error.to_string()),
                 },
                 Err(error) => jobs::fail(&worker_jobs, &data_root, &job_id, error),
             }
         })
-        .map_err(|error| command_error(format!("render job could not start: {error}")))?;
+        .map_err(|error| {
+            jobs.fail(&id, error.clone());
+            command_error(format!("render job could not start: {error}"))
+        })?;
         jobs::to_background_status(status).map_err(command_error)
     }
 
     fn wait_for_voisona_render(
         &self,
         current: CanonicalState,
-    ) -> Result<CanonicalState, ProtocolError> {
+        generation: u64,
+        cancelled: Option<&std::sync::atomic::AtomicBool>,
+        play_operation: Option<crate::runtime::TransportOperationId>,
+    ) -> Result<(CanonicalState, Vec<crate::api::output::PluginEntry>), ProtocolError> {
+        if cancelled.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire)) {
+            return Err(command_error("render was cancelled"));
+        }
+        let catalog_generation = self.event_hub.catalog_generation();
         let catalog = crate::voisona::load_catalog(&self.data_root).map_err(command_error)?;
+        if self.event_hub.catalog_generation() != catalog_generation {
+            return Err(command_error(
+                "plugin catalog changed before synchronization",
+            ));
+        }
         if !current
             .session
             .arrangement
@@ -1402,11 +1517,20 @@ impl HostState {
             .iter()
             .any(|track| crate::voisona::is_target_in(&catalog, track))
         {
-            return Ok(current);
+            let now = self
+                .canonical()
+                .map_err(|error| command_error(error.to_string()))?;
+            if now.project_id != current.project_id
+                || now.sequence != current.sequence
+                || self.runtime.status().runtime_generation != generation
+            {
+                return Err(command_error("project or runtime changed before rendering"));
+            }
+            return Ok((current, catalog));
         }
         let synchronized = self
             .voisona_status
-            .wait(self, &current)
+            .wait(self, &current, generation, cancelled, play_operation)
             .map_err(command_error)?;
         if !crate::voisona::sessions_match_with_sync_changes(
             current.session.clone(),
@@ -1417,7 +1541,12 @@ impl HostState {
                 "project changed while waiting for VoiSona synchronization; retry the render",
             ));
         }
-        Ok(synchronized.canonical)
+        if self.event_hub.catalog_generation() != catalog_generation {
+            return Err(command_error(
+                "plugin catalog changed while waiting for synchronization",
+            ));
+        }
+        Ok((synchronized.canonical, catalog))
     }
 
     fn start_analysis_measure(
@@ -1459,14 +1588,21 @@ impl HostState {
     }
 
     fn start_render_stems(
-        &self,
+        self: &Arc<Self>,
         current: CanonicalState,
         params: crate::api::params::RenderStemsParams,
     ) -> Result<BackgroundJobStatus, ProtocolError> {
-        let current = self.wait_for_voisona_render(current)?;
         let selection =
             render::select_stem_tracks(&current.session, params.all_tracks, &params.track_ids)
                 .map_err(command_error)?;
+        render::validate_stems_request(
+            &current.session,
+            &params.range,
+            params.output_directory.as_deref(),
+        )
+        .map_err(command_error)?;
+        let generation = self.runtime.status().runtime_generation;
+        let host = Arc::clone(self);
         let data_root = self.data_root.clone();
         let built_in_instruments = Arc::clone(&self.built_in_instruments);
         let worker = self.render_worker.clone();
@@ -1478,6 +1614,15 @@ impl HostState {
         let job_id = id.clone();
         let worker_jobs = jobs.clone();
         jobs.spawn_worker(&id, "riffra-render-stems-job", move || {
+            worker_jobs.set_running(&job_id, "Waiting for VoiSona synchronization.");
+            let (current, catalog) =
+                match host.wait_for_voisona_render(current, generation, Some(&cancelled), None) {
+                    Ok(current) => current,
+                    Err(error) => {
+                        jobs::fail(&worker_jobs, &data_root, &job_id, error.message);
+                        return;
+                    }
+                };
             worker_jobs.set_running(
                 &job_id,
                 "Rendering aligned stems for the canonical arrangement.",
@@ -1497,6 +1642,7 @@ impl HostState {
                 },
                 cancelled.as_ref(),
                 |p, m| worker_jobs.set_progress(&job_id, p, m),
+                &catalog,
             ) {
                 Ok(pending) => match jobs::serialize_result(&pending.result) {
                     Ok(value) => {
@@ -1513,7 +1659,10 @@ impl HostState {
                 Err(error) => jobs::fail(&worker_jobs, &data_root, &job_id, error),
             }
         })
-        .map_err(|error| command_error(format!("render stems job could not start: {error}")))?;
+        .map_err(|error| {
+            jobs.fail(&id, error.clone());
+            command_error(format!("render stems job could not start: {error}"))
+        })?;
         jobs::to_background_status(status).map_err(command_error)
     }
 
@@ -1820,6 +1969,165 @@ mod tests {
         HelloRequest, HelloResponse, LocalHostClient, LocalHostRegistry, endpoint_path,
         new_instance_id, read_endpoint, transport,
     };
+
+    #[test]
+    fn render_requests_register_jobs_before_sync_and_cancel_while_waiting() {
+        let root = std::env::temp_dir().join(format!("riffra-render-wait-{}", new_instance_id()));
+        let mut session = riffra_core::CreativeSession::new(1);
+        let mut track = riffra_core::Track::instrument("voice".into(), "Voice".into());
+        track.instrument = Some(
+            riffra_core::TrackInstrument::vst3(
+                "device".into(),
+                "Voice".into(),
+                "voice.vst3".into(),
+            )
+            .unwrap(),
+        );
+        session.arrangement.tracks.push(track);
+        session.arrangement.midi_clips.push(riffra_core::MidiClip {
+            id: "clip".into(),
+            name: "Clip".into(),
+            track_id: "voice".into(),
+            asset_id: None,
+            start_tick: riffra_core::TimelineTick(0),
+            duration_ticks: 960,
+            notes: Vec::new(),
+            events: Vec::new(),
+            instrument_control_events: Vec::new(),
+            muted: false,
+            loop_enabled: false,
+            recording_take_id: None,
+        });
+        let host = HostState::for_test(
+            &root,
+            session,
+            crate::AudioSupervisor::offline("test"),
+            true,
+        );
+        crate::plugins::save(
+            &root,
+            &crate::api::output::ScanReport {
+                root: root.to_string_lossy().into_owned(),
+                started_at_ms: 0,
+                finished_at_ms: 0,
+                plugins: vec![crate::api::output::PluginEntry {
+                    id: "voice".into(),
+                    name: "VoiSona".into(),
+                    vendor: None,
+                    version: None,
+                    identifier: Some("VST3-VoiSona Song Editor-3fac6da4-dd045f83".into()),
+                    format: crate::api::output::PluginFormat::Vst3,
+                    role: Some(crate::api::output::PluginRole::Instrument),
+                    path: "voice.vst3".into(),
+                    bundle: true,
+                    modified_at_ms: None,
+                    scan_state: crate::api::output::PluginScanState::Validated,
+                }],
+                issues: Vec::new(),
+            },
+        )
+        .unwrap();
+        let project = host.canonical().unwrap().project_id;
+        let server =
+            crate::control::ControlServer::start(Arc::clone(&host), host.identity().clone())
+                .unwrap();
+        let client = LocalHostClient::connect_data_root(&root).unwrap();
+        let mut ids = Vec::new();
+        for (index, (command, params)) in [
+            ("render.start", serde_json::json!({})),
+            ("render.stems", serde_json::json!({"allTracks": true})),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let request = ControlRequest::new(command, command, params, None)
+                .with_expected_project_id(project.clone());
+            let response = if index == 0 {
+                host.dispatch_request(request)
+            } else {
+                client.request(&request).unwrap()
+            };
+            assert!(response.ok, "{response:?}");
+            ids.push(
+                response.result.unwrap().value["id"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned(),
+            );
+        }
+        for (index, id) in ids.iter().enumerate() {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            loop {
+                let status = host.jobs.status(id).unwrap();
+                if status.state == crate::api::output::JobState::Running {
+                    break;
+                }
+                assert!(std::time::Instant::now() < deadline, "{status:?}");
+                std::thread::yield_now();
+            }
+            if index == 1 {
+                let request =
+                    ControlRequest::new("get", "job.get", serde_json::json!({"id": id}), None);
+                let status = client.request(&request).unwrap();
+                assert_eq!(status.result.unwrap().value["state"], "running");
+            }
+            let request =
+                ControlRequest::new("cancel", "job.cancel", serde_json::json!({"id": id}), None);
+            let response = if index == 0 {
+                host.dispatch_request(request)
+            } else {
+                client.request(&request).unwrap()
+            };
+            assert!(response.ok, "{response:?}");
+        }
+        host.jobs.cancel_all_and_wait();
+        for id in &ids {
+            assert_eq!(
+                host.jobs.status(id).unwrap().state,
+                crate::api::output::JobState::Cancelled
+            );
+        }
+        let request =
+            ControlRequest::new("switch-render", "render.start", serde_json::json!({}), None)
+                .with_expected_project_id(project.clone());
+        let response = client.request(&request).unwrap();
+        assert!(response.ok, "{response:?}");
+        let id = response.result.unwrap().value["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            if host.jobs.status(&id).unwrap().state == crate::api::output::JobState::Running {
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        let request = ControlRequest::new(
+            "switch",
+            "project.create",
+            serde_json::json!({"name": "Next"}),
+            None,
+        )
+        .with_expected_project_id(project);
+        let response = client.request(&request).unwrap();
+        assert!(response.ok, "{response:?}");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            let status = host.jobs.status(&id).unwrap();
+            if status.state == crate::api::output::JobState::Failed {
+                assert!(status.message.contains("project changed"));
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline, "{status:?}");
+            std::thread::yield_now();
+        }
+        host.jobs.cancel_all_and_wait();
+        server.shutdown();
+        drop(host);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn resolves_builtin_and_user_previews_with_their_resource_base_directories() {

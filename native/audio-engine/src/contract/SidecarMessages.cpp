@@ -620,6 +620,20 @@ juce::var encodeOfflineRenderComplete(const OfflineRenderCompleteSpec& result) {
         .set("automationWarnings",
              array(result.automationWarnings,
                    [](const juce::String& warning) { return juce::var(warning); }))
+        .set("silentVocals",
+             array(result.silentVocals,
+                   [](const VocalDiagnosticSpec& track) {
+                       return ObjectBuilder{}
+                           .set("trackId", track.trackId)
+                           .set("ranges", array(track.ranges,
+                                                [](const VocalRangeSpec& range) {
+                                                    return ObjectBuilder{}
+                                                        .set("startTick", integer(range.startTick))
+                                                        .set("endTick", integer(range.endTick))
+                                                        .build();
+                                                }))
+                           .build();
+                   }))
         .build();
 }
 

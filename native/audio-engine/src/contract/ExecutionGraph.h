@@ -352,6 +352,18 @@ struct OfflineStemOutputSpec final {
     bool operator==(const OfflineStemOutputSpec&) const = default;
 };
 
+struct VocalRangeSpec final {
+    std::uint64_t startTick = 0;
+    std::uint64_t endTick = 0;
+    bool operator==(const VocalRangeSpec&) const = default;
+};
+
+struct VocalDiagnosticSpec final {
+    juce::String trackId;
+    std::vector<VocalRangeSpec> ranges;
+    bool operator==(const VocalDiagnosticSpec&) const = default;
+};
+
 struct OfflineRenderRequestSpec final {
     ExecutionGraph graph;
     juce::String destination;
@@ -363,7 +375,7 @@ struct OfflineRenderRequestSpec final {
     double tailSeconds = 0.0;
     bool includeEndEvents = false;
     std::vector<OfflineStemOutputSpec> stems;
-    std::vector<OfflineStemOutputSpec> vocals;
+    std::vector<VocalDiagnosticSpec> vocalDiagnostics;
     bool operator==(const OfflineRenderRequestSpec&) const = default;
 };
 

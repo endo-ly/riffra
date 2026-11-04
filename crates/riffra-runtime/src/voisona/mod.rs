@@ -4,31 +4,14 @@ mod state;
 use crate::api::output::{PluginEntry, PluginScanState};
 use crate::execution::GraphPluginState;
 use riffra_core::{CreativeSession, EffectOwner, Track, Vst3Plugin};
-use std::{
-    path::{Path, PathBuf},
-    time::SystemTime,
-};
+use std::path::Path;
 
 const IDENTIFIER: &str = "VST3-VoiSona Song Editor-3fac6da4-dd045f83";
-
-fn catalog_path(data_root: &Path) -> PathBuf {
-    data_root.join("plugins/catalog.json")
-}
 
 /// Loads the validated plugin catalog used to resolve VoiSona instruments.
 pub(crate) fn load_catalog(data_root: &Path) -> Result<Vec<PluginEntry>, String> {
     crate::plugins::load(data_root)
         .map_err(|error| format!("plugin catalog could not be read: {error}"))
-}
-
-/// Identifies the catalog file version without decoding it.
-///
-/// The synchronization worker uses this stamp to re-resolve targets after a
-/// plugin scan without reading the catalog on every idle poll.
-pub(crate) fn catalog_stamp(data_root: &Path) -> (Option<SystemTime>, u64) {
-    std::fs::metadata(catalog_path(data_root))
-        .map(|metadata| (metadata.modified().ok(), metadata.len()))
-        .unwrap_or((None, 0))
 }
 
 /// Returns whether the track holds the validated VoiSona instrument, ignoring bypass.
@@ -55,10 +38,6 @@ pub(crate) fn is_target_in(catalog: &[PluginEntry], track: &Track) -> bool {
             .instrument
             .as_ref()
             .is_some_and(|instrument| !instrument.bypassed)
-}
-
-pub(crate) fn is_target(data_root: &Path, track: &Track) -> Result<bool, String> {
-    Ok(is_target_in(&load_catalog(data_root)?, track))
 }
 
 /// One plugin state that synchronization wrote while completing a wait.
@@ -116,44 +95,18 @@ fn plugin<'a>(
     owner: &EffectOwner,
     device_id: &str,
 ) -> Option<&'a Vst3Plugin> {
-    match owner {
-        EffectOwner::Track { id } => {
-            let track = session
-                .arrangement
-                .tracks
-                .iter()
-                .find(|track| track.id == *id)?;
-            if let Some(instrument) = track
-                .instrument
-                .as_ref()
-                .filter(|instrument| instrument.id == device_id)
-            {
-                return instrument.as_vst3();
-            }
-            track
-                .effects
-                .iter()
-                .find(|effect| effect.id == device_id)
-                .map(|effect| &effect.plugin)
-        }
-        EffectOwner::Bus { id } => session
-            .arrangement
-            .mixer
-            .buses
-            .iter()
-            .find(|bus| bus.id == *id)?
-            .effects
-            .iter()
-            .find(|effect| effect.id == device_id)
-            .map(|effect| &effect.plugin),
-        EffectOwner::Master => session
-            .arrangement
-            .mixer
-            .master_effects
-            .iter()
-            .find(|effect| effect.id == device_id)
-            .map(|effect| &effect.plugin),
-    }
+    let EffectOwner::Track { id } = owner else {
+        return None;
+    };
+    session
+        .arrangement
+        .tracks
+        .iter()
+        .find(|track| track.id == *id)?
+        .instrument
+        .as_ref()
+        .filter(|instrument| instrument.id == device_id)?
+        .as_vst3()
 }
 
 fn plugin_mut<'a>(
@@ -161,44 +114,18 @@ fn plugin_mut<'a>(
     owner: &EffectOwner,
     device_id: &str,
 ) -> Option<&'a mut Vst3Plugin> {
-    match owner {
-        EffectOwner::Track { id } => {
-            let track = session
-                .arrangement
-                .tracks
-                .iter_mut()
-                .find(|track| track.id == *id)?;
-            if let Some(instrument) = track
-                .instrument
-                .as_mut()
-                .filter(|instrument| instrument.id == device_id)
-            {
-                return instrument.as_vst3_mut();
-            }
-            track
-                .effects
-                .iter_mut()
-                .find(|effect| effect.id == device_id)
-                .map(|effect| &mut effect.plugin)
-        }
-        EffectOwner::Bus { id } => session
-            .arrangement
-            .mixer
-            .buses
-            .iter_mut()
-            .find(|bus| bus.id == *id)?
-            .effects
-            .iter_mut()
-            .find(|effect| effect.id == device_id)
-            .map(|effect| &mut effect.plugin),
-        EffectOwner::Master => session
-            .arrangement
-            .mixer
-            .master_effects
-            .iter_mut()
-            .find(|effect| effect.id == device_id)
-            .map(|effect| &mut effect.plugin),
-    }
+    let EffectOwner::Track { id } = owner else {
+        return None;
+    };
+    session
+        .arrangement
+        .tracks
+        .iter_mut()
+        .find(|track| track.id == *id)?
+        .instrument
+        .as_mut()
+        .filter(|instrument| instrument.id == device_id)?
+        .as_vst3_mut()
 }
 
 fn graph_states_match(left: &GraphPluginState, right: &GraphPluginState) -> bool {
@@ -250,7 +177,7 @@ pub(crate) fn sessions_match_with_sync_changes(
     requested == synchronized
 }
 
-pub(crate) use score::{TrackScore, has_sounding_notes, update_score};
+pub(crate) use score::{TrackScore, has_sounding_notes, singing_ranges, update_score};
 
 #[cfg(test)]
 mod tests {

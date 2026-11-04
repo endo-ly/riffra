@@ -59,7 +59,8 @@ set(request_template [=[
         }
       ]
     },
-    "output": { "kind": "mixdown", "destination": "__DESTINATION__", "vocals": [] },
+    "output": { "kind": "mixdown", "destination": "__DESTINATION__" },
+    "vocalDiagnostics": [],
     "tailSeconds": 0.0,
     "includeEndEvents": false,
     "startTick": 0,

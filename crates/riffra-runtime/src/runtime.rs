@@ -8,6 +8,7 @@ mod transport_executor;
 
 pub(crate) use self::ports::{ProjectionDriver, RuntimeDriver, TransportDriver};
 pub(crate) use self::projection_coordinator::{ProjectionStatusHook, ProjectionWait};
+pub(crate) use self::transport::TransportOperationId;
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
@@ -268,6 +269,63 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
     ) -> Result<ProjectionWait, RuntimeError> {
         self.projection
             .wait_for_projection(key, TIMELINE_PREPARE_TIMEOUT)
+    }
+
+    pub(crate) fn request_play_after_sync(&self) -> Result<TransportOperationId, RuntimeError> {
+        let lease = self.transport.acquire()?;
+        let operation = lease.request_sync_play()?.operation;
+        if let Err(error) = lease.set_transport_starting() {
+            lease.fail_play(operation)?;
+            return Err(error);
+        }
+        Ok(operation)
+    }
+
+    pub(crate) fn sync_play_is_current(
+        &self,
+        operation: TransportOperationId,
+    ) -> Result<bool, RuntimeError> {
+        self.transport.sync_play_is_current(operation)
+    }
+
+    pub(crate) fn finish_play_sync(
+        &self,
+        operation: TransportOperationId,
+        projection: ProjectionKey,
+    ) -> Result<Option<PlayStart>, RuntimeError> {
+        let lease = self.transport.acquire()?;
+        if !lease.finish_sync_play(operation, projection)? {
+            return Ok(None);
+        }
+        if self.projection.is_ready_for(projection) {
+            return match lease.play_if_current(Some(operation), Some(projection)) {
+                Ok(true) => Ok(Some(PlayStart::Started)),
+                Ok(false) => Ok(None),
+                Err(error) => {
+                    self.projection.mark_failed(error.to_string());
+                    Err(error)
+                }
+            };
+        }
+        Ok(Some(if self.projection.pending_work_for(projection) {
+            PlayStart::Waiting
+        } else {
+            PlayStart::Stalled
+        }))
+    }
+
+    pub(crate) fn fail_play_sync(
+        &self,
+        operation: TransportOperationId,
+        error: String,
+    ) -> Result<(), RuntimeError> {
+        let lease = self.transport.acquire()?;
+        if lease.fail_play(operation)? {
+            let stopped = lease.stop();
+            self.projection.mark_failed(error);
+            stopped?;
+        }
+        Ok(())
     }
 
     /// Registers a Play intent without starting a new projection. Canonical
@@ -547,6 +605,43 @@ mod tests {
         // Assert
         assert_eq!(driver.starting.load(Ordering::Relaxed), 1);
         assert_eq!(driver.played.load(Ordering::Relaxed), 0);
+        assert_eq!(driver.stopped.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn synchronized_play_obeys_stop_and_newer_play_intents() {
+        let driver = Arc::new(FakeDriver::new(Duration::from_millis(5)));
+        let reconciler = RuntimeReconciler::new(Arc::clone(&driver)).unwrap();
+        let projection = key(9, 9);
+        let first = reconciler.request_play_after_sync().unwrap();
+        submit_canonical(&reconciler, snapshot(9), projection);
+        wait_until(|| reconciler.projection.is_ready_for(projection));
+        assert_eq!(driver.played.load(Ordering::Relaxed), 0);
+        reconciler.stop().unwrap();
+        assert!(
+            reconciler
+                .finish_play_sync(first, projection)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(driver.played.load(Ordering::Relaxed), 0);
+
+        let old = reconciler.request_play_after_sync().unwrap();
+        let latest = reconciler.request_play_after_sync().unwrap();
+        assert!(
+            reconciler
+                .finish_play_sync(old, projection)
+                .unwrap()
+                .is_none()
+        );
+        assert!(matches!(
+            reconciler.finish_play_sync(latest, projection),
+            Ok(Some(PlayStart::Started))
+        ));
+        assert_eq!(driver.played.load(Ordering::Relaxed), 1);
+        reconciler
+            .fail_play_sync(old, "stale error".into())
+            .unwrap();
         assert_eq!(driver.stopped.load(Ordering::Relaxed), 1);
     }
 

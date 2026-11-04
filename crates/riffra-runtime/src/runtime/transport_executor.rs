@@ -33,6 +33,13 @@ impl<D: TransportDriver> TransportExecutor<D> {
             .map_err(|_| RuntimeError::Internal("transport state was poisoned".into()))
     }
 
+    pub(crate) fn sync_play_is_current(
+        &self,
+        operation: TransportOperationId,
+    ) -> Result<bool, RuntimeError> {
+        Ok(self.lock_controller()?.sync_play_is_current(operation))
+    }
+
     pub(crate) fn acquire(&self) -> Result<TransportExecutionLease<'_, D>, RuntimeError> {
         let (execution, available) = &*self.execution;
         let mut in_flight = execution.lock().map_err(|_| {
@@ -105,6 +112,28 @@ impl<D: TransportDriver> TransportExecutor<D> {
 }
 
 impl<D: TransportDriver> TransportExecutionLease<'_, D> {
+    pub(crate) fn request_sync_play(&self) -> Result<PlayDecision, RuntimeError> {
+        self.executor
+            .lock_controller()
+            .map(|mut controller| controller.request_sync_play())
+    }
+
+    pub(crate) fn finish_sync_play(
+        &self,
+        operation: TransportOperationId,
+        projection: ProjectionKey,
+    ) -> Result<bool, RuntimeError> {
+        self.executor
+            .lock_controller()
+            .map(|mut controller| controller.finish_sync_play(operation, projection))
+    }
+
+    pub(crate) fn fail_play(&self, operation: TransportOperationId) -> Result<bool, RuntimeError> {
+        self.executor
+            .lock_controller()
+            .map(|mut controller| controller.record_play_failure(operation))
+    }
+
     pub(crate) fn request_play(
         &self,
         required_projection: Option<ProjectionKey>,

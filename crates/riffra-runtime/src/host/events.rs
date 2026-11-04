@@ -261,6 +261,7 @@ impl EventQueueState {
 enum HostEventSubscriber {
     Events(EventQueue),
     PluginPersistence(Sender<HostEventFrame>),
+    VoiSona(mpsc::SyncSender<()>),
 }
 
 /// Fans Host events out to the shell and to independent local event clients.
@@ -269,6 +270,7 @@ pub struct HostEventHub {
     emit_gate: Mutex<()>,
     subscribers: Mutex<Vec<HostEventSubscriber>>,
     closed: std::sync::atomic::AtomicBool,
+    catalog_generation: std::sync::atomic::AtomicU64,
 }
 
 impl HostEventHub {
@@ -279,6 +281,7 @@ impl HostEventHub {
             emit_gate: Mutex::new(()),
             subscribers: Mutex::new(Vec::new()),
             closed: std::sync::atomic::AtomicBool::new(false),
+            catalog_generation: std::sync::atomic::AtomicU64::new(0),
         })
     }
 
@@ -317,6 +320,37 @@ impl HostEventHub {
         Some(HostEventSubscription {
             inner: SubscriptionInner::PluginPersistence(receiver),
         })
+    }
+
+    pub(super) fn subscribe_voisona(&self) -> Option<(mpsc::SyncSender<()>, Receiver<()>)> {
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let mut subscribers = self
+            .subscribers
+            .lock()
+            .expect("Host event subscribers lock was poisoned");
+        if self.closed.load(std::sync::atomic::Ordering::Acquire) {
+            return None;
+        }
+        subscribers.push(HostEventSubscriber::VoiSona(sender.clone()));
+        Some((sender, receiver))
+    }
+
+    pub(super) fn notify_plugin_catalog_changed(&self) {
+        self.catalog_generation
+            .fetch_add(1, std::sync::atomic::Ordering::Release);
+        let mut subscribers = self
+            .subscribers
+            .lock()
+            .expect("Host event subscribers lock was poisoned");
+        subscribers.retain(|subscriber| match subscriber {
+            HostEventSubscriber::VoiSona(sender) => notify_voisona(sender),
+            _ => true,
+        });
+    }
+
+    pub(super) fn catalog_generation(&self) -> u64 {
+        self.catalog_generation
+            .load(std::sync::atomic::Ordering::Acquire)
     }
 
     /// Closes all event subscriptions during orderly Host shutdown.
@@ -376,8 +410,29 @@ impl HostEventSink for HostEventHub {
                     true
                 }
             }
+            HostEventSubscriber::VoiSona(subscriber) => {
+                if matches!(
+                    event,
+                    HostEvent::CanonicalStateChanged(_)
+                        | HostEvent::ProjectActivated(_)
+                        | HostEvent::RuntimeProjectionStatus(_)
+                        | HostEvent::RuntimeStartupFinished(_)
+                        | HostEvent::RuntimeRestarted(_)
+                ) {
+                    notify_voisona(subscriber)
+                } else {
+                    true
+                }
+            }
         });
     }
+}
+
+fn notify_voisona(sender: &mpsc::SyncSender<()>) -> bool {
+    !matches!(
+        sender.try_send(()),
+        Err(mpsc::TrySendError::Disconnected(()))
+    )
 }
 
 fn is_plugin_persistence_event(event: &str) -> bool {
@@ -505,6 +560,25 @@ mod tests {
             &shell_events[0],
             HostEvent::RuntimeRestarted(RuntimeRestarted { generation: 4 })
         ));
+    }
+
+    #[test]
+    fn voisona_notifications_coalesce_and_catalog_changes_advance_generation() {
+        let hub = HostEventHub::new(Arc::new(NoopHostEventSink));
+        let (_wake, receiver) = hub.subscribe_voisona().unwrap();
+        for generation in 1..=3 {
+            hub.emit(HostEvent::RuntimeRestarted(RuntimeRestarted { generation }));
+        }
+        hub.notify_plugin_catalog_changed();
+        hub.notify_plugin_catalog_changed();
+        assert_eq!(hub.catalog_generation(), 2);
+        assert!(receiver.try_recv().is_ok());
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+        hub.notify_plugin_catalog_changed();
+        assert!(receiver.try_recv().is_ok());
     }
 
     #[test]
