@@ -5,7 +5,6 @@ use crate::api::output::{PluginEntry, PluginScanState};
 use crate::execution::GraphPluginState;
 use riffra_core::{CreativeSession, EffectOwner, Track, Vst3Plugin};
 use std::{
-    collections::HashSet,
     path::{Path, PathBuf},
     time::SystemTime,
 };
@@ -69,6 +68,40 @@ pub(crate) struct SyncedPluginState {
     pub(crate) device_id: String,
     pub(crate) before: GraphPluginState,
     pub(crate) after: GraphPluginState,
+}
+
+/// The plugin states synchronization wrote while completing a wait.
+///
+/// Consecutive writes to one plugin collapse into a single before/after pair. A
+/// write that does not continue the recorded state marks the history as
+/// discontinuous so a user change between synchronizations cannot be hidden.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct SyncHistory {
+    plugins: Vec<SyncedPluginState>,
+    discontinuous: bool,
+}
+
+impl SyncHistory {
+    /// Records one completed plugin write.
+    pub(crate) fn record(&mut self, change: SyncedPluginState) {
+        let Some(existing) = self.plugins.iter_mut().find(|existing| {
+            existing.owner == change.owner && existing.device_id == change.device_id
+        }) else {
+            self.plugins.push(change);
+            return;
+        };
+        if graph_states_match(&existing.after, &change.before) {
+            existing.after = change.after;
+        } else {
+            self.discontinuous = true;
+        }
+    }
+
+    /// Forgets every recorded write.
+    pub(crate) fn clear(&mut self) {
+        self.plugins.clear();
+        self.discontinuous = false;
+    }
 }
 
 fn plugin<'a>(
@@ -161,12 +194,14 @@ fn plugin_mut<'a>(
     }
 }
 
-fn plugin_state_matches(plugin: &Vst3Plugin, state: &GraphPluginState) -> bool {
-    plugin.state_data == state.state_data && plugin.parameter_values == state.parameter_values
+fn graph_states_match(left: &GraphPluginState, right: &GraphPluginState) -> bool {
+    left.state_data == right.state_data
+        && left.parameter_values == right.parameter_values
+        && left.bypassed == right.bypassed
 }
 
-fn plugins_match(left: &Vst3Plugin, right: &Vst3Plugin) -> bool {
-    left.state_data == right.state_data && left.parameter_values == right.parameter_values
+fn plugin_state_matches(plugin: &Vst3Plugin, state: &GraphPluginState) -> bool {
+    plugin.state_data == state.state_data && plugin.parameter_values == state.parameter_values
 }
 
 /// Compares a requested session with the post-sync one, allowing only the
@@ -174,15 +209,14 @@ fn plugins_match(left: &Vst3Plugin, right: &Vst3Plugin) -> bool {
 pub(crate) fn sessions_match_with_sync_changes(
     mut requested: CreativeSession,
     mut synchronized: CreativeSession,
-    changes: &[SyncedPluginState],
+    history: &SyncHistory,
 ) -> bool {
+    if history.discontinuous {
+        return false;
+    }
     requested.arrangement.revision = synchronized.arrangement.revision;
     requested.updated_at_ms = synchronized.updated_at_ms;
-    let mut checked = HashSet::new();
-    for change in changes {
-        if !checked.insert((change.owner.clone(), change.device_id.clone())) {
-            continue;
-        }
+    for change in &history.plugins {
         let Some(requested_plugin) = plugin(&requested, &change.owner, &change.device_id) else {
             return false;
         };
@@ -190,26 +224,12 @@ pub(crate) fn sessions_match_with_sync_changes(
         let Some(plugin) = plugin_mut(&mut synchronized, &change.owner, &change.device_id) else {
             return false;
         };
-        let related = changes
-            .iter()
-            .filter(|candidate| {
-                candidate.owner == change.owner && candidate.device_id == change.device_id
-            })
-            .collect::<Vec<_>>();
-        let synchronized_from_sync = related
-            .iter()
-            .any(|candidate| plugin_state_matches(plugin, &candidate.after));
-        if !synchronized_from_sync {
-            if !plugins_match(plugin, &requested_state) {
-                return false;
-            }
-            continue;
+        if !plugin_state_matches(plugin, &change.after) {
+            return false;
         }
-        let requested_is_known = related.iter().any(|candidate| {
-            plugin_state_matches(&requested_state, &candidate.before)
-                || plugin_state_matches(&requested_state, &candidate.after)
-        });
-        if !requested_is_known {
+        let requested_is_written = plugin_state_matches(&requested_state, &change.before)
+            || plugin_state_matches(&requested_state, &change.after);
+        if !requested_is_written {
             return false;
         }
         plugin.state_data = requested_state.state_data;
@@ -244,78 +264,60 @@ mod tests {
         }
     }
 
+    fn synchronized_session(
+        requested: &CreativeSession,
+        state_data: &str,
+        parameter_values: Vec<f32>,
+    ) -> CreativeSession {
+        let mut session = requested.clone();
+        session.arrangement.revision += 1;
+        session.updated_at_ms += 1;
+        let voice = session.arrangement.tracks[0]
+            .instrument
+            .as_mut()
+            .unwrap()
+            .as_vst3_mut()
+            .unwrap();
+        voice.state_data = Some(state_data.into());
+        voice.parameter_values = parameter_values;
+        session
+    }
+
+    fn voice_change(before: GraphPluginState, after: GraphPluginState) -> SyncedPluginState {
+        SyncedPluginState {
+            owner: EffectOwner::Track { id: "voice".into() },
+            device_id: "voice".into(),
+            before,
+            after,
+        }
+    }
+
     #[test]
     fn ignores_only_plugin_states_written_by_sync() {
         let requested = session_with_plugins();
-        let mut synchronized = requested.clone();
-        synchronized.arrangement.revision += 1;
-        synchronized.updated_at_ms += 1;
-        let voice = synchronized.arrangement.tracks[0]
-            .instrument
-            .as_mut()
-            .unwrap()
-            .as_vst3_mut()
-            .unwrap();
-        voice.state_data = Some("synced".into());
-        voice.parameter_values = vec![0.5];
-        let synced = SyncedPluginState {
-            owner: EffectOwner::Track { id: "voice".into() },
-            device_id: "voice".into(),
-            before: state(None, vec![]),
-            after: state(Some("synced"), vec![0.5]),
-        };
+        let synchronized = synchronized_session(&requested, "synced", vec![0.5]);
+        let mut history = SyncHistory::default();
+        history.record(voice_change(
+            state(None, vec![]),
+            state(Some("synced"), vec![0.5]),
+        ));
 
         assert!(sessions_match_with_sync_changes(
             requested.clone(),
             synchronized.clone(),
-            std::slice::from_ref(&synced),
+            &history,
         ));
         assert!(sessions_match_with_sync_changes(
             synchronized.clone(),
             synchronized.clone(),
-            std::slice::from_ref(&synced),
+            &history,
         ));
 
-        let mut after_first_sync = requested.clone();
-        after_first_sync.arrangement.revision += 1;
-        let voice = after_first_sync.arrangement.tracks[0]
-            .instrument
-            .as_mut()
-            .unwrap()
-            .as_vst3_mut()
-            .unwrap();
-        voice.state_data = Some("first".into());
-        voice.parameter_values = vec![0.25];
-        let first = SyncedPluginState {
-            owner: EffectOwner::Track { id: "voice".into() },
-            device_id: "voice".into(),
-            before: state(None, vec![]),
-            after: state(Some("first"), vec![0.25]),
-        };
-        let second = SyncedPluginState {
-            owner: EffectOwner::Track { id: "voice".into() },
-            device_id: "voice".into(),
-            before: state(Some("first"), vec![0.25]),
-            after: state(Some("synced"), vec![0.5]),
-        };
-        assert!(sessions_match_with_sync_changes(
-            after_first_sync,
-            synchronized.clone(),
-            &[first, second],
-        ));
-
-        let mut changed_after_sync = synchronized.clone();
-        changed_after_sync.arrangement.tracks[0]
-            .instrument
-            .as_mut()
-            .unwrap()
-            .as_vst3_mut()
-            .unwrap()
-            .state_data = Some("user change".into());
+        let changed_after_sync = synchronized_session(&requested, "user change", vec![0.5]);
         assert!(!sessions_match_with_sync_changes(
             requested.clone(),
             changed_after_sync,
-            std::slice::from_ref(&synced),
+            &history,
         ));
 
         let mut piano_changed = synchronized.clone();
@@ -329,7 +331,7 @@ mod tests {
         assert!(!sessions_match_with_sync_changes(
             requested.clone(),
             piano_changed,
-            &[],
+            &SyncHistory::default(),
         ));
 
         let mut track_changed = synchronized;
@@ -337,7 +339,49 @@ mod tests {
         assert!(!sessions_match_with_sync_changes(
             requested,
             track_changed,
-            &[],
+            &SyncHistory::default(),
+        ));
+    }
+
+    #[test]
+    fn collapses_consecutive_sync_writes_to_one_plugin() {
+        let requested = session_with_plugins();
+        let synchronized = synchronized_session(&requested, "last", vec![0.75]);
+        let mut history = SyncHistory::default();
+        history.record(voice_change(
+            state(None, vec![]),
+            state(Some("first"), vec![0.5]),
+        ));
+        history.record(voice_change(
+            state(Some("first"), vec![0.5]),
+            state(Some("last"), vec![0.75]),
+        ));
+
+        assert!(sessions_match_with_sync_changes(
+            requested,
+            synchronized,
+            &history,
+        ));
+    }
+
+    #[test]
+    fn rejects_discontinuous_sync_history() {
+        let requested = session_with_plugins();
+        let synchronized = synchronized_session(&requested, "last", vec![0.75]);
+        let mut history = SyncHistory::default();
+        history.record(voice_change(
+            state(None, vec![]),
+            state(Some("first"), vec![0.5]),
+        ));
+        history.record(voice_change(
+            state(Some("user edit"), vec![0.5]),
+            state(Some("last"), vec![0.75]),
+        ));
+
+        assert!(!sessions_match_with_sync_changes(
+            requested,
+            synchronized,
+            &history,
         ));
     }
 }
