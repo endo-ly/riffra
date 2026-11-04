@@ -1374,14 +1374,25 @@ impl HostState {
                 },
                 cancelled.as_ref(),
             ) {
-                Ok(result) => match serde_json::to_value(result) {
-                    Ok(value) => worker_jobs.complete(&job_id, value, "Offline render completed."),
+                Ok(pending) => match serde_json::to_value(&pending.result) {
+                    Ok(value) => {
+                        let mut output = pending.output;
+                        worker_jobs.complete_if_not_cancelled(
+                            &job_id,
+                            value,
+                            "Offline render completed.",
+                            move || output.commit(),
+                        );
+                    }
                     Err(error) => jobs::fail(&worker_jobs, &data_root, &job_id, error.to_string()),
                 },
                 Err(error) => jobs::fail(&worker_jobs, &data_root, &job_id, error),
             }
         })
-        .map_err(|error| command_error(format!("render job could not start: {error}")))?;
+        .map_err(|error| {
+            jobs.fail(&id, error.clone());
+            command_error(format!("render job could not start: {error}"))
+        })?;
         jobs::to_background_status(status).map_err(command_error)
     }
 
@@ -1477,7 +1488,10 @@ impl HostState {
                 Err(error) => jobs::fail(&worker_jobs, &data_root, &job_id, error),
             }
         })
-        .map_err(|error| command_error(format!("render stems job could not start: {error}")))?;
+        .map_err(|error| {
+            jobs.fail(&id, error.clone());
+            command_error(format!("render stems job could not start: {error}"))
+        })?;
         jobs::to_background_status(status).map_err(command_error)
     }
 
