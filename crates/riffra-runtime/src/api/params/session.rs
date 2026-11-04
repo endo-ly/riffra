@@ -26,17 +26,34 @@ pub struct BatchOperation {
     #[ts(type = "unknown")]
     pub params: Value,
     /// Names exactly one device created by this operation for later references.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "deserialize_bind"
-    )]
-    #[ts(as = "Option<String>", optional)]
-    pub bind: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub bind: Option<String>,
 }
 
-fn deserialize_bind<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Option<Value>, D::Error> {
-    Value::deserialize(deserializer).map(Some)
+#[cfg(test)]
+mod tests {
+    use super::BatchOperation;
+    use serde_json::json;
+
+    #[test]
+    fn bind_is_an_optional_string() {
+        let operation = |bind| json!({"command": "effect.add", "params": {}, "bind": bind});
+        assert_eq!(
+            serde_json::from_value::<BatchOperation>(operation(json!(null)))
+                .unwrap()
+                .bind,
+            None
+        );
+        assert_eq!(
+            serde_json::from_value::<BatchOperation>(operation(json!("synth")))
+                .unwrap()
+                .bind
+                .as_deref(),
+            Some("synth")
+        );
+        for invalid in [json!(42), json!({})] {
+            assert!(serde_json::from_value::<BatchOperation>(operation(invalid)).is_err());
+        }
+    }
 }

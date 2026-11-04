@@ -58,11 +58,6 @@ impl HostDispatcher<'_> {
                 bind,
             } = operation;
             let result = (|| {
-                let bind = match bind {
-                    Some(Value::String(name)) => Some(name),
-                    Some(_) => return Err(DispatchError::invalid_request("bind must be a string")),
-                    None => None,
-                };
                 if let Some(name) = &bind {
                     if name.trim().is_empty() || name.starts_with('@') {
                         return Err(DispatchError::invalid_request(
@@ -1945,16 +1940,6 @@ mod tests {
                 json!([{"command":"mixer.bus.add","params":{"name":"Unused","kind":"return"},"bind":"x"}]),
                 0,
                 "exactly one created device",
-            ),
-            (
-                json!([{"command":"mixer.bus.add","params":{"name":"Unused","kind":"return"}},{"command":"effect.add","params":{"owner":{"kind":"bus","name":"Unused"},"pluginPath":"x.vst3"},"bind":42}]),
-                1,
-                "bind must be a string",
-            ),
-            (
-                json!([{"command":"effect.add","params":{"owner":{"kind":"bus","name":"FX"},"pluginPath":"x.vst3"},"bind":null}]),
-                0,
-                "bind must be a string",
             ),
             (
                 json!([{"command":"effect.add","params":{"owner":{"kind":"track","name":"@verb"},"pluginPath":"a.vst3"}},{"command":"effect.add","params":{"owner":{"kind":"track","name":"@verb"},"pluginPath":"b.vst3"}},{"command":"track.duplicate","params":{"trackName":"@verb"},"bind":"x"}]),
