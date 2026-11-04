@@ -21,6 +21,8 @@ struct ScoreNote {
     start_tick: u64,
     duration_ticks: u64,
     lyric: Option<String>,
+    // Out-of-range notes stay silent so transposing back restores their expression.
+    out_of_range: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -73,14 +75,16 @@ impl TrackScore {
                     notes: clip
                         .notes
                         .iter()
-                        .filter_map(|note| {
-                            midi.output_note(note.note).map(|pitch| ScoreNote {
+                        .map(|note| {
+                            let output = midi.output_note(note.note);
+                            ScoreNote {
                                 id: note.id.clone(),
-                                pitch,
+                                pitch: output.unwrap_or(note.note),
                                 start_tick: note.start_tick.0,
                                 duration_ticks: note.duration_ticks,
                                 lyric: note.lyric.clone(),
-                            })
+                                out_of_range: output.is_none(),
+                            }
                         })
                         .collect(),
                     muted: clip.muted,
@@ -188,7 +192,7 @@ fn notes(score: &TrackScore) -> Result<BTreeMap<(String, String), PlannedNote>, 
                     .checked_add(note.start_tick)
                     .ok_or("VoiSona note start overflow")?;
                 let start_clock = clock(start, ppq)?;
-                let duration = if clip.muted {
+                let duration = if clip.muted || note.out_of_range {
                     0
                 } else {
                     let end = start
@@ -1002,6 +1006,69 @@ mod tests {
                 pitch: 60,
                 lyric: "あ".into(),
             }
+        );
+    }
+
+    #[test]
+    fn transposing_a_note_out_of_range_preserves_its_expression() {
+        let mut transposed = session("あ", 120, 480);
+        transposed.arrangement.tracks[0].instrument = Some(
+            TrackInstrument::vst3("voice".into(), "VoiSona".into(), "C:/VoiSona.vst3".into())
+                .unwrap(),
+        );
+        transposed.arrangement.tracks[0]
+            .instrument
+            .as_mut()
+            .unwrap()
+            .midi
+            .transpose_semitones = 12;
+        let mut stored = score_note_with_id(0, 480, 120, "あ", "clip", "note");
+        set(&mut stored, "Accent", vec![2]);
+        let encoded = PluginState::for_test(state(vec![stored])).encode().unwrap();
+        let mut original = transposed.clone();
+        original.arrangement.tracks[0]
+            .instrument
+            .as_mut()
+            .unwrap()
+            .midi
+            .transpose_semitones = 0;
+
+        let output = update_score(&encoded, &score(&original), &score(&transposed))
+            .unwrap()
+            .unwrap();
+        let parsed = PluginState::parse(&output).unwrap();
+        let note = &parsed.root.children[0].children[2].children[0];
+        assert_eq!(read_note(note).unwrap().duration, 0);
+        assert_eq!(
+            note.properties
+                .iter()
+                .find(|(key, _)| key == "Accent")
+                .unwrap()
+                .1,
+            [2]
+        );
+
+        let output = update_score(&output, &score(&transposed), &score(&original))
+            .unwrap()
+            .unwrap();
+        let parsed = PluginState::parse(&output).unwrap();
+        let note = &parsed.root.children[0].children[2].children[0];
+        assert_eq!(
+            read_note(note).unwrap(),
+            Note {
+                clock: 0,
+                duration: 480,
+                pitch: 120,
+                lyric: "あ".into(),
+            }
+        );
+        assert_eq!(
+            note.properties
+                .iter()
+                .find(|(key, _)| key == "Accent")
+                .unwrap()
+                .1,
+            [2]
         );
     }
 
