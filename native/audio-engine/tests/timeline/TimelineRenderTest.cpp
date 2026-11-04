@@ -17,6 +17,63 @@ TEST(TimelineEngineTest, FadeShapeEnvelopeMatchesTheRustContract) {
     }
 }
 
+TEST(TimelineEngineTest, CapturesAlignedPostFaderStemsAcrossSplitBlocks) {
+    juce::ScopedJuceInitialiser_GUI initialiser;
+    test::TemporaryDirectory directory;
+    const auto source = directory.get().getChildFile("source.wav");
+    ASSERT_TRUE(writePcmWave(source, 48'000, 1, 128, 8'192));
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    auto snapshot = makeTestSnapshot();
+    snapshot.graph.timebase.tempoChanges.push_back({21, 100.0});
+    auto first = makeAudioTrack("first");
+    first.panLaw = "unityCenterStereo";
+    first.gainDb = -6.0;
+    AudioClipSpec clip;
+    clip.id = "clip:first";
+    clip.path = source.getFullPathName();
+    clip.startTick = 20;
+    clip.sourceSampleRate = 48'000;
+    clip.sourceEndFrame = 128;
+    clip.durationFrames = 128;
+    clip.durationSampleRate = 48'000;
+    first.audioClips.push_back(clip);
+    auto second = first;
+    second.id = "second";
+    second.gainDb = 0.0;
+    second.audioClips[0].id = "clip:second";
+    second.effects = {{"fx:one", RIFFRA_TEST_EFFECT_BUNDLE_PATH, {}},
+                      {"fx:two", RIFFRA_TEST_EFFECT_BUNDLE_PATH, {}}};
+    snapshot.graph.tracks = {first, second};
+    snapshot.graph.mixer.masterEffects = {{"fx:master", RIFFRA_TEST_EFFECT_BUNDLE_PATH, {}}};
+    TimelineEngine engine(true);
+    juce::String error;
+    ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, 48'000.0, 64, error)) << error;
+    ASSERT_TRUE(engine.prepareStemCapture({"first", "second"}, error)) << error;
+    ASSERT_TRUE(engine.play());
+    juce::AudioBuffer<float> mix(2, 64);
+    std::array<std::vector<float>, 2> stems;
+    for (int block = 0; block < 12; ++block) {
+        mix.clear();
+        engine.mix(mix.getArrayOfWritePointers(), 2, 64);
+        for (std::size_t i = 0; i < stems.size(); ++i) {
+            const auto& buffer = engine.stemBuffer(i);
+            stems[i].insert(stems[i].end(), buffer.getReadPointer(0),
+                            buffer.getReadPointer(0) + 64);
+        }
+    }
+    const auto firstSound = [](const std::vector<float>& samples) {
+        return std::find_if(samples.begin(), samples.end(),
+                            [](float sample) { return std::abs(sample) > 0.001f; }) -
+               samples.begin();
+    };
+    EXPECT_EQ(firstSound(stems[0]), firstSound(stems[1]));
+    EXPECT_LT(firstSound(stems[0]), 700);
+    EXPECT_GT(std::abs(stems[0][560]), 0.01f);
+    // Each test effect has a default gain of one half.
+    EXPECT_NEAR(stems[0][560] / stems[1][560], 4.0f * juce::Decibels::decibelsToGain(-6.0f), 0.01f);
+}
+
 TEST(TimelineEngineTest, KeepsProcessedTakesOutOfTheCurrentTrackEffectChain) {
     // Arrange
     test::TemporaryDirectory directory;

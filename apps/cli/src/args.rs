@@ -270,7 +270,7 @@ pub enum SessionCommand {
     Inspect(SessionInspectArgs),
     /// Apply a batch of operations from a JSON Lines file as one atomic mutation.
     ///
-    /// Each operation holds `command` and `params`; requestId and expectedSequence are not operation fields.
+    /// Each operation holds `command`, `params`, and an optional `bind`; requestId and expectedSequence are not operation fields.
     ///
     /// Operations run in order, and the project changes only if all succeed.
     /// Later operations can reference Tracks and Clips created earlier in the batch.
@@ -279,6 +279,8 @@ pub enum SessionCommand {
     /// Batch operations may resolve `trackName` instead of `trackId`, and `clipName` instead of
     /// `clipId`. Specifying both forms fails. Zero matches or multiple matches fail. `clipName`
     /// also requires `trackId` or `trackName` and resolves only within that Track.
+    /// An operation that creates exactly one device may bind its ID with `bind`; later device ID
+    /// fields can use `@name`. Device parameter changes in a batch use normalized `value`.
     ///
     /// Only these commands may appear in a batch: session.settings.update; track.add, track.update,
     /// track.remove, track.duplicate, track.reorder, track.audio-input.set, track.audio-input.clear,
@@ -297,7 +299,8 @@ pub enum SessionCommand {
     /// instrument-event.update, instrument-event.remove;
     /// loop-range.set, punch-range.set; automation.set, automation.clear; instrument.apply,
     /// instrument.midi.set, instrument.vst3.set, plugin.state.import,
-    /// instrument.clear; effect.add, effect.remove, effect.reorder; device.bypass,
+    /// instrument.clear; mixer.bus.add/update/remove, mixer.output.set, mixer.send.add/update/remove,
+    /// mixer.sidechain.add/update/remove; effect.add, effect.remove, effect.reorder; device.bypass,
     /// device.parameter.set. instrument.apply accepts `builtin:` and `user:` instruments;
     /// User Instrument assignments create Project-owned package snapshots atomically with the batch.
     ///
@@ -1258,6 +1261,9 @@ pub struct MusicalNoteBulkArgs {
     /// Id of the MIDI Clip that receives the Notes.
     #[arg(long)]
     pub clip_id: String,
+    /// Shorten notes that extend past the clip end; notes must still start inside the clip.
+    #[arg(long)]
+    pub clip_to_end: bool,
     /// Inline JSON array of notes; each element is an object with pitch (note name such as C4), position (arrangement-absolute bar:beat), duration (whole-note fraction such as 1/8), and optional lyric, velocity (0..=127, default 100) and channel (1..=16, default 1). Mutually exclusive with --notes-file and --stdin.
     #[arg(long, alias = "notes")]
     pub notes_json: Option<String>,
@@ -2103,6 +2109,9 @@ pub struct DeviceParameterSetArgs {
         required_unless_present = "value"
     )]
     pub display: Option<String>,
+    /// Use the closest numeric display value supported by the plugin.
+    #[arg(long, requires = "display", conflicts_with = "value")]
+    pub nearest: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -2606,9 +2615,8 @@ pub enum RenderCommand {
     /// cannot be combined with `loop-range`; --start and --end must be provided together. --track-id
     /// renders only that Track as a stem. --normalize applies peak normalization. --expected-sequence
     /// is the sequence precondition for the project state being rendered. Success returns a Job;
-    /// under an attached one-shot, use `job wait` to follow it to a terminal state. `job wait`
-    /// without --timeout-ms waits until a terminal state, and only a supplied --timeout-ms ends
-    /// the wait early.
+    /// use --wait to return its terminal state, or `job wait` to follow it later. `job wait`
+    /// without --timeout-ms waits until a terminal state.
     /// --out copies the completed WAV to an absolute path without replacing an existing file.
     Start(RenderStartArgs),
     /// Render several Tracks to aligned WAV stems under one job and directory.
@@ -2627,6 +2635,9 @@ pub enum RenderCommand {
 
 #[derive(Debug, Args)]
 pub struct RenderStartArgs {
+    /// Wait for the Job to finish; failure or cancellation exits non-zero (requires --attach).
+    #[arg(long)]
+    pub wait: bool,
     /// Render range: `entire-arrangement` (default) or `loop-range`; supplying --start and --end switches to a time-selection render, which cannot be combined with `loop-range`.
     #[arg(long, default_value = "entire-arrangement", value_parser = ["entire-arrangement", "loop-range"])]
     pub range: String,
@@ -2649,6 +2660,9 @@ pub struct RenderStartArgs {
 
 #[derive(Debug, Args)]
 pub struct RenderStemsArgs {
+    /// Wait for the Job to finish; failure or cancellation exits non-zero (requires --attach).
+    #[arg(long)]
+    pub wait: bool,
     /// Render each Track that contains at least one unmuted Clip.
     #[arg(long)]
     pub all_tracks: bool,
@@ -2689,7 +2703,7 @@ pub struct RenderCleanArgs {
 #[derive(Debug, Subcommand)]
 pub enum JobCommand {
     /// Read one background Job's state by id; requires a running Riffra Host accessed with --attach.
-    Get(JobIdArgs),
+    Get(JobLookupArgs),
     /// Cancel one background Job by id; requires a running Riffra Host accessed with --attach.
     Cancel(JobIdArgs),
     /// Poll a background Job until it reaches a terminal state; requires --attach and cannot be combined with --data-root or --expected-sequence.
@@ -2707,10 +2721,36 @@ pub struct JobIdArgs {
 }
 
 #[derive(Debug, Args)]
+pub struct JobLookupArgs {
+    /// Id of the background Job (or use --id).
+    #[arg(
+        value_name = "JOB_ID",
+        required_unless_present = "id",
+        conflicts_with = "id"
+    )]
+    pub job_id: Option<String>,
+    /// Id of the background Job.
+    #[arg(long, required_unless_present = "job_id")]
+    pub id: Option<String>,
+}
+
+impl JobLookupArgs {
+    pub fn id(&self) -> &str {
+        self.job_id
+            .as_deref()
+            .or(self.id.as_deref())
+            .expect("clap requires a job ID")
+    }
+
+    pub fn into_id(self) -> String {
+        self.job_id.or(self.id).expect("clap requires a job ID")
+    }
+}
+
+#[derive(Debug, Args)]
 pub struct JobWaitArgs {
-    /// Id of the background Job to wait for.
-    #[arg(long)]
-    pub id: String,
+    #[command(flatten)]
+    pub job: JobLookupArgs,
     /// Maximum time to wait in milliseconds; omit to wait until the Job reaches a terminal state.
     #[arg(long)]
     pub timeout_ms: Option<u64>,
@@ -3221,6 +3261,7 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
                 MusicNoteCommand::Insert(args) => {
                     Canonical::MusicNoteInsert(MusicalNoteInsertParams {
                         clip_id: args.clip_id,
+                        clip_to_end: args.clip_to_end,
                         notes: note_input(args.notes_json, args.notes_file, args.stdin)?,
                     })
                     .into()
@@ -3564,6 +3605,7 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
                         parameter_index: args.parameter_index,
                         value: args.value,
                         display: args.display,
+                        nearest: args.nearest,
                     })
                     .into()
                 }
@@ -3767,7 +3809,7 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
             }
         },
         CliCommand::Job { command } => match command {
-            JobCommand::Get(args) => Runtime::JobGet(IdParams { id: args.id }).into(),
+            JobCommand::Get(args) => Runtime::JobGet(IdParams { id: args.into_id() }).into(),
             JobCommand::Cancel(args) => Runtime::JobCancel(IdParams { id: args.id }).into(),
             JobCommand::Wait(_) => {
                 return Err("job wait is handled locally by an attached one-shot CLI".into());
@@ -4804,9 +4846,24 @@ mod tests {
             request.params,
             json!({
                 "clipId":"midi-clip:1",
+                "clipToEnd":false,
                 "notes":[{"pitch":"C4","position":"5:1","duration":"1/8"}]
             })
         );
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "--attach",
+            "music",
+            "note",
+            "insert",
+            "--clip-id",
+            "midi-clip:1",
+            "--clip-to-end",
+            "--notes-json",
+            r#"[{"pitch":"C4","position":"5:1","duration":"1/8"}]"#,
+        ])
+        .unwrap();
+        assert_eq!(wire(cli).params["clipToEnd"], true);
 
         let cli = Cli::try_parse_from([
             "riffra",
@@ -5450,7 +5507,8 @@ mod tests {
             &path,
             br#"{"command":"track.add","params":{"name":"Lead","kind":"instrument"}}
 
-{"command":"music.midi-clip.create","params":{"trackName":"Lead","name":"Verse","start":"1:1","end":"5:1"}}"#,
+{"command":"music.midi-clip.create","params":{"trackName":"Lead","name":"Verse","start":"1:1","end":"5:1"}}
+{"command":"effect.add","params":{"owner":{"kind":"track","name":"Lead"},"pluginPath":"effect.vst3"},"bind":"fx"}"#,
         )
         .unwrap();
         let cli = Cli::try_parse_from([
@@ -5465,8 +5523,9 @@ mod tests {
         .unwrap();
         let request = wire(cli);
         assert_eq!(request.name, "session.apply");
-        assert_eq!(request.params["operations"].as_array().unwrap().len(), 2);
+        assert_eq!(request.params["operations"].as_array().unwrap().len(), 3);
         assert_eq!(request.params["operations"][0]["command"], "track.add");
+        assert_eq!(request.params["operations"][2]["bind"], "fx");
         assert_eq!(request.params["includeCreatedIds"], true);
         assert_eq!(request.params["replace"], true);
         let _ = std::fs::remove_file(path);
@@ -5618,9 +5677,28 @@ mod tests {
                 "1",
                 "--display",
                 "-60.00 dB",
+                "--nearest",
             ])
             .unwrap(),
         );
         assert_eq!(display.params["display"], "-60.00 dB");
+        assert_eq!(display.params["nearest"], true);
+        assert!(
+            Cli::try_parse_from([
+                "riffra",
+                "device",
+                "parameter",
+                "set",
+                "--master",
+                "--device-id",
+                "fx",
+                "--parameter-index",
+                "1",
+                "--value",
+                "0.5",
+                "--nearest"
+            ])
+            .is_err()
+        );
     }
 }

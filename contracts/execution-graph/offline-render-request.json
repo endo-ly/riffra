@@ -378,7 +378,10 @@
       }
     ]
   },
-  "destination": "renders/song.wav",
+  "output": {
+    "kind": "mixdown",
+    "destination": "renders/song.wav"
+  },
   "startTick": 0,
   "endTick": 7680,
   "sampleRate": 48000,

@@ -734,7 +734,11 @@ impl HostDispatcher<'_> {
                 )
             }
             CanonicalCommand::MusicNoteInsert(params) => self.created(
-                application.insert_musical_notes_with_created_ids(&params.clip_id, params.notes)?,
+                application.insert_musical_notes_with_created_ids(
+                    &params.clip_id,
+                    params.clip_to_end,
+                    params.notes,
+                )?,
                 application,
             ),
             CanonicalCommand::MusicNoteUpdate(params) => {

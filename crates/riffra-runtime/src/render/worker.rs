@@ -1,8 +1,10 @@
 //! Process adapter for device-independent Riffra offline rendering.
 
 use crate::audio::wire::{OfflineRenderEnvelope, RenderMessage, SIDECAR_PROTOCOL_VERSION};
-use crate::execution::OfflineRenderRequest as OfflineRenderRequestSpec;
-use crate::render::OfflineRenderRequest;
+use crate::execution::{
+    OfflineRenderOutput, OfflineRenderRequest as OfflineRenderRequestSpec, OfflineStemOutput,
+};
+use crate::render::{OfflineRenderRequest, OfflineRenderTarget};
 use std::{
     io::{Read, Write},
     path::PathBuf,
@@ -87,7 +89,20 @@ impl RenderWorker {
                 include_end_events: request.include_end_events,
                 tail_seconds: request.tail_seconds,
                 graph: request.graph,
-                destination: request.destination.to_string_lossy().into_owned(),
+                output: match request.output {
+                    OfflineRenderTarget::Mixdown(destination) => OfflineRenderOutput::Mixdown {
+                        destination: destination.to_string_lossy().into_owned(),
+                    },
+                    OfflineRenderTarget::Stems(outputs) => OfflineRenderOutput::Stems {
+                        outputs: outputs
+                            .into_iter()
+                            .map(|(track_id, destination)| OfflineStemOutput {
+                                track_id,
+                                destination: destination.to_string_lossy().into_owned(),
+                            })
+                            .collect(),
+                    },
+                },
                 start_tick: request.start_tick,
                 end_tick: request.end_tick,
                 sample_rate: request.sample_rate,
@@ -245,7 +260,7 @@ mod tests {
             include_end_events: false,
             tail_seconds: 0.0,
             graph: empty_graph(),
-            destination,
+            output: OfflineRenderTarget::Mixdown(destination),
             start_tick: 0,
             end_tick: 960,
             sample_rate: 48_000,

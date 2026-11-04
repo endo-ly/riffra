@@ -59,7 +59,7 @@ set(request_template [=[
         }
       ]
     },
-    "destination": "__DESTINATION__",
+    "output": { "kind": "mixdown", "destination": "__DESTINATION__" },
     "tailSeconds": 0.0,
     "includeEndEvents": false,
     "startTick": 0,

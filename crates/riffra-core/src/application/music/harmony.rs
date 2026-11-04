@@ -413,7 +413,8 @@ where
                 )
                 .into());
             }
-            let ids = insert_resolved_midi_notes_in_arrangement(arrangement, clip_id, notes)?;
+            let ids =
+                insert_resolved_midi_notes_in_arrangement(arrangement, clip_id, false, notes)?;
             for id in ids {
                 super::record_created(&mut created_entity_ids, "midiNotes", id);
             }

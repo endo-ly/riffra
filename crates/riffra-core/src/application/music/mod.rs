@@ -436,6 +436,7 @@ where
     pub fn insert_musical_notes_with_created_ids(
         &mut self,
         clip_id: &str,
+        clip_to_end: bool,
         inputs: Vec<MusicalMidiNoteInput>,
     ) -> Result<ApplicationMutation, ApplicationError> {
         if inputs.is_empty() {
@@ -466,7 +467,12 @@ where
                     })
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            let ids = insert_resolved_midi_notes_in_arrangement(arrangement, clip_id, notes)?;
+            let ids = insert_resolved_midi_notes_in_arrangement(
+                arrangement,
+                clip_id,
+                clip_to_end,
+                notes,
+            )?;
             for id in ids {
                 record_created(&mut created_entity_ids, "midiNotes", id);
             }
@@ -922,6 +928,7 @@ fn note_starts_in_range(note_start: u64, range: Option<(TimelineTick, TimelineTi
 fn insert_resolved_midi_notes_in_arrangement(
     arrangement: &mut crate::domain::Arrangement,
     clip_id: &str,
+    clip_to_end: bool,
     inputs: Vec<ResolvedMidiNoteInput>,
 ) -> Result<Vec<String>, DomainError> {
     if inputs.is_empty() {
@@ -929,13 +936,15 @@ fn insert_resolved_midi_notes_in_arrangement(
             "at least one musical midi note is required".into(),
         ));
     }
-    let (clip_start, available_notes) = arrangement
+    let (clip_start, clip_duration, clip_name, available_notes) = arrangement
         .midi_clips
         .iter()
         .find(|clip| clip.id == clip_id)
         .map(|clip| {
             (
                 clip.start_tick,
+                clip.duration_ticks,
+                clip.name.clone(),
                 crate::domain::arrangement::MAX_MIDI_NOTES_PER_CLIP.checked_sub(clip.notes.len()),
             )
         })
@@ -946,24 +955,39 @@ fn insert_resolved_midi_notes_in_arrangement(
     if inputs.len() > available_notes {
         return Err(too_many_midi_notes());
     }
+    clip_start.0.checked_add(clip_duration).ok_or_else(|| {
+        DomainError::InvalidClip(format!(
+            "midi clip '{clip_name}' ({clip_id}) end tick overflows"
+        ))
+    })?;
     let notes = inputs
         .into_iter()
-        .map(|input| {
+        .enumerate()
+        .map(|(index, input)| {
+            let invalid = |reason: &str| DomainError::InvalidMusicalValue(format!("midi clip '{clip_name}' ({clip_id}) input note {index} (pitch {}, absolute start tick {}, duration {}): {reason}", input.pitch, input.absolute_start_tick.0, input.duration_ticks));
+            if input.duration_ticks == 0 {
+                return Err(invalid("duration is zero"));
+            }
+            input.absolute_start_tick.0.checked_add(input.duration_ticks).ok_or_else(|| invalid("end tick overflows"))?;
             let start_tick = input
                 .absolute_start_tick
                 .0
                 .checked_sub(clip_start.0)
-                .ok_or_else(|| {
-                    DomainError::InvalidMusicalValue(
-                        "note position must not precede the MIDI clip".into(),
-                    )
-                })?;
+                .ok_or_else(|| invalid("start precedes the clip"))?;
+            if start_tick >= clip_duration {
+                return Err(invalid("start is outside the clip"));
+            }
+            let end = start_tick.checked_add(input.duration_ticks).ok_or_else(|| invalid("end tick overflows"))?;
+            let duration_ticks = if end > clip_duration {
+                if !clip_to_end { return Err(invalid("end exceeds the clip")); }
+                clip_duration - start_tick
+            } else { input.duration_ticks };
             Ok(MidiNote {
                 lyric: input.lyric,
                 id: next_id("note"),
                 note: input.pitch,
                 start_tick: TimelineTick(start_tick),
-                duration_ticks: input.duration_ticks,
+                duration_ticks,
                 velocity: input.velocity,
                 channel: input.channel,
             })
@@ -1067,6 +1091,81 @@ mod tests {
     }
 
     #[test]
+    fn musical_note_insert_clips_only_ends_and_is_atomic() {
+        let storage = MemoryStorage::default();
+        let mut session = CreativeSession::new(1);
+        session.arrangement.timebase.ppq = 480;
+        session.arrangement.timebase.time_signature_changes[0].numerator = 3;
+        session
+            .arrangement
+            .timebase
+            .tempo_changes
+            .push(crate::domain::TempoChange {
+                tick: 1440,
+                bpm: 90.0,
+            });
+        let mut core = AppCore::new("project:test".into(), session, 0);
+        let track = core
+            .application(&storage)
+            .add_track_with_created_ids("Vocal", TrackKind::Instrument)
+            .unwrap();
+        let clip = core
+            .application(&storage)
+            .create_musical_midi_clip_with_created_ids(
+                &track.session.arrangement.tracks[0].id,
+                "2:1".parse().unwrap(),
+                "3:1".parse().unwrap(),
+                Some("Vocal".into()),
+            )
+            .unwrap();
+        let clip_id = clip.session.arrangement.midi_clips[0].id.clone();
+        let note = |position: &str| MusicalMidiNoteInput {
+            lyric: Some("a".into()),
+            pitch: "C4".parse().unwrap(),
+            position: position.parse().unwrap(),
+            duration: "1/4".parse().unwrap(),
+            velocity: None,
+            channel: None,
+        };
+        let inputs = vec![note("2:3+1/2"), note("2:3+3/4")];
+        let error = core
+            .application(&storage)
+            .insert_musical_notes_with_created_ids(&clip_id, false, inputs.clone())
+            .unwrap_err();
+        assert!(error.to_string().contains("input note 0"));
+        assert!(error.to_string().contains("end exceeds the clip"));
+        assert!(
+            core.snapshot().session.arrangement.midi_clips[0]
+                .notes
+                .is_empty()
+        );
+        let error = core
+            .application(&storage)
+            .insert_musical_notes_with_created_ids(&clip_id, true, vec![note("2:3"), note("3:1")])
+            .unwrap_err();
+        assert!(error.to_string().contains("input note 1"));
+        assert!(
+            core.snapshot().session.arrangement.midi_clips[0]
+                .notes
+                .is_empty()
+        );
+        let result = core
+            .application(&storage)
+            .insert_musical_notes_with_created_ids(&clip_id, true, inputs)
+            .unwrap();
+        let notes = &result.session.arrangement.midi_clips[0].notes;
+        assert_eq!(
+            (notes[0].start_tick.0, notes[0].duration_ticks),
+            (1200, 240)
+        );
+        assert_eq!(
+            (notes[1].start_tick.0, notes[1].duration_ticks),
+            (1320, 120)
+        );
+        assert_eq!(storage.0.lock().unwrap().len(), 3);
+    }
+
+    #[test]
     fn musical_notes_use_absolute_positions_and_one_commit() {
         let storage = MemoryStorage::default();
         let mut core = AppCore::new("project:test".into(), CreativeSession::new(1), 0);
@@ -1089,6 +1188,7 @@ mod tests {
             .application(&storage)
             .insert_musical_notes_with_created_ids(
                 &clip_id,
+                false,
                 vec![
                     MusicalMidiNoteInput {
                         lyric: None,
@@ -1136,6 +1236,7 @@ mod tests {
             core.application(&storage)
                 .insert_musical_notes_with_created_ids(
                     &clip_id,
+                    false,
                     vec![MusicalMidiNoteInput {
                         lyric: None,
                         pitch: "C4".parse().unwrap(),
@@ -1198,6 +1299,7 @@ mod tests {
             .application(&storage)
             .insert_musical_notes_with_created_ids(
                 &clip_id,
+                false,
                 vec![MusicalMidiNoteInput {
                     lyric: Some("き".into()),
                     pitch: "C4".parse().unwrap(),
@@ -1346,6 +1448,7 @@ mod tests {
         core.application(&storage)
             .insert_musical_notes_with_created_ids(
                 &first_clip,
+                false,
                 vec![
                     MusicalMidiNoteInput {
                         lyric: None,
@@ -1369,6 +1472,7 @@ mod tests {
         core.application(&storage)
             .insert_musical_notes_with_created_ids(
                 &second_clip,
+                false,
                 vec![MusicalMidiNoteInput {
                     lyric: None,
                     pitch: "D2".parse().unwrap(),

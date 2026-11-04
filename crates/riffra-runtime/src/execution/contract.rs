@@ -265,12 +265,26 @@ pub(crate) struct OfflineRenderRequest {
     pub(crate) include_end_events: bool,
     pub(crate) tail_seconds: f64,
     pub(crate) graph: ExecutionGraph,
-    pub(crate) destination: String,
+    pub(crate) output: OfflineRenderOutput,
     pub(crate) start_tick: u64,
     pub(crate) end_tick: u64,
     pub(crate) sample_rate: u32,
     pub(crate) block_size: u32,
     pub(crate) normalize: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub(crate) enum OfflineRenderOutput {
+    Mixdown { destination: String },
+    Stems { outputs: Vec<OfflineStemOutput> },
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct OfflineStemOutput {
+    pub(crate) track_id: String,
+    pub(crate) destination: String,
 }
 
 #[cfg(test)]
@@ -629,7 +643,9 @@ mod tests {
                     include_end_events: false,
                     tail_seconds: 0.0,
                     graph,
-                    destination: "renders/song.wav".into(),
+                    output: OfflineRenderOutput::Mixdown {
+                        destination: "renders/song.wav".into(),
+                    },
                     start_tick: 0,
                     end_tick: 7_680,
                     sample_rate: 48_000,

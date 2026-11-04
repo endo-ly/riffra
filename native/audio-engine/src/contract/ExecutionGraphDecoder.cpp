@@ -849,11 +849,11 @@ bool decodeTimelineSnapshot(const juce::var& value, TimelineSnapshotSpec& output
 bool decodeOfflineRenderRequest(const juce::var& value, OfflineRenderRequestSpec& output,
                                 juce::String& error) {
     ContractReader reader(value, "request",
-                          {"graph", "destination", "startTick", "endTick", "sampleRate",
-                           "blockSize", "normalize", "tailSeconds", "includeEndEvents"},
+                          {"graph", "output", "startTick", "endTick", "sampleRate", "blockSize",
+                           "normalize", "tailSeconds", "includeEndEvents"},
                           error);
-    juce::var graph;
-    if (!reader.object("graph", graph) || !reader.string("destination", output.destination) ||
+    juce::var graph, target;
+    if (!reader.object("graph", graph) || !reader.object("output", target) ||
         !reader.unsignedInteger("startTick", output.startTick) ||
         !reader.unsignedInteger("endTick", output.endTick) ||
         !reader.unsigned32("sampleRate", output.sampleRate) ||
@@ -863,11 +863,44 @@ bool decodeOfflineRenderRequest(const juce::var& value, OfflineRenderRequestSpec
         !reader.boolean("normalize", output.normalize) || !reader.finish())
         return false;
     if (!decodeGraph(graph, "request.graph", output.graph, error)) return false;
+    output.destination.clear();
+    output.stems.clear();
+    const auto kind = target.getProperty("kind", {}).toString();
+    if (kind == "mixdown") {
+        ContractReader targetReader(target, "request.output", {"kind", "destination"}, error);
+        juce::String ignored;
+        if (!targetReader.string("kind", ignored) ||
+            !targetReader.string("destination", output.destination) || !targetReader.finish())
+            return false;
+        if (output.destination.isEmpty())
+            return fail(error, "request.output.destination", "must not be empty");
+    } else if (kind == "stems") {
+        ContractReader targetReader(target, "request.output", {"kind", "outputs"}, error);
+        juce::String ignored;
+        juce::Array<juce::var> stems;
+        if (!targetReader.string("kind", ignored) || !targetReader.array("outputs", stems) ||
+            !targetReader.finish())
+            return false;
+        if (stems.isEmpty()) return fail(error, "request.output.outputs", "must not be empty");
+        std::set<juce::String> ids, paths;
+        for (int i = 0; i < stems.size(); ++i) {
+            const auto path = element("request.output.outputs", i);
+            ContractReader stem(stems[i], path, {"trackId", "destination"}, error);
+            OfflineStemOutputSpec entry;
+            if (!stem.string("trackId", entry.trackId) ||
+                !stem.string("destination", entry.destination) || !stem.finish())
+                return false;
+            if (entry.trackId.isEmpty() || entry.destination.isEmpty() ||
+                !ids.insert(entry.trackId).second || !paths.insert(entry.destination).second)
+                return fail(error, path, "track and destination must be nonempty and unique");
+            output.stems.push_back(std::move(entry));
+        }
+    } else {
+        return fail(error, "request.output.kind", unknownValue(kind));
+    }
     if (output.tailSeconds < 0.0) return fail(error, "request.tailSeconds", "must be nonnegative");
     if (output.endTick <= output.startTick)
         return fail(error, "request.endTick", "must be greater than startTick");
-    if (output.destination.isEmpty())
-        return fail(error, "request.destination", "must not be empty");
     if (output.sampleRate == 0) return fail(error, "request.sampleRate", "must be greater than 0");
     if (output.blockSize == 0) return fail(error, "request.blockSize", "must be greater than 0");
     if (output.blockSize > static_cast<std::uint32_t>(std::numeric_limits<int>::max()))

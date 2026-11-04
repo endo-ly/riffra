@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <thread>
 #include <utility>
 
@@ -95,6 +96,41 @@ bool TimelineEngine::loadSnapshot(const TimelineSnapshotSpec& snapshot,
         [&prepared](ControlGraphRegistry::State& graphs) { graphs.pending = std::move(prepared); });
     if (!commitImmediately) return true;
     return commitPreparedSnapshot(error) == RealtimeRequest::accepted;
+}
+
+bool TimelineEngine::prepareStemCapture(const std::vector<juce::String>& trackIds,
+                                        juce::String& error) {
+    auto* graph = realtime.graph;
+    if (!offlineMode || graph == nullptr || !stemCaptures.empty()) {
+        error = "Stem capture requires a prepared offline graph.";
+        return false;
+    }
+    std::vector<std::unique_ptr<StemCapture>> captures;
+    for (const auto& id : trackIds) {
+        auto* track = graph->findTrack(id);
+        if (track == nullptr) {
+            error = "Stem capture track is missing: " + id;
+            return false;
+        }
+        const auto delay = static_cast<std::int64_t>(graph->summary.maximumLatencySamples) -
+                           track->runtime->routeLatencySamples;
+        if (delay < 0 || delay >= std::numeric_limits<int>::max()) {
+            error = "Stem capture latency is invalid: " + id;
+            return false;
+        }
+        auto capture = std::make_unique<StemCapture>();
+        capture->track = track->runtime.get();
+        capture->delay.prepare(static_cast<int>(delay));
+        capture->scratch.setSize(2, graph->preparedBlockSize);
+        capture->output.setSize(2, graph->preparedBlockSize);
+        captures.push_back(std::move(capture));
+    }
+    stemCaptures = std::move(captures);
+    return true;
+}
+
+const juce::AudioBuffer<float>& TimelineEngine::stemBuffer(const std::size_t index) const noexcept {
+    return stemCaptures[index]->output;
 }
 
 RealtimeRequest TimelineEngine::commitPreparedSnapshot(juce::String& error) {

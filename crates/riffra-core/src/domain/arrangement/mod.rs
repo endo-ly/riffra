@@ -582,25 +582,9 @@ impl Arrangement {
                 clip.name
             )));
         }
-        for note in &clip.notes {
-            if note.id.trim().is_empty()
-                || note.note > 127
-                || note.velocity > 127
-                || note.channel == 0
-                || note.channel > 16
-                || note.duration_ticks == 0
-                || note.start_tick.0 >= clip.duration_ticks
-                || note
-                    .start_tick
-                    .0
-                    .checked_add(note.duration_ticks)
-                    .is_none_or(|end| end > clip.duration_ticks)
-            {
-                return Err(DomainError::InvalidClip(format!(
-                    "MIDI clip '{}' contains an invalid note.",
-                    clip.name
-                )));
-            }
+        for (index, note) in clip.notes.iter().enumerate() {
+            clip.validate_note(index, note)
+                .map_err(DomainError::InvalidClip)?;
         }
         for event in &clip.events {
             if event.id.trim().is_empty()

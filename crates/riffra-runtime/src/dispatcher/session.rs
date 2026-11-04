@@ -49,16 +49,46 @@ impl HostDispatcher<'_> {
         let memory = BatchCandidateStorage;
         let mut created_entity_counts = BTreeMap::<String, usize>::new();
         let mut created_entity_ids = BTreeMap::<String, Vec<String>>::new();
+        let mut device_bindings = BTreeMap::<String, String>::new();
         let mut owned_snapshots = Vec::<OwnedProjectInstrumentSnapshot>::new();
         for (operation_index, operation) in params.operations.into_iter().enumerate() {
-            let BatchOperation { command, params } = operation;
-            let created = match batch_operation(
-                self,
-                &mut candidate.application(&memory),
-                &command,
+            let BatchOperation {
+                command,
                 params,
-                &mut owned_snapshots,
-            ) {
+                bind,
+            } = operation;
+            let result = (|| {
+                if let Some(name) = &bind {
+                    if name.trim().is_empty() || name.starts_with('@') {
+                        return Err(DispatchError::invalid_request(
+                            "bind must be a non-empty name without a leading @",
+                        ));
+                    }
+                    if device_bindings.contains_key(name) {
+                        return Err(DispatchError::invalid_request(format!(
+                            "duplicate device binding '{name}'"
+                        )));
+                    }
+                }
+                let params = resolve_device_bindings(&command, params, &device_bindings)?;
+                let created = batch_operation(
+                    self,
+                    &mut candidate.application(&memory),
+                    &command,
+                    params,
+                    &mut owned_snapshots,
+                )?;
+                if let Some(name) = bind {
+                    let Some([id]) = created.get("devices").map(Vec::as_slice) else {
+                        return Err(DispatchError::invalid_request(format!(
+                            "bind '{name}' requires exactly one created device"
+                        )));
+                    };
+                    device_bindings.insert(name, id.clone());
+                }
+                Ok(created)
+            })();
+            let created = match result {
                 Ok(created) => created,
                 Err(error) => {
                     let error = error.with_batch_context(operation_index, &command);
@@ -110,6 +140,54 @@ impl HostDispatcher<'_> {
     }
 }
 
+fn resolve_device_bindings(
+    command: &str,
+    mut params: Value,
+    bindings: &BTreeMap<String, String>,
+) -> Result<Value, DispatchError> {
+    fn resolve(
+        value: Option<&mut Value>,
+        bindings: &BTreeMap<String, String>,
+    ) -> Result<(), DispatchError> {
+        if let Some(Value::String(value)) = value
+            && let Some(name) = value.strip_prefix('@')
+        {
+            *value = bindings.get(name).cloned().ok_or_else(|| {
+                DispatchError::invalid_request(format!("unknown device binding '@{name}'"))
+            })?;
+        }
+        Ok(())
+    }
+    match command {
+        "effect.remove" | "device.bypass" | "device.parameter.set" | "plugin.state.import" => {
+            resolve(params.get_mut("deviceId"), bindings)?
+        }
+        "effect.reorder" => {
+            if let Some(Value::Array(ids)) = params.get_mut("deviceIds") {
+                for id in ids {
+                    resolve(Some(id), bindings)?;
+                }
+            }
+        }
+        "mixer.sidechain.add" => resolve(params.get_mut("targetDeviceId"), bindings)?,
+        "mixer.sidechain.update" => resolve(
+            params
+                .get_mut("patch")
+                .and_then(|patch| patch.get_mut("targetDeviceId")),
+            bindings,
+        )?,
+        "automation.set" | "automation.clear" => {
+            if let Some(target) = params.get_mut("target")
+                && target.get("kind").and_then(Value::as_str) == Some("deviceParameter")
+            {
+                resolve(target.get_mut("deviceId"), bindings)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(params)
+}
+
 /// Resolves, decodes, validates, and applies one operation to the candidate,
 /// returning the entities it created.
 fn batch_operation(
@@ -152,11 +230,16 @@ fn batch_operation(
         });
     }
     if let CanonicalCommand::DeviceParameterSet(params) = command {
+        if params.nearest {
+            return Err(DispatchError::CommandFailed(
+                "session apply requires a normalized value for device parameters".into(),
+            ));
+        }
         let value = match (params.value, params.display) {
             (Some(value), None) => value,
             (None, Some(_)) => {
                 return Err(DispatchError::CommandFailed(
-                    "display parameter input requires a live Host".into(),
+                    "session apply requires a normalized value for device parameters".into(),
                 ));
             }
             _ => {
@@ -440,11 +523,13 @@ fn resolve_automation_points(
 
 #[cfg(test)]
 mod tests {
+    use super::resolve_device_bindings;
     use crate::dispatcher::Dispatcher;
     use crate::test_support::{command, mutated_session, output_type, output_value};
     use riffra_control::{ControlRequest, ErrorCode, new_instance_id};
     use riffra_host::{ProjectStore, now_ms};
     use serde_json::json;
+    use std::collections::BTreeMap;
     use std::fs;
 
     #[test]
@@ -1050,6 +1135,39 @@ mod tests {
             .unwrap();
         assert_eq!(after_failure.sequence, replaced_state.sequence);
         assert_eq!(output_value(&after_failure), output_value(&replaced_state));
+
+        let batch = |clip_to_end| {
+            command(
+                "session.apply",
+                json!({"operations":[
+                    {"command":"midi-note.clear","params":{"trackName":"Lead","clipName":"Verse"}},
+                    {"command":"music.note.insert","params":{"trackName":"Lead","clipName":"Verse","clipToEnd":clip_to_end,"notes":[{"pitch":"C4","position":"4:4+1/2","duration":"1/4"}]}}
+                ]}),
+            )
+        };
+        let error = dispatcher
+            .dispatch(batch(false), None)
+            .unwrap_err()
+            .protocol_error();
+        assert_eq!(error.details.as_ref().unwrap()["operationIndex"], 1);
+        assert!(
+            error.details.as_ref().unwrap()["cause"]
+                .as_str()
+                .unwrap()
+                .contains("end exceeds the clip")
+        );
+        let unchanged = dispatcher
+            .dispatch(command("session.get", json!({})), None)
+            .unwrap();
+        assert_eq!(output_value(&unchanged), output_value(&replaced_state));
+        dispatcher.dispatch(batch(true), None).unwrap();
+        let clipped = dispatcher
+            .dispatch(command("session.get", json!({})), None)
+            .unwrap();
+        assert_eq!(
+            output_value(&clipped)["arrangement"]["midiClips"][0]["notes"][0]["durationTicks"],
+            480
+        );
 
         let _ = fs::remove_dir_all(root);
     }
@@ -1745,6 +1863,151 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn session_apply_binds_devices_and_rolls_back_invalid_references() {
+        let root = std::env::temp_dir().join(format!("riffra-dispatcher-device-bind-{}", now_ms()));
+        let mut dispatcher = Dispatcher::open(
+            root.clone(),
+            crate::test_support::prepare_built_in_resource_root(&root),
+        )
+        .unwrap();
+        dispatcher.test_sidechain_capability =
+            Some(crate::api::output::DeviceSidechainCapability {
+                available: true,
+                mono: false,
+                stereo: true,
+                channels: 0,
+                reason: None,
+            });
+        let track = dispatcher
+            .dispatch(
+                command("track.add", json!({"name":"@verb","kind":"instrument"})),
+                None,
+            )
+            .unwrap();
+        let track_id = mutated_session(&track).arrangement.tracks[0].id.clone();
+        let result = dispatcher.dispatch(command("session.apply", json!({"includeCreatedIds":true,"operations":[
+            {"command":"mixer.bus.add","params":{"name":"FX","kind":"return"}},
+            {"command":"mixer.bus.add","params":{"name":"Other","kind":"return"}},
+            {"command":"effect.add","params":{"owner":{"kind":"bus","name":"Other"},"pluginPath":"same.vst3"}},
+            {"command":"effect.add","params":{"owner":{"kind":"bus","name":"FX"},"pluginPath":"same.vst3"},"bind":"verb"},
+            {"command":"effect.add","params":{"owner":{"kind":"bus","name":"FX"},"pluginPath":"second.vst3"},"bind":"second"},
+            {"command":"effect.reorder","params":{"owner":{"kind":"bus","name":"FX"},"deviceIds":["@second","@verb"]}},
+            {"command":"device.parameter.set","params":{"owner":{"kind":"bus","name":"FX"},"deviceId":"@verb","parameterIndex":0,"value":0.45}},
+            {"command":"mixer.send.add","params":{"trackName":"@verb","returnBusName":"FX","levelDb":-12}},
+            {"command":"mixer.sidechain.add","params":{"sourceTrackId":track_id,"targetDeviceId":"@verb","levelDb":-9}}
+        ]})), None).unwrap();
+        let ids = output_value(&result)["createdEntityIds"]["devices"]
+            .as_array()
+            .unwrap()
+            .clone();
+        assert_eq!(ids.len(), 3);
+        let state = dispatcher
+            .dispatch(command("session.get", json!({})), None)
+            .unwrap();
+        let arrangement = &output_value(&state)["arrangement"];
+        let buses = arrangement["mixer"]["buses"].as_array().unwrap();
+        assert_eq!(buses[0]["effects"][0]["id"], ids[2]);
+        assert_eq!(buses[0]["effects"][1]["id"], ids[1]);
+        assert!(
+            (buses[0]["effects"][1]["plugin"]["parameterValues"][0]
+                .as_f64()
+                .unwrap()
+                - 0.45)
+                .abs()
+                < 1e-6
+        );
+        assert_eq!(
+            arrangement["mixer"]["sidechainSends"][0]["targetDeviceId"],
+            ids[1]
+        );
+        assert_eq!(arrangement["tracks"][0]["name"], "@verb");
+
+        let cases = [
+            (
+                json!([{"command":"device.bypass","params":{"owner":{"kind":"bus","name":"FX"},"deviceId":"@later","bypassed":true}},{"command":"effect.add","params":{"owner":{"kind":"bus","name":"FX"},"pluginPath":"x.vst3"},"bind":"later"}]),
+                0,
+                "unknown device binding",
+            ),
+            (
+                json!([{"command":"effect.add","params":{"owner":{"kind":"bus","name":"FX"},"pluginPath":"x.vst3"},"bind":"x"},{"command":"effect.add","params":{"owner":{"kind":"bus","name":"FX"},"pluginPath":"x.vst3"},"bind":"x"}]),
+                1,
+                "duplicate device binding",
+            ),
+            (
+                json!([{"command":"mixer.bus.add","params":{"name":"Unused","kind":"return"},"bind":"x"}]),
+                0,
+                "exactly one created device",
+            ),
+            (
+                json!([{"command":"effect.add","params":{"owner":{"kind":"track","name":"@verb"},"pluginPath":"a.vst3"}},{"command":"effect.add","params":{"owner":{"kind":"track","name":"@verb"},"pluginPath":"b.vst3"}},{"command":"track.duplicate","params":{"trackName":"@verb"},"bind":"x"}]),
+                2,
+                "exactly one created device",
+            ),
+            (
+                json!([{"command":"effect.add","params":{"owner":{"kind":"bus","name":"FX"},"pluginPath":"x.vst3"},"bind":"x"},{"command":"device.parameter.set","params":{"owner":{"kind":"bus","name":"Other"},"deviceId":"@x","parameterIndex":0,"value":0.5}}]),
+                1,
+                "device",
+            ),
+            (
+                json!([{"command":"effect.add","params":{"owner":{"kind":"bus","name":"FX"},"pluginPath":"x.vst3"},"bind":"x"},{"command":"device.parameter.set","params":{"owner":{"kind":"bus","name":"FX"},"deviceId":"@x","parameterIndex":0,"display":"-4 dB"}}]),
+                1,
+                "requires a normalized value",
+            ),
+        ];
+        for (operations, index, cause) in cases {
+            let error = dispatcher
+                .dispatch(
+                    command("session.apply", json!({"operations":operations})),
+                    None,
+                )
+                .unwrap_err()
+                .protocol_error();
+            assert_eq!(error.details.as_ref().unwrap()["operationIndex"], index);
+            assert!(
+                error.details.as_ref().unwrap()["cause"]
+                    .as_str()
+                    .unwrap()
+                    .contains(cause),
+                "{error:?}"
+            );
+            let after = dispatcher
+                .dispatch(command("session.get", json!({})), None)
+                .unwrap();
+            assert_eq!(after.sequence, state.sequence);
+            assert_eq!(output_value(&after), output_value(&state));
+        }
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn device_bindings_are_limited_to_device_fields() {
+        let bindings = BTreeMap::from([("x".to_owned(), "device:1".to_owned())]);
+        let params = resolve_device_bindings(
+            "mixer.sidechain.update",
+            json!({"sidechainSendId":"@x","patch":{"targetDeviceId":"@x"}}),
+            &bindings,
+        )
+        .unwrap();
+        assert_eq!(params["sidechainSendId"], "@x");
+        assert_eq!(params["patch"]["targetDeviceId"], "device:1");
+        let params = resolve_device_bindings(
+            "automation.set",
+            json!({"target":{"kind":"deviceParameter","deviceId":"@x","parameterId":"@x"}}),
+            &bindings,
+        )
+        .unwrap();
+        assert_eq!(params["target"]["deviceId"], "device:1");
+        assert_eq!(params["target"]["parameterId"], "@x");
+        let params = resolve_device_bindings(
+            "track.midi-input.set",
+            json!({"trackId":"t","deviceId":"@x"}),
+            &bindings,
+        )
+        .unwrap();
+        assert_eq!(params["deviceId"], "@x");
     }
 
     #[test]

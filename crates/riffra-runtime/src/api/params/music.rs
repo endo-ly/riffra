@@ -32,6 +32,9 @@ pub struct MusicalMidiClipResizeParams {
 pub struct MusicalNoteInsertParams {
     pub clip_id: String,
     pub notes: Vec<MusicalMidiNoteInput>,
+    #[serde(default)]
+    #[ts(as = "Option<bool>", optional)]
+    pub clip_to_end: bool,
 }
 
 /// Selects Notes by Clip or Track and an optional half-open range.

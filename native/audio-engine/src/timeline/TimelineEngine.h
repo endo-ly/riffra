@@ -181,7 +181,8 @@ public:
                            bool bypassed, juce::String& error) noexcept;
     bool setDeviceParameter(const EffectOwnerSpec& deviceOwner, const juce::String& deviceId,
                             int parameterIndex, std::optional<float> value, juce::String& error,
-                            const std::optional<juce::String>& display = {}) noexcept;
+                            const std::optional<juce::String>& display = {},
+                            bool nearest = false) noexcept;
     bool setDeviceProgram(const EffectOwnerSpec& deviceOwner, const juce::String& deviceId,
                           int programIndex, juce::String& error);
     bool setDevicePersistedState(const EffectOwnerSpec& deviceOwner, const juce::String& deviceId,
@@ -242,6 +243,10 @@ public:
     /// Processes every VST3 instrument and effect chain with silence and no MIDI, discarding the
     /// output, so plugins that finish preparing while processing can do so before playback.
     void warmUpPluginDevices(int sampleCount) noexcept;
+
+    /// Prepares aligned post-fader track capture for an offline render.
+    bool prepareStemCapture(const std::vector<juce::String>& trackIds, juce::String& error);
+    [[nodiscard]] const juce::AudioBuffer<float>& stemBuffer(std::size_t index) const noexcept;
 
 private:
     friend class TimelineEngineTestPeer;
@@ -404,6 +409,13 @@ private:
 
     juce::TimeSliceThread readAheadThread{"Riffra timeline read-ahead"};
     bool offlineMode = false;
+    struct StemCapture final {
+        TrackRuntime* track = nullptr;
+        MixRouteDelay delay;
+        juce::AudioBuffer<float> scratch;
+        juce::AudioBuffer<float> output;
+    };
+    std::vector<std::unique_ptr<StemCapture>> stemCaptures;
     std::unique_ptr<TrackProcessingPool> pool;
     ControlGraphRegistry graphRegistry;
     ControlGraphRegistry::Retired retiredGraphs;

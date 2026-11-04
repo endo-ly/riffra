@@ -134,6 +134,8 @@ pub struct PluginEntry {
     pub name: String,
     pub vendor: Option<String>,
     pub version: Option<String>,
+    /// Identifier reported by the plugin scanner after validation.
+    pub identifier: Option<String>,
     pub format: PluginFormat,
     /// The plug-in role reported by the VST3 scanner, when available.
     pub role: Option<PluginRole>,

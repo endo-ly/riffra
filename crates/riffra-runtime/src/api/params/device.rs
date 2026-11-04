@@ -55,6 +55,9 @@ pub struct DeviceParameterSetParams {
     pub parameter_index: u32,
     pub value: Option<f32>,
     pub display: Option<String>,
+    #[serde(default)]
+    #[ts(as = "Option<bool>", optional)]
+    pub nearest: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]

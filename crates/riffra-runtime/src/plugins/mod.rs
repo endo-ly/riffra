@@ -137,6 +137,7 @@ fn plugin_entry(root: &Path, path: &Path, bundle: bool) -> PluginEntry {
         name,
         vendor,
         version: None,
+        identifier: None,
         format: PluginFormat::Vst3,
         role: None,
         path: path_string,

@@ -100,6 +100,7 @@ struct SetDeviceParameterCommand final {
     std::uint32_t parameterIndex = 0;
     std::optional<float> value;
     std::optional<juce::String> display;
+    bool nearest = false;
 };
 
 enum class DeviceQuery {

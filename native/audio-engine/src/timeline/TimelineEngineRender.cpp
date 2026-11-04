@@ -238,6 +238,14 @@ void TimelineEngine::processTracks(PreparedTimeline& prepared,
                    transportGainStart, transportGainStep, true});
         mixSidechainStage(prepared, static_cast<int>(stageIndex), rangeStart, sampleCount, true);
     }
+    for (auto& capture : stemCaptures) {
+        capture->scratch.clear(0, sampleCount);
+        capture->delay.add(capture->track->trackOutputBuffer, capture->scratch, sampleCount, 1.0f,
+                           !capture->track->muted, false);
+        for (int channel = 0; channel < 2; ++channel)
+            capture->output.copyFrom(channel, destinationStart, capture->scratch, channel, 0,
+                                     sampleCount);
+    }
     mixProductionOutput(prepared, outputChannels, channelCount, rangeStart, destinationStart,
                         sampleCount, true);
     if (prepared.fadeOutSamples > 0) {
@@ -677,6 +685,7 @@ void TimelineEngine::mix(float* const* outputChannels, const int channelCount,
 void TimelineEngine::mix(const float* const* inputChannels, const int inputChannelCount,
                          float* const* outputChannels, const int channelCount,
                          const int sampleCount) noexcept {
+    for (auto& capture : stemCaptures) capture->output.clear(0, sampleCount);
     mixActiveGraph(inputChannels, inputChannelCount, outputChannels, channelCount, sampleCount);
     publishFrame(realtime);
 }

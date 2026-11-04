@@ -285,7 +285,11 @@ pub fn set_device_parameter(
     parameter_index: u32,
     value: Option<f32>,
     display: Option<String>,
+    nearest: bool,
 ) -> Result<crate::api::output::DeviceParameterMutationResult, AdapterError> {
+    if nearest && display.is_none() {
+        return Err("nearest requires numeric display text".into());
+    }
     if value.is_some() == display.is_some() || value.is_some_and(|value| !value.is_finite()) {
         return Err("select exactly one finite value or display text".into());
     }
@@ -320,9 +324,14 @@ pub fn set_device_parameter(
         return Err(AdapterError::command("device parameter index is invalid"));
     }
     let committed: Result<_, AdapterError> = (|| {
-        context
-            .audio
-            .set_device_parameter(owner, device_id, parameter_index, value, display)?;
+        context.audio.set_device_parameter(
+            owner,
+            device_id,
+            parameter_index,
+            value,
+            display,
+            nearest,
+        )?;
         let state = context.audio.get_plugin_state(owner, device_id)?;
         context.commit(|mut app| {
             app.persist_plugin_state(

@@ -42,6 +42,8 @@ riffra --attach --expected-sequence 2 music note insert --clip-id midi-clip:01j.
 
 複数の正準Mutationを事前に決めている場合は、CLI側でIDを受け渡すスクリプトを書かずに `session apply` へJSONLを渡す。Batchの適用規則、`trackName` / `clipName` の名前解決、含められるコマンドの一覧は `riffra session apply --help` が正本である。Mixer周りも `busName`、`returnBusName`、ownerの `owner.name` で指定でき、同じBatch内で追加したTrackとBusを参照できる。
 
+デバイスを1件作る操作に `bind` で名前を付けると、後続操作のデバイスIDには `@名前` を使える。名前はそのBatchの中だけで有効で、同じ名前を再利用できない。Batch内のパラメーター設定には正規化値 `value` を使う。
+
 `--replace` はProjectの同一性を保ち、Sessionを初期状態に戻してからJSONLを適用する。録音素材ファイルは残る。
 
 ```powershell
@@ -53,6 +55,8 @@ riffra --attach session apply --file ./song.jsonl --include-created-ids
 {"command":"track.add","params":{"name":"Lead","kind":"instrument"}}
 {"command":"music.midi-clip.create","params":{"trackName":"Lead","name":"Verse","start":"1:1","end":"9:1"}}
 {"command":"music.note.insert","params":{"trackName":"Lead","clipName":"Verse","notes":[{"pitch":"C4","position":"1:1","duration":"1/8"}]}}
+{"command":"effect.add","params":{"owner":{"kind":"track","name":"Lead"},"pluginPath":"C:/Plugins/Effect.vst3"},"bind":"effect"}
+{"command":"device.parameter.set","params":{"owner":{"kind":"track","name":"Lead"},"deviceId":"@effect","parameterIndex":0,"value":0.45}}
 ```
 
 既存ClipのNoteだけをまとめて置き換えるには、音楽座標なら同じBatchに `midi-note.clear` と `music.note.insert` をこの順で含める。raw MIDI値でよければ `midi-clip.update` の `patch.notes` へNote配列を渡す。
@@ -63,7 +67,7 @@ Protocol上のparamsキーはCLIフラグと対応する(`--notes-json` など �
 
 ### 音楽操作
 
-NoteとMIDI Clipの通常編集には `music note` / `music midi-clip` を使う。`position` はClip内部の相対位置ではなくArrangement全体の絶対位置である。複数Noteは1回の `music note insert` で渡す。各Noteの `lyric` に歌詞を指定でき、`music note update --lyric` で変更、`--clear-lyric` で削除する。一括変更は `midi-note update-many` のpatchに `lyric` を指定し、`null` で削除する。
+NoteとMIDI Clipの通常編集には `music note` / `music midi-clip` を使う。`position` はClip内部の相対位置ではなくArrangement全体の絶対位置である。複数Noteは1回の `music note insert` で渡す。Clip末尾を越えるNoteは `--clip-to-end` を指定すると末尾までに短縮できる。開始位置はClip内でなければならない。各Noteの `lyric` に歌詞を指定でき、`music note update --lyric` で変更、`--clear-lyric` で削除する。一括変更は `midi-note update-many` のpatchに `lyric` を指定し、`null` で削除する。
 
 `music export-midi --clip-id <id> --output <path>` はClip内のNoteとMIDIイベントをClip先頭から書き出す。`--track-id` を指定するとTrack内の全MIDI Clipをプロジェクト上の位置で書き出す。歌詞とプロジェクトのテンポ・拍子もSMFに含まれる。
 
@@ -183,7 +187,7 @@ Built-in instrumentはparameter、state、preset、editorをサポートしな�
 
 手動操作では `name` でParameterを特定し、離散値は `choices` の表示から目的の状態を選んでその `value` を渡す。Continuousの表示が空の場合も、値をPlugin固有の単位へ変換して推測しない。Automationは `automatable: true` かつ `parameterId` が非nullのParameterを選ぶ。Defaultへの復元には `defaultValue` を渡す。
 
-`device parameter set` の応答は、`mutation`に正準変更、`parameter`に対象の読み戻し値、`changedParameters`に値が変わったほかのParameterをindex順で返す。`--display` はLive HostのPluginに文字列からの変換を依頼し、表示へ戻した結果が入力と等価な場合だけ適用する。`session apply` 内では正規化値だけを正準状態へ書き、`--display` は使えない。
+`device parameter set` の応答は、`mutation`に正準変更、`parameter`に対象の読み戻し値、`changedParameters`に値が変わったほかのParameterをindex順で返す。`--display` はLive HostのPluginに文字列からの変換を依頼し、表示へ戻した結果が入力と等価な場合に適用する。数値表示には `--nearest` を併用でき、単位が一致する範囲で最も近い適用可能な表示値を選ぶ。適用値は応答の `parameter.value` と `displayValue` で確認できる。`session apply` 内では正規化値だけを正準状態へ書き、`--display` は使えない。
 
 `effect add` は Effect Chain の末尾へ追加し、応答の `createdEntityIds.devices` に新しい Device ID を返す。
 
@@ -193,7 +197,7 @@ Instrumentの割り当ては `instrument apply`(`builtin:<presetId>` または `
 riffra --attach instrument midi set --track-id track:01j... --settings-json '{"transposeSemitones":12,"playableNotes":{"type":"range","start":36,"end":84},"keyswitches":[{"note":24,"name":"C0"}]}'
 ```
 
-User Instrumentは `instrument save` で登録し、応答のIDを割当へ渡す。定義から素材への参照を保つため、定義JSONと相対パスの素材を同じパッケージ構成で用意する。複数Trackへまとめて割り当てるときは、`session apply` に `instrument.apply` を含める。
+User Instrumentは `instrument save` で登録し、応答のIDを割当へ渡す。定義が参照するサンプルなどの素材は登録時にパッケージへコピーされ、元のファイルから独立して利用できる。複数Trackへまとめて割り当てるときは、`session apply` に `instrument.apply` を含める。
 
 ### Missing 復旧
 
@@ -229,7 +233,7 @@ riffra --data-root ./riffra-data serve --safe-mode
 
 ### レンダリング(非同期ジョブ)
 
-`render start` の `--expected-sequence` はRender対象のCanonical snapshotを固定する。ConflictならWAVを作成せず、最新状態をInspectしてからRenderし直す。応答は `type: "job"` のジョブIDで、ワンショットは `job wait`(無指定ならterminal stateまで待機)、interactiveは `job get` の繰り返しで追跡し、停止には `job cancel` を使う。出力はDataRootの `renders/` 配下へ書き出される。`plugin scan-start` と `analysis measure` も同じ非同期ジョブである。`ok: true` は状態取得の成功を表し、Job自体の成功は `state: "completed"` で判断する。
+`render start` の `--expected-sequence` はRender対象のCanonical snapshotを固定する。ConflictならWAVを作成せず、最新状態をInspectしてからRenderし直す。ワンショットでは `render start --wait` または `render stems --wait` で完了結果を待てる。非同期の応答は `type: "job"` のジョブIDを返し、ワンショットは `job wait JOB_ID`、interactiveは `job get` の繰り返しで追跡する。待機のタイムアウトは `job wait --timeout-ms` で指定でき、無指定なら終了まで待つ。停止には `job cancel` を使う。出力はDataRootの `renders/` 配下へ書き出される。`plugin scan-start` と `analysis measure` も同じ非同期ジョブである。`ok: true` は状態取得の成功を表し、Job自体の成功は `state: "completed"` で判断する。
 
 Stem Render(`render stems`)は一度の要求で複数Trackを同じ時間基準のWAVへ書き出す。全WAVで開始Tick、終了Tick、Sample Rate、フレーム数を揃え、個別の正規化とMasteringは行わない。共有する非線形Effectでは、Stemの合計と全体Mixが一致しない場合がある。StemとMasteringの設計上の扱いは[音声エンジンの設計](../../../../docs/audio-engine.md)を参照。
 

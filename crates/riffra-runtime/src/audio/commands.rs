@@ -257,7 +257,13 @@ impl AudioSupervisor {
         parameter_index: u32,
         value: Option<f32>,
         display: Option<String>,
+        nearest: bool,
     ) -> NativeAudioResult<()> {
+        if nearest && display.is_none() {
+            return Err(NativeAudioError::native_rejected(
+                "nearest requires numeric display text",
+            ));
+        }
         if value.is_some() == display.is_some() || value.is_some_and(|value| !value.is_finite()) {
             return Err(NativeAudioError::native_rejected(
                 "select exactly one finite value or display text",
@@ -270,6 +276,7 @@ impl AudioSupervisor {
                 parameter_index,
                 value: value.map(|value| value.clamp(0.0, 1.0)),
                 display,
+                nearest,
             },
             TRACK_DEVICE_COMMAND_TIMEOUT,
         )

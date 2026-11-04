@@ -384,7 +384,8 @@ bool decodeCommand(const juce::var& value, SidecarCommandSpec& output, juce::Str
         return true;
     }
     if (type == "setDeviceParameter") {
-        auto fields = reader({"type", "owner", "deviceId", "parameterIndex", "value", "display"});
+        auto fields =
+            reader({"type", "owner", "deviceId", "parameterIndex", "value", "display", "nearest"});
         SetDeviceParameterCommand command;
         std::optional<double> parameterValue;
         if (!fields.string("type", ignoredType) ||
@@ -392,10 +393,13 @@ bool decodeCommand(const juce::var& value, SidecarCommandSpec& output, juce::Str
             !fields.unsigned32("parameterIndex", command.parameterIndex) ||
             (value.hasProperty("value") && !fields.optionalNumber("value", parameterValue)) ||
             (value.hasProperty("display") && !fields.optionalString("display", command.display)) ||
+            (value.hasProperty("nearest") && !fields.boolean("nearest", command.nearest)) ||
             !fields.finish())
             return false;
         if (parameterValue.has_value() == command.display.has_value())
             return fail(error, field("value"), "select exactly one of value or display");
+        if (command.nearest && !command.display.has_value())
+            return fail(error, field("nearest"), "requires display text");
         if (parameterValue.has_value()) {
             if (*parameterValue < 0.0 || *parameterValue > 1.0)
                 return fail(error, field("value"), "must be between 0 and 1");

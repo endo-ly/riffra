@@ -147,25 +147,8 @@ impl MidiClip {
                 self.name
             ));
         }
-        for note in &self.notes {
-            if note.id.trim().is_empty()
-                || note.note > 127
-                || note.velocity > 127
-                || note.channel == 0
-                || note.channel > 16
-                || note.duration_ticks == 0
-                || note.start_tick.0 >= self.duration_ticks
-                || note
-                    .start_tick
-                    .0
-                    .checked_add(note.duration_ticks)
-                    .is_none_or(|end| end > self.duration_ticks)
-            {
-                return Err(format!(
-                    "MIDI clip '{}' contains an invalid note.",
-                    self.name
-                ));
-            }
+        for (index, note) in self.notes.iter().enumerate() {
+            self.validate_note(index, note)?;
         }
         for event in &self.events {
             if event.id.trim().is_empty()
@@ -224,6 +207,35 @@ impl MidiClip {
                     self.name
                 ));
             }
+        }
+        Ok(())
+    }
+
+    pub(super) fn validate_note(&self, index: usize, note: &MidiNote) -> Result<(), String> {
+        let reason = if note.id.trim().is_empty() {
+            Some("note id is empty")
+        } else if note.note > 127 {
+            Some("pitch exceeds 127")
+        } else if note.velocity > 127 {
+            Some("velocity exceeds 127")
+        } else if !(1..=16).contains(&note.channel) {
+            Some("channel must be between 1 and 16")
+        } else if note.duration_ticks == 0 {
+            Some("duration is zero")
+        } else if note.start_tick.0 >= self.duration_ticks {
+            Some("start is outside the clip")
+        } else {
+            match note.start_tick.0.checked_add(note.duration_ticks) {
+                None => Some("end tick overflows"),
+                Some(end) if end > self.duration_ticks => Some("end exceeds the clip"),
+                Some(_) => None,
+            }
+        };
+        if let Some(reason) = reason {
+            return Err(format!(
+                "MIDI clip '{}' ({}) note {index} (id {:?}, pitch {}, start tick {}, duration {}): {reason}",
+                self.name, self.id, note.id, note.note, note.start_tick.0, note.duration_ticks
+            ));
         }
         Ok(())
     }
@@ -305,6 +317,52 @@ mod tests {
             muted: false,
             loop_enabled: false,
             recording_take_id: None,
+        }
+    }
+
+    #[test]
+    fn note_validation_reports_clip_note_and_specific_cause() {
+        let clip = midi_clip("instrument");
+        let note = clip.notes[0].clone();
+        let mut cases = Vec::new();
+        let mut candidate = note.clone();
+        candidate.id.clear();
+        cases.push((candidate, "note id is empty"));
+        let mut candidate = note.clone();
+        candidate.note = 128;
+        cases.push((candidate, "pitch exceeds 127"));
+        let mut candidate = note.clone();
+        candidate.velocity = 128;
+        cases.push((candidate, "velocity exceeds 127"));
+        let mut candidate = note.clone();
+        candidate.channel = 17;
+        cases.push((candidate, "channel must be"));
+        let mut candidate = note.clone();
+        candidate.duration_ticks = 0;
+        cases.push((candidate, "duration is zero"));
+        let mut candidate = note.clone();
+        candidate.start_tick = TimelineTick(1920);
+        cases.push((candidate, "start is outside"));
+        let mut candidate = note.clone();
+        candidate.duration_ticks = 2000;
+        cases.push((candidate, "end exceeds"));
+        let mut candidate = note;
+        candidate.duration_ticks = u64::MAX;
+        cases.push((candidate, "end tick overflows"));
+        for (candidate, reason) in cases {
+            let error = clip.validate_note(3, &candidate).unwrap_err();
+            assert!(
+                error.contains("MIDI")
+                    && error.contains("midi-clip:1")
+                    && error.contains("note 3")
+                    && error.contains(reason),
+                "{error}"
+            );
+            assert!(
+                error.contains(&format!("pitch {}", candidate.note))
+                    && error.contains(&format!("start tick {}", candidate.start_tick.0))
+                    && error.contains(&format!("duration {}", candidate.duration_ticks))
+            );
         }
     }
 
