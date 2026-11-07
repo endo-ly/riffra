@@ -29,6 +29,7 @@
 #include "contract/ExecutionGraph.h"
 #include "contract/SidecarMessages.h"
 #include "instruments/InstrumentRuntime.h"
+#include "instruments/SonalloyInstrumentRuntime.h"
 #include "plugins/PluginChain.h"
 #include "recording/ArrangementCaptureSink.h"
 #include "recording/RecordingCaptureRuntime.h"
@@ -408,6 +409,7 @@ private:
                                                        const char* noun, juce::String& error);
 
     juce::TimeSliceThread readAheadThread{"Riffra timeline read-ahead"};
+    SonalloyInstrumentRuntime::CompiledCache instrumentCache;
     bool offlineMode = false;
     struct StemCapture final {
         TrackRuntime* track = nullptr;

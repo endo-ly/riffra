@@ -41,7 +41,7 @@ struct PreparedTimeline final {
     struct Clip final {
         juce::String id;
         std::unique_ptr<juce::AudioFormatReaderSource> readerSource;
-        std::unique_ptr<juce::BufferingAudioSource> bufferingSource;
+        juce::BufferingAudioReader* bufferingReader = nullptr;
         juce::PositionableAudioSource* positionableSource = nullptr;
         std::unique_ptr<juce::ResamplingAudioSource> resamplingSource;
         juce::AudioBuffer<float> scratch;

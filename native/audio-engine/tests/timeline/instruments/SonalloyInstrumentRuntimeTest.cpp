@@ -540,15 +540,21 @@ TEST(SonalloyInstrumentRuntimeTest, AveragesStereoExternalInputForMonoWithoutOut
     external->setProperty("channels", "mono");
     juce::String error;
     const auto text = juce::JSON::toString(definition);
-    auto averaged =
-        SonalloyInstrumentRuntime::create(text, directory.getFullPathName(), 48'000, 256, error);
-    auto silent =
-        SonalloyInstrumentRuntime::create(text, directory.getFullPathName(), 48'000, 256, error);
-    auto driven =
-        SonalloyInstrumentRuntime::create(text, directory.getFullPathName(), 48'000, 256, error);
+    SonalloyInstrumentRuntime::CompiledCache cache;
+    auto averaged = SonalloyInstrumentRuntime::create(text, directory.getFullPathName(), 48'000,
+                                                      256, error, &cache);
+    auto silent = SonalloyInstrumentRuntime::create(text, directory.getFullPathName(), 48'000, 256,
+                                                    error, &cache);
+    auto driven = SonalloyInstrumentRuntime::create(text, directory.getFullPathName(), 48'000, 256,
+                                                    error, &cache);
     ASSERT_NE(averaged, nullptr) << error;
     ASSERT_NE(silent, nullptr) << error;
     ASSERT_NE(driven, nullptr) << error;
+    ASSERT_EQ(cache.entries.size(), 1u);
+    auto differentBlockSize = SonalloyInstrumentRuntime::create(text, directory.getFullPathName(),
+                                                                48'000, 512, error, &cache);
+    ASSERT_NE(differentBlockSize, nullptr) << error;
+    ASSERT_EQ(cache.entries.size(), 2u);
     ASSERT_EQ(averaged->requiredInputChannels(), 1u);
     juce::AudioBuffer<float> input(2, 256), zero(2, 256), coherent(2, 256);
     for (int sample = 0; sample < 256; ++sample) {
