@@ -4,6 +4,106 @@
 
 namespace riffra {
 
+TEST(TimelineReadAheadSourceTest, ReportsReadFailures) {
+    class FailingReader final : public juce::AudioFormatReader {
+    public:
+        FailingReader() : AudioFormatReader(nullptr, "failing") {
+            lengthInSamples = 1024;
+            sampleRate = 48'000;
+            numChannels = 1;
+            bitsPerSample = 32;
+            usesFloatingPointData = true;
+        }
+        bool readSamples(int* const*, int, int, juce::int64, int) override { return false; }
+    };
+
+    juce::TimeSliceThread worker("test read ahead");
+    ASSERT_TRUE(worker.startThread());
+    TimelineReadAheadSource source(std::make_unique<FailingReader>(), worker, 4096);
+    source.prepareToPlay(128, 48'000);
+    for (int attempt = 0; attempt < 1000 && !source.failed(); ++attempt) juce::Thread::sleep(1);
+    EXPECT_TRUE(source.failed());
+    EXPECT_FALSE(source.ready(128));
+}
+
+TEST(TimelineReadAheadSourceTest, StreamsHighRateAudioWithoutDroppingBlocks) {
+    test::TemporaryDirectory directory;
+    const auto path = directory.get().getChildFile("high-rate.wav");
+    ASSERT_TRUE(writePcmWave(path, 384'000, 1, 384'000, 8'000));
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    auto reader = std::unique_ptr<juce::AudioFormatReader>(formats.createReaderFor(path));
+    ASSERT_NE(reader, nullptr);
+    juce::TimeSliceThread worker("test read ahead");
+    ASSERT_TRUE(worker.startThread());
+    TimelineReadAheadSource source(std::move(reader), worker, 32'768);
+    source.prepareToPlay(384, 384'000);
+    for (int attempt = 0; attempt < 1000 && !source.ready(32'000); ++attempt)
+        juce::Thread::sleep(1);
+    ASSERT_TRUE(source.ready(32'000));
+    juce::AudioBuffer<float> block(2, 384);
+    for (int index = 0; index < 200; ++index) {
+        source.getNextAudioBlock({&block, 0, 384});
+        EXPECT_GT(block.findMinMax(0, 0, 384).getStart(), 0.2f) << index;
+        juce::Thread::sleep(1);
+    }
+}
+
+TEST(TimelineReadAheadSourceTest, PreservesTheAvailablePartOfARead) {
+    test::TemporaryDirectory directory;
+    const auto path = directory.get().getChildFile("partial.wav");
+    ASSERT_TRUE(writePcmWave(path, 48'000, 1, 8192, 8'000));
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    auto reader = std::unique_ptr<juce::AudioFormatReader>(formats.createReaderFor(path));
+    ASSERT_NE(reader, nullptr);
+    juce::TimeSliceThread worker("test read ahead");
+    ASSERT_TRUE(worker.startThread());
+    TimelineReadAheadSource source(std::move(reader), worker, 4096);
+    source.prepareToPlay(128, 48'000);
+    for (int attempt = 0; attempt < 1000 && !source.ready(4096); ++attempt) {
+        juce::Thread::sleep(1);
+    }
+    ASSERT_TRUE(source.ready(4096));
+    ASSERT_TRUE(worker.stopThread(1000));
+    source.setNextReadPosition(4090);
+    juce::AudioBuffer<float> block(2, 16);
+    source.getNextAudioBlock({&block, 0, 16});
+    EXPECT_GT(block.findMinMax(0, 0, 6).getStart(), 0.2f);
+    EXPECT_FLOAT_EQ(block.getMagnitude(0, 6, 10), 0.0f);
+}
+
+TEST(TimelineReadAheadSourceTest, TreatsTheEndOfAShortFileAsSilence) {
+    test::TemporaryDirectory directory;
+    const auto path = directory.get().getChildFile("short-tail.wav");
+    ASSERT_TRUE(writePcmWave(path, 48'000, 1, 128, 8'000));
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    auto reader = std::unique_ptr<juce::AudioFormatReader>(formats.createReaderFor(path));
+    ASSERT_NE(reader, nullptr);
+    juce::TimeSliceThread worker("test read ahead");
+    ASSERT_TRUE(worker.startThread());
+    TimelineReadAheadSource source(std::move(reader), worker, 32'768);
+    source.prepareToPlay(512, 48'000);
+    for (int attempt = 0; attempt < 1000 && !source.ready(512); ++attempt) {
+        juce::Thread::sleep(1);
+    }
+    ASSERT_TRUE(source.ready(512));
+    ASSERT_TRUE(worker.stopThread(1000));
+    juce::AudioBuffer<float> block(2, 512);
+    source.getNextAudioBlock({&block, 0, 512});
+    EXPECT_GT(block.findMinMax(0, 0, 128).getStart(), 0.2f);
+    EXPECT_FLOAT_EQ(block.getMagnitude(0, 128, 384), 0.0f);
+    EXPECT_TRUE(source.ready(512));
+    source.getNextAudioBlock({&block, 0, 512});
+    EXPECT_FLOAT_EQ(block.getMagnitude(0, 0, 512), 0.0f);
+    source.setNextReadPosition(64);
+    EXPECT_TRUE(source.ready(512));
+    source.getNextAudioBlock({&block, 0, 512});
+    EXPECT_GT(block.findMinMax(0, 0, 64).getStart(), 0.2f);
+    EXPECT_FLOAT_EQ(block.getMagnitude(0, 64, 448), 0.0f);
+}
+
 TEST(TimelineEngineTest, FadeShapeEnvelopeMatchesTheRustContract) {
     // Arrange
     // Act / Assert
@@ -657,9 +757,9 @@ TEST(TimelineEngineTest, MixesMonoAndStereoSourcesAtDifferentSampleRates) {
     snapshot.revision = 7;
     auto track = makeAudioTrack("track:mixed");
     track.audioClips = {
-        {"mono-44100", mono.getFullPathName(), 44'100, 0, 44'100, 44'100, 44'100, 0, 0, 0,
+        {"mono-44100", mono.getFullPathName(), 44'100, 22'050, 44'100, 22'050, 44'100, 0, 0, 0,
          FadeShapeSpec::linear, 0.0, 0.0, TakeVariantSpec::raw, false, false},
-        {"stereo-48000", stereo.getFullPathName(), 48'000, 0, 48'000, 48'000, 48'000, 0, 0, 0,
+        {"stereo-48000", stereo.getFullPathName(), 48'000, 24'000, 48'000, 24'000, 48'000, 0, 0, 0,
          FadeShapeSpec::linear, 0.0, 0.0, TakeVariantSpec::raw, false, false},
     };
     snapshot.graph.tracks.push_back(std::move(track));
@@ -670,11 +770,86 @@ TEST(TimelineEngineTest, MixesMonoAndStereoSourcesAtDifferentSampleRates) {
     std::array<float, 512> left{};
     std::array<float, 512> right{};
     const std::array<float*, 2> outputs{left.data(), right.data()};
-    for (int block = 0; block < 8; ++block) engine.mix(outputs.data(), 2, 512);
+    engine.mix(outputs.data(), 2, 512);
 
-    // Assert: both sources contribute to the mix once they overlap.
+    // Assert: both sources contribute from the first block after preparation.
     EXPECT_GT(*std::max_element(left.begin(), left.end()), 0.1f);
     EXPECT_GT(*std::max_element(right.begin(), right.end()), 0.1f);
+}
+
+TEST(TimelineEngineTest, PreparesManyShortClips) {
+    test::TemporaryDirectory directory;
+    const auto source = directory.get().getChildFile("short.wav");
+    ASSERT_TRUE(writePcmWave(source, 48'000, 1, 128, 2'000));
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine engine;
+    juce::String error;
+    auto snapshot = makeTestSnapshot();
+    auto track = makeAudioTrack("track:short");
+    for (int index = 0; index < 20; ++index)
+        track.audioClips.push_back({"clip:" + juce::String(index), source.getFullPathName(), 48'000,
+                                    0, 128, 48'000, 48'000, 0, 0, 0, FadeShapeSpec::linear, 0.0,
+                                    0.0, TakeVariantSpec::raw, true, false});
+    snapshot.graph.tracks.push_back(std::move(track));
+    ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, 48'000, 128, error)) << error;
+    ASSERT_TRUE(engine.play());
+    std::array<float, 128> left{}, right{};
+    const std::array<float*, 2> outputs{left.data(), right.data()};
+    engine.mix(outputs.data(), 2, 128);
+    EXPECT_GT(*std::max_element(left.begin(), left.end()), 0.1f);
+}
+
+TEST(TimelineEngineTest, ReadsTheRequestedPositionAfterASeekOutsideReadAhead) {
+    test::TemporaryDirectory directory;
+    const auto source = directory.get().getChildFile("seek.wav");
+    ASSERT_TRUE(writePcmWave(source, 48'000, 1, 144'000, 4'000));
+    {
+        std::fstream stream(source.getFullPathName().toStdString(),
+                            std::ios::in | std::ios::out | std::ios::binary);
+        ASSERT_TRUE(stream.is_open());
+        stream.seekp(44 + 48'000 * sizeof(std::int16_t));
+        const std::int16_t sample = -8'000;
+        for (int index = 0; index < 96'000; ++index)
+            stream.write(reinterpret_cast<const char*>(&sample), sizeof(sample));
+        ASSERT_TRUE(stream.good());
+    }
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine engine;
+    juce::String error;
+    auto snapshot = makeTestSnapshot();
+    auto track = makeAudioTrack("track:seek");
+    track.audioClips.push_back({"clip:seek", source.getFullPathName(), 48'000, 0, 144'000, 288'000,
+                                48'000, 0, 0, 0, FadeShapeSpec::linear, 0.0, 0.0,
+                                TakeVariantSpec::raw, true, false});
+    snapshot.graph.tracks.push_back(std::move(track));
+    ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, 48'000, 128, error)) << error;
+    ASSERT_TRUE(engine.play());
+    std::array<float, 128> left{}, right{};
+    const std::array<float*, 2> outputs{left.data(), right.data()};
+    engine.mix(outputs.data(), 2, 128);
+    EXPECT_GT(*std::max_element(left.begin(), left.end()), 0.01f);
+    ASSERT_TRUE(engine.seekToTick(3840));
+    bool reached = false;
+    for (int attempt = 0; attempt < 200 && !reached; ++attempt) {
+        left.fill(0.0f);
+        right.fill(0.0f);
+        engine.mix(outputs.data(), 2, 128);
+        reached = *std::min_element(left.begin(), left.end()) < -0.1f;
+        if (!reached) juce::Thread::sleep(1);
+    }
+    EXPECT_TRUE(reached);
+    ASSERT_TRUE(engine.seekToTick(6720));
+    reached = false;
+    for (int attempt = 0; attempt < 200 && !reached; ++attempt) {
+        left.fill(0.0f);
+        right.fill(0.0f);
+        engine.mix(outputs.data(), 2, 128);
+        reached = *std::max_element(left.begin(), left.end()) > 0.05f;
+        if (!reached) juce::Thread::sleep(1);
+    }
+    EXPECT_TRUE(reached);
 }
 
 TEST(TimelineEngineTest, NormalizesAnOfflineRenderToTheTargetPeak) {

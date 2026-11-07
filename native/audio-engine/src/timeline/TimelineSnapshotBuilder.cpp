@@ -481,7 +481,7 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
                 juce::String runtimeError;
                 track->runtime->setInstrument(SonalloyInstrumentRuntime::create(
                     internal.definitionJson, internal.definitionBaseDir, outputSampleRate,
-                    maximumBlockSize, runtimeError));
+                    maximumBlockSize, runtimeError, &engine.instrumentCache));
                 if (track->runtime->instrument() == nullptr)
                     return roleError("instrument", runtimeError);
                 track->runtime->instrument()->setBypassed(internal.bypassed);
@@ -549,14 +549,25 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
             clip->rightGain = clip->gain * std::sin(panAngle);
             clip->loop = clipSpec.loopEnabled;
             clip->muted = clipSpec.muted;
-            clip->readerSource =
-                std::make_unique<juce::AudioFormatReaderSource>(reader.release(), true);
-            clip->positionableSource = clip->readerSource.get();
             if (!engine.offlineMode) {
-                clip->bufferingSource = std::make_unique<juce::BufferingAudioSource>(
-                    clip->readerSource.get(), engine.readAheadThread, false, kReadAheadSamples, 2);
-                clip->positionableSource = clip->bufferingSource.get();
-            }
+                const auto inputSamples = std::ceil(static_cast<double>(maximumBlockSize) *
+                                                    clip->sourceSampleRate / outputSampleRate) +
+                                          64.0;
+                if (!std::isfinite(inputSamples) ||
+                    inputSamples >= static_cast<double>(std::numeric_limits<int>::max() - 2055)) {
+                    error = "Timeline source sample rate requires an unsupported buffer size.";
+                    return false;
+                }
+                auto buffered = std::make_unique<TimelineReadAheadSource>(
+                    std::move(reader), engine.readAheadThread,
+                    std::max(kReadAheadSamples, static_cast<int>(inputSamples) + 8));
+                clip->bufferingSource = buffered.get();
+                clip->bufferingSource->setNextReadPosition(clip->sourceStartFrame);
+                clip->readerSource = std::move(buffered);
+            } else
+                clip->readerSource =
+                    std::make_unique<juce::AudioFormatReaderSource>(reader.release(), true);
+            clip->positionableSource = clip->readerSource.get();
             clip->resamplingSource =
                 std::make_unique<juce::ResamplingAudioSource>(clip->positionableSource, false, 2);
             clip->resamplingSource->setResamplingRatio(clip->sourceSampleRate / outputSampleRate);
@@ -717,6 +728,41 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
     if (prepared->fadeOutSamples > prepared->mixEndSample) {
         error = "Mix fade duration exceeds the final mix duration.";
         return false;
+    }
+    if (!engine.offlineMode) {
+        std::vector<Clip*> pending;
+        for (auto& track : prepared->tracks)
+            for (auto& clip : track->clips) pending.push_back(clip.get());
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+        while (!pending.empty()) {
+            for (auto it = pending.begin(); it != pending.end();) {
+                auto* clip = *it;
+                if (clip->bufferingSource->failed()) {
+                    error = "Timeline source could not be read: " + clip->id;
+                    return false;
+                }
+                const auto requested =
+                    static_cast<int>(std::ceil(static_cast<double>(maximumBlockSize) *
+                                               clip->sourceSampleRate / outputSampleRate)) +
+                    64;
+                const auto samples = static_cast<int>(std::min<std::int64_t>(
+                    requested, clip->sourceEndFrame - clip->sourceStartFrame));
+                if (clip->bufferingSource->ready(samples)) {
+                    if (clip->bufferingSource->failed()) {
+                        error = "Timeline source could not be read: " + clip->id;
+                        return false;
+                    }
+                    it = pending.erase(it);
+                } else
+                    ++it;
+            }
+            if (pending.empty()) break;
+            if (std::chrono::steady_clock::now() >= deadline) {
+                error = "Timeline source read-ahead timed out.";
+                return false;
+            }
+            juce::Thread::sleep(1);
+        }
     }
     return true;
 }
