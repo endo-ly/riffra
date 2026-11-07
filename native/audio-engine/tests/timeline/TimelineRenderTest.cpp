@@ -26,6 +26,52 @@ TEST(TimelineReadAheadSourceTest, ReportsReadFailures) {
     EXPECT_FALSE(source.ready(128));
 }
 
+TEST(TimelineReadAheadSourceTest, StreamsHighRateAudioWithoutDroppingBlocks) {
+    test::TemporaryDirectory directory;
+    const auto path = directory.get().getChildFile("high-rate.wav");
+    ASSERT_TRUE(writePcmWave(path, 384'000, 1, 384'000, 8'000));
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    auto reader = std::unique_ptr<juce::AudioFormatReader>(formats.createReaderFor(path));
+    ASSERT_NE(reader, nullptr);
+    juce::TimeSliceThread worker("test read ahead");
+    ASSERT_TRUE(worker.startThread());
+    TimelineReadAheadSource source(std::move(reader), worker, 32'768);
+    source.prepareToPlay(384, 384'000);
+    for (int attempt = 0; attempt < 1000 && !source.ready(32'000); ++attempt)
+        juce::Thread::sleep(1);
+    ASSERT_TRUE(source.ready(32'000));
+    juce::AudioBuffer<float> block(2, 384);
+    for (int index = 0; index < 200; ++index) {
+        source.getNextAudioBlock({&block, 0, 384});
+        EXPECT_GT(block.findMinMax(0, 0, 384).getStart(), 0.2f) << index;
+        juce::Thread::sleep(1);
+    }
+}
+
+TEST(TimelineReadAheadSourceTest, PreservesTheAvailablePartOfARead) {
+    test::TemporaryDirectory directory;
+    const auto path = directory.get().getChildFile("partial.wav");
+    ASSERT_TRUE(writePcmWave(path, 48'000, 1, 8192, 8'000));
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    auto reader = std::unique_ptr<juce::AudioFormatReader>(formats.createReaderFor(path));
+    ASSERT_NE(reader, nullptr);
+    juce::TimeSliceThread worker("test read ahead");
+    ASSERT_TRUE(worker.startThread());
+    TimelineReadAheadSource source(std::move(reader), worker, 4096);
+    source.prepareToPlay(128, 48'000);
+    for (int attempt = 0; attempt < 1000 && !source.ready(4096); ++attempt)
+        juce::Thread::sleep(1);
+    ASSERT_TRUE(source.ready(4096));
+    ASSERT_TRUE(worker.stopThread(1000));
+    source.setNextReadPosition(4090);
+    juce::AudioBuffer<float> block(2, 16);
+    source.getNextAudioBlock({&block, 0, 16});
+    EXPECT_GT(block.findMinMax(0, 0, 6).getStart(), 0.2f);
+    EXPECT_FLOAT_EQ(block.getMagnitude(0, 6, 10), 0.0f);
+}
+
 TEST(TimelineEngineTest, FadeShapeEnvelopeMatchesTheRustContract) {
     // Arrange
     // Act / Assert

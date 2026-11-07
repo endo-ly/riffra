@@ -554,7 +554,7 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
                                                     clip->sourceSampleRate / outputSampleRate) +
                                           64.0;
                 if (!std::isfinite(inputSamples) ||
-                    inputSamples >= static_cast<double>(std::numeric_limits<int>::max() - 8)) {
+                    inputSamples >= static_cast<double>(std::numeric_limits<int>::max() - 2055)) {
                     error = "Timeline source sample rate requires an unsupported buffer size.";
                     return false;
                 }
