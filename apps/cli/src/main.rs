@@ -205,7 +205,8 @@ fn run(cli: Cli) -> Result<(), RunFailure> {
             )
         {
             return Err(
-                "undo and redo require --interactive because history is process-local".into(),
+                "history undo and redo require --interactive because history is process-local"
+                    .into(),
             );
         }
         Some(command)
@@ -546,7 +547,7 @@ mod tests {
             &dispatcher,
             &json!({
                 "requestId": "clip",
-                "command": "midi-clip.create",
+                "command": "clip.midi.create",
                 "expectedSequence": 1,
                 "params": {
                     "trackId": track_id,
@@ -564,7 +565,7 @@ mod tests {
             &dispatcher,
             &json!({
                 "requestId": "note-1",
-                "command": "midi-note.add",
+                "command": "clip.midi.note.add",
                 "expectedSequence": 2,
                 "params": {
                     "clipId": clip_id,
@@ -586,7 +587,7 @@ mod tests {
             &dispatcher,
             &json!({
                 "requestId": "note-2",
-                "command": "midi-note.add",
+                "command": "clip.midi.note.add",
                 "expectedSequence": 3,
                 "params": {
                     "clipId": clip_id,
@@ -609,7 +610,7 @@ mod tests {
             &dispatcher,
             &json!({
                 "requestId": "duplicate",
-                "command": "midi-note.duplicate",
+                "command": "clip.midi.note.duplicate",
                 "expectedSequence": 4,
                 "params": {
                     "clipId": clip_id,
@@ -636,7 +637,7 @@ mod tests {
             &dispatcher,
             &json!({
                 "requestId": "invalid-duplicate",
-                "command": "midi-note.duplicate",
+                "command": "clip.midi.note.duplicate",
                 "expectedSequence": 5,
                 "params": {
                     "clipId": clip_id,
@@ -680,7 +681,7 @@ mod tests {
 
         let response = handle_request(
             &dispatcher,
-            r#"{"requestId":"undo","command":"undo","expectedSequence":0,"params":{}}"#,
+            r#"{"requestId":"undo","command":"history.undo","expectedSequence":0,"params":{}}"#,
         );
         assert!(!response.ok);
         assert_eq!(
@@ -856,7 +857,7 @@ mod tests {
         let dispatcher = open_test_dispatcher(root.clone());
         let response = handle_request(
             &dispatcher,
-            r#"{"requestId":"44","command":"audio-clip.split","params":{"clipId":"clip:missing"}}"#,
+            r#"{"requestId":"44","command":"clip.audio.split","params":{"clipId":"clip:missing"}}"#,
         );
         assert!(!response.ok);
         assert_eq!(

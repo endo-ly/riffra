@@ -77,7 +77,7 @@ pub struct MarkerIdParams {
     pub marker_id: String,
 }
 
-/// Params of `timebase.update`; at least one field is required.
+/// Params of `music.timebase.update`; at least one field is required.
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(optional_fields = nullable)]
@@ -95,7 +95,7 @@ pub struct TimebaseSetMapParams {
     pub time_signature_changes: Vec<riffra_core::TimeSignatureChange>,
 }
 
-/// Params of `loop-range.set` and `punch-range.set`.
+/// Params of `transport.loop.set` and `record.punch.set`.
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct RangeParams {

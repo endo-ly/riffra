@@ -1,6 +1,6 @@
 //! Opaque passthrough for the bundled Sonalloy CLI.
 
-use crate::args::{Cli, CliCommand, InstrumentCommand};
+use crate::args::{Cli, CliCommand, InstrumentCommand, InstrumentDefinitionCommand};
 use riffra_control::new_instance_id;
 use riffra_runtime::RuntimeBinaries;
 use std::ffi::OsString;
@@ -14,10 +14,11 @@ where
     I: IntoIterator<Item = OsString>,
 {
     let args = args.into_iter().collect::<Vec<_>>();
-    let passthrough_subcommand = args.windows(2).enumerate().find_map(|(index, pair)| {
+    let passthrough_subcommand = args.windows(3).enumerate().find_map(|(index, pair)| {
         (pair[0] == "instrument"
-            && PASSTHROUGH_SUBCOMMANDS.contains(&pair[1].to_string_lossy().as_ref()))
-        .then_some(index + 2)
+            && pair[1] == "definition"
+            && PASSTHROUGH_SUBCOMMANDS.contains(&pair[2].to_string_lossy().as_ref()))
+        .then_some(index + 3)
     });
     let Some(passthrough_start) = passthrough_subcommand else {
         return args;
@@ -34,38 +35,32 @@ where
     prepared
 }
 
-pub(crate) fn passthrough_command(cli: &Cli) -> Option<&InstrumentCommand> {
-    let Some(CliCommand::Instrument { command }) = cli.command.as_ref() else {
-        return None;
-    };
-    match command {
-        InstrumentCommand::Init(_)
-        | InstrumentCommand::Validate(_)
-        | InstrumentCommand::Inspect(_)
-        | InstrumentCommand::Render(_)
-        | InstrumentCommand::Audition(_) => Some(command),
+pub(crate) fn passthrough_command(cli: &Cli) -> Option<&InstrumentDefinitionCommand> {
+    match cli.command.as_ref() {
+        Some(CliCommand::Instrument {
+            command: InstrumentCommand::Definition { command },
+        }) => Some(command),
         _ => None,
     }
 }
 
 pub(crate) fn run(
-    command: &InstrumentCommand,
+    command: &InstrumentDefinitionCommand,
     data_root: Option<&Path>,
 ) -> Result<(), PassthroughError> {
     let binaries = RuntimeBinaries::beside_current_executable().map_err(PassthroughError::spawn)?;
     let (subcommand, forwarded) = match command {
-        InstrumentCommand::Init(args) => ("instrument init", &args.args),
-        InstrumentCommand::Validate(args) => ("instrument validate", &args.args),
-        InstrumentCommand::Inspect(args) => ("instrument inspect", &args.args),
-        InstrumentCommand::Render(args) => ("render", &args.args),
-        InstrumentCommand::Audition(args) => ("audition", &args.args),
-        _ => unreachable!("only Sonalloy passthrough commands are forwarded"),
+        InstrumentDefinitionCommand::Init(args) => ("instrument init", &args.args),
+        InstrumentDefinitionCommand::Validate(args) => ("instrument validate", &args.args),
+        InstrumentDefinitionCommand::Inspect(args) => ("instrument inspect", &args.args),
+        InstrumentDefinitionCommand::Render(args) => ("render", &args.args),
+        InstrumentDefinitionCommand::Audition(args) => ("audition", &args.args),
     };
     let mut process = Command::new(&binaries.sonalloy);
     process.args(subcommand.split_ascii_whitespace());
-    if matches!(command, InstrumentCommand::Init(_)) && forwarded.is_empty() {
+    if matches!(command, InstrumentDefinitionCommand::Init(_)) && forwarded.is_empty() {
         let data_root = data_root.ok_or_else(|| {
-            PassthroughError::message("--data-root is required for instrument init")
+            PassthroughError::message("--data-root is required for instrument definition init")
         })?;
         process.arg(
             create_draft_definition(data_root)
@@ -134,6 +129,7 @@ mod tests {
             let cli = Cli::try_parse_from([
                 "riffra",
                 "instrument",
+                "definition",
                 subcommand,
                 "note",
                 "definition.json",
@@ -142,12 +138,11 @@ mod tests {
             ])
             .unwrap();
             let args = match passthrough_command(&cli).unwrap() {
-                InstrumentCommand::Init(args)
-                | InstrumentCommand::Validate(args)
-                | InstrumentCommand::Inspect(args)
-                | InstrumentCommand::Render(args)
-                | InstrumentCommand::Audition(args) => args,
-                _ => panic!("expected a Sonalloy passthrough command"),
+                InstrumentDefinitionCommand::Init(args)
+                | InstrumentDefinitionCommand::Validate(args)
+                | InstrumentDefinitionCommand::Inspect(args)
+                | InstrumentDefinitionCommand::Render(args)
+                | InstrumentDefinitionCommand::Audition(args) => args,
             };
             assert_eq!(
                 args.args,
@@ -166,6 +161,7 @@ mod tests {
         let cli = Cli::try_parse_from(prepare_cli_args([
             OsString::from("riffra"),
             OsString::from("instrument"),
+            OsString::from("definition"),
             OsString::from("validate"),
             OsString::from("--help"),
         ]))
@@ -173,7 +169,7 @@ mod tests {
 
         assert!(matches!(
             passthrough_command(&cli),
-            Some(InstrumentCommand::Validate(args))
+            Some(InstrumentDefinitionCommand::Validate(args))
                 if args.args == [OsString::from("--help")]
         ));
     }

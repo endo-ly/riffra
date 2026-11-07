@@ -556,7 +556,7 @@ mod tests {
             .unwrap();
             let before = output_value(
                 &dispatcher
-                    .dispatch(command("timebase.get-map", json!({})), None)
+                    .dispatch(command("music.timebase.get-map", json!({})), None)
                     .unwrap(),
             );
             assert_eq!(before["ppq"], ppq);
@@ -564,7 +564,7 @@ mod tests {
             dispatcher
                 .dispatch(
                     command(
-                        "timebase.set-map",
+                        "music.timebase.set-map",
                         json!({
                             "tempoChanges":[{"tick":0,"bpm":120},{"tick":tempo_tick,"bpm":bpm}],
                             "timeSignatureChanges":[{"tick":0,"numerator":4,"denominator":4}]
@@ -576,7 +576,7 @@ mod tests {
 
             let map = output_value(
                 &dispatcher
-                    .dispatch(command("timebase.get-map", json!({})), None)
+                    .dispatch(command("music.timebase.get-map", json!({})), None)
                     .unwrap(),
             );
             assert_eq!(map["ppq"], ppq);
@@ -705,7 +705,7 @@ mod tests {
             .unwrap();
 
         let undone = dispatcher
-            .dispatch(command("undo", json!({})), None)
+            .dispatch(command("history.undo", json!({})), None)
             .unwrap();
         assert_eq!(output_type(&undone), "arrangementMutation");
         assert_eq!(
@@ -717,7 +717,7 @@ mod tests {
         );
 
         let redone = dispatcher
-            .dispatch(command("redo", json!({})), None)
+            .dispatch(command("history.redo", json!({})), None)
             .unwrap();
         assert_eq!(output_type(&redone), "arrangementMutation");
         assert_eq!(
@@ -1022,7 +1022,7 @@ mod tests {
         assert_eq!(result.sequence, 1);
 
         let undone = dispatcher
-            .dispatch(command("undo", json!({})), None)
+            .dispatch(command("history.undo", json!({})), None)
             .unwrap();
         assert_eq!(
             output_value(&undone)["canonical"]["session"]["arrangement"]["tracks"]
@@ -1088,7 +1088,7 @@ mod tests {
                     "session.apply",
                     json!({
                         "operations":[
-                            {"command":"midi-note.clear","params":{"trackName":"Lead","clipName":"Verse"}},
+                            {"command":"clip.midi.note.clear","params":{"trackName":"Lead","clipName":"Verse"}},
                             {"command":"music.note.insert","params":{"trackName":"Lead","clipName":"Verse","notes":[
                                 {"pitch":"E4","position":"1:2","duration":"1/8"},
                                 {"pitch":"G4","position":"2:1","duration":"1/8"}
@@ -1120,7 +1120,7 @@ mod tests {
                 "session.apply",
                 json!({
                     "operations":[
-                        {"command":"midi-note.clear","params":{"trackName":"Lead","clipName":"Verse"}},
+                        {"command":"clip.midi.note.clear","params":{"trackName":"Lead","clipName":"Verse"}},
                         {"command":"music.note.insert","params":{"trackName":"Lead","clipName":"Verse","notes":[
                             {"pitch":"C4","position":"1:1","duration":"0"}
                         ]}}
@@ -1140,7 +1140,7 @@ mod tests {
             command(
                 "session.apply",
                 json!({"operations":[
-                    {"command":"midi-note.clear","params":{"trackName":"Lead","clipName":"Verse"}},
+                    {"command":"clip.midi.note.clear","params":{"trackName":"Lead","clipName":"Verse"}},
                     {"command":"music.note.insert","params":{"trackName":"Lead","clipName":"Verse","clipToEnd":clip_to_end,"notes":[{"pitch":"C4","position":"4:4+1/2","duration":"1/4"}]}}
                 ]}),
             )
@@ -1338,7 +1338,7 @@ mod tests {
                             {"command":"effect.add","params":{"owner":{"kind":"track","name":"Drums"},"pluginPath":"C:\\Plugins\\OldCompressor.vst3"}},
                             {"command":"effect.add","params":{"owner":{"kind":"bus","name":"Group"},"pluginPath":"C:\\Plugins\\OldLimiter.vst3"}},
                             {"command":"effect.add","params":{"owner":{"kind":"master"},"pluginPath":"Master.vst3"}},
-                            {"command":"marker.add","params":{"name":"Old","position":"1:1"}}
+                            {"command":"music.marker.add","params":{"name":"Old","position":"1:1"}}
                         ]
                     }),
                 ),
@@ -1530,7 +1530,7 @@ mod tests {
         assert_eq!(final_arrangement["markers"], json!([]));
         assert_eq!(final_arrangement["mixer"]["masterEffects"], json!([]));
         let undone = dispatcher
-            .dispatch(command("undo", json!({})), None)
+            .dispatch(command("history.undo", json!({})), None)
             .unwrap();
         let restored = &output_value(&undone)["canonical"]["session"];
         let mut expected = output_value(&before_rebuild);
@@ -1570,7 +1570,7 @@ mod tests {
                                 "target":{"kind":"busMix","busName":"Group","parameter":"gain"},
                                 "interpolation":"linear",
                                 "points":[{"id":"point:group","tick":0,"value":0}]}},
-                            {"command":"timebase.set-map","params":{
+                            {"command":"music.timebase.set-map","params":{
                                 "tempoChanges":[{"tick":0,"bpm":120}],
                                 "timeSignatureChanges":[{"tick":0,"numerator":4,"denominator":4},{"tick":15360,"numerator":2,"denominator":4}]}},
                             {"command":"automation.set","params":{

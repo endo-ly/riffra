@@ -292,7 +292,7 @@ export type { RecoveryCandidate } from './RecoveryCandidate';
 export type { RegionAddParams } from './RegionAddParams';
 export type { RegionIdParams } from './RegionIdParams';
 export type { RegionUpdateParams } from './RegionUpdateParams';
-export type { RenderCleanParams } from './RenderCleanParams';
+export type { RenderDeleteParams } from './RenderDeleteParams';
 export type { RenderDeleteResult } from './RenderDeleteResult';
 export type { RenderExportParams } from './RenderExportParams';
 export type { RenderExportResult } from './RenderExportResult';

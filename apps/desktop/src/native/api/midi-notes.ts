@@ -47,7 +47,7 @@ async function addMidiNote(
   channel: number,
 ): Promise<ArrangementMutationResult> {
   return dispatchControl({
-    command: 'midi-note.add',
+    command: 'clip.midi.note.add',
     params: { clipId, startTick, pitch, durationTicks, velocity, channel },
   });
 }
@@ -56,7 +56,7 @@ async function insertMidiNotes(
   clipId: string,
   notes: MidiNoteInput[],
 ): Promise<ArrangementMutationResult> {
-  return dispatchControl({ command: 'midi-note.insert', params: { clipId, notes } });
+  return dispatchControl({ command: 'clip.midi.note.insert', params: { clipId, notes } });
 }
 
 async function updateMidiNote(
@@ -64,25 +64,25 @@ async function updateMidiNote(
   noteId: string,
   patch: MidiNotePatch,
 ): Promise<ArrangementMutationResult> {
-  return dispatchControl({ command: 'midi-note.update', params: { clipId, noteId, patch } });
+  return dispatchControl({ command: 'clip.midi.note.update', params: { clipId, noteId, patch } });
 }
 
 async function updateMidiNotes(
   clipId: string,
   updates: MidiNoteUpdate[],
 ): Promise<ArrangementMutationResult> {
-  return dispatchControl({ command: 'midi-note.update-many', params: { clipId, updates } });
+  return dispatchControl({ command: 'clip.midi.note.update-many', params: { clipId, updates } });
 }
 
 async function removeMidiNote(clipId: string, noteId: string): Promise<ArrangementMutationResult> {
-  return dispatchControl({ command: 'midi-note.remove', params: { clipId, noteId } });
+  return dispatchControl({ command: 'music.note.remove', params: { clipId, noteId } });
 }
 
 async function removeMidiNotes(
   clipId: string,
   noteIds: string[],
 ): Promise<ArrangementMutationResult> {
-  return dispatchControl({ command: 'midi-note.remove-many', params: { clipId, noteIds } });
+  return dispatchControl({ command: 'clip.midi.note.remove-many', params: { clipId, noteIds } });
 }
 
 async function quantizeMidiNotes(
@@ -91,7 +91,7 @@ async function quantizeMidiNotes(
   gridTicks: number,
 ): Promise<ArrangementMutationResult> {
   return dispatchControl({
-    command: 'midi-note.quantize',
+    command: 'clip.midi.note.quantize',
     params: { clipId, noteIds, gridTicks },
   });
 }
@@ -103,7 +103,7 @@ async function transformMidiNotes(
   velocityOffset: number,
 ): Promise<ArrangementMutationResult> {
   return dispatchControl({
-    command: 'midi-note.transform',
+    command: 'clip.midi.note.transform',
     params: { clipId, noteIds, transposeSemitones, velocityOffset },
   });
 }
@@ -114,7 +114,7 @@ async function duplicateMidiNotes(
   offsetTicks: number,
 ): Promise<ArrangementMutationResult> {
   return dispatchControl({
-    command: 'midi-note.duplicate',
+    command: 'clip.midi.note.duplicate',
     params: { clipId, noteIds, offsetTicks },
   });
 }

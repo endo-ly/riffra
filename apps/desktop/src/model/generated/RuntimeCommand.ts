@@ -34,7 +34,7 @@ import type { ProjectRestoreParams } from './ProjectRestoreParams';
 import type { RecordListParams } from './RecordListParams';
 import type { RecordRenameParams } from './RecordRenameParams';
 import type { RecordStartParams } from './RecordStartParams';
-import type { RenderCleanParams } from './RenderCleanParams';
+import type { RenderDeleteParams } from './RenderDeleteParams';
 import type { RenderExportParams } from './RenderExportParams';
 import type { RenderStartParams } from './RenderStartParams';
 import type { RenderStemsParams } from './RenderStemsParams';
@@ -55,8 +55,8 @@ export type RuntimeCommand =
   | { command: 'host.info'; params: EmptyParams }
   | { command: 'host.bootstrap'; params: EmptyParams }
   | { command: 'host.shutdown'; params: EmptyParams }
-  | { command: 'runtime.projection.get'; params: EmptyParams }
-  | { command: 'runtime.projection.retry'; params: EmptyParams }
+  | { command: 'audio.projection.get'; params: EmptyParams }
+  | { command: 'audio.projection.retry'; params: EmptyParams }
   | { command: 'transport.play'; params: EmptyParams }
   | { command: 'transport.pause'; params: EmptyParams }
   | { command: 'transport.stop'; params: EmptyParams }
@@ -70,15 +70,15 @@ export type RuntimeCommand =
   | { command: 'audio.status'; params: EmptyParams }
   | { command: 'audio.diagnostics'; params: AudioDiagnosticsParams }
   | { command: 'audio.probe'; params: EmptyParams }
-  | { command: 'audio.channels.probe'; params: AudioChannelsProbeParams }
+  | { command: 'audio.probe-channels'; params: AudioChannelsProbeParams }
   | { command: 'audio.recover'; params: EmptyParams }
-  | { command: 'audio.startup.retry'; params: EmptyParams }
+  | { command: 'audio.startup-retry'; params: EmptyParams }
   | { command: 'audio.driver.get'; params: EmptyParams }
   | { command: 'audio.driver.set'; params: AudioDriverConfig }
   | { command: 'audio.emergency-mute'; params: MuteParams }
   | { command: 'audio.feedback-protection.reset'; params: EmptyParams }
   | { command: 'asset.preview'; params: AssetPreviewParams }
-  | { command: 'asset.preview.stop'; params: EmptyParams }
+  | { command: 'asset.stop-preview'; params: EmptyParams }
   | { command: 'instrument.preview'; params: InstrumentIdParams }
   | { command: 'instrument.preview.stop'; params: EmptyParams }
   | { command: 'midi.listening.enable'; params: EmptyParams }
@@ -113,7 +113,7 @@ export type RuntimeCommand =
   | { command: 'record.duplicates'; params: EmptyParams }
   | { command: 'take.activate'; params: TakeActivateParams }
   | { command: 'take.place-separate-clip'; params: TakeIdParams }
-  | { command: 'audio-clip.take-variant.set'; params: TakeVariantParams }
+  | { command: 'clip.audio.take-variant.set'; params: TakeVariantParams }
   | { command: 'take.comparison.start'; params: TakeIdParams }
   | { command: 'take.comparison.switch'; params: TakeComparisonParams }
   | { command: 'take.comparison.stop'; params: EmptyParams }
@@ -122,14 +122,14 @@ export type RuntimeCommand =
   | { command: 'render.stems'; params: RenderStemsParams }
   | { command: 'render.export'; params: RenderExportParams }
   | { command: 'render.list'; params: EmptyParams }
-  | { command: 'render.clean'; params: RenderCleanParams }
+  | { command: 'render.delete'; params: RenderDeleteParams }
   | { command: 'job.get'; params: IdParams }
   | { command: 'job.cancel'; params: IdParams }
   | { command: 'analysis.measure'; params: AnalysisMeasureParams }
-  | { command: 'analysis.start'; params: AnalysisParams }
-  | { command: 'library.search'; params: LibrarySearchParams }
-  | { command: 'library.asset.update'; params: LibraryTagParams }
-  | { command: 'library.related'; params: IdParams }
+  | { command: 'analysis.inspect'; params: AnalysisParams }
+  | { command: 'asset.search'; params: LibrarySearchParams }
+  | { command: 'asset.update'; params: LibraryTagParams }
+  | { command: 'asset.related'; params: IdParams }
   | { command: 'library.instrument.list'; params: EmptyParams }
   | { command: 'library.instrument.favorite.set'; params: InstrumentFavoriteParams }
   | { command: 'library.instrument.category.list'; params: EmptyParams }
