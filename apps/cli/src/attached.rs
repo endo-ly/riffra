@@ -1,4 +1,3 @@
-
 use riffra_control::{
     ControlRequest, ControlResponse, ErrorCode, LocalHostClient, LocalHostClientError,
     LocalHostDiscovery, ProtocolError, new_instance_id,

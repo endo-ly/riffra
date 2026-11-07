@@ -40,6 +40,7 @@
       "binaries/riffra-plugin-scan",
       "binaries/riffra-render",
       "binaries/riffra",
+      "binaries/riffra-mcp",
       "binaries/sonalloy"
     ],
     "resources": {

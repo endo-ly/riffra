@@ -27,6 +27,12 @@ description: >-
 
 正準状態は操作ごとに DataRoot へ永続化されるため、編集自体はプロセスを跨いで引き継がれる。履歴(Undo / Redo)と `expectedSequence` のRevision tokenはプロセスまたはHostの寿命に紐づくため、音声を伴わない編集は Standalone(単発はワンショット、連続操作や Undo / Redo は `--interactive`)、Audio Runtime を伴う操作は `serve` で起動した Host へ `--attach` する。
 
+## MCPクライアントから操作する場合
+
+MCPを使う場合もHostは同じで、`riffra-mcp` がstdio経由でControl Commandへ転送する。Hostを先に起動し、MCPクライアントの `command` に `riffra-mcp.exe` の絶対パスを指定する。複数のHostがある場合は `args` に `--host <instance-id>` を渡す。設定の詳細は [docs/mcp.md](../../../docs/mcp.md) を参照する。
+
+ツールは操作対象ごとにまとまり、`action` と `params` でControl Commandを選ぶ。状況把握には `session_read.inspect`、複数変更の原子的な適用には `session_edit.apply`、書き出しや測定の完了確認には `job.wait` を使う。位置・音価・音高はCLIと同じく音楽座標を優先する。Render→Job→Analysisの制作手順もCLIと同じである。ツール名と引数の一覧はここへ複写しない。
+
 ## コマンドの 2 系統
 
 コマンドは「正準状態の編集」と「Runtime サービス」の 2 系統しかなく、4 つの実行形態は同じコマンドへの要求経路の違いである。

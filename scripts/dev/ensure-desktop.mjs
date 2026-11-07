@@ -60,6 +60,29 @@ export function stageRiffraCli({ configuration }) {
   );
 }
 
+/**
+ * Stages the riffra-mcp server for the Tauri externalBin entry "binaries/riffra-mcp".
+ *
+ * `dev` reuses an already staged binary because the desktop does not launch the MCP server;
+ * `release` always rebuilds so distribution bundles ship the optimized server.
+ */
+export function stageRiffraMcp({ configuration }) {
+  const exeSuffix = process.platform === 'win32' ? '.exe' : '';
+  const stagingPath = join(binariesRoot, `riffra-mcp-${getRustHostTriple()}${exeSuffix}`);
+  const release = configuration === 'release';
+  if (!release && isRunnableFile(stagingPath)) {
+    return;
+  }
+  const cargoArguments = release
+    ? ['build', '-p', 'riffra-mcp', '--release']
+    : ['build', '-p', 'riffra-mcp'];
+  execFileSync('cargo', cargoArguments, { cwd: repositoryRoot, stdio: 'inherit' });
+  copyFileSync(
+    join(repositoryRoot, `target/${release ? 'release' : 'debug'}/riffra-mcp${exeSuffix}`),
+    stagingPath,
+  );
+}
+
 function sidecarPaths(targetTriple) {
   const suffix = process.platform === 'win32' ? '.exe' : '';
   const packaged = sidecarNames.map((name) =>
@@ -304,6 +327,7 @@ function ensureFinalResources() {
 function main() {
   const targetTriple = getRustHostTriple();
   stageRiffraCli({ configuration: 'dev' });
+  stageRiffraMcp({ configuration: 'dev' });
   const inputFingerprint = nativeInputFingerprint();
   const resources = inspectResources();
   const sidecars = inspectSidecars({ targetTriple, inputFingerprint });

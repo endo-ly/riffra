@@ -19,7 +19,9 @@ use riffra_control::{
 use riffra_runtime::Dispatcher;
 use riffra_runtime::api::output::{BackgroundJobStatus, ControlOutput};
 use riffra_runtime::api::params::EmptyParams;
-use riffra_runtime::api::{CanonicalCommand, ControlCommand, RuntimeCommand, compact_agent_response};
+use riffra_runtime::api::{
+    CanonicalCommand, ControlCommand, RuntimeCommand, compact_agent_response,
+};
 use std::io;
 use std::path::Path;
 use std::thread;
