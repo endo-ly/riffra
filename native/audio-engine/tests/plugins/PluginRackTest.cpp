@@ -181,6 +181,32 @@ TEST(PluginRackTest, RejectsParametersBeyondThePreparedChangeQueue) {
     EXPECT_FLOAT_EQ(state->parameterValues[0], 0.5f);
 }
 
+TEST(PluginRackTest, RestoresParameterValuesWithoutGeneratingDisplayText) {
+    ProcessorTrace trace;
+    auto processor = std::make_unique<TestProcessor>(trace);
+    int displayCalls = 0;
+    const auto attributes = juce::AudioParameterFloatAttributes().withStringFromValueFunction(
+        [&displayCalls](float value, int) {
+            ++displayCalls;
+            return juce::String(value);
+        });
+    processor->addParameter(new juce::AudioParameterFloat(
+        juce::ParameterID{"restore", 1}, "Restore", juce::NormalisableRange<float>{0.0f, 1.0f},
+        0.5f, attributes));
+    juce::String error;
+    auto rack = PluginRackTestPeer::install(std::move(processor), kSampleRate, kBlockSize, error);
+    ASSERT_NE(rack, nullptr) << error;
+    PluginStateSpec state;
+    state.parameterValues = {0.75f};
+
+    ASSERT_TRUE(rack->applyPersistedState(state, error)) << error;
+
+    EXPECT_EQ(displayCalls, 0);
+    const auto saved = rack->persistedState(error);
+    ASSERT_TRUE(saved.has_value()) << error;
+    EXPECT_FLOAT_EQ(saved->parameterValues[0], 0.75f);
+}
+
 TEST(PluginRackTest, ApproximatesOnlyStableMonotonicNumericDisplays) {
     ProcessorTrace trace;
     auto processor = std::make_unique<TestProcessor>(trace);

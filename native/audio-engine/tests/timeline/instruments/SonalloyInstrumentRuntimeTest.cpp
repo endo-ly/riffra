@@ -528,6 +528,28 @@ TEST(SonalloyInstrumentRuntimeTest, ResolvesNativeParameterValuesAndRejectsStale
     EXPECT_FLOAT_EQ(maximumMagnitude(output), 0.0f);
 }
 
+TEST(SonalloyInstrumentRuntimeTest, RetainsLiveCompiledInstrumentsWhenEvictingUnusedEntries) {
+    const auto directory = test::builtInPresetDirectory("BASS-001");
+    const auto definition = directory.getChildFile("definition.json").loadFileAsString();
+    SonalloyInstrumentRuntime::CompiledCache cache;
+    juce::String error;
+    auto active = SonalloyInstrumentRuntime::create(definition, directory.getFullPathName(), 48'000,
+                                                    256, error, &cache);
+    ASSERT_NE(active, nullptr) << error;
+    for (int index = 1; index <= 10; ++index) {
+        auto runtime = SonalloyInstrumentRuntime::create(
+            definition + juce::String::repeatedString(" ", index), directory.getFullPathName(),
+            48'000, 256, error, &cache);
+        ASSERT_NE(runtime, nullptr) << error;
+    }
+    cache.trim();
+    EXPECT_EQ(cache.entries.size(), 9u);
+    EXPECT_TRUE(active->isLoaded());
+    active.reset();
+    cache.trim();
+    EXPECT_EQ(cache.entries.size(), 8u);
+}
+
 TEST(SonalloyInstrumentRuntimeTest, AveragesStereoExternalInputForMonoWithoutOutputAliasing) {
     // Arrange
     const auto directory = juce::File(RIFFRA_CONTRACT_FIXTURE_DIR)
