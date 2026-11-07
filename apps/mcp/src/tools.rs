@@ -927,6 +927,46 @@ mod tests {
     }
 
     #[test]
+    fn every_tool_schema_reference_resolves_inside_its_own_definitions() {
+        // Arrange
+        let tools = build_tools().unwrap();
+
+        // Act / Assert
+        for tool in tools {
+            let schema = Value::Object((*tool.tool.input_schema).clone());
+            let mut references = Vec::new();
+            collect_references(&schema, &mut references);
+            for reference in references {
+                let pointer = reference.strip_prefix('#').unwrap_or(&reference);
+                assert!(
+                    schema.pointer(pointer).is_some(),
+                    "{} has an unresolved reference {reference}",
+                    tool.tool.name
+                );
+            }
+        }
+    }
+
+    fn collect_references(value: &Value, references: &mut Vec<String>) {
+        match value {
+            Value::Object(object) => {
+                if let Some(reference) = object.get("$ref").and_then(Value::as_str) {
+                    references.push(reference.to_owned());
+                }
+                for value in object.values() {
+                    collect_references(value, references);
+                }
+            }
+            Value::Array(values) => {
+                for value in values {
+                    collect_references(value, references);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    #[test]
     fn schemas_enforce_action_and_params_structure() {
         // Arrange
         let tools = build_tools().unwrap();
