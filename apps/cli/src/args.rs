@@ -72,7 +72,7 @@ pub enum CliCommand {
         #[command(subcommand)]
         command: SessionCommand,
     },
-    /// Read the history stack of completed mutations.
+    /// Inspect mutation history and undo or redo changes.
     History {
         #[command(subcommand)]
         command: HistoryCommand,
@@ -159,7 +159,7 @@ pub enum CliCommand {
         #[command(subcommand)]
         command: AnalysisCommand,
     },
-    /// Discover VST3 plugins, manage presets and state, and load instrument or effect plugins onto Tracks.
+    /// Discover VST3 plugins and manage plugin presets and state.
     ///
     /// For built-in and User Instruments defined by Sonalloy definitions, use `instrument` instead.
     Plugin {
@@ -804,7 +804,7 @@ pub struct AudioClipCrossfadeArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum MidiClipCommand {
-    /// Edit MIDI notes.
+    /// Edit MIDI notes directly using MIDI values and Clip-relative ticks.
     Note {
         #[command(subcommand)]
         command: MidiNoteCommand,

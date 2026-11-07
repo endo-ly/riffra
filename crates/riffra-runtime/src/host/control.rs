@@ -1588,7 +1588,7 @@ pub(super) fn runtime_error(error: RuntimeError) -> ProtocolError {
                 serde_json::json!({
                     "domain": "runtime",
                     "kind": "projectionTimeout",
-                    "operation": "audio.projection.prepare",
+                    "operation": "runtime.projection.prepare",
                 }),
             )
         }
@@ -1630,7 +1630,7 @@ pub(super) fn runtime_error(error: RuntimeError) -> ProtocolError {
             ProtocolError::new(ErrorCode::CommandFailed, message).with_details(serde_json::json!({
                 "domain": "runtime",
                 "kind": "projectionRejected",
-                "operation": "audio.projection.prepare",
+                "operation": "runtime.projection.prepare",
             }))
         }
         RuntimeError::Internal(message) => ProtocolError::new(ErrorCode::CommandFailed, message)
