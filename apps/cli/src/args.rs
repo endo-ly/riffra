@@ -95,7 +95,7 @@ pub enum CliCommand {
         #[command(subcommand)]
         command: MusicCommand,
     },
-    /// Remove or paste whole Audio and MIDI Clips as a group.
+    /// Create and edit Audio and MIDI Clips, or remove and paste them as a group.
     Clip {
         #[command(subcommand)]
         command: ClipCommand,
@@ -105,7 +105,7 @@ pub enum CliCommand {
         #[command(subcommand)]
         command: AutomationCommand,
     },
-    /// Import MIDI files, preview Assets, and stop previews.
+    /// Import, preview, search, and update Assets.
     Asset {
         #[command(subcommand)]
         command: AssetCommand,
@@ -115,7 +115,7 @@ pub enum CliCommand {
         #[command(subcommand)]
         command: ProjectCommand,
     },
-    /// Manage Instruments: list, save, export, apply to Tracks, and clear; init, validate, inspect, render, and audition forward to the bundled Sonalloy CLI.
+    /// Manage Instruments and their definitions, or assign VST3 instruments to Tracks.
     ///
     /// Use `instrument vst3 set` to configure a VST3 instrument plugin.
     Instrument {
@@ -230,7 +230,7 @@ pub enum SessionCommand {
     /// clip.audio.trim, clip.audio.split, clip.audio.duplicate, clip.audio.crossfade;
     /// clip.midi.create, clip.midi.update, clip.midi.move, clip.midi.trim, clip.midi.split,
     /// clip.midi.duplicate; clip.midi.note.add, clip.midi.note.insert, clip.midi.note.update, clip.midi.note.update-many,
-    /// music.note.remove, clip.midi.note.remove-many, clip.midi.note.clear, clip.midi.note.quantize,
+    /// clip.midi.note.remove-many, clip.midi.note.clear, clip.midi.note.quantize,
     /// clip.midi.note.transform, clip.midi.note.duplicate; music.midi-clip.create, music.midi-clip.resize,
     /// music.note.insert, music.note.update, music.note.remove, music.note.transform,
     /// music.harmony.insert, music.harmony.update, music.harmony.remove, music.harmony.realize,
@@ -240,15 +240,15 @@ pub enum SessionCommand {
     /// clip.midi.instrument-event.update, clip.midi.instrument-event.remove;
     /// transport.loop.set, record.punch.set; automation.set, automation.clear; instrument.apply,
     /// instrument.midi.set, instrument.vst3.set, plugin.state.import,
-    /// instrument.clear; mixer.bus.add/update/remove, mixer.output.set, mixer.send.add/update/remove,
-    /// mixer.sidechain.add/update/remove; effect.add, effect.remove, effect.reorder; device.bypass,
+    /// instrument.clear; mixer.bus.add, mixer.bus.update, mixer.bus.remove, mixer.output.set, mixer.send.add, mixer.send.update, mixer.send.remove,
+    /// mixer.sidechain.add, mixer.sidechain.update, mixer.sidechain.remove; effect.add, effect.remove, effect.reorder; device.bypass,
     /// device.parameter.set. instrument.apply accepts `builtin:` and `user:` instruments;
     /// User Instrument assignments create Project-owned package snapshots atomically with the batch.
     ///
     /// plugin.state.import requires exactly one of inline state or stateFile (read by the CLI).
     /// Example: {"command":"plugin.state.import","params":{"owner":{"kind":"track","name":"Drums"},"stateFile":"drums-state.json"}}.
     Apply(SessionApplyArgs),
-    /// Read or update session settings such as project name, master gain, loop, and metronome.
+    /// Read or update session settings such as master gain, loop, and metronome.
     Settings {
         #[command(subcommand)]
         command: SessionSettingsCommand,
@@ -2425,7 +2425,7 @@ pub enum PluginCommand {
         #[command(subcommand)]
         command: PluginCatalogCommand,
     },
-    /// Scan a directory for VST3 plugins and wait for the report; requires a running Riffra Host accessed with --attach and is unavailable in Safe Mode, which blocks VST3 discovery and load validation.
+    /// Scan VST3 plugins and return a report, or a Job with --background; requires --attach and is unavailable in Safe Mode.
     Scan(PluginScanArgs),
     /// List, read, and set presets on a plugin device.
     Preset {
@@ -4547,8 +4547,40 @@ mod tests {
             }
         }
 
-        Cli::command().debug_assert();
-        assert_help(&Cli::command(), "riffra");
+        fn leaves(command: &clap::Command) -> usize {
+            let children: Vec<_> = command.get_subcommands().collect();
+            if children.is_empty() {
+                1
+            } else {
+                children.into_iter().map(leaves).sum()
+            }
+        }
+
+        let command = Cli::command();
+        command.clone().debug_assert();
+        assert_help(&command, "riffra");
+        assert_eq!(command.get_subcommands().count(), 23);
+        assert_eq!(leaves(&command), 187);
+    }
+
+    #[test]
+    fn plugin_scan_selects_result_or_background_job() {
+        let synchronous =
+            wire(Cli::try_parse_from(["riffra", "plugin", "scan", "--path", "plugins"]).unwrap());
+        let background = wire(
+            Cli::try_parse_from([
+                "riffra",
+                "plugin",
+                "scan",
+                "--path",
+                "plugins",
+                "--background",
+            ])
+            .unwrap(),
+        );
+        assert_eq!(synchronous.name, "plugin.scan");
+        assert_eq!(background.name, "plugin.scan.start");
+        assert_eq!(synchronous.params, background.params);
     }
 
     #[test]

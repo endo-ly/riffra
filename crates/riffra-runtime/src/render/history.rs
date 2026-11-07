@@ -721,7 +721,7 @@ fn finish_interrupted_render_deletion(
             fs::remove_file(&marker_path)
                 .map_err(|error| format!("render deletion marker could not be removed: {error}"))?;
             return Err(format!(
-                "interrupted render deletion was restored to {}; retry render clean",
+                "interrupted render deletion was restored to {}; retry render delete",
                 original.display()
             ));
         }

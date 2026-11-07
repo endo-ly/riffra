@@ -43,9 +43,9 @@ description: >-
 3. `music harmony`、リズムパターン、`music phrase` で和声や反復パターンを配置する
 4. Noteは `music note list` で必要な範囲だけ取得し、一括調整は `music note transform`、個別の更新・削除だけ `--include-ids` で取得したIDを使う。raw tickやMIDI値が必要なときだけ `--raw` を付ける
 5. `session inspect` または `track list` で結果を確認する
-6. Live Host で `device inspect` と `device parameter list` を読み、Parameter の意味と表示値を確認して `device parameter set` で音を調整する。離散値は `choices` の表示から選び、その `value` を渡す。設定後は応答の`parameter`で対象の読み戻し値、`changedParameters`でほかのParameterへの影響を確認する。順序・Bypass・公開 Preset は `effect reorder`、`device bypass`、`plugin preset` を使う。ミックスのバランスを `track update`、`audio-clip update`、`automation set`、`session settings update --master-db` で整える
+6. Live Host で `device inspect` と `device parameter list` を読み、Parameter の意味と表示値を確認して `device parameter set` で音を調整する。離散値は `choices` の表示から選び、その `value` を渡す。設定後は応答の`parameter`で対象の読み戻し値、`changedParameters`でほかのParameterへの影響を確認する。順序・Bypass・公開 Preset は `effect reorder`、`device bypass`、`plugin preset` を使う。ミックスのバランスを `track update`、`clip audio update`、`automation set`、`session settings update --master-db` で整える
 7. `render start` で音声を書き出し、完了を `job wait`(ワンショット)または `job get`(interactive)で確認する
-8. 書き出し結果の`measurements.sections`で区間ごとのラウドネス・ピーク位置・帯域バランスを確認する。素材の解析には`analysis start`、実行状態の確認には`audio diagnostics`を使い、必要なら編集へ戻る
+8. 書き出し結果の`measurements.sections`で区間ごとのラウドネス・ピーク位置・帯域バランスを確認する。素材の解析には`analysis inspect`、実行状態の確認には`audio diagnostics`を使い、必要なら編集へ戻る
 
 ### まとめて構築する場合
 
@@ -68,8 +68,8 @@ description: >-
 コマンドの使い分けは次のとおり。
 
 - `music note` / `music midi-clip`: 音楽座標によるNoteとMIDI Clipの参照・作成・更新・削除・配置。通常のNote操作はこちらを使う
-- `midi-note`: 量子化・変形・複製など、既知のNote IDをraw tick・MIDI値で直接編集する操作
-- `midi-clip`・`instrument-event` のraw tick系操作: CCやPitch Bendなど音楽上の基本操作に含まれないMIDIイベントの、tickによる直接編集
+- `clip midi note`: 量子化・変形・複製など、既知のNote IDをraw tick・MIDI値で直接編集する操作
+- `clip midi`・`clip midi instrument-event` のraw tick系操作: CCやPitch Bendなど音楽上の基本操作に含まれないMIDIイベントの、tickによる直接編集
 
 既存Noteの通常の調整に `session get` で全Sessionを取得したりNote IDを列挙して再挿入したりする必要はない。和声の解決、Phrase / Rhythmの展開、bar・beatからtickへの変換、Clip相対位置はエージェント側で計算せず、Coreが解決・展開して正準セッションへ保存する。TimelineのPPQは `session inspect.project.ppq` を正とし、固定値を再定義しない。Instrument previewの `ticksPerBeat` はpreview固有の値であり、Timelineのtick計算には使わない。
 
@@ -113,7 +113,7 @@ AttachedはDataRootを開かず、current-user registryから稼働中のHostプ
 - `expectedSequence`: 任意。指定すると正準シーケンスが一致するときだけ実行する。ワンショットでは `--expected-sequence <n>` フラグ
 - `params`: コマンドごとの引数。キー名は camelCase
 
-`session inspect`、Mutation、`render start`、`undo`、`redo` は `expectedSequence` を検証する。interactive JSONLで操作を連鎖させる場合は、1つの要求を送り、応答を受け取ってから次の要求を組み立て、`expectedSequence` には直前の応答の `sequence` を渡す。
+`session inspect`、Mutation、`render start`、`history undo`、`history redo` は `expectedSequence` を検証する。interactive JSONLで操作を連鎖させる場合は、1つの要求を送り、応答を受け取ってから次の要求を組み立て、`expectedSequence` には直前の応答の `sequence` を渡す。
 
 成功応答:
 

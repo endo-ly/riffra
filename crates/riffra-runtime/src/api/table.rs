@@ -454,6 +454,36 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn command_names_and_policies_match_the_wire_contract() {
+        let map = typescript_result_map();
+        let names: Vec<_> = map
+            .lines()
+            .filter_map(|line| line.trim().strip_prefix('\''))
+            .filter_map(|line| line.split_once('\'').map(|(name, _)| name))
+            .collect();
+        let unique: std::collections::HashSet<_> = names.iter().copied().collect();
+        assert_eq!(names.len(), 215);
+        assert_eq!(unique.len(), names.len());
+
+        for (name, params) in [
+            ("clip.audio.list", json!({})),
+            (
+                "music.note.remove",
+                json!({"clipId":"clip:1", "noteId":"note:1"}),
+            ),
+            ("audio.projection.get", json!({})),
+            ("history.undo", json!({})),
+        ] {
+            let command = ControlCommand::decode(name, params).unwrap();
+            assert_eq!(command.name(), name);
+            assert!(unique.contains(name));
+            let serialized = serde_json::to_value(&command).unwrap();
+            let decoded = ControlCommand::decode(name, serialized["params"].clone()).unwrap();
+            assert_eq!(decoded.policy(), command.policy());
+        }
+    }
+
+    #[test]
     fn scope_follows_active_project_dependency() {
         // Arrange
         let cases = [
