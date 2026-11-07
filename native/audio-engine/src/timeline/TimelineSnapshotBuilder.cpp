@@ -549,24 +549,24 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
             clip->rightGain = clip->gain * std::sin(panAngle);
             clip->loop = clipSpec.loopEnabled;
             clip->muted = clipSpec.muted;
-            if (!engine.offlineMode) {
-                const auto inputSamples = std::ceil(static_cast<double>(maximumBlockSize) *
-                                                    reader->sampleRate / outputSampleRate) +
-                                          64.0;
-                if (!std::isfinite(inputSamples) ||
-                    inputSamples >= static_cast<double>(std::numeric_limits<int>::max())) {
-                    error = "Timeline source sample rate requires an unsupported buffer size.";
-                    return false;
-                }
-                auto buffered = std::make_unique<juce::BufferingAudioReader>(
-                    reader.release(), engine.readAheadThread,
-                    std::max(kReadAheadSamples, static_cast<int>(inputSamples)));
-                clip->bufferingReader = buffered.get();
-                reader = std::move(buffered);
-            }
             clip->readerSource =
                 std::make_unique<juce::AudioFormatReaderSource>(reader.release(), true);
             clip->positionableSource = clip->readerSource.get();
+            if (!engine.offlineMode) {
+                const auto inputSamples = std::ceil(static_cast<double>(maximumBlockSize) *
+                                                    clip->sourceSampleRate / outputSampleRate) +
+                                          64.0;
+                if (!std::isfinite(inputSamples) ||
+                    inputSamples >= static_cast<double>(std::numeric_limits<int>::max() - 8)) {
+                    error = "Timeline source sample rate requires an unsupported buffer size.";
+                    return false;
+                }
+                clip->bufferingSource = std::make_unique<juce::BufferingAudioSource>(
+                    clip->readerSource.get(), engine.readAheadThread, false,
+                    std::max(kReadAheadSamples, static_cast<int>(inputSamples) + 8), 2, false);
+                clip->bufferingSource->setNextReadPosition(clip->sourceStartFrame);
+                clip->positionableSource = clip->bufferingSource.get();
+            }
             clip->resamplingSource =
                 std::make_unique<juce::ResamplingAudioSource>(clip->positionableSource, false, 2);
             clip->resamplingSource->setResamplingRatio(clip->sourceSampleRate / outputSampleRate);
@@ -737,13 +737,15 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
         while (!pending.empty()) {
             for (auto it = pending.begin(); it != pending.end();) {
                 auto* clip = *it;
-                const auto samples =
+                const auto requested =
                     static_cast<int>(std::ceil(static_cast<double>(maximumBlockSize) *
                                                clip->sourceSampleRate / outputSampleRate)) +
                     64;
+                const auto samples = static_cast<int>(std::min<std::int64_t>(
+                    requested, clip->sourceEndFrame - clip->sourceStartFrame));
                 if (samples > scratch.getNumSamples()) scratch.setSize(2, samples);
-                if (clip->bufferingReader->read(&scratch, 0, samples, clip->sourceStartFrame, true,
-                                                true))
+                if (clip->bufferingSource->waitForNextAudioBlockReady(
+                        juce::AudioSourceChannelInfo(&scratch, 0, samples), 1))
                     it = pending.erase(it);
                 else
                     ++it;

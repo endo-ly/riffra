@@ -677,6 +677,39 @@ TEST(TimelineEngineTest, MixesMonoAndStereoSourcesAtDifferentSampleRates) {
     EXPECT_GT(*std::max_element(right.begin(), right.end()), 0.1f);
 }
 
+TEST(TimelineEngineTest, PreparesManyShortClipsAndRecoversAfterSeek) {
+    test::TemporaryDirectory directory;
+    const auto source = directory.get().getChildFile("short.wav");
+    ASSERT_TRUE(writePcmWave(source, 48'000, 1, 128, 2'000));
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine engine;
+    juce::String error;
+    auto snapshot = makeTestSnapshot();
+    auto track = makeAudioTrack("track:short");
+    for (int index = 0; index < 20; ++index)
+        track.audioClips.push_back({"clip:" + juce::String(index), source.getFullPathName(), 48'000,
+                                    0, 128, 48'000, 48'000, 0, 0, 0, FadeShapeSpec::linear, 0.0,
+                                    0.0, TakeVariantSpec::raw, true, false});
+    snapshot.graph.tracks.push_back(std::move(track));
+    ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, 48'000, 128, error)) << error;
+    ASSERT_TRUE(engine.play());
+    std::array<float, 128> left{}, right{};
+    const std::array<float*, 2> outputs{left.data(), right.data()};
+    engine.mix(outputs.data(), 2, 128);
+    EXPECT_GT(*std::max_element(left.begin(), left.end()), 0.1f);
+    ASSERT_TRUE(engine.seekToTick(960));
+    bool audible = false;
+    for (int attempt = 0; attempt < 200 && !audible; ++attempt) {
+        left.fill(0.0f);
+        right.fill(0.0f);
+        engine.mix(outputs.data(), 2, 128);
+        audible = *std::max_element(left.begin(), left.end()) > 0.1f;
+        if (!audible) juce::Thread::sleep(1);
+    }
+    EXPECT_TRUE(audible);
+}
+
 TEST(TimelineEngineTest, NormalizesAnOfflineRenderToTheTargetPeak) {
     // Arrange
     juce::AudioFormatManager formats;
