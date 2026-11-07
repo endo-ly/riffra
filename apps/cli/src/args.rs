@@ -1,8 +1,7 @@
 use clap::{Args, Parser, Subcommand};
 use riffra_core::application::{SessionInspectionQuery, SessionSettingsPatch};
 use riffra_core::{
-    AudioClipMove, AudioClipPatch, FrameRange, MidiClipMove, MidiClipPatch, PhrasePattern,
-    PhrasePlacement, TimelineTick,
+    AudioClipPatch, FrameRange, MidiClipPatch, PhrasePattern, PhrasePlacement, TimelineTick,
 };
 use riffra_runtime::api::params::*;
 use riffra_runtime::api::{
@@ -683,8 +682,6 @@ pub enum AudioClipCommand {
     /// Gain is specified in dB and clamped to -90..=24; pan is clamped to -1.0..=1.0. --patch is
     /// mutually exclusive with the individual field flags.
     Update(AudioClipUpdateArgs),
-    /// Move one Audio Clip to a new arrangement tick and Track.
-    Move(ClipMoveArgs),
     /// Change where an Audio Clip starts on the arrangement and which source sample range it plays.
     Trim(AudioClipTrimArgs),
     /// Split one Audio Clip into two Clips at an arrangement tick.
@@ -744,19 +741,6 @@ pub struct AudioClipUpdateArgs {
     /// Mute or unmute only this Clip's output.
     #[arg(long)]
     pub muted: Option<bool>,
-}
-
-#[derive(Debug, Args)]
-pub struct ClipMoveArgs {
-    /// Id of the Clip to move.
-    #[arg(long)]
-    pub clip_id: String,
-    /// Absolute arrangement start position in timeline ticks for the Clip after the move.
-    #[arg(long)]
-    pub start_tick: u64,
-    /// Destination Track id.
-    #[arg(long)]
-    pub track_id: String,
 }
 
 #[derive(Debug, Args)]
@@ -825,8 +809,6 @@ pub enum MidiClipCommand {
     ///
     /// --patch is mutually exclusive with the individual field flags.
     Update(MidiClipUpdateArgs),
-    /// Move one MIDI Clip to a new arrangement tick and Track.
-    Move(ClipMoveArgs),
     /// Change a MIDI Clip's arrangement start and duration in timeline ticks.
     Trim(MidiClipTrimArgs),
     /// Split one MIDI Clip into two Clips at an arrangement tick.
@@ -910,49 +892,18 @@ pub struct MidiClipTrimArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum MidiNoteCommand {
-    /// Add one MIDI Note to a Clip at a Clip-relative tick.
-    Add(MidiNoteAddArgs),
     /// Insert many MIDI Notes into a Clip from a JSON array in one mutation.
     Insert(MidiNoteBulkArgs),
-    /// Replace fields on one MIDI Note with a JSON patch object.
-    Update(MidiNoteUpdateArgs),
     /// Replace fields on many MIDI Notes in one mutation from a JSON array of updates.
     UpdateMany(MidiNoteUpdatesArgs),
     /// Remove many MIDI Notes from a Clip by id list or JSON array.
     RemoveMany(MidiNoteIdsArgs),
-    /// Remove every MIDI Note from a Clip.
-    Clear(ClipIdArg),
     /// Move selected MIDI Notes onto a tick grid.
     Quantize(MidiNoteQuantizeArgs),
     /// Transpose and re-velocity selected MIDI Notes in one mutation.
     Transform(MidiNoteTransformArgs),
     /// Duplicate selected MIDI Notes by a tick offset.
     Duplicate(MidiNoteDuplicateArgs),
-}
-
-#[derive(Debug, Args)]
-pub struct MidiNoteAddArgs {
-    /// Lyric assigned to the Note.
-    #[arg(long)]
-    pub lyric: Option<String>,
-    /// Id of the MIDI Clip that receives the Note.
-    #[arg(long)]
-    pub clip_id: String,
-    /// MIDI pitch number 0..=127 where 60 is middle C.
-    #[arg(long)]
-    pub pitch: u8,
-    /// Note start relative to the Clip start in timeline ticks; the project timebase defines ticks per beat.
-    #[arg(long)]
-    pub start_tick: u64,
-    /// Note length in timeline ticks.
-    #[arg(long)]
-    pub duration_ticks: u64,
-    /// MIDI velocity 0..=127.
-    #[arg(long)]
-    pub velocity: u8,
-    /// MIDI channel number in the inclusive range 1..=16.
-    #[arg(long)]
-    pub channel: u8,
 }
 
 #[derive(Debug, Args)]
@@ -1397,19 +1348,6 @@ pub struct MusicalRegionIdArgs {
     /// Id of the region.
     #[arg(long)]
     pub region_id: String,
-}
-
-#[derive(Debug, Args)]
-pub struct MidiNoteUpdateArgs {
-    /// Id of the MIDI Clip containing the Note.
-    #[arg(long)]
-    pub clip_id: String,
-    /// Id of the Note to update.
-    #[arg(long)]
-    pub note_id: String,
-    /// JSON object patch; allowed fields are note (MIDI pitch 0..=127), startTick (Clip-relative), durationTicks, velocity (0..=127), and channel (1..=16).
-    #[arg(long)]
-    pub patch: String,
 }
 
 #[derive(Debug, Args)]
@@ -3216,14 +3154,6 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
                     .into()
                 }
                 AudioClipCommand::Update(args) => audio_clip_update(args)?,
-                AudioClipCommand::Move(args) => Canonical::AudioClipMove(AudioClipMoveParams {
-                    moves: vec![AudioClipMove {
-                        clip_id: args.clip_id,
-                        start_tick: TimelineTick(args.start_tick),
-                        track_id: args.track_id,
-                    }],
-                })
-                .into(),
                 AudioClipCommand::Trim(args) => Canonical::AudioClipTrim(AudioClipTrimParams {
                     clip_id: args.clip_id,
                     start_tick: args.start_tick,
@@ -3251,28 +3181,10 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
             },
             ClipCommand::Midi { command } => match command {
                 MidiClipCommand::Note { command } => match command {
-                    MidiNoteCommand::Add(args) => Canonical::MidiNoteAdd(MidiNoteAddParams {
-                        lyric: args.lyric,
-                        clip_id: args.clip_id,
-                        pitch: args.pitch,
-                        start_tick: args.start_tick,
-                        duration_ticks: args.duration_ticks,
-                        velocity: args.velocity,
-                        channel: args.channel,
-                    })
-                    .into(),
                     MidiNoteCommand::Insert(args) => {
                         Canonical::MidiNoteInsert(MidiNoteInsertParams {
                             clip_id: args.clip_id,
                             notes: note_input(args.notes_json, args.notes_file, args.stdin)?,
-                        })
-                        .into()
-                    }
-                    MidiNoteCommand::Update(args) => {
-                        Canonical::MidiNoteUpdate(MidiNoteUpdateParams {
-                            clip_id: args.clip_id,
-                            note_id: args.note_id,
-                            patch: field("/patch", json_argument("patch", &args.patch)?)?,
                         })
                         .into()
                     }
@@ -3293,7 +3205,6 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
                         })
                         .into()
                     }
-                    MidiNoteCommand::Clear(args) => Canonical::MidiNoteClear(clip_id(args)).into(),
                     MidiNoteCommand::Quantize(args) => {
                         Canonical::MidiNoteQuantize(MidiNoteQuantizeParams {
                             clip_id: args.clip_id,
@@ -3376,14 +3287,6 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
                     .into()
                 }
                 MidiClipCommand::Update(args) => midi_clip_update(args)?,
-                MidiClipCommand::Move(args) => Canonical::MidiClipMove(MidiClipMoveParams {
-                    moves: vec![MidiClipMove {
-                        clip_id: args.clip_id,
-                        start_tick: TimelineTick(args.start_tick),
-                        track_id: args.track_id,
-                    }],
-                })
-                .into(),
                 MidiClipCommand::Trim(args) => Canonical::MidiClipTrim(MidiClipTrimParams {
                     clip_id: args.clip_id,
                     start_tick: args.start_tick,
@@ -4560,7 +4463,7 @@ mod tests {
         command.clone().debug_assert();
         assert_help(&command, "riffra");
         assert_eq!(command.get_subcommands().count(), 23);
-        assert_eq!(leaves(&command), 187);
+        assert_eq!(leaves(&command), 182);
     }
 
     #[test]
@@ -5526,23 +5429,172 @@ mod tests {
     }
 
     #[test]
-    fn midi_note_clear_maps_to_the_clip_command() {
-        let cli = Cli::try_parse_from([
-            "riffra",
-            "--data-root",
-            "data",
-            "clip",
-            "midi",
-            "note",
-            "clear",
-            "--clip-id",
-            "midi-clip:1",
-        ])
-        .unwrap();
+    fn clip_edits_use_the_remaining_single_item_routes() {
+        // Arrange / Act
+        let insert = wire(
+            Cli::try_parse_from([
+                "riffra",
+                "clip",
+                "midi",
+                "note",
+                "insert",
+                "--clip-id",
+                "midi-clip:1",
+                "--notes-json",
+                r#"[{"lyric":"la","pitch":60,"startTick":0,"durationTicks":480,"velocity":100,"channel":1}]"#,
+            ])
+            .unwrap(),
+        );
+        let update_many = wire(
+            Cli::try_parse_from([
+                "riffra",
+                "clip",
+                "midi",
+                "note",
+                "update-many",
+                "--clip-id",
+                "midi-clip:1",
+                "--updates-json",
+                r#"[{"noteId":"note:1","patch":{"velocity":90}}]"#,
+            ])
+            .unwrap(),
+        );
+        let audio_update = wire(
+            Cli::try_parse_from([
+                "riffra",
+                "clip",
+                "audio",
+                "update",
+                "--clip-id",
+                "audio-clip:1",
+                "--start-tick",
+                "960",
+                "--track-id",
+                "track:2",
+            ])
+            .unwrap(),
+        );
+        let midi_update = wire(
+            Cli::try_parse_from([
+                "riffra",
+                "clip",
+                "midi",
+                "update",
+                "--clip-id",
+                "midi-clip:1",
+                "--start-tick",
+                "960",
+                "--track-id",
+                "track:2",
+            ])
+            .unwrap(),
+        );
+        let clear = wire(
+            Cli::try_parse_from([
+                "riffra",
+                "clip",
+                "midi",
+                "update",
+                "--clip-id",
+                "midi-clip:1",
+                "--patch",
+                r#"{"notes":[]}"#,
+            ])
+            .unwrap(),
+        );
 
-        let request = wire(cli);
-        assert_eq!(request.name, "clip.midi.note.clear");
-        assert_eq!(request.params, json!({"clipId":"midi-clip:1"}));
+        // Assert
+        assert_eq!(insert.name, "clip.midi.note.insert");
+        assert_eq!(
+            insert.params,
+            json!({
+                "clipId":"midi-clip:1",
+                "notes":[{"lyric":"la","pitch":60,"startTick":0,"durationTicks":480,"velocity":100,"channel":1}]
+            })
+        );
+        assert_eq!(update_many.name, "clip.midi.note.update-many");
+        assert_eq!(update_many.params["clipId"], "midi-clip:1");
+        assert_eq!(update_many.params["updates"][0]["noteId"], "note:1");
+        assert_eq!(update_many.params["updates"][0]["patch"]["velocity"], 90);
+        assert_eq!(audio_update.name, "clip.audio.update");
+        assert_eq!(
+            audio_update.params,
+            json!({"clipId":"audio-clip:1","patch":{"trackId":"track:2","startTick":960}})
+        );
+        assert_eq!(midi_update.name, "clip.midi.update");
+        assert_eq!(
+            midi_update.params,
+            json!({"clipId":"midi-clip:1","patch":{"trackId":"track:2","startTick":960}})
+        );
+        assert_eq!(clear.name, "clip.midi.update");
+        assert_eq!(
+            clear.params,
+            json!({"clipId":"midi-clip:1","patch":{"notes":[]}})
+        );
+    }
+
+    #[test]
+    fn removed_clip_commands_are_not_recognized() {
+        // Arrange / Act / Assert
+        for path in [
+            vec![
+                "clip",
+                "midi",
+                "note",
+                "add",
+                "--clip-id",
+                "midi-clip:1",
+                "--pitch",
+                "60",
+                "--start-tick",
+                "0",
+                "--duration-ticks",
+                "480",
+                "--velocity",
+                "100",
+                "--channel",
+                "1",
+            ],
+            vec![
+                "clip",
+                "midi",
+                "note",
+                "update",
+                "--clip-id",
+                "midi-clip:1",
+                "--note-id",
+                "note:1",
+                "--patch",
+                "{}",
+            ],
+            vec!["clip", "midi", "note", "clear", "--clip-id", "midi-clip:1"],
+            vec![
+                "clip",
+                "audio",
+                "move",
+                "--clip-id",
+                "audio-clip:1",
+                "--start-tick",
+                "960",
+                "--track-id",
+                "track:2",
+            ],
+            vec![
+                "clip",
+                "midi",
+                "move",
+                "--clip-id",
+                "midi-clip:1",
+                "--start-tick",
+                "960",
+                "--track-id",
+                "track:2",
+            ],
+        ] {
+            let mut argv = vec!["riffra"];
+            argv.extend(path);
+            assert!(Cli::try_parse_from(argv).is_err());
+        }
     }
 
     #[test]
