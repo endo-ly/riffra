@@ -10,6 +10,7 @@
 
 #include "MetronomeClicks.h"
 #include "MixerRuntime.h"
+#include "TimelineReadAheadSource.h"
 #include "TimelineTimebase.h"
 #include "TrackRuntime.h"
 #include "contract/ExecutionGraph.h"
@@ -40,8 +41,8 @@ struct GraphSummary final {
 struct PreparedTimeline final {
     struct Clip final {
         juce::String id;
-        std::unique_ptr<juce::AudioFormatReaderSource> readerSource;
-        std::unique_ptr<juce::BufferingAudioSource> bufferingSource;
+        std::unique_ptr<juce::PositionableAudioSource> readerSource;
+        TimelineReadAheadSource* bufferingSource = nullptr;
         juce::PositionableAudioSource* positionableSource = nullptr;
         std::unique_ptr<juce::ResamplingAudioSource> resamplingSource;
         juce::AudioBuffer<float> scratch;

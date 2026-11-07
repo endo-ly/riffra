@@ -4,6 +4,28 @@
 
 namespace riffra {
 
+TEST(TimelineReadAheadSourceTest, ReportsReadFailures) {
+    class FailingReader final : public juce::AudioFormatReader {
+    public:
+        FailingReader() : AudioFormatReader(nullptr, "failing") {
+            lengthInSamples = 1024;
+            sampleRate = 48'000;
+            numChannels = 1;
+            bitsPerSample = 32;
+            usesFloatingPointData = true;
+        }
+        bool readSamples(int* const*, int, int, juce::int64, int) override { return false; }
+    };
+
+    juce::TimeSliceThread worker("test read ahead");
+    ASSERT_TRUE(worker.startThread());
+    TimelineReadAheadSource source(std::make_unique<FailingReader>(), worker, 4096);
+    source.prepareToPlay(128, 48'000);
+    for (int attempt = 0; attempt < 1000 && !source.failed(); ++attempt) juce::Thread::sleep(1);
+    EXPECT_TRUE(source.failed());
+    EXPECT_FALSE(source.ready(128));
+}
+
 TEST(TimelineEngineTest, FadeShapeEnvelopeMatchesTheRustContract) {
     // Arrange
     // Act / Assert
@@ -720,9 +742,9 @@ TEST(TimelineEngineTest, ReadsTheRequestedPositionAfterASeekOutsideReadAhead) {
     juce::String error;
     auto snapshot = makeTestSnapshot();
     auto track = makeAudioTrack("track:seek");
-    track.audioClips.push_back({"clip:seek", source.getFullPathName(), 48'000, 0, 144'000, 144'000,
+    track.audioClips.push_back({"clip:seek", source.getFullPathName(), 48'000, 0, 144'000, 288'000,
                                 48'000, 0, 0, 0, FadeShapeSpec::linear, 0.0, 0.0,
-                                TakeVariantSpec::raw, false, false});
+                                TakeVariantSpec::raw, true, false});
     snapshot.graph.tracks.push_back(std::move(track));
     ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, 48'000, 128, error)) << error;
     ASSERT_TRUE(engine.play());
@@ -737,6 +759,16 @@ TEST(TimelineEngineTest, ReadsTheRequestedPositionAfterASeekOutsideReadAhead) {
         right.fill(0.0f);
         engine.mix(outputs.data(), 2, 128);
         reached = *std::min_element(left.begin(), left.end()) < -0.1f;
+        if (!reached) juce::Thread::sleep(1);
+    }
+    EXPECT_TRUE(reached);
+    ASSERT_TRUE(engine.seekToTick(6720));
+    reached = false;
+    for (int attempt = 0; attempt < 200 && !reached; ++attempt) {
+        left.fill(0.0f);
+        right.fill(0.0f);
+        engine.mix(outputs.data(), 2, 128);
+        reached = *std::max_element(left.begin(), left.end()) > 0.05f;
         if (!reached) juce::Thread::sleep(1);
     }
     EXPECT_TRUE(reached);
