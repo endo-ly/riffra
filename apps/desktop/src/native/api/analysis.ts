@@ -6,7 +6,7 @@ export interface AnalysisApi {
 }
 
 async function analyzeAsset(assetId: AssetId): Promise<AudioAnalysis> {
-  return dispatchControl({ command: 'analysis.start', params: { assetId, path: null } });
+  return dispatchControl({ command: 'analysis.inspect', params: { assetId, path: null } });
 }
 
 export const analysisApi: AnalysisApi = {

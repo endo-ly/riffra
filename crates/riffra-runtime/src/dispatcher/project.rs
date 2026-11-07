@@ -167,14 +167,14 @@ mod tests {
         let clip = dispatcher
             .dispatch(
                 request(
-                    "midi-clip.create",
+                    "clip.midi.create",
                     json!({"trackId":track_id,"startTick":960,"durationTicks":1920,"name":"Voice"}),
                 ),
                 None,
             )
             .unwrap();
         let clip_id = mutated_session(&clip).arrangement.midi_clips[0].id.clone();
-        dispatcher.dispatch(request("midi-note.add", json!({"clipId":clip_id,"pitch":60,"startTick":240,"durationTicks":480,"velocity":100,"channel":1,"lyric":"き"})), None).unwrap();
+        dispatcher.dispatch(request("clip.midi.note.add", json!({"clipId":clip_id,"pitch":60,"startTick":240,"durationTicks":480,"velocity":100,"channel":1,"lyric":"き"})), None).unwrap();
         for (scope, expected) in [
             (json!({"clipId":clip_id}), 240),
             (json!({"trackId":track_id}), 1200),
@@ -191,11 +191,11 @@ mod tests {
             assert_eq!(notes[0].start_tick.0, expected);
             assert_eq!(notes[0].lyric.as_deref(), Some("き"));
         }
-        let second = dispatcher.dispatch(request("midi-clip.create", json!({"trackId":track_id,"startTick":1200,"durationTicks":1920,"name":"Second"})), None).unwrap();
+        let second = dispatcher.dispatch(request("clip.midi.create", json!({"trackId":track_id,"startTick":1200,"durationTicks":1920,"name":"Second"})), None).unwrap();
         let second_id = mutated_session(&second).arrangement.midi_clips[1]
             .id
             .clone();
-        dispatcher.dispatch(request("midi-note.add", json!({"clipId":second_id,"pitch":60,"startTick":100,"durationTicks":240,"velocity":100,"channel":1})), None).unwrap();
+        dispatcher.dispatch(request("clip.midi.note.add", json!({"clipId":second_id,"pitch":60,"startTick":100,"durationTicks":240,"velocity":100,"channel":1})), None).unwrap();
         let path = root.join("1200.mid");
         let existing = std::fs::read(&path).unwrap();
         let result = dispatcher.dispatch(
@@ -208,7 +208,7 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(std::fs::read(&path).unwrap(), existing);
 
-        dispatcher.dispatch(request("midi-note.add", json!({"clipId":clip_id,"pitch":60,"startTick":300,"durationTicks":240,"velocity":100,"channel":1})), None).unwrap();
+        dispatcher.dispatch(request("clip.midi.note.add", json!({"clipId":clip_id,"pitch":60,"startTick":300,"durationTicks":240,"velocity":100,"channel":1})), None).unwrap();
         let path = root.join("overlap.mid");
         let result = dispatcher.dispatch(
             request("music.export-midi", json!({"clipId":clip_id,"output":path})),

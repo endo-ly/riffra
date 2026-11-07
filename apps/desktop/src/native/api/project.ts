@@ -22,11 +22,11 @@ export interface ProjectApi {
 }
 
 async function undoSession(): Promise<ArrangementMutationResult> {
-  return dispatchControl({ command: 'undo', params: {} });
+  return dispatchControl({ command: 'history.undo', params: {} });
 }
 
 async function redoSession(): Promise<ArrangementMutationResult> {
-  return dispatchControl({ command: 'redo', params: {} });
+  return dispatchControl({ command: 'history.redo', params: {} });
 }
 
 async function restoreRecoveryGeneration(fileName: string): Promise<ArrangementMutationResult> {

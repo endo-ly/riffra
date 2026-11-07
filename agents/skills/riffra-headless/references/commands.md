@@ -6,10 +6,10 @@
 
 コマンドは「正準状態の編集」と「Runtime サービス」の 2 系統しかない。
 
-| 系統             | 主なコマンド                                                                                               | 実行できる場所                 |
-| ---------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------ |
-| 正準状態の編集   | session / track / music / clip / midi-note / marker / automation / instrument / effect / missing 復旧      | すべての実行形態               |
-| Runtime サービス | transport / audio / midi 送信 / record / render / job / library / plugin 実体の操作 / device parameter set | Live Host(`serve`)+ `--attach` |
+| 系統             | 主なコマンド                                                                                             | 実行できる場所                 |
+| ---------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------ |
+| 正準状態の編集   | session / track / music / clip / automation / instrument / effect / missing 復旧                         | すべての実行形態               |
+| Runtime サービス | transport / audio / midi 送信 / record / render / job / asset / plugin 実体の操作 / device parameter set | Live Host(`serve`)+ `--attach` |
 
 Live Host が必要なコマンドを Standalone で実行すると、引数の内容にかかわらず `runtimeUnavailable` になる。
 
@@ -19,7 +19,7 @@ Live Host が必要なコマンドを Standalone で実行すると、引数の�
 
 1. `session inspect` で現在の構造と `sequence` を把握する。`session get` は MIDI ノート全件や録音の詳細を含むフルスナップショットなので、Inspectにない詳細が必要なときだけ使う
 2. 編集コマンドを実行する。Inspectまたは直前の応答の `sequence` を `--expected-sequence` に渡す
-3. 編集後は同じ範囲を `session inspect` し、音を確認するときは確認後の `sequence` を指定した `render start` を行い、完了を `job wait`(ワンショット)または `job get`(interactive)で待つ。採用しない変更は変更後の `sequence` を指定した `undo` を実行して再Inspectする
+3. 編集後は同じ範囲を `session inspect` し、音を確認するときは確認後の `sequence` を指定した `render start` を行い、完了を `job wait`(ワンショット)または `job get`(interactive)で待つ。採用しない変更は変更後の `sequence` を指定した `history undo` を実行して再Inspectする
 4. `conflict` になったMutation・Render・Undo・Redoは自動再送せず、最新状態をInspectして内容を決め直す
 
 ```powershell
@@ -59,7 +59,7 @@ riffra --attach session apply --file ./song.jsonl --include-created-ids
 {"command":"device.parameter.set","params":{"owner":{"kind":"track","name":"Lead"},"deviceId":"@effect","parameterIndex":0,"value":0.45}}
 ```
 
-既存ClipのNoteだけをまとめて置き換えるには、音楽座標なら同じBatchに `midi-note.clear` と `music.note.insert` をこの順で含める。raw MIDI値でよければ `midi-clip.update` の `patch.notes` へNote配列を渡す。
+既存ClipのNoteだけをまとめて置き換えるには、音楽座標なら同じBatchに `clip.midi.note.clear` と `music.note.insert` をこの順で含める。raw MIDI値でよければ `clip.midi.update` の `patch.notes` へNote配列を渡す。
 
 Protocol上のparamsキーはCLIフラグと対応する(`--notes-json` など → `notes`、`session apply --file` → `operations`)。`music phrase insert` だけは `--phrase-json` の内容が `pattern` と `placements` の2つのparamsへ分かれる。
 
@@ -67,7 +67,7 @@ Protocol上のparamsキーはCLIフラグと対応する(`--notes-json` など �
 
 ### 音楽操作
 
-NoteとMIDI Clipの通常編集には `music note` / `music midi-clip` を使う。`position` はClip内部の相対位置ではなくArrangement全体の絶対位置である。複数Noteは1回の `music note insert` で渡す。Clip末尾を越えるNoteは `--clip-to-end` を指定すると末尾までに短縮できる。開始位置はClip内でなければならない。各Noteの `lyric` に歌詞を指定でき、`music note update --lyric` で変更、`--clear-lyric` で削除する。一括変更は `midi-note update-many` のpatchに `lyric` を指定し、`null` で削除する。
+NoteとMIDI Clipの通常編集には `music note` / `music midi-clip` を使う。`position` はClip内部の相対位置ではなくArrangement全体の絶対位置である。複数Noteは1回の `music note insert` で渡す。Clip末尾を越えるNoteは `--clip-to-end` を指定すると末尾までに短縮できる。開始位置はClip内でなければならない。各Noteの `lyric` に歌詞を指定でき、`music note update --lyric` で変更、`--clear-lyric` で削除する。一括変更は `clip midi note update-many` のpatchに `lyric` を指定し、`null` で削除する。
 
 `music export-midi --clip-id <id> --output <path>` はClip内のNoteとMIDIイベントをClip先頭から書き出す。`--track-id` を指定するとTrack内の全MIDI Clipをプロジェクト上の位置で書き出す。歌詞とプロジェクトのテンポ・拍子もSMFに含まれる。
 
@@ -98,12 +98,12 @@ riffra --data-root ./riffra-data music harmony realize --clip-id midi-clip:01j..
 
 ### Session・Timebase・Mixdown
 
-Timebaseのテンポ・拍子は `timebase update` で変更し、変更点全体は `timebase get-map` / `set-map` で扱う。
+Timebaseのテンポ・拍子は `music timebase update` で変更し、変更点全体は `music timebase get-map` / `set-map` で扱う。
 
-Mixdown設定は `mixdown get` / `mixdown set --settings-json` で参照・置換する。Masteringは目標ラウドネスへMix全体を一定のゲインで合わせ、True Peak上限を超えるときは上限に合わせてゲインを下げる。`mastering.deviation.integratedLufs` は最終ラウドネス − 目標で、負なら目標に届いていない。`mastering.truePeakCorrectionDb` は True Peak上限のために下げたゲインで、0より大きければ上限で止まったことを示す。
+Mixdown設定は `render settings get` / `render settings set --settings-json` で参照・置換する。Masteringは目標ラウドネスへMix全体を一定のゲインで合わせ、True Peak上限を超えるときは上限に合わせてゲインを下げる。`mastering.deviation.integratedLufs` は最終ラウドネス − 目標で、負なら目標に届いていない。`mastering.truePeakCorrectionDb` は True Peak上限のために下げたゲインで、0より大きければ上限で止まったことを示す。
 
 ```powershell
-riffra --attach mixdown set --settings-json '{"musicalEndTick":0,"tailSeconds":2,"fadeOutSeconds":0.5,"mastering":{"integratedLufs":-14,"truePeakDb":-1,"loudnessRangeLu":11},"sampleRate":48000,"blockSize":1024}'
+riffra --attach render settings set --settings-json '{"musicalEndTick":0,"tailSeconds":2,"fadeOutSeconds":0.5,"mastering":{"integratedLufs":-14,"truePeakDb":-1,"loudnessRangeLu":11},"sampleRate":48000,"blockSize":1024}'
 ```
 
 ### Track・Clip・ミックス
@@ -154,15 +154,15 @@ Group・Return・Send・Sidechainの正準設定は `mixer get` でまとめて�
 
 ### 音源制御イベント
 
-`instrument-event` はMIDI Clip内の音源制御(`sustainPedal`、`pitchBend`、`modWheel`、`aftertouch`、`parameterChange`)を編集する。Parameter Changeは `parameter` と `nativeValue` を保持する。
+`clip midi instrument-event` はMIDI Clip内の音源制御(`sustainPedal`、`pitchBend`、`modWheel`、`aftertouch`、`parameterChange`)を編集する。Parameter Changeは `parameter` と `nativeValue` を保持する。
 
 ### 低レベル MIDI Note
 
-`midi-note` は、量子化・変形・複製など既知のNote IDをraw tick・MIDI値で直接編集するときだけ使う。通常のNote操作は `music note` を使う(SKILL.md「楽曲制作の入力契約」)。
+`clip midi note` は、量子化・変形・複製など既知のNote IDをraw tick・MIDI値で直接編集するときだけ使う。通常のNote操作は `music note` を使う(SKILL.md「楽曲制作の入力契約」)。
 
 ### Asset と Project
 
-取り込んだMIDI Asset(`asset import-midi`)の配置は `audio-clip add-asset` / `midi-clip add-asset` で行う。
+取り込んだMIDI Asset(`asset import-midi`)の配置は `clip audio add-asset` / `clip midi add-asset` で行う。
 
 ### Channel Device (Instrument / Effect)
 
@@ -221,7 +221,7 @@ riffra --data-root ./riffra-data serve --safe-mode
 
 ### Safe Mode の範囲
 
-正準状態の編集は Safe Mode でもそのまま使える。transport、live MIDI送信、`audio probe` 系、`audio driver set`、`plugin scan`、`record start`、`asset preview` は `runtimeUnavailable` になる(`serve --help` と各コマンドの `--help` に記載)。`render` とjob管理、`library`、`analysis`、`plugin catalog list`、`missing list`、`record list` などの管理系はSafe Modeでも使える。
+正準状態の編集は Safe Mode でもそのまま使える。transport、live MIDI送信、`audio probe` 系、`audio driver set`、`plugin scan`、`record start`、`asset preview` は `runtimeUnavailable` になる(`serve --help` と各コマンドの `--help` に記載)。`render` とjob管理、`asset`、`analysis`、`plugin catalog list`、`missing list`、`record list` などの管理系はSafe Modeでも使える。
 
 ### Audio と Transport
 
@@ -233,7 +233,7 @@ riffra --data-root ./riffra-data serve --safe-mode
 
 ### レンダリング(非同期ジョブ)
 
-`render start` の `--expected-sequence` はRender対象のCanonical snapshotを固定する。ConflictならWAVを作成せず、最新状態をInspectしてからRenderし直す。ワンショットでは `render start --wait` または `render stems --wait` で完了結果を待てる。非同期の応答は `type: "job"` のジョブIDを返し、ワンショットは `job wait JOB_ID`、interactiveは `job get` の繰り返しで追跡する。待機のタイムアウトは `job wait --timeout-ms` で指定でき、無指定なら終了まで待つ。停止には `job cancel` を使う。出力はDataRootの `renders/` 配下へ書き出される。`plugin scan-start` と `analysis measure` も同じ非同期ジョブである。`ok: true` は状態取得の成功を表し、Job自体の成功は `state: "completed"` で判断する。
+`render start` の `--expected-sequence` はRender対象のCanonical snapshotを固定する。ConflictならWAVを作成せず、最新状態をInspectしてからRenderし直す。ワンショットでは `render start --wait` または `render stems --wait` で完了結果を待てる。非同期の応答は `type: "job"` のジョブIDを返し、ワンショットは `job wait JOB_ID`、interactiveは `job get` の繰り返しで追跡する。待機のタイムアウトは `job wait --timeout-ms` で指定でき、無指定なら終了まで待つ。停止には `job cancel` を使う。出力はDataRootの `renders/` 配下へ書き出される。`plugin scan --background` と `analysis measure` も同じ非同期ジョブである。`ok: true` は状態取得の成功を表し、Job自体の成功は `state: "completed"` で判断する。
 
 Stem Render(`render stems`)は一度の要求で複数Trackを同じ時間基準のWAVへ書き出す。全WAVで開始Tick、終了Tick、Sample Rate、フレーム数を揃え、個別の正規化とMasteringは行わない。共有する非線形Effectでは、Stemの合計と全体Mixが一致しない場合がある。StemとMasteringの設計上の扱いは[音声エンジンの設計](../../../../docs/audio-engine.md)を参照。
 
@@ -273,7 +273,7 @@ riffra --attach job wait --id job:analysis-measure:0 --timeout-ms 120000
 
 ### Library・解析・Preview
 
-`library search` はAsset metadataへのfree-text検索である(短い語は全Assetがヒットして応答が膨らむので具体語で絞る)。素材の解析は `analysis start`、試聴は `asset preview` / `stop-preview`、Runtime projectionの状態は `runtime projection get` / `retry` で扱う。
+`asset search` はAsset metadataへのfree-text検索である(短い語は全Assetがヒットして応答が膨らむので具体語で絞る)。素材の解析は `analysis inspect`、試聴は `asset preview` / `stop-preview`、Runtime projectionの状態は `audio projection get` / `retry` で扱う。
 
 ## Windows の入出力
 

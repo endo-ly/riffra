@@ -518,7 +518,7 @@ mod tests {
             .clone();
         assert!(
             request(
-                "midi-clip.create",
+                "clip.midi.create",
                 json!({"trackId":track_id,"startTick":960,"durationTicks":1920,"name":"Voice"})
             )
             .ok
@@ -531,7 +531,7 @@ mod tests {
             .midi_clips[0]
             .id
             .clone();
-        assert!(request("midi-note.add", json!({"clipId":clip_id,"pitch":60,"startTick":120,"durationTicks":240,"velocity":100,"channel":1,"lyric":"み"})).ok);
+        assert!(request("clip.midi.note.add", json!({"clipId":clip_id,"pitch":60,"startTick":120,"durationTicks":240,"velocity":100,"channel":1,"lyric":"み"})).ok);
         let path = data_root.join("voice.mid");
         let response = request("music.export-midi", json!({"clipId":clip_id,"output":path}));
         assert!(response.ok, "{:?}", response.error);

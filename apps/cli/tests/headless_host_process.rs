@@ -372,7 +372,10 @@ fn headless_host_process_covers_lifecycle_and_mode_contracts() {
     assert!(track["result"]["value"].get("canonical").is_none());
 
     let undo = success_json(
-        attached(instance_id, &["--expected-sequence", "1", "undo"]),
+        attached(
+            instance_id,
+            &["--expected-sequence", "1", "history", "undo"],
+        ),
         "undo",
     );
     assert_eq!(undo["result"]["type"], "mutation");

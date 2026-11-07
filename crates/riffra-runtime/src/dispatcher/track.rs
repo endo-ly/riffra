@@ -129,7 +129,10 @@ mod tests {
 
         // Arrange: only the tempo is patched first.
         let tempo_only = dispatcher
-            .dispatch(command("timebase.update", json!({"bpm": 140.0})), None)
+            .dispatch(
+                command("music.timebase.update", json!({"bpm": 140.0})),
+                None,
+            )
             .unwrap();
 
         assert_eq!(mutated_session(&tempo_only).arrangement.timebase.ppq, 960);
@@ -154,7 +157,7 @@ mod tests {
         let patched = dispatcher
             .dispatch(
                 command(
-                    "timebase.update",
+                    "music.timebase.update",
                     json!({
                         "bpm": 100.0,
                         "timeSignatureNumerator": 7,
@@ -198,7 +201,7 @@ mod tests {
         dispatcher
             .dispatch(
                 command(
-                    "timebase.update",
+                    "music.timebase.update",
                     json!({"timeSignatureNumerator":3,"timeSignatureDenominator":4}),
                 ),
                 None,
@@ -206,7 +209,10 @@ mod tests {
             .unwrap();
         let marker = dispatcher
             .dispatch(
-                command("marker.add", json!({"name":"Chorus","position":"5:1"})),
+                command(
+                    "music.marker.add",
+                    json!({"name":"Chorus","position":"5:1"}),
+                ),
                 None,
             )
             .unwrap();
@@ -218,7 +224,7 @@ mod tests {
         let looped = dispatcher
             .dispatch(
                 command(
-                    "loop-range.set",
+                    "transport.loop.set",
                     json!({"enabled":true,"start":"5:1","end":"9:1"}),
                 ),
                 None,
@@ -231,7 +237,7 @@ mod tests {
         let punched = dispatcher
             .dispatch(
                 command(
-                    "punch-range.set",
+                    "record.punch.set",
                     json!({"enabled":true,"start":"9:1","end":"13:1"}),
                 ),
                 None,

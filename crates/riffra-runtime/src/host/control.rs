@@ -349,7 +349,6 @@ impl HostState {
             | CanonicalCommand::MidiNoteInsert(_)
             | CanonicalCommand::MidiNoteUpdate(_)
             | CanonicalCommand::MidiNoteUpdateMany(_)
-            | CanonicalCommand::MidiNoteRemove(_)
             | CanonicalCommand::MidiNoteRemoveMany(_)
             | CanonicalCommand::MidiNoteClear(_)
             | CanonicalCommand::MidiNoteQuantize(_)
@@ -1135,7 +1134,7 @@ impl HostState {
             RuntimeCommand::RenderList(_) => ControlOutput::RenderList(
                 render::list_renders(&self.data_root).map_err(command_error)?,
             ),
-            RuntimeCommand::RenderClean(params) => ControlOutput::RenderDelete({
+            RuntimeCommand::RenderDelete(params) => ControlOutput::RenderDelete({
                 let history_sessions = writer
                     .as_ref()
                     .ok_or_else(|| {
@@ -1172,7 +1171,7 @@ impl HostState {
             RuntimeCommand::AnalysisMeasure(params) => {
                 ControlOutput::Job(Some(self.start_analysis_measure(params)?))
             }
-            RuntimeCommand::AnalysisStart(params) => {
+            RuntimeCommand::AnalysisInspect(params) => {
                 let path = if let Some(asset_id) = params.asset_id {
                     let id = riffra_core::AssetId::from_normalized(&asset_id).map_err(|error| {
                         ProtocolError::new(ErrorCode::InvalidRequest, error.to_string())
@@ -2178,7 +2177,7 @@ mod tests {
         assert_eq!(mutation.sequence, Some(1));
 
         let undo = host.dispatch_control(
-            ControlRequest::new("stale-undo", "undo", serde_json::json!({}), Some(0))
+            ControlRequest::new("stale-undo", "history.undo", serde_json::json!({}), Some(0))
                 .with_expected_project_id(expected_project_id.clone()),
         );
         assert!(!undo.ok);
@@ -2457,7 +2456,7 @@ mod tests {
         let marker = host.dispatch_control(
             ControlRequest::new(
                 "marker-add",
-                "marker.add",
+                "music.marker.add",
                 serde_json::json!({"name": "Verse", "position": "1:1"}),
                 Some(1),
             )

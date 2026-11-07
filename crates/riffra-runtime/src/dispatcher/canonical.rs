@@ -660,10 +660,6 @@ impl HostDispatcher<'_> {
                 application.update_midi_notes(&params.clip_id, params.updates)?,
                 application,
             ),
-            CanonicalCommand::MidiNoteRemove(params) => self.edited(
-                application.remove_midi_note(&params.clip_id, &params.note_id)?,
-                application,
-            ),
             CanonicalCommand::MidiNoteRemoveMany(params) => self.edited(
                 application.remove_midi_notes(&params.clip_id, params.note_ids)?,
                 application,

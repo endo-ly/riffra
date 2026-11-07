@@ -130,7 +130,7 @@ mod tests {
         let placed = dispatcher
             .dispatch(
                 command(
-                    "midi-clip.add-asset",
+                    "clip.midi.add-asset",
                     json!({"assetId":asset_id,"name":"Voice"}),
                 ),
                 None,
@@ -169,7 +169,7 @@ mod tests {
         let created = dispatcher
             .dispatch(
                 command(
-                    "midi-clip.create",
+                    "clip.midi.create",
                     json!({
                         "trackId": track_id,
                         "startTick": 480,
@@ -185,7 +185,7 @@ mod tests {
         dispatcher
             .dispatch(
                 command(
-                    "midi-note.insert",
+                    "clip.midi.note.insert",
                     json!({
                         "clipId": clip_id,
                         "notes": [{
@@ -202,7 +202,10 @@ mod tests {
             .unwrap();
 
         let cleared = dispatcher
-            .dispatch(command("midi-note.clear", json!({"clipId": clip_id})), None)
+            .dispatch(
+                command("clip.midi.note.clear", json!({"clipId": clip_id})),
+                None,
+            )
             .unwrap();
         let session = mutated_session(&cleared);
         let cleared_clip = &session.arrangement.midi_clips[0];
@@ -213,7 +216,7 @@ mod tests {
         assert_eq!(cleared_clip.duration_ticks, original_clip.duration_ticks);
 
         let undone = dispatcher
-            .dispatch(command("undo", json!({})), None)
+            .dispatch(command("history.undo", json!({})), None)
             .unwrap();
         assert_eq!(
             mutated_session(&undone).arrangement.midi_clips[0]

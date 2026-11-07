@@ -60,7 +60,7 @@ pub(super) fn prepare_command(command: &mut ControlCommand) -> Result<(), String
             RuntimeCommand::PluginStateSet(params) => {
                 resolve_string(&mut params.state.plugin_path)?
             }
-            RuntimeCommand::AnalysisStart(params) => resolve_optional(&mut params.path)?,
+            RuntimeCommand::AnalysisInspect(params) => resolve_optional(&mut params.path)?,
             RuntimeCommand::AnalysisMeasure(params) => {
                 if let Some(paths) = &mut params.paths {
                     for path in paths {

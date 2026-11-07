@@ -65,7 +65,7 @@ async function addAudioClipToArrangement(
   trackId?: string,
 ): Promise<ArrangementMutationResult> {
   return dispatchControl({
-    command: 'audio-clip.add-asset',
+    command: 'clip.audio.add-asset',
     params: { assetId, name, startTick: startTick ?? null, trackId: trackId ?? null },
   });
 }
@@ -77,7 +77,7 @@ async function addMidiClipToArrangement(
   trackId?: string,
 ): Promise<ArrangementMutationResult> {
   return dispatchControl({
-    command: 'midi-clip.add-asset',
+    command: 'clip.midi.add-asset',
     params: { assetId, name, startTick: startTick ?? null, trackId: trackId ?? null },
   });
 }
@@ -89,7 +89,7 @@ async function createMidiClip(
   name?: string,
 ): Promise<ArrangementMutationResult> {
   return dispatchControl({
-    command: 'midi-clip.create',
+    command: 'clip.midi.create',
     params: { trackId, startTick, durationTicks, name: name ?? null },
   });
 }
@@ -98,14 +98,14 @@ async function updateAudioClip(
   clipId: string,
   patch: AudioClipPatch,
 ): Promise<ArrangementMutationResult> {
-  return dispatchControl({ command: 'audio-clip.update', params: { clipId, patch } });
+  return dispatchControl({ command: 'clip.audio.update', params: { clipId, patch } });
 }
 
 async function updateMidiClip(
   clipId: string,
   patch: MidiClipPatch,
 ): Promise<ArrangementMutationResult> {
-  return dispatchControl({ command: 'midi-clip.update', params: { clipId, patch } });
+  return dispatchControl({ command: 'clip.midi.update', params: { clipId, patch } });
 }
 
 async function removeTimelineClips(
@@ -121,7 +121,7 @@ async function trimAudioClip(
   sourceRange: FrameRange,
 ): Promise<ArrangementMutationResult> {
   return dispatchControl({
-    command: 'audio-clip.trim',
+    command: 'clip.audio.trim',
     params: { clipId, startTick, sourceRange },
   });
 }
@@ -130,19 +130,19 @@ async function splitAudioClip(
   clipId: string,
   splitTick: number,
 ): Promise<ArrangementMutationResult> {
-  return dispatchControl({ command: 'audio-clip.split', params: { clipId, splitTick } });
+  return dispatchControl({ command: 'clip.audio.split', params: { clipId, splitTick } });
 }
 
 async function duplicateAudioClip(clipId: string): Promise<ArrangementMutationResult> {
-  return dispatchControl({ command: 'audio-clip.duplicate', params: { clipId } });
+  return dispatchControl({ command: 'clip.audio.duplicate', params: { clipId } });
 }
 
 async function moveAudioClips(moves: AudioClipMove[]): Promise<ArrangementMutationResult> {
-  return dispatchControl({ command: 'audio-clip.move', params: { moves } });
+  return dispatchControl({ command: 'clip.audio.move', params: { moves } });
 }
 
 async function moveMidiClips(moves: MidiClipMove[]): Promise<ArrangementMutationResult> {
-  return dispatchControl({ command: 'midi-clip.move', params: { moves } });
+  return dispatchControl({ command: 'clip.midi.move', params: { moves } });
 }
 
 async function trimMidiClip(
@@ -151,7 +151,7 @@ async function trimMidiClip(
   durationTicks: number,
 ): Promise<ArrangementMutationResult> {
   return dispatchControl({
-    command: 'midi-clip.trim',
+    command: 'clip.midi.trim',
     params: { clipId, startTick, durationTicks },
   });
 }
@@ -160,11 +160,11 @@ async function splitMidiClip(
   clipId: string,
   splitTick: number,
 ): Promise<ArrangementMutationResult> {
-  return dispatchControl({ command: 'midi-clip.split', params: { clipId, splitTick } });
+  return dispatchControl({ command: 'clip.midi.split', params: { clipId, splitTick } });
 }
 
 async function duplicateMidiClip(clipId: string): Promise<ArrangementMutationResult> {
-  return dispatchControl({ command: 'midi-clip.duplicate', params: { clipId } });
+  return dispatchControl({ command: 'clip.midi.duplicate', params: { clipId } });
 }
 
 async function pasteTimelineClips(
@@ -183,7 +183,7 @@ async function crossfadeAudioClips(
   secondId: string,
 ): Promise<ArrangementMutationResult> {
   return dispatchControl({
-    command: 'audio-clip.crossfade',
+    command: 'clip.audio.crossfade',
     params: { firstClipId: firstId, secondClipId: secondId },
   });
 }

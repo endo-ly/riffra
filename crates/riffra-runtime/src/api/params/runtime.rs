@@ -186,7 +186,7 @@ pub struct RenderExportParams {
 /// Removes one managed Render after every reference has been checked.
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct RenderCleanParams {
+pub struct RenderDeleteParams {
     pub render_id: String,
 }
 

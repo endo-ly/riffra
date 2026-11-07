@@ -12,11 +12,11 @@ export interface TransportApi {
 }
 
 async function getRuntimeProjectionStatus(): Promise<RuntimeProjectionStatus> {
-  return dispatchControl({ command: 'runtime.projection.get', params: {} });
+  return dispatchControl({ command: 'audio.projection.get', params: {} });
 }
 
 async function retryRuntimeProjection(): Promise<RuntimeProjectionStatus> {
-  return dispatchControl({ command: 'runtime.projection.retry', params: {} });
+  return dispatchControl({ command: 'audio.projection.retry', params: {} });
 }
 
 async function playTimeline(): Promise<void> {

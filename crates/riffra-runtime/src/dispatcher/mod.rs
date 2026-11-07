@@ -602,8 +602,8 @@ mod tests {
             ("host.info", json!({})),
             ("host.bootstrap", json!({})),
             ("host.shutdown", json!({})),
-            ("runtime.projection.get", json!({})),
-            ("runtime.projection.retry", json!({})),
+            ("audio.projection.get", json!({})),
+            ("audio.projection.retry", json!({})),
             ("transport.play", json!({})),
             ("transport.stop", json!({})),
             ("transport.go-to-start", json!({})),
@@ -617,11 +617,11 @@ mod tests {
             ("audio.diagnostics", json!({})),
             ("audio.probe", json!({})),
             (
-                "audio.channels.probe",
+                "audio.probe-channels",
                 json!({"driver": "d", "inputDevice": "i", "outputDevice": "o"}),
             ),
             ("audio.recover", json!({})),
-            ("audio.startup.retry", json!({})),
+            ("audio.startup-retry", json!({})),
             ("audio.driver.get", json!({})),
             (
                 "audio.driver.set",
@@ -630,7 +630,7 @@ mod tests {
             ("audio.emergency-mute", json!({"muted": true})),
             ("audio.feedback-protection.reset", json!({})),
             ("asset.preview", json!({"assetId": "asset:1"})),
-            ("asset.preview.stop", json!({})),
+            ("asset.stop-preview", json!({})),
             ("instrument.preview", json!({"instrumentId": "builtin:1"})),
             ("instrument.preview.stop", json!({})),
             ("midi.listening.enable", json!({})),
@@ -682,7 +682,7 @@ mod tests {
             ),
             ("take.place-separate-clip", json!({"takeId": "take"})),
             (
-                "audio-clip.take-variant.set",
+                "clip.audio.take-variant.set",
                 json!({"clipId": "clip", "variant": "raw"}),
             ),
             ("take.comparison.start", json!({"takeId": "take"})),
@@ -695,13 +695,13 @@ mod tests {
             ("render.start", json!({})),
             ("job.get", json!({"id": "job"})),
             ("job.cancel", json!({"id": "job"})),
-            ("analysis.start", json!({"path": "take.wav"})),
-            ("library.search", json!({"query": "kick"})),
+            ("analysis.inspect", json!({"path": "take.wav"})),
+            ("asset.search", json!({"query": "kick"})),
             (
-                "library.asset.update",
+                "asset.update",
                 json!({"id": "asset", "tag": null, "note": null}),
             ),
-            ("library.related", json!({"id": "asset"})),
+            ("asset.related", json!({"id": "asset"})),
             ("library.instrument.list", json!({})),
             (
                 "library.instrument.favorite.set",
@@ -781,7 +781,7 @@ mod tests {
         dispatcher
             .dispatch(
                 command(
-                    "midi-clip.create",
+                    "clip.midi.create",
                     json!({"trackId":track_id,"startTick":0,"durationTicks":3840}),
                 ),
                 None,
