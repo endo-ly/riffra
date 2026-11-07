@@ -229,23 +229,30 @@ bool PluginRack::applyPersistedState(const PluginStateSpec& state, juce::String&
         if (!applyStateData(*state.stateData, error)) return false;
     }
     {
-        const auto available = parameters();
-        const auto count = std::min(state.parameterValues.size(), available.size());
+        const juce::SpinLock::ScopedLockType lock(pluginLock);
+        if (plugin == nullptr) {
+            error = "No VST3 plugin is loaded.";
+            return false;
+        }
+        const auto& available = plugin->getParameters();
+        const auto count =
+            std::min(state.parameterValues.size(), static_cast<std::size_t>(available.size()));
         for (std::size_t offset = 0; offset < count; ++offset) {
             const auto index = static_cast<int>(offset);
+            const auto* parameter = available[index];
+            if (parameter == nullptr) continue;
             const auto target = state.parameterValues[offset];
-            const auto availableIndex = available[offset].index;
             const auto current =
                 parameterQueue != nullptr && offset < parameterQueue->capacity &&
                         parameterQueue->dirty[offset].load(std::memory_order_acquire)
                     ? parameterQueue->values[offset].load(std::memory_order_acquire)
-                    : available[offset].value;
+                    : parameter->getValue();
             // VST instruments often expose thousands of parameters, most of
             // which are already at their saved/default value immediately
             // after construction. Avoid calling third-party automation hooks
             // for those entries; applying them all can turn a normal restore
             // into a multi-second operation even though no state changes.
-            if (availableIndex == index && std::isfinite(target) && std::isfinite(current) &&
+            if (std::isfinite(target) && std::isfinite(current) &&
                 std::abs(target - current) <= 0.000001f)
                 continue;
             if (!setParameter(index, target, error)) return false;

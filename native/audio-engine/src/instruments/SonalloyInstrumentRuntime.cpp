@@ -35,6 +35,19 @@ juce::String diagnosticText(const SonalloyStringView value) {
 
 }  // namespace
 
+void SonalloyInstrumentRuntime::CompiledCache::trim() {
+    auto unused = std::count_if(entries.begin(), entries.end(),
+                                [](const auto& entry) { return entry.compiled.use_count() == 1; });
+    for (auto it = entries.begin(); it != entries.end() && unused > 8;) {
+        if (it->compiled.use_count() == 1) {
+            it = entries.erase(it);
+            --unused;
+        } else {
+            ++it;
+        }
+    }
+}
+
 void SonalloyInstrumentRuntime::CompiledDeleter::operator()(
     SonalloyCompiledInstrument* const value) const noexcept {
     if (value != nullptr) sonalloy_compiled_destroy(value);
@@ -61,45 +74,69 @@ SonalloyInstrumentRuntime::SonalloyInstrumentRuntime(CompiledPtr compiled, Runti
 
 std::unique_ptr<SonalloyInstrumentRuntime> SonalloyInstrumentRuntime::create(
     const juce::String& definitionJson, const juce::String& definitionBaseDir,
-    const double sampleRate, const int blockSize, juce::String& error) {
+    const double sampleRate, const int blockSize, juce::String& error, CompiledCache* cache) {
     if (definitionJson.isEmpty() || definitionBaseDir.isEmpty() || !std::isfinite(sampleRate) ||
         sampleRate <= 0.0 || blockSize <= 0) {
         error = "Instrument definition or process specification is invalid.";
         return nullptr;
     }
-    SonalloyDefinitionInfo definitionInfo{};
-    SonalloyDiagnostics* inspectDiagnosticsRaw = nullptr;
-    const auto inspectResult =
-        sonalloy_inspect_json(stringView(definitionJson), stringView(definitionBaseDir),
-                              &definitionInfo, &inspectDiagnosticsRaw);
-    std::unique_ptr<SonalloyDiagnostics, DiagnosticsDeleter> inspectDiagnostics(
-        inspectDiagnosticsRaw);
-    if (inspectResult != SONALLOY_OK) {
-        error = diagnosticsSummary(inspectDiagnostics.get(), inspectResult);
-        return nullptr;
+    CompiledPtr compiled;
+    if (cache != nullptr) {
+        auto found =
+            std::find_if(cache->entries.begin(), cache->entries.end(), [&](const auto& entry) {
+                return entry.definition == definitionJson && entry.directory == definitionBaseDir &&
+                       entry.sampleRate == sampleRate && entry.blockSize == blockSize;
+            });
+        if (found != cache->entries.end()) {
+            auto entry = std::move(*found);
+            cache->entries.erase(found);
+            compiled = entry.compiled;
+            cache->entries.push_back(std::move(entry));
+        }
     }
-    if (!acceptsRequiredInputChannels(definitionInfo.required_input_channels)) {
-        error = "This instrument requires an audio input route that Riffra does not support yet.";
-        return nullptr;
-    }
+    if (compiled == nullptr) {
+        SonalloyDefinitionInfo definitionInfo{};
+        SonalloyDiagnostics* inspectDiagnosticsRaw = nullptr;
+        const auto inspectResult =
+            sonalloy_inspect_json(stringView(definitionJson), stringView(definitionBaseDir),
+                                  &definitionInfo, &inspectDiagnosticsRaw);
+        std::unique_ptr<SonalloyDiagnostics, DiagnosticsDeleter> inspectDiagnostics(
+            inspectDiagnosticsRaw);
+        if (inspectResult != SONALLOY_OK) {
+            error = diagnosticsSummary(inspectDiagnostics.get(), inspectResult);
+            return nullptr;
+        }
+        if (!acceptsRequiredInputChannels(definitionInfo.required_input_channels)) {
+            error =
+                "This instrument requires an audio input route that Riffra does not support yet.";
+            return nullptr;
+        }
 
-    const SonalloyProcessSpec spec{
-        sampleRate,
-        static_cast<std::uint32_t>(blockSize),
-        definitionInfo.required_input_channels,
-        2,
-    };
-    SonalloyCompiledInstrument* compiledRaw = nullptr;
-    SonalloyDiagnostics* diagnosticsRaw = nullptr;
-    const auto result =
-        sonalloy_compile_json(stringView(definitionJson), stringView(definitionBaseDir), spec,
-                              &compiledRaw, &diagnosticsRaw);
-    std::unique_ptr<SonalloyDiagnostics, DiagnosticsDeleter> diagnostics(diagnosticsRaw);
-    CompiledPtr compiled(compiledRaw);
-    if (result != SONALLOY_OK || compiled == nullptr) {
-        error = diagnosticsSummary(diagnostics.get(), result);
-        return nullptr;
+        const SonalloyProcessSpec compileSpec{
+            sampleRate,
+            static_cast<std::uint32_t>(blockSize),
+            definitionInfo.required_input_channels,
+            2,
+        };
+        SonalloyCompiledInstrument* compiledRaw = nullptr;
+        SonalloyDiagnostics* diagnosticsRaw = nullptr;
+        const auto result =
+            sonalloy_compile_json(stringView(definitionJson), stringView(definitionBaseDir),
+                                  compileSpec, &compiledRaw, &diagnosticsRaw);
+        std::unique_ptr<SonalloyDiagnostics, DiagnosticsDeleter> diagnostics(diagnosticsRaw);
+        compiled = CompiledPtr(compiledRaw, CompiledDeleter{});
+        if (result != SONALLOY_OK || compiled == nullptr) {
+            error = diagnosticsSummary(diagnostics.get(), result);
+            return nullptr;
+        }
+        if (cache != nullptr) {
+            cache->entries.push_back(
+                {definitionJson, definitionBaseDir, sampleRate, blockSize, compiled});
+            cache->trim();
+        }
     }
+    const SonalloyProcessSpec spec{sampleRate, static_cast<std::uint32_t>(blockSize),
+                                   sonalloy_compiled_required_input_channels(compiled.get()), 2};
     const auto latency = static_cast<int>(
         std::min<std::uint32_t>(sonalloy_compiled_reported_latency_frames(compiled.get()),
                                 static_cast<std::uint32_t>(std::numeric_limits<int>::max())));

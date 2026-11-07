@@ -16,7 +16,7 @@ pub use asset::{
     discard_output_registration, ensure_assets_schema, import_midi_asset, import_midi_bytes, load,
     register, register_derived, registered_render_asset_count, relocate_content_location,
     remove_render_assets, render_asset_dependents, render_asset_location_owners,
-    resolve_audio_path, resolve_content_location, update_metadata,
+    resolve_audio_path, resolve_content_location, resolve_content_locations, update_metadata,
 };
 pub use audio_file::{WavMetadata, parse_wav, read_wav_metadata, read_wav_structure};
 pub use data_root::DataRootLease;

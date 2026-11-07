@@ -19,15 +19,16 @@ pub(crate) fn resolve(
     session: &CreativeSession,
 ) -> Result<ResolvedResources, String> {
     let mut audio_paths = HashMap::new();
-    for clip in &session.arrangement.audio_clips {
-        if audio_paths.contains_key(&clip.asset_id) {
-            continue;
-        }
-        if let Some(path) = asset::resolve_content_location(data_root, &clip.asset_id)? {
-            let path = PathBuf::from(path);
-            if path.is_file() {
-                audio_paths.insert(clip.asset_id.clone(), path);
-            }
+    let ids = session
+        .arrangement
+        .audio_clips
+        .iter()
+        .map(|clip| clip.asset_id.clone())
+        .collect();
+    for (id, path) in asset::resolve_content_locations(data_root, &ids)? {
+        let path = PathBuf::from(path);
+        if path.is_file() {
+            audio_paths.insert(id, path);
         }
     }
 

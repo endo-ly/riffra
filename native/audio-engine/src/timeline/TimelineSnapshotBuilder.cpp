@@ -481,7 +481,7 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
                 juce::String runtimeError;
                 track->runtime->setInstrument(SonalloyInstrumentRuntime::create(
                     internal.definitionJson, internal.definitionBaseDir, outputSampleRate,
-                    maximumBlockSize, runtimeError));
+                    maximumBlockSize, runtimeError, &engine.instrumentCache));
                 if (track->runtime->instrument() == nullptr)
                     return roleError("instrument", runtimeError);
                 track->runtime->instrument()->setBypassed(internal.bypassed);
@@ -549,14 +549,24 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
             clip->rightGain = clip->gain * std::sin(panAngle);
             clip->loop = clipSpec.loopEnabled;
             clip->muted = clipSpec.muted;
+            if (!engine.offlineMode) {
+                const auto inputSamples = std::ceil(static_cast<double>(maximumBlockSize) *
+                                                    reader->sampleRate / outputSampleRate) +
+                                          64.0;
+                if (!std::isfinite(inputSamples) ||
+                    inputSamples >= static_cast<double>(std::numeric_limits<int>::max())) {
+                    error = "Timeline source sample rate requires an unsupported buffer size.";
+                    return false;
+                }
+                auto buffered = std::make_unique<juce::BufferingAudioReader>(
+                    reader.release(), engine.readAheadThread,
+                    std::max(kReadAheadSamples, static_cast<int>(inputSamples)));
+                clip->bufferingReader = buffered.get();
+                reader = std::move(buffered);
+            }
             clip->readerSource =
                 std::make_unique<juce::AudioFormatReaderSource>(reader.release(), true);
             clip->positionableSource = clip->readerSource.get();
-            if (!engine.offlineMode) {
-                clip->bufferingSource = std::make_unique<juce::BufferingAudioSource>(
-                    clip->readerSource.get(), engine.readAheadThread, false, kReadAheadSamples, 2);
-                clip->positionableSource = clip->bufferingSource.get();
-            }
             clip->resamplingSource =
                 std::make_unique<juce::ResamplingAudioSource>(clip->positionableSource, false, 2);
             clip->resamplingSource->setResamplingRatio(clip->sourceSampleRate / outputSampleRate);
@@ -717,6 +727,34 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
     if (prepared->fadeOutSamples > prepared->mixEndSample) {
         error = "Mix fade duration exceeds the final mix duration.";
         return false;
+    }
+    if (!engine.offlineMode) {
+        std::vector<Clip*> pending;
+        for (auto& track : prepared->tracks)
+            for (auto& clip : track->clips) pending.push_back(clip.get());
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+        juce::AudioBuffer<float> scratch(2, 1);
+        while (!pending.empty()) {
+            for (auto it = pending.begin(); it != pending.end();) {
+                auto* clip = *it;
+                const auto samples =
+                    static_cast<int>(std::ceil(static_cast<double>(maximumBlockSize) *
+                                               clip->sourceSampleRate / outputSampleRate)) +
+                    64;
+                if (samples > scratch.getNumSamples()) scratch.setSize(2, samples);
+                if (clip->bufferingReader->read(&scratch, 0, samples, clip->sourceStartFrame, true,
+                                                true))
+                    it = pending.erase(it);
+                else
+                    ++it;
+            }
+            if (pending.empty()) break;
+            if (std::chrono::steady_clock::now() >= deadline) {
+                error = "Timeline source read-ahead timed out.";
+                return false;
+            }
+            juce::Thread::sleep(1);
+        }
     }
     return true;
 }

@@ -657,9 +657,9 @@ TEST(TimelineEngineTest, MixesMonoAndStereoSourcesAtDifferentSampleRates) {
     snapshot.revision = 7;
     auto track = makeAudioTrack("track:mixed");
     track.audioClips = {
-        {"mono-44100", mono.getFullPathName(), 44'100, 0, 44'100, 44'100, 44'100, 0, 0, 0,
+        {"mono-44100", mono.getFullPathName(), 44'100, 22'050, 44'100, 22'050, 44'100, 0, 0, 0,
          FadeShapeSpec::linear, 0.0, 0.0, TakeVariantSpec::raw, false, false},
-        {"stereo-48000", stereo.getFullPathName(), 48'000, 0, 48'000, 48'000, 48'000, 0, 0, 0,
+        {"stereo-48000", stereo.getFullPathName(), 48'000, 24'000, 48'000, 24'000, 48'000, 0, 0, 0,
          FadeShapeSpec::linear, 0.0, 0.0, TakeVariantSpec::raw, false, false},
     };
     snapshot.graph.tracks.push_back(std::move(track));
@@ -670,9 +670,9 @@ TEST(TimelineEngineTest, MixesMonoAndStereoSourcesAtDifferentSampleRates) {
     std::array<float, 512> left{};
     std::array<float, 512> right{};
     const std::array<float*, 2> outputs{left.data(), right.data()};
-    for (int block = 0; block < 8; ++block) engine.mix(outputs.data(), 2, 512);
+    engine.mix(outputs.data(), 2, 512);
 
-    // Assert: both sources contribute to the mix once they overlap.
+    // Assert: both sources contribute from the first block after preparation.
     EXPECT_GT(*std::max_element(left.begin(), left.end()), 0.1f);
     EXPECT_GT(*std::max_element(right.begin(), right.end()), 0.1f);
 }

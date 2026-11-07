@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <vector>
 
 #include "InstrumentRuntime.h"
 #include "concurrency/BoundedMpmcQueue.h"
@@ -16,9 +17,21 @@ namespace riffra {
 /// Runs a compiled Riffra Sonalloy instrument through the pinned C API.
 class SonalloyInstrumentRuntime final : public InstrumentRuntime {
 public:
+    class CompiledCache final {
+    public:
+        struct Entry final {
+            juce::String definition;
+            juce::String directory;
+            double sampleRate;
+            int blockSize;
+            std::shared_ptr<SonalloyCompiledInstrument> compiled;
+        };
+        std::vector<Entry> entries;
+        void trim();
+    };
     [[nodiscard]] static std::unique_ptr<SonalloyInstrumentRuntime> create(
         const juce::String& definitionJson, const juce::String& definitionBaseDir,
-        double sampleRate, int blockSize, juce::String& error);
+        double sampleRate, int blockSize, juce::String& error, CompiledCache* cache = nullptr);
 
     /// Returns whether Riffra can execute a Sonalloy definition's required input route.
     [[nodiscard]] static constexpr bool acceptsRequiredInputChannels(
@@ -58,7 +71,7 @@ private:
     struct RuntimeDeleter final {
         void operator()(SonalloyRuntime* value) const noexcept;
     };
-    using CompiledPtr = std::unique_ptr<SonalloyCompiledInstrument, CompiledDeleter>;
+    using CompiledPtr = std::shared_ptr<SonalloyCompiledInstrument>;
     using RuntimePtr = std::unique_ptr<SonalloyRuntime, RuntimeDeleter>;
 
     struct PendingMidi final {

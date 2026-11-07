@@ -90,8 +90,11 @@ bool TimelineEngine::loadSnapshot(const TimelineSnapshotSpec& snapshot,
                                   const bool commitImmediately) {
     std::unique_ptr<PreparedTimeline> prepared;
     TimelineSnapshotBuilder builder(*this);
-    if (!builder.build(snapshot, formats, outputSampleRate, maximumBlockSize, prepared, error))
+    if (!builder.build(snapshot, formats, outputSampleRate, maximumBlockSize, prepared, error)) {
+        prepared.reset();
+        instrumentCache.trim();
         return false;
+    }
     graphRegistry.access(
         [&prepared](ControlGraphRegistry::State& graphs) { graphs.pending = std::move(prepared); });
     if (!commitImmediately) return true;
@@ -174,6 +177,8 @@ void TimelineEngine::discardPreparedSnapshot() noexcept {
     graphRegistry.access([&discarded](ControlGraphRegistry::State& graphs) {
         discarded = std::move(graphs.pending);
     });
+    discarded.reset();
+    instrumentCache.trim();
 }
 
 bool TimelineEngine::preparedOwnerReusesRuntimeDevices(const EffectOwnerSpec& deviceOwner) const {
@@ -200,7 +205,11 @@ bool TimelineEngine::hasPreparedSnapshot() const {
         [](const ControlGraphRegistry::State& graphs) { return graphs.pending != nullptr; });
 }
 
-std::size_t TimelineEngine::reclaimRetiredGraphs() { return graphRegistry.reclaim(retiredGraphs); }
+std::size_t TimelineEngine::reclaimRetiredGraphs() {
+    const auto count = graphRegistry.reclaim(retiredGraphs);
+    if (count != 0) instrumentCache.trim();
+    return count;
+}
 
 std::optional<std::uint64_t> TimelineEngine::submit(RealtimeCommand command) noexcept {
     const std::lock_guard lock(ownerMutex);
