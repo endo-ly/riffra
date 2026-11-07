@@ -11,7 +11,7 @@ use args::{Cli, CliCommand, RequestError};
 use attached::AttachedBackend;
 use clap::Parser;
 use interactive::with_input_line;
-use output::{compact_agent_response, write_audio_diagnostics};
+use output::write_audio_diagnostics;
 use riffra_control::{
     CommandResult, ControlRequest, ControlResponse, ErrorCode, LocalHostDiscovery,
     LocalHostRegistry,
@@ -19,7 +19,7 @@ use riffra_control::{
 use riffra_runtime::Dispatcher;
 use riffra_runtime::api::output::{BackgroundJobStatus, ControlOutput};
 use riffra_runtime::api::params::EmptyParams;
-use riffra_runtime::api::{CanonicalCommand, ControlCommand, RuntimeCommand};
+use riffra_runtime::api::{CanonicalCommand, ControlCommand, RuntimeCommand, compact_agent_response};
 use std::io;
 use std::path::Path;
 use std::thread;

@@ -4,12 +4,14 @@
 //! This module defines requests and results only; executing them is the job
 //! of the Standalone dispatcher and the live Host.
 
+pub mod agent_response;
 mod decode;
 pub mod output;
 pub mod params;
 mod policy;
 mod table;
 
+pub use agent_response::compact_agent_response;
 pub use decode::{CommandDecodeError, decode_params};
 pub(crate) use decode::{attach_input_value, json_pointer_segment};
 pub use output::ControlOutput;

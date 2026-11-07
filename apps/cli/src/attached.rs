@@ -1,4 +1,4 @@
-use crate::output::compact_agent_response;
+
 use riffra_control::{
     ControlRequest, ControlResponse, ErrorCode, LocalHostClient, LocalHostClientError,
     LocalHostDiscovery, ProtocolError, new_instance_id,
@@ -7,6 +7,7 @@ use riffra_runtime::api::output::{BackgroundJobStatus, JobState};
 use riffra_runtime::api::params::{EmptyParams, IdParams};
 use riffra_runtime::api::{
     CommandScope, ControlCommand, ControlOutput, ProjectCommand, RuntimeCommand,
+    compact_agent_response,
 };
 use std::thread;
 use std::time::{Duration, Instant};
