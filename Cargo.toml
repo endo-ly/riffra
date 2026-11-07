@@ -5,6 +5,7 @@ members = [
   "crates/riffra-host",
   "crates/riffra-runtime",
   "apps/cli",
+  "apps/mcp",
   "apps/desktop/src-tauri",
 ]
 resolver = "2"

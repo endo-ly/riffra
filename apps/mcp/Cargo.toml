@@ -1,0 +1,28 @@
+[package]
+name = "riffra-mcp"
+version = "2026.11.1"
+description = "MCP stdio server for a running Riffra Host"
+authors = ["Riffra contributors"]
+edition = "2024"
+rust-version = "1.88"
+
+[[bin]]
+name = "riffra-mcp"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+jsonschema = { version = "0.60", default-features = false }
+riffra-control = { path = "../../crates/riffra-control" }
+riffra-runtime = { path = "../../crates/riffra-runtime" }
+rmcp = { version = "3.9", default-features = false, features = ["server", "transport-io"] }
+schemars = "1.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
+tokio-util = "0.7"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt"] }
+
+[dev-dependencies]
+tempfile = "3"
