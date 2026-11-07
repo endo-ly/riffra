@@ -8,7 +8,7 @@ use std::fmt;
 use std::str::FromStr;
 
 /// A non-negative normalized fraction.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, schemars::JsonSchema)]
 pub struct MusicalFraction {
     pub numerator: u32,
     pub denominator: u32,
@@ -175,6 +175,20 @@ impl<'de> Deserialize<'de> for MusicalPosition {
     }
 }
 
+impl schemars::JsonSchema for MusicalPosition {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "MusicalPosition".into()
+    }
+
+    fn json_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "type": "string",
+            "pattern": "^[0-9]+:[0-9]+(?:[+][0-9]+/[0-9]+)?$",
+            "description": "One-origin bar:beat position with an optional beat-relative fraction."
+        })
+    }
+}
+
 /// A positive duration expressed as a fraction of a whole note.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ts_rs::TS)]
 #[ts(type = "string")]
@@ -236,6 +250,20 @@ impl<'de> Deserialize<'de> for MusicalDuration {
     }
 }
 
+impl schemars::JsonSchema for MusicalDuration {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "MusicalDuration".into()
+    }
+
+    fn json_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "type": "string",
+            "pattern": "^[0-9]+/[0-9]+$",
+            "description": "A positive duration expressed as a fraction of a whole note."
+        })
+    }
+}
+
 /// A non-negative offset expressed as a fraction of a whole note.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ts_rs::TS)]
 #[ts(type = "string")]
@@ -291,6 +319,20 @@ impl<'de> Deserialize<'de> for MusicalOffset {
         String::deserialize(deserializer)?
             .parse()
             .map_err(D::Error::custom)
+    }
+}
+
+impl schemars::JsonSchema for MusicalOffset {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "MusicalOffset".into()
+    }
+
+    fn json_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "type": "string",
+            "pattern": "^[0-9]+/[0-9]+$",
+            "description": "A non-negative offset expressed as a fraction of a whole note."
+        })
     }
 }
 
@@ -377,6 +419,20 @@ impl<'de> Deserialize<'de> for MusicalTimeDelta {
         String::deserialize(deserializer)?
             .parse()
             .map_err(D::Error::custom)
+    }
+}
+
+impl schemars::JsonSchema for MusicalTimeDelta {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "MusicalTimeDelta".into()
+    }
+
+    fn json_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "type": "string",
+            "pattern": "^[+-]?[0-9]+/[0-9]+$",
+            "description": "A signed whole-note fraction used to move musical events."
+        })
     }
 }
 

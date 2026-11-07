@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 /// Creates a Group or Return mixing channel.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MixBusAddParams {
     pub name: String,
@@ -13,14 +13,14 @@ pub struct MixBusAddParams {
 }
 
 /// Identifies a mixing channel.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MixBusIdParams {
     pub bus_id: String,
 }
 
 /// Changes the controls of a mixing channel.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MixBusUpdateParams {
     pub bus_id: String,
@@ -28,7 +28,7 @@ pub struct MixBusUpdateParams {
 }
 
 /// Routes a Track's main output to a Group, or to Master with a null Bus ID.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct TrackOutputParams {
     pub track_id: String,
@@ -36,7 +36,7 @@ pub struct TrackOutputParams {
 }
 
 /// Creates an enabled parallel Track-to-Return route.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct SendAddParams {
     pub track_id: String,
@@ -47,14 +47,14 @@ pub struct SendAddParams {
 }
 
 /// Identifies a parallel Send route.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct SendIdParams {
     pub send_id: String,
 }
 
 /// Changes a Send's destination and controls.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct SendUpdateParams {
     pub send_id: String,
@@ -62,7 +62,7 @@ pub struct SendUpdateParams {
 }
 
 /// Creates an enabled Track-to-device auxiliary route.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct SidechainSendAddParams {
     pub source_track_id: String,
@@ -73,14 +73,14 @@ pub struct SidechainSendAddParams {
 }
 
 /// Identifies a sidechain route.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct SidechainSendIdParams {
     pub sidechain_send_id: String,
 }
 
 /// Changes a sidechain route's destination and controls.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct SidechainSendUpdateParams {
     pub sidechain_send_id: String,

@@ -142,6 +142,73 @@ macro_rules! control_commands {
             ];
             render_result_map(rows)
         }
+
+        /// Returns every Control Command wire name in table order.
+        pub fn command_names() -> &'static [&'static str] {
+            &[
+                $( $canonical_name, )*
+                $( $project_name, )*
+                $( $runtime_name, )*
+            ]
+        }
+
+        /// Generates the params schema for one Control Command into `generator`.
+        ///
+        /// Returns `None` for an unknown command. Sharing one generator across
+        /// several commands lets their `$defs` coexist at a single root.
+        pub fn command_params_subschema(
+            name: &str,
+            generator: &mut schemars::SchemaGenerator,
+        ) -> Option<schemars::Schema> {
+            match name {
+                $( $canonical_name => Some(generator.subschema_for::<$canonical_params>()), )*
+                $( $project_name => Some(generator.subschema_for::<$project_params>()), )*
+                $( $runtime_name => Some(generator.subschema_for::<$runtime_params>()), )*
+                _ => None,
+            }
+        }
+
+        /// Generates a standalone params schema for one Control Command.
+        ///
+        /// Returns `None` for an unknown command.
+        pub fn command_params_schema(name: &str) -> Option<schemars::Schema> {
+            let mut generator = schemars::SchemaGenerator::default();
+            let mut schema = command_params_subschema(name, &mut generator)?;
+            let definitions = generator.take_definitions(false);
+            if !definitions.is_empty() {
+                schema
+                    .ensure_object()
+                    .insert("$defs".into(), serde_json::Value::Object(definitions));
+            }
+            Some(schema)
+        }
+
+        /// Reports whether a command accepts an omitted `params` object.
+        ///
+        /// Returns `None` for an unknown command.
+        pub fn command_params_allow_omitted(name: &str) -> Option<bool> {
+            match name {
+                $(
+                    $canonical_name => Some(
+                        std::any::TypeId::of::<$canonical_params>()
+                            == std::any::TypeId::of::<EmptyParams>(),
+                    ),
+                )*
+                $(
+                    $project_name => Some(
+                        std::any::TypeId::of::<$project_params>()
+                            == std::any::TypeId::of::<EmptyParams>(),
+                    ),
+                )*
+                $(
+                    $runtime_name => Some(
+                        std::any::TypeId::of::<$runtime_params>()
+                            == std::any::TypeId::of::<EmptyParams>(),
+                    ),
+                )*
+                _ => None,
+            }
+        }
     };
     (@access read) => { CanonicalAccess::Read };
     (@access mutation) => { CanonicalAccess::Mutation { batchable: false } };
@@ -451,7 +518,320 @@ control_commands! {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use serde_json::{Map, Value, json};
+
+    fn schema_value(name: &str) -> serde_json::Value {
+        command_params_schema(name)
+            .unwrap_or_else(|| panic!("missing params schema for {name}"))
+            .to_value()
+    }
+
+    fn assert_schema(name: &str, params: serde_json::Value, expected: bool) {
+        let schema = schema_value(name);
+        assert_eq!(
+            jsonschema::is_valid(&schema, &params),
+            expected,
+            "{name} params: {params}\nschema: {schema}"
+        );
+    }
+
+    #[test]
+    fn every_command_exposes_a_deterministic_params_schema() {
+        // Arrange
+        let names = command_names();
+
+        // Act / Assert
+        assert_eq!(names.len(), 215);
+        let unique: std::collections::HashSet<_> = names.iter().copied().collect();
+        assert_eq!(unique.len(), names.len());
+        for name in names {
+            let first = schema_value(name);
+            let second = schema_value(name);
+            assert_eq!(first, second, "{name}");
+            assert!(command_params_allow_omitted(name).is_some(), "{name}");
+            assert_ne!(
+                first,
+                serde_json::json!(true),
+                "{name} must not fall back to an unconstrained schema"
+            );
+        }
+        assert_eq!(command_params_schema("unknown.command"), None);
+        assert_eq!(command_params_allow_omitted("unknown.command"), None);
+    }
+
+    #[test]
+    fn params_schemas_follow_the_serde_input_shape() {
+        // Arrange / Act / Assert
+        assert_schema(
+            "music.note.insert",
+            json!({
+                "clipId": "midi-clip:1",
+                "notes": [{
+                    "pitch": "C4",
+                    "position": "1:1",
+                    "duration": "1/8",
+                    "velocity": 100,
+                    "channel": 1
+                }],
+                "clipToEnd": false
+            }),
+            true,
+        );
+        assert_schema(
+            "music.note.insert",
+            json!({"clipId": "midi-clip:1", "notes": [{"pitch": 60, "position": "1:1", "duration": "1/8"}]}),
+            false,
+        );
+        assert_schema(
+            "music.note.insert",
+            json!({"clipId": "midi-clip:1", "notes": [{"pitch": "C4", "position": 1, "duration": "1/8"}]}),
+            false,
+        );
+        assert_schema(
+            "music.note.insert",
+            json!({"clipId": "midi-clip:1", "notes": [], "unknown": true}),
+            false,
+        );
+        assert_schema(
+            "music.note.update",
+            json!({"clipId": "midi-clip:1", "noteId": "note:1", "lyric": null}),
+            true,
+        );
+        assert_schema(
+            "music.note.insert",
+            json!({"clipId": "midi-clip:1", "notes": [{"pitch": "C4", "position": "1:1", "duration": "1/8", "velocity": null}]}),
+            false,
+        );
+        assert_schema(
+            "session.settings.update",
+            json!({"projectName": null}),
+            true,
+        );
+        assert_schema("clip.audio.list", json!({}), true);
+        assert_schema("clip.audio.list", json!({"unexpected": 1}), false);
+        assert_schema(
+            "project.import",
+            json!({"path": "C:/tmp/project.riffra"}),
+            true,
+        );
+        assert_schema("job.get", json!({"id": "job:1"}), true);
+        assert_schema("job.get", json!({}), false);
+        assert_schema(
+            "plugin.state.set",
+            json!({
+                "owner": {"kind": "track", "id": "track:1"},
+                "deviceId": "device:1",
+                "state": {"schemaVersion": 1, "pluginPath": "Reverb.vst3", "parameterValues": [0.5]}
+            }),
+            true,
+        );
+        assert_schema(
+            "audio.driver.set",
+            json!({
+                "driver": "WASAPI",
+                "inputChannel": 0,
+                "inputDevice": null,
+                "outputDevice": null,
+                "sampleRate": null,
+                "bufferSize": null
+            }),
+            true,
+        );
+        assert_schema(
+            "clip.audio.trim",
+            json!({
+                "clipId": "clip:1",
+                "startTick": 0,
+                "sourceRange": {"start": 0, "end": 44100}
+            }),
+            true,
+        );
+        assert_schema(
+            "clip.audio.trim",
+            json!({
+                "clipId": "clip:1",
+                "startTick": "0",
+                "sourceRange": {"start": 0, "end": 44100}
+            }),
+            false,
+        );
+        assert_schema(
+            "automation.set",
+            json!({
+                "target": {"kind": "trackMix", "trackId": "track:1", "parameter": "volume"},
+                "interpolation": "linear",
+                "points": [{"id": "point:1", "tick": 0, "value": -6.0}]
+            }),
+            true,
+        );
+        assert_schema(
+            "automation.set",
+            json!({
+                "target": {"kind": "trackMix", "trackId": "track:1", "parameter": "Volume"},
+                "interpolation": "linear",
+                "points": []
+            }),
+            false,
+        );
+        assert_schema(
+            "clip.midi.update",
+            json!({"clipId": "midi-clip:1", "patch": {"notes": []}}),
+            true,
+        );
+        assert_schema(
+            "music.timebase.set-map",
+            json!({
+                "tempoChanges": [{"tick": 0, "bpm": 120.0}],
+                "timeSignatureChanges": [{"tick": 0, "numerator": 4, "denominator": 4}]
+            }),
+            true,
+        );
+    }
+
+    #[test]
+    fn every_command_schema_accepts_a_complete_sample_and_rejects_invalid_shapes() {
+        for name in command_names() {
+            let schema = schema_value(name);
+            let empty = Map::new();
+            let definitions = schema
+                .get("$defs")
+                .and_then(Value::as_object)
+                .unwrap_or(&empty);
+            let sample = sample_for(&schema, definitions, None)
+                .unwrap_or_else(|| panic!("no sample could be generated for {name}: {schema}"));
+            assert!(
+                jsonschema::is_valid(&schema, &sample),
+                "{name} sample {sample}\nschema: {schema}"
+            );
+
+            let resolved = resolve(&schema, definitions).unwrap_or(&schema);
+            if let Value::Object(object) = &sample
+                && resolved.get("additionalProperties") == Some(&Value::Bool(false))
+            {
+                let mut unknown = object.clone();
+                unknown.insert("__unexpected".into(), json!(true));
+                assert!(
+                    !jsonschema::is_valid(&schema, &Value::Object(unknown)),
+                    "{name} accepted an unknown field"
+                );
+            }
+            let Some(required) = resolved.get("required").and_then(Value::as_array) else {
+                continue;
+            };
+            let Some(required) = required.first().and_then(Value::as_str) else {
+                continue;
+            };
+            let Value::Object(mut missing) = sample.clone() else {
+                continue;
+            };
+            missing.remove(required);
+            assert!(
+                !jsonschema::is_valid(&schema, &Value::Object(missing)),
+                "{name} accepted a missing required field {required}"
+            );
+        }
+    }
+
+    fn resolve<'a>(schema: &'a Value, definitions: &'a Map<String, Value>) -> Option<&'a Value> {
+        let reference = schema.get("$ref")?.as_str()?;
+        let name = reference.rsplit('/').next()?;
+        definitions.get(name)
+    }
+
+    fn sample_for(
+        schema: &Value,
+        definitions: &Map<String, Value>,
+        hint: Option<&str>,
+    ) -> Option<Value> {
+        if let Some(resolved) = resolve(schema, definitions) {
+            let name = schema
+                .get("$ref")
+                .and_then(Value::as_str)
+                .and_then(|reference| reference.rsplit('/').next());
+            return sample_for(resolved, definitions, name.or(hint));
+        }
+        if let Some(constant) = schema.get("const") {
+            return Some(constant.clone());
+        }
+        if let Some(value) = schema
+            .get("enum")
+            .and_then(Value::as_array)
+            .and_then(|values| values.first())
+        {
+            return Some(value.clone());
+        }
+        for keyword in ["oneOf", "anyOf", "allOf"] {
+            if let Some(branches) = schema.get(keyword).and_then(Value::as_array) {
+                for branch in branches {
+                    if let Some(value) = sample_for(branch, definitions, hint) {
+                        return Some(value);
+                    }
+                }
+            }
+        }
+        let types = match schema.get("type") {
+            Some(Value::String(value)) => vec![value.as_str()],
+            Some(Value::Array(values)) => values.iter().filter_map(Value::as_str).collect(),
+            _ => {
+                if schema.get("properties").is_some() {
+                    vec!["object"]
+                } else if schema.get("items").is_some() {
+                    vec!["array"]
+                } else if schema.get("pattern").is_some() {
+                    vec!["string"]
+                } else {
+                    vec![]
+                }
+            }
+        };
+        let kind = types
+            .into_iter()
+            .find(|kind| *kind != "null")
+            .unwrap_or("null");
+        match kind {
+            "null" => Some(Value::Null),
+            "boolean" => Some(Value::Bool(false)),
+            "integer" | "number" => Some(json!(
+                schema.get("minimum").and_then(Value::as_f64).unwrap_or(0.0)
+            )),
+            "string" => Some(Value::String(match hint {
+                Some("MusicalPosition") => "1:1".into(),
+                Some("MusicalDuration" | "MusicalOffset") => "1/4".into(),
+                Some("MusicalTimeDelta") => "0/1".into(),
+                Some("MusicalNoteName") => "C".into(),
+                Some("MusicalPitch") => "C4".into(),
+                _ => "x".into(),
+            })),
+            "array" => {
+                let item = sample_for(schema.get("items")?, definitions, hint)?;
+                let length = schema
+                    .get("minItems")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(1)
+                    .max(1);
+                Some(Value::Array(vec![item; usize::try_from(length).ok()?]))
+            }
+            "object" => {
+                let properties = schema.get("properties").and_then(Value::as_object);
+                let mut object = Map::new();
+                for required in schema
+                    .get("required")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                {
+                    let required = required.as_str()?;
+                    let property = properties?.get(required)?;
+                    object.insert(
+                        required.into(),
+                        sample_for(property, definitions, Some(required))?,
+                    );
+                }
+                Some(Value::Object(object))
+            }
+            _ => None,
+        }
+    }
 
     #[test]
     fn command_names_and_policies_match_the_wire_contract() {

@@ -19,7 +19,7 @@ use crate::{DomainError, InputLocation};
 use serde::{Deserialize, Serialize};
 
 /// A MIDI note described using musical position, duration, and pitch values.
-#[derive(Clone, Debug, Deserialize, Serialize, ts_rs::TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, ts_rs::TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MusicalMidiNoteInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -34,6 +34,7 @@ pub struct MusicalMidiNoteInput {
         with = "optional_non_null"
     )]
     #[ts(optional, type = "number")]
+    #[schemars(with = "u8")]
     pub velocity: Option<u8>,
     #[serde(
         default,
@@ -41,6 +42,7 @@ pub struct MusicalMidiNoteInput {
         with = "optional_non_null"
     )]
     #[ts(optional, type = "number")]
+    #[schemars(with = "u8")]
     pub channel: Option<u8>,
 }
 

@@ -17,5 +17,7 @@ pub(crate) use decode::{attach_input_value, json_pointer_segment};
 pub use output::ControlOutput;
 pub use policy::{CanonicalAccess, CommandExecutor, CommandPolicy, CommandScope};
 pub use table::{
-    CanonicalCommand, ControlCommand, ProjectCommand, RuntimeCommand, typescript_result_map,
+    CanonicalCommand, ControlCommand, ProjectCommand, RuntimeCommand, command_names,
+    command_params_allow_omitted, command_params_schema, command_params_subschema,
+    typescript_result_map,
 };

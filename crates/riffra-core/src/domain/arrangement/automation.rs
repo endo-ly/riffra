@@ -6,7 +6,9 @@ use ts_rs::TS;
 pub(super) const MAX_AUTOMATION_LANES: usize = 16_384;
 
 /// A Track mix parameter controlled on the Arrangement timeline.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize, TS)]
+#[derive(
+    Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize, TS, schemars::JsonSchema,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum TrackMixParameter {
     Volume,
@@ -14,7 +16,9 @@ pub enum TrackMixParameter {
 }
 
 /// A Bus fader parameter controlled on the Arrangement timeline.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize, TS)]
+#[derive(
+    Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize, TS, schemars::JsonSchema,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum BusMixParameter {
     Gain,
@@ -22,7 +26,7 @@ pub enum BusMixParameter {
 }
 
 /// Stable identity of a parameter controlled by a timeline lane.
-#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[serde(
     deny_unknown_fields,
     tag = "kind",
@@ -53,7 +57,7 @@ pub enum AutomationTarget {
 }
 
 /// Evaluation between adjacent points in musical time.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum AutomationInterpolation {
     Linear,

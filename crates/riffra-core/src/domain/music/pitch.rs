@@ -220,6 +220,20 @@ impl<'de> Deserialize<'de> for MusicalNoteName {
     }
 }
 
+impl schemars::JsonSchema for MusicalNoteName {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "MusicalNoteName".into()
+    }
+
+    fn json_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "type": "string",
+            "pattern": "^[A-Ga-g](?:##|bb|#|b)?$",
+            "description": "A note name without an octave that retains its enharmonic spelling."
+        })
+    }
+}
+
 /// A pitch name that retains its enharmonic spelling while exposing its MIDI value.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ts_rs::TS)]
 #[ts(type = "string")]
@@ -304,6 +318,20 @@ impl<'de> Deserialize<'de> for MusicalPitch {
         String::deserialize(deserializer)?
             .parse()
             .map_err(D::Error::custom)
+    }
+}
+
+impl schemars::JsonSchema for MusicalPitch {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "MusicalPitch".into()
+    }
+
+    fn json_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "type": "string",
+            "pattern": "^[A-Ga-g](?:##|bb|#|b)?-?[0-9]+$",
+            "description": "A pitch name with an octave, retaining its enharmonic spelling."
+        })
     }
 }
 

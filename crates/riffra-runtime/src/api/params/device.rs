@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 /// Loads a VST3 into a Track's instrument slot or effect chain.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(optional_fields = nullable)]
 pub struct PluginPathParams {
@@ -15,7 +15,7 @@ pub struct PluginPathParams {
 }
 
 /// Inserts an effect into a Track, Bus, or Master chain.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(optional_fields = nullable)]
 pub struct EffectAddParams {
@@ -25,20 +25,20 @@ pub struct EffectAddParams {
 }
 
 /// Opens a validated VST3 outside the Project.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct PluginAuditionParams {
     pub plugin_path: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct EffectReorderParams {
     pub owner: riffra_core::EffectOwner,
     pub device_ids: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct DeviceBypassParams {
     pub owner: riffra_core::EffectOwner,
@@ -46,7 +46,7 @@ pub struct DeviceBypassParams {
     pub bypassed: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(optional_fields = nullable)]
 pub struct DeviceParameterSetParams {
@@ -60,7 +60,7 @@ pub struct DeviceParameterSetParams {
     pub nearest: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct DeviceParameterGetParams {
     pub owner: riffra_core::EffectOwner,
@@ -68,7 +68,7 @@ pub struct DeviceParameterGetParams {
     pub parameter_index: u32,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct DeviceParameterFormatParams {
     pub owner: riffra_core::EffectOwner,
@@ -78,7 +78,7 @@ pub struct DeviceParameterFormatParams {
 }
 
 /// Selects a plugin program by name or index; exactly one is required.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(optional_fields = nullable)]
 pub struct PluginPresetSetParams {
@@ -88,7 +88,7 @@ pub struct PluginPresetSetParams {
     pub preset_index: Option<u32>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct PluginStateSetParams {
     pub owner: riffra_core::EffectOwner,
@@ -97,7 +97,7 @@ pub struct PluginStateSetParams {
 }
 
 /// Imports a saved VST3 state into the Project without querying a live plugin.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(optional_fields = nullable)]
 pub struct PluginStateImportParams {
@@ -108,7 +108,7 @@ pub struct PluginStateImportParams {
 }
 
 /// Replaces a missing audio Asset with a file on disk.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MissingRelinkParams {
     pub asset_id: String,
@@ -116,7 +116,7 @@ pub struct MissingRelinkParams {
 }
 
 /// Replaces a missing VST3 with another plugin binary.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MissingPluginReplaceParams {
     pub device_id: String,

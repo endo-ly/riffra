@@ -11,6 +11,7 @@ riffra-control = { path = "../riffra-control" }
 riffra-core = { path = "../riffra-core" }
 riffra-host = { path = "../riffra-host" }
 serde = { version = "1", features = ["derive"] }
+schemars = "1.2"
 serde_json = { version = "1", features = ["float_roundtrip", "preserve_order"] }
 yaml-rust2 = "0.10"
 num-bigint = "0.4"
@@ -28,3 +29,6 @@ rustix = { version = "1.1.5", features = ["fs"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem"] }
+
+[dev-dependencies]
+jsonschema = { version = "0.60", default-features = false }

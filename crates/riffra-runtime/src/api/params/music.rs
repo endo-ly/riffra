@@ -8,7 +8,7 @@ use riffra_core::{
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(optional_fields = nullable)]
 pub struct MusicalMidiClipCreateParams {
@@ -18,7 +18,7 @@ pub struct MusicalMidiClipCreateParams {
     pub name: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(optional_fields = nullable)]
 pub struct MusicalMidiClipResizeParams {
@@ -27,7 +27,7 @@ pub struct MusicalMidiClipResizeParams {
     pub end: Option<MusicalPosition>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MusicalNoteInsertParams {
     pub clip_id: String,
@@ -38,7 +38,7 @@ pub struct MusicalNoteInsertParams {
 }
 
 /// Selects Notes by Clip or Track and an optional half-open range.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(optional_fields = nullable)]
 pub struct MusicalNoteListParams {
@@ -54,7 +54,7 @@ pub struct MusicalNoteListParams {
 }
 
 /// Params of `music.note.update`; at least one note field is required.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(optional_fields = nullable)]
 pub struct MusicalNoteUpdateParams {
@@ -75,7 +75,7 @@ pub struct MusicalNoteUpdateParams {
 }
 
 /// Transforms the Notes selected by scope, range, pitch, and channel.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(optional_fields = nullable)]
 pub struct MusicalNoteTransformParams {
@@ -90,13 +90,13 @@ pub struct MusicalNoteTransformParams {
     pub transpose_semitones: Option<i16>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct HarmonyResolveParams {
     pub chord: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct HarmonyInsertParams {
     pub events: Vec<HarmonyEventInput>,
@@ -106,7 +106,7 @@ pub struct HarmonyInsertParams {
 ///
 /// A chord symbol and explicit tone fields are alternative complete chord
 /// definitions; explicit fields are never inherited from the current chord.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(optional_fields = nullable)]
 pub struct HarmonyUpdateParams {
@@ -120,13 +120,13 @@ pub struct HarmonyUpdateParams {
     pub label: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct HarmonyRemoveParams {
     pub event_ids: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(optional_fields = nullable)]
 pub struct HarmonyRealizeParams {
@@ -140,7 +140,7 @@ pub struct HarmonyRealizeParams {
     pub channel: Option<u8>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(optional_fields = nullable)]
 pub struct PhraseInsertParams {
@@ -150,7 +150,7 @@ pub struct PhraseInsertParams {
     pub channel: Option<u8>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(optional_fields = nullable)]
 pub struct PhrasePreviewParams {
@@ -162,7 +162,7 @@ pub struct PhrasePreviewParams {
     pub include_notes: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct RegionAddParams {
     pub name: String,
@@ -170,7 +170,7 @@ pub struct RegionAddParams {
     pub end: MusicalPosition,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(optional_fields = nullable)]
 pub struct RegionUpdateParams {
@@ -180,14 +180,14 @@ pub struct RegionUpdateParams {
     pub end: Option<MusicalPosition>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct RegionIdParams {
     pub region_id: String,
 }
 
 /// Selects a Clip or Track for Standard MIDI File export.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(optional_fields = nullable)]
 pub struct MidiExportParams {
