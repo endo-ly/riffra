@@ -3,18 +3,33 @@
 use crate::host::HostBridge;
 use crate::tools::ToolDef;
 use riffra_control::{ControlResponse, ErrorCode, ProtocolError};
-use riffra_runtime::api::{ControlCommand, compact_agent_response};
+use riffra_runtime::api::decode_params;
+use riffra_runtime::api::output::{BackgroundJobStatus, ControlOutput, JobState};
+use riffra_runtime::api::params::IdParams;
+use riffra_runtime::api::{ControlCommand, RuntimeCommand, compact_agent_response};
 use rmcp::model::{CallToolResult, ContentBlock, JsonObject};
+use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
+
+const JOB_POLL_INTERVAL: Duration = Duration::from_millis(100);
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct JobWaitParams {
+    id: String,
+    timeout_ms: Option<u64>,
+}
 
 /// Executes one validated MCP tool call.
 pub(crate) async fn execute(
     bridge: Arc<HostBridge>,
     tool: &'static ToolDef,
     mut arguments: JsonObject,
-    _cancellation: CancellationToken,
+    cancellation: CancellationToken,
 ) -> CallToolResult {
     let action_name = arguments
         .remove("action")
@@ -54,6 +69,10 @@ pub(crate) async fn execute(
         ));
     }
 
+    if tool.name == "job" && action.action == Some("wait") {
+        return wait_for_job(bridge, params, cancellation).await;
+    }
+
     let command = match ControlCommand::decode(action.command, params) {
         Ok(command) => command,
         Err(error) => return tool_error(error.into()),
@@ -70,6 +89,134 @@ pub(crate) async fn execute(
             ErrorCode::CommandFailed,
             format!("Host request task failed: {error}"),
         )),
+    }
+}
+
+async fn wait_for_job(
+    bridge: Arc<HostBridge>,
+    params: Value,
+    cancellation: CancellationToken,
+) -> CallToolResult {
+    let params = match decode_params::<JobWaitParams>(params) {
+        Ok(params) => params,
+        Err(error) => return tool_error(error.into()),
+    };
+    let deadline = params
+        .timeout_ms
+        .map(|timeout| Instant::now() + Duration::from_millis(timeout));
+    loop {
+        let job_id = params.id.clone();
+        let bridge_for_request = Arc::clone(&bridge);
+        let response = tokio::task::spawn_blocking(move || {
+            bridge_for_request.request(
+                RuntimeCommand::JobGet(IdParams { id: job_id }).into(),
+                None,
+                None,
+            )
+        })
+        .await;
+        let response = match response {
+            Ok(Ok(response)) => response,
+            Ok(Err(error)) => return tool_error(error),
+            Err(error) => {
+                return tool_error(ProtocolError::new(
+                    ErrorCode::CommandFailed,
+                    format!("Host job request task failed: {error}"),
+                ));
+            }
+        };
+        if !response.ok {
+            return tool_error(response.error.unwrap_or_else(|| {
+                ProtocolError::new(
+                    ErrorCode::CommandFailed,
+                    "Host returned an invalid job.get failure",
+                )
+            }));
+        }
+        let status = match job_status(&response) {
+            Ok(Some(status)) => status,
+            Ok(None) => {
+                return tool_error(ProtocolError::new(
+                    ErrorCode::CommandFailed,
+                    format!("background job was not found: {}", params.id),
+                ));
+            }
+            Err(error) => return tool_error(error),
+        };
+        let state = status.state();
+        match state {
+            JobState::Completed => return response_result("job.get", response),
+            JobState::Failed | JobState::Cancelled => {
+                return tool_error(
+                    ProtocolError::new(
+                        ErrorCode::CommandFailed,
+                        format!("background job {} {}", params.id, state_name(state)),
+                    )
+                    .with_details(json!({
+                        "jobId": params.id,
+                        "state": state_name(state),
+                        "job": status,
+                    })),
+                );
+            }
+            JobState::Queued | JobState::Running | JobState::Cancelling => {}
+        }
+        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+            return tool_error(
+                ProtocolError::new(
+                    ErrorCode::CommandFailed,
+                    format!("timed out waiting for background job: {}", params.id),
+                )
+                .with_details(json!({
+                    "jobId": params.id,
+                    "state": state_name(state),
+                    "job": status,
+                })),
+            );
+        }
+        tokio::select! {
+            () = sleep(JOB_POLL_INTERVAL) => {}
+            () = cancellation.cancelled() => {
+                return tool_error(
+                    ProtocolError::new(
+                        ErrorCode::CommandFailed,
+                        format!("waiting for background job was cancelled: {}", params.id),
+                    )
+                    .with_details(json!({
+                        "jobId": params.id,
+                        "state": state_name(state),
+                        "job": status,
+                    })),
+                );
+            }
+        }
+    }
+}
+
+fn job_status(response: &ControlResponse) -> Result<Option<BackgroundJobStatus>, ProtocolError> {
+    let result = response.result.clone().ok_or_else(|| {
+        ProtocolError::new(
+            ErrorCode::CommandFailed,
+            "job.get response did not contain a result",
+        )
+    })?;
+    match ControlOutput::try_from(result) {
+        Ok(ControlOutput::Job(status)) => Ok(status),
+        _ => Err(ProtocolError::new(
+            ErrorCode::CommandFailed,
+            "job.get response did not contain a background job",
+        )),
+    }
+}
+
+fn state_name(state: JobState) -> &'static str {
+    match state {
+        JobState::Queued => "queued",
+        JobState::Running => "running",
+        JobState::Cancelling => "cancelling",
+        JobState::Cancelled => "cancelled",
+        JobState::Completed => "completed",
+        JobState::Failed => "failed",
     }
 }
 
@@ -105,4 +252,50 @@ pub(crate) fn tool_error(error: ProtocolError) -> CallToolResult {
     let mut result = CallToolResult::error(vec![ContentBlock::text(text)]);
     result.structured_content = Some(payload);
     result
+}
+
+trait BackgroundJobStatusState {
+    fn state(&self) -> JobState;
+}
+
+impl BackgroundJobStatusState for BackgroundJobStatus {
+    fn state(&self) -> JobState {
+        match self {
+            Self::Scan { state, .. }
+            | Self::Render { state, .. }
+            | Self::RenderStems { state, .. }
+            | Self::AnalysisMeasure { state, .. } => *state,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn completed_jobs_are_reported_with_their_final_value() {
+        // Arrange
+        let response = ControlResponse::success(
+            "r",
+            3,
+            riffra_control::CommandResult {
+                result_type: "job".into(),
+                value: json!({
+                    "kind": "render",
+                    "id": "job:1",
+                    "state": "completed",
+                    "progress": 1.0,
+                    "message": "done",
+                    "result": null
+                }),
+            },
+        );
+
+        // Act
+        let status = job_status(&response).unwrap().unwrap();
+
+        // Assert
+        assert_eq!(status.state(), JobState::Completed);
+    }
 }
