@@ -79,8 +79,29 @@ impl ServerHandler for RiffraMcp {
             rmcp::ErrorData::invalid_params(format!("unknown tool: {}", request.name), None)
         })?;
         let arguments = request.arguments.unwrap_or_default();
+        let action = match tools::resolve_action(tool.definition, &arguments) {
+            Ok(action) => action,
+            Err(message) => {
+                return Ok(dispatch::tool_error(
+                    ProtocolError::new(ErrorCode::InvalidRequest, message)
+                        .with_details(serde_json::json!({ "path": "/action" })),
+                )
+                .into());
+            }
+        };
+        let Some(validator) = tool.action_validator(action.action) else {
+            return Ok(dispatch::tool_error(ProtocolError::new(
+                ErrorCode::CommandFailed,
+                format!(
+                    "no input schema for {} action {}",
+                    tool.tool.name,
+                    action.action.unwrap_or("direct")
+                ),
+            ))
+            .into());
+        };
         let input = Value::Object(arguments.clone());
-        if let Some(error) = tool.validator.iter_errors(&input).next() {
+        if let Some(error) = validator.iter_errors(&input).next() {
             let details = serde_json::json!({
                 "path": error.instance_path().to_string(),
                 "message": error.to_string(),

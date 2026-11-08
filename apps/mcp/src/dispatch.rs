@@ -1,7 +1,7 @@
 //! Translation between MCP tool calls and Control Commands.
 
 use crate::host::HostBridge;
-use crate::tools::ToolDef;
+use crate::tools::{ToolDef, resolve_action};
 use riffra_control::{ControlResponse, ErrorCode, ProtocolError};
 use riffra_runtime::api::decode_params;
 use riffra_runtime::api::output::{BackgroundJobStatus, ControlOutput, JobState};
@@ -31,36 +31,24 @@ pub(crate) async fn execute(
     mut arguments: JsonObject,
     cancellation: CancellationToken,
 ) -> CallToolResult {
-    let action_name = arguments
-        .remove("action")
-        .and_then(|value| value.as_str().map(str::to_owned));
-    let action = match action_name.as_deref() {
-        Some(name) => match tool.action(name) {
-            Some(action) => action,
-            None => {
-                return tool_error(ProtocolError::new(
-                    ErrorCode::InvalidRequest,
-                    format!("unknown action for {}: {name}", tool.name),
-                ));
-            }
-        },
-        None => match tool.actions {
-            [action] if action.action.is_none() => action,
-            _ => {
-                return tool_error(ProtocolError::new(
-                    ErrorCode::InvalidRequest,
-                    format!("action is required for {}", tool.name),
-                ));
-            }
-        },
+    let action = match resolve_action(tool, &arguments) {
+        Ok(action) => action,
+        Err(message) => {
+            return tool_error(
+                ProtocolError::new(ErrorCode::InvalidRequest, message)
+                    .with_details(json!({ "path": "/action" })),
+            );
+        }
     };
+    arguments.remove("action");
     let params = arguments.remove("params").unwrap_or_else(|| json!({}));
     let expected_project_id = arguments
         .remove("expectedProjectId")
         .and_then(|value| value.as_str().map(str::to_owned));
-    let expected_sequence = arguments
-        .remove("expectedSequence")
-        .and_then(|value| value.as_u64());
+    let expected_sequence = match take_expected_sequence(&mut arguments) {
+        Ok(sequence) => sequence,
+        Err(error) => return tool_error(error),
+    };
     if !arguments.is_empty() {
         let unknown = arguments.keys().cloned().collect::<Vec<_>>().join(", ");
         return tool_error(ProtocolError::new(
@@ -90,6 +78,37 @@ pub(crate) async fn execute(
             format!("Host request task failed: {error}"),
         )),
     }
+}
+
+fn take_expected_sequence(arguments: &mut JsonObject) -> Result<Option<u64>, ProtocolError> {
+    let Some(value) = arguments.remove("expectedSequence") else {
+        return Ok(None);
+    };
+    let Some(number) = value.as_number() else {
+        return Err(invalid_expected_sequence());
+    };
+    if let Some(sequence) = number.as_u64() {
+        return Ok(Some(sequence));
+    }
+    let Some(sequence) = number.as_f64() else {
+        return Err(invalid_expected_sequence());
+    };
+    if !sequence.is_finite()
+        || sequence.fract() != 0.0
+        || sequence < 0.0
+        || sequence >= 18_446_744_073_709_551_616.0
+    {
+        return Err(invalid_expected_sequence());
+    }
+    Ok(Some(sequence as u64))
+}
+
+fn invalid_expected_sequence() -> ProtocolError {
+    ProtocolError::new(
+        ErrorCode::InvalidRequest,
+        "expectedSequence must be a non-negative integer",
+    )
+    .with_details(json!({ "path": "/expectedSequence" }))
 }
 
 async fn wait_for_job(
@@ -272,6 +291,47 @@ impl BackgroundJobStatusState for BackgroundJobStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn expected_sequence_accepts_integral_json_numbers() {
+        // Arrange
+        let mut integer = json!({ "expectedSequence": 42 })
+            .as_object()
+            .unwrap()
+            .clone();
+        let mut float = json!({ "expectedSequence": 42.0 })
+            .as_object()
+            .unwrap()
+            .clone();
+        let mut missing = JsonObject::new();
+
+        // Act / Assert
+        assert_eq!(take_expected_sequence(&mut integer).unwrap(), Some(42));
+        assert_eq!(take_expected_sequence(&mut float).unwrap(), Some(42));
+        assert_eq!(take_expected_sequence(&mut missing).unwrap(), None);
+    }
+
+    #[test]
+    fn expected_sequence_rejects_values_that_cannot_be_converted() {
+        // Arrange
+        let invalid = [
+            json!(42.5),
+            json!("42"),
+            json!(-1),
+            json!(18_446_744_073_709_551_616.0),
+        ];
+
+        // Act / Assert
+        for value in invalid {
+            let mut arguments = json!({ "expectedSequence": value })
+                .as_object()
+                .unwrap()
+                .clone();
+            let error = take_expected_sequence(&mut arguments).unwrap_err();
+            assert_eq!(error.code, ErrorCode::InvalidRequest);
+            assert_eq!(error.details.unwrap()["path"], "/expectedSequence");
+        }
+    }
 
     #[test]
     fn completed_jobs_are_reported_with_their_final_value() {

@@ -336,7 +336,7 @@ fn stdio_tools_share_the_live_host_and_preserve_control_results() {
         json!({
             "action": "add",
             "params": {"name": "Stale", "kind": "audio"},
-            "expectedSequence": 0
+            "expectedSequence": 0.0
         }),
     );
     let created_project = mcp.tool(
@@ -357,7 +357,21 @@ fn stdio_tools_share_the_live_host_and_preserve_control_results() {
             "expectedProjectId": original_project
         }),
     );
-    let invalid = mcp.tool("clip_audio", json!({"action": "update"}));
+    let invalid = mcp.tool(
+        "clip_audio",
+        json!({
+            "action": "update",
+            "params": {"clipId": "clip:1", "patch": {"muted": "yes"}}
+        }),
+    );
+    let invalid_sequence = mcp.tool(
+        "track",
+        json!({
+            "action": "add",
+            "params": {"name": "Overflow", "kind": "audio"},
+            "expectedSequence": 1e20
+        }),
+    );
     let unknown = mcp.request("tools/call", json!({"name": "not_a_tool", "arguments": {}}));
 
     // Assert
@@ -380,7 +394,10 @@ fn stdio_tools_share_the_live_host_and_preserve_control_results() {
     assert!(conflict["details"]["currentSequence"].is_u64());
     let invalid = tool_error(&invalid);
     assert_eq!(invalid["code"], "invalidRequest");
-    assert!(invalid["details"]["path"].is_string());
+    assert_eq!(invalid["details"]["path"], "/params/patch/muted");
+    let invalid_sequence = tool_error(&invalid_sequence);
+    assert_eq!(invalid_sequence["code"], "invalidRequest");
+    assert_eq!(invalid_sequence["details"]["path"], "/expectedSequence");
     assert!(unknown.get("error").is_some(), "{unknown}");
 
     // Act

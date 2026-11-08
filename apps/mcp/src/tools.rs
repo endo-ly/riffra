@@ -33,6 +33,24 @@ impl ToolDef {
     }
 }
 
+/// Resolves the action selected by a tool call before schema validation.
+pub(crate) fn resolve_action<'a>(
+    tool: &'a ToolDef,
+    arguments: &JsonObject,
+) -> Result<&'a ActionDef, String> {
+    match arguments.get("action") {
+        Some(Value::String(name)) => tool
+            .action(name)
+            .ok_or_else(|| format!("unknown action for {}: {name}", tool.name)),
+        Some(_) => Err(format!("action must be a string for {}", tool.name)),
+        None => tool
+            .actions
+            .iter()
+            .find(|action| action.action.is_none())
+            .ok_or_else(|| format!("action is required for {}", tool.name)),
+    }
+}
+
 const fn action(action: &'static str, command: &'static str) -> ActionDef {
     ActionDef {
         action: Some(action),
@@ -652,11 +670,32 @@ pub(crate) const TOOLS: &[ToolDef] = &[
     },
 ];
 
-/// A callable tool with its compiled input validator.
+/// A callable tool with its compiled input validators.
 pub(crate) struct ToolSpec {
     pub(crate) definition: &'static ToolDef,
     pub(crate) tool: Tool,
+    #[cfg(test)]
     pub(crate) validator: jsonschema::Validator,
+    action_validators: Vec<ActionValidator>,
+}
+
+struct ActionValidator {
+    action: Option<&'static str>,
+    validator: jsonschema::Validator,
+}
+
+impl ToolSpec {
+    pub(crate) fn action_validator(&self, action: Option<&str>) -> Option<&jsonschema::Validator> {
+        self.action_validators
+            .iter()
+            .find(|validator| validator.action == action)
+            .map(|validator| &validator.validator)
+    }
+}
+
+struct ToolSchema {
+    root: Value,
+    actions: Vec<Value>,
 }
 
 /// Builds the fixed tool list and compiles each input schema once.
@@ -665,9 +704,29 @@ pub(crate) fn build_tools() -> Result<Vec<ToolSpec>, String> {
         .iter()
         .map(|definition| {
             let schema = tool_input_schema(definition)?;
-            let validator = jsonschema::Validator::new(&schema)
+            #[cfg(test)]
+            let validator = jsonschema::Validator::new(&schema.root)
                 .map_err(|error| format!("{} input schema is invalid: {error}", definition.name))?;
+            let action_validators = definition
+                .actions
+                .iter()
+                .zip(&schema.actions)
+                .map(|(action, schema)| {
+                    let validator = jsonschema::Validator::new(schema).map_err(|error| {
+                        format!(
+                            "{}.{} input schema is invalid: {error}",
+                            definition.name,
+                            action.action.unwrap_or("direct")
+                        )
+                    })?;
+                    Ok(ActionValidator {
+                        action: action.action,
+                        validator,
+                    })
+                })
+                .collect::<Result<Vec<_>, String>>()?;
             let input_schema: JsonObject = schema
+                .root
                 .as_object()
                 .cloned()
                 .ok_or_else(|| format!("{} input schema is not an object", definition.name))?;
@@ -684,33 +743,56 @@ pub(crate) fn build_tools() -> Result<Vec<ToolSpec>, String> {
             Ok(ToolSpec {
                 definition,
                 tool,
+                #[cfg(test)]
                 validator,
+                action_validators,
             })
         })
         .collect()
 }
 
-fn tool_input_schema(definition: &'static ToolDef) -> Result<Value, String> {
+fn tool_input_schema(definition: &'static ToolDef) -> Result<ToolSchema, String> {
     let mut generator = SchemaGenerator::default();
-    let mut branches = Vec::new();
+    let mut actions = Vec::new();
     for action in definition.actions {
-        branches.push(action_branch(definition, action, &mut generator)?);
+        actions.push(action_branch(definition, action, &mut generator)?);
+    }
+    let definitions = generator.take_definitions(false);
+    let mut action_schemas = Vec::with_capacity(actions.len());
+    for action in &actions {
+        let mut action = action.clone();
+        if !definitions.is_empty() {
+            let Value::Object(object) = &mut action else {
+                return Err(format!(
+                    "{} action schema is not an object",
+                    definition.name
+                ));
+            };
+            object.insert("$defs".into(), Value::Object(definitions.clone()));
+        }
+        action_schemas.push(action);
     }
     let mut root = Map::new();
     root.insert("type".into(), json!("object"));
     if definition.actions.len() == 1 && definition.actions[0].action.is_none() {
-        let branch = branches.pop().expect("one actionless branch");
-        if let Value::Object(branch) = branch {
-            root.extend(branch);
-        }
+        let branch = actions[0].clone();
+        let Value::Object(branch) = branch else {
+            return Err(format!(
+                "{} action schema is not an object",
+                definition.name
+            ));
+        };
+        root.extend(branch);
     } else {
-        root.insert("oneOf".into(), Value::Array(branches));
+        root.insert("oneOf".into(), Value::Array(actions));
     }
-    let definitions = generator.take_definitions(false);
     if !definitions.is_empty() {
         root.insert("$defs".into(), Value::Object(definitions));
     }
-    Ok(Value::Object(root))
+    Ok(ToolSchema {
+        root: Value::Object(root),
+        actions: action_schemas,
+    })
 }
 
 fn action_branch(
@@ -1002,6 +1084,26 @@ mod tests {
         }
     }
 
+    #[test]
+    fn every_action_schema_reference_resolves_inside_its_own_definitions() {
+        // Arrange / Act / Assert
+        for definition in TOOLS {
+            let schema = tool_input_schema(definition).unwrap();
+            for (index, action) in schema.actions.iter().enumerate() {
+                let mut references = Vec::new();
+                collect_references(action, &mut references);
+                for reference in references {
+                    let pointer = reference.strip_prefix('#').unwrap_or(&reference);
+                    assert!(
+                        action.pointer(pointer).is_some(),
+                        "{} action {index} has an unresolved reference {reference}",
+                        definition.name
+                    );
+                }
+            }
+        }
+    }
+
     fn collect_references(value: &Value, references: &mut Vec<String>) {
         match value {
             Value::Object(object) => {
@@ -1019,6 +1121,28 @@ mod tests {
             }
             _ => {}
         }
+    }
+
+    #[test]
+    fn action_validator_reports_the_nested_field_path() {
+        // Arrange
+        let tools = build_tools().unwrap();
+        let tool = tools
+            .iter()
+            .find(|tool| tool.tool.name == "clip_audio")
+            .unwrap();
+        let action = tool.definition.action("update").unwrap();
+        let validator = tool.action_validator(action.action).unwrap();
+
+        // Act
+        let input = json!({
+            "action": "update",
+            "params": {"clipId": "clip:1", "patch": {"muted": "yes"}}
+        });
+        let error = validator.iter_errors(&input).next().unwrap();
+
+        // Assert
+        assert_eq!(error.instance_path().to_string(), "/params/patch/muted");
     }
 
     #[test]
