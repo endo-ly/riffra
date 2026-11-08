@@ -542,12 +542,15 @@ mod tests {
         // Act
         submit_canonical(&reconciler, snapshot(13), key(13, 13));
         assert!(reconciler.request_play_when_ready(key(13, 13)).is_ok());
-        wait_until(|| matches!(reconciler.status().state, RuntimeProjectionState::Failed));
+        wait_until(|| {
+            matches!(reconciler.status().state, RuntimeProjectionState::Failed)
+                && driver.stopped.load(Ordering::Acquire) == 1
+        });
 
         // Assert
         assert_eq!(driver.starting.load(Ordering::Relaxed), 1);
         assert_eq!(driver.played.load(Ordering::Relaxed), 0);
-        assert_eq!(driver.stopped.load(Ordering::Relaxed), 1);
+        assert_eq!(driver.stopped.load(Ordering::Acquire), 1);
     }
 
     #[test]
