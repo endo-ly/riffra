@@ -14,7 +14,7 @@ use crate::ports::SessionStorage;
 use serde::{Deserialize, Serialize};
 
 /// Input for one harmony event, using either a chord symbol or explicit tones.
-#[derive(Clone, Debug, Deserialize, Serialize, ts_rs::TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, ts_rs::TS, schemars::JsonSchema)]
 #[ts(optional_fields = nullable)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct HarmonyEventInput {

@@ -23,12 +23,26 @@ pub(crate) fn rescale_tick(
 }
 
 /// An exact position in musical time.
-#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    Eq,
+    Ord,
+    PartialEq,
+    PartialOrd,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(transparent)]
 pub struct TimelineTick(pub u64);
 
 /// A half-open range of source-audio frames.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[derive(
+    Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize, TS, schemars::JsonSchema,
+)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct FrameRange {
     pub start: u64,
@@ -42,7 +56,9 @@ impl FrameRange {
 }
 
 /// A real-time duration expressed against its source sample rate.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[derive(
+    Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize, TS, schemars::JsonSchema,
+)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct FrameDuration {
     pub frames: u64,
@@ -59,7 +75,7 @@ pub struct ProjectTimebase {
 }
 
 /// A tempo effective from an absolute timeline tick.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct TempoChange {
     pub tick: u64,
@@ -67,7 +83,7 @@ pub struct TempoChange {
 }
 
 /// A time signature effective from an absolute timeline tick.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct TimeSignatureChange {
     pub tick: u64,

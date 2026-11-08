@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 /// Audio preference input shared by shell adapters and the Host workflow.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct AudioDriverConfig {
     /// Native driver name.
@@ -23,7 +23,7 @@ pub struct AudioDriverConfig {
 }
 
 /// The timeline span of an offline render.
-#[derive(Clone, Debug, Default, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(
     tag = "kind",
     rename_all = "camelCase",
@@ -40,7 +40,7 @@ pub enum RenderRange {
 }
 
 /// Range, normalization, and Track selection of an offline render.
-#[derive(Clone, Debug, Default, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(optional_fields = nullable)]
 pub struct RenderOptions {
@@ -53,20 +53,20 @@ pub struct RenderOptions {
     pub output_path: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct SeekParams {
     pub tick: u64,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MasterGainParams {
     pub gain_db: f64,
 }
 
 /// Previews a Track mix without persisting it; at least one value is required.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(optional_fields = nullable)]
 pub struct ChannelMixParams {
@@ -75,7 +75,7 @@ pub struct ChannelMixParams {
     pub pan: Option<f64>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(optional_fields = nullable)]
 pub struct AutomationPreviewParams {
@@ -84,14 +84,14 @@ pub struct AutomationPreviewParams {
     pub preview_token: u64,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MuteParams {
     pub muted: bool,
 }
 
 /// Sends raw MIDI bytes to a Track's instrument.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MidiSendParams {
     pub track_id: String,
@@ -99,7 +99,7 @@ pub struct MidiSendParams {
 }
 
 /// Routes live MIDI input to a Track; `null` clears the target.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(optional_fields = nullable)]
 pub struct LiveMidiTargetParams {
@@ -107,14 +107,14 @@ pub struct LiveMidiTargetParams {
 }
 
 /// Scans a VST3 folder; defaults to the platform plugin folder.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(optional_fields = nullable)]
 pub struct PluginScanParams {
     pub path: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct AudioChannelsProbeParams {
     pub driver: String,
@@ -122,7 +122,7 @@ pub struct AudioChannelsProbeParams {
     pub output_device: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct AudioDiagnosticsParams {
     /// Includes projection and timeline details outside the stable contract.
@@ -131,7 +131,7 @@ pub struct AudioDiagnosticsParams {
 }
 
 /// Previews an Asset through the live output.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(optional_fields = nullable)]
 pub struct AssetPreviewParams {
@@ -149,7 +149,7 @@ fn unity_gain() -> f32 {
     1.0
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(optional_fields = nullable)]
 pub struct RenderStartParams {
@@ -157,7 +157,7 @@ pub struct RenderStartParams {
 }
 
 /// Selects Tracks and a shared time range for one multi-stem render job.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(optional_fields = nullable)]
 pub struct RenderStemsParams {
@@ -175,7 +175,7 @@ pub struct RenderStemsParams {
 }
 
 /// Copies a completed render to another path without creating a new render.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct RenderExportParams {
     pub render_id: String,
@@ -184,14 +184,14 @@ pub struct RenderExportParams {
 }
 
 /// Removes one managed Render after every reference has been checked.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct RenderDeleteParams {
     pub render_id: String,
 }
 
 /// Analyzes an Asset or a file; exactly one source is required.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(optional_fields = nullable)]
 pub struct AnalysisParams {
@@ -199,34 +199,34 @@ pub struct AnalysisParams {
     pub path: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct TakeIdParams {
     pub take_id: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct TakeActivateParams {
     pub session_id: String,
     pub take_id: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct TakeVariantParams {
     pub clip_id: String,
     pub variant: AudioTakeVariant,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct TakeComparisonParams {
     pub variant: AudioTakeVariant,
 }
 
 /// Transient Send level; canonical state is changed only by send.update.
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, ts_rs::TS)]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, ts_rs::TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct SendLevelPreviewParams {
     pub send_id: String,
@@ -234,7 +234,7 @@ pub struct SendLevelPreviewParams {
 }
 
 /// Transient Sidechain Send level; canonical state is changed only by sidechain.update.
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, ts_rs::TS)]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, ts_rs::TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct SidechainSendLevelPreviewParams {
     pub sidechain_send_id: String,
@@ -242,7 +242,7 @@ pub struct SidechainSendLevelPreviewParams {
 }
 
 /// A half-open time range measured from the WAV start.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(optional_fields = nullable)]
 pub struct MeasurementRange {
@@ -252,7 +252,7 @@ pub struct MeasurementRange {
 }
 
 /// Measures either one managed Render or an ordered list of WAV paths.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(optional_fields = nullable)]
 pub struct AnalysisMeasureParams {

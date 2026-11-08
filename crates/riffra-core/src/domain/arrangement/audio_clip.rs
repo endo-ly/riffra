@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 /// The amplitude curve used by clip fades.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[derive(
+    Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize, TS, schemars::JsonSchema,
+)]
 #[serde(rename_all = "camelCase")]
 pub enum FadeShape {
     Linear,
@@ -129,7 +131,7 @@ impl AudioClip {
 /// Only the supplied fields are written; `None` fields keep the clip's current
 /// value. Numeric normalization (gain, pan, fade clamping) is applied by the
 /// domain, so callers may pass unclamped values.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct AudioClipPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -170,7 +172,7 @@ pub struct AudioClipPatch {
     pub muted: Option<bool>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct AudioClipMove {
     pub clip_id: String,

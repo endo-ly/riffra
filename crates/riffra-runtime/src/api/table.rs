@@ -142,10 +142,88 @@ macro_rules! control_commands {
             ];
             render_result_map(rows)
         }
+
+        /// Returns every Control Command wire name in table order.
+        pub fn command_names() -> &'static [&'static str] {
+            &[
+                $( $canonical_name, )*
+                $( $project_name, )*
+                $( $runtime_name, )*
+            ]
+        }
+
+        /// Generates the params schema for one Control Command into `generator`.
+        ///
+        /// Returns `None` for an unknown command. Sharing one generator across
+        /// several commands lets their `$defs` coexist at a single root.
+        pub fn command_params_subschema(
+            name: &str,
+            generator: &mut schemars::SchemaGenerator,
+        ) -> Option<schemars::Schema> {
+            match name {
+                $( $canonical_name => Some(generator.subschema_for::<$canonical_params>()), )*
+                $( $project_name => Some(generator.subschema_for::<$project_params>()), )*
+                $( $runtime_name => Some(generator.subschema_for::<$runtime_params>()), )*
+                _ => None,
+            }
+        }
+
+        /// Generates a standalone params schema for one Control Command.
+        ///
+        /// Returns `None` for an unknown command.
+        pub fn command_params_schema(name: &str) -> Option<schemars::Schema> {
+            let mut generator = schemars::SchemaGenerator::default();
+            let mut schema = command_params_subschema(name, &mut generator)?;
+            let definitions = generator.take_definitions(false);
+            if !definitions.is_empty() {
+                schema
+                    .ensure_object()
+                    .insert("$defs".into(), serde_json::Value::Object(definitions));
+            }
+            Some(schema)
+        }
+
+        /// Returns the names of canonical commands accepted by `session.apply`.
+        pub fn batchable_command_names() -> impl Iterator<Item = &'static str> {
+            [
+                $( control_commands!(@batchable_name $canonical_name $access $(($batch))?), )*
+            ]
+            .into_iter()
+            .flatten()
+        }
+
+        /// Reports whether a command accepts an omitted `params` object.
+        ///
+        /// Returns `None` for an unknown command.
+        pub fn command_params_allow_omitted(name: &str) -> Option<bool> {
+            match name {
+                $(
+                    $canonical_name => Some(
+                        std::any::TypeId::of::<$canonical_params>()
+                            == std::any::TypeId::of::<EmptyParams>(),
+                    ),
+                )*
+                $(
+                    $project_name => Some(
+                        std::any::TypeId::of::<$project_params>()
+                            == std::any::TypeId::of::<EmptyParams>(),
+                    ),
+                )*
+                $(
+                    $runtime_name => Some(
+                        std::any::TypeId::of::<$runtime_params>()
+                            == std::any::TypeId::of::<EmptyParams>(),
+                    ),
+                )*
+                _ => None,
+            }
+        }
     };
     (@access read) => { CanonicalAccess::Read };
     (@access mutation) => { CanonicalAccess::Mutation { batchable: false } };
     (@access mutation (batch)) => { CanonicalAccess::Mutation { batchable: true } };
+    (@batchable_name $name:literal mutation (batch)) => { Some($name) };
+    (@batchable_name $name:literal $access:ident) => { None };
     (@scope host) => { CommandScope::Host };
     (@scope project) => { CommandScope::Project { long_running: false } };
     (@scope project (long)) => { CommandScope::Project { long_running: true } };
@@ -451,7 +529,257 @@ control_commands! {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use serde_json::{Value, json};
+
+    fn schema_value(name: &str) -> serde_json::Value {
+        command_params_schema(name)
+            .unwrap_or_else(|| panic!("missing params schema for {name}"))
+            .to_value()
+    }
+
+    fn assert_schema(name: &str, params: serde_json::Value, expected: bool) {
+        let schema = schema_value(name);
+        assert_eq!(
+            jsonschema::is_valid(&schema, &params),
+            expected,
+            "{name} params: {params}\nschema: {schema}"
+        );
+    }
+
+    #[test]
+    fn every_command_exposes_a_deterministic_params_schema() {
+        // Arrange
+        let names = command_names();
+
+        // Act / Assert
+        assert_eq!(names.len(), 215);
+        let unique: std::collections::HashSet<_> = names.iter().copied().collect();
+        assert_eq!(unique.len(), names.len());
+        for name in names {
+            let first = schema_value(name);
+            let second = schema_value(name);
+            assert_eq!(first, second, "{name}");
+            assert!(command_params_allow_omitted(name).is_some(), "{name}");
+            assert_ne!(
+                first,
+                serde_json::json!(true),
+                "{name} must not fall back to an unconstrained schema"
+            );
+        }
+        assert_eq!(command_params_schema("unknown.command"), None);
+        assert_eq!(command_params_allow_omitted("unknown.command"), None);
+    }
+
+    #[test]
+    fn batchable_names_follow_canonical_batch_access() {
+        // Arrange
+        let names: Vec<_> = batchable_command_names().collect();
+        let all: std::collections::HashSet<_> = command_names().iter().copied().collect();
+
+        // Act / Assert
+        assert!(names.contains(&"track.add"));
+        assert!(names.contains(&"clip.midi.create"));
+        assert!(names.contains(&"music.note.insert"));
+        assert!(!names.contains(&"session.apply"));
+        assert!(!names.contains(&"track.list"));
+        assert!(!names.contains(&"clip.audio.add-asset"));
+        assert!(!names.contains(&"render.start"));
+        assert!(!names.contains(&"project.create"));
+        assert!(!names.contains(&"instrument.save"));
+        assert!(!names.contains(&"host.status"));
+        assert!(names.iter().all(|name| all.contains(name)));
+        let unique: std::collections::HashSet<_> = names.iter().copied().collect();
+        assert_eq!(unique.len(), names.len());
+    }
+
+    #[test]
+    fn params_schemas_follow_the_serde_input_shape() {
+        // Arrange / Act / Assert
+        assert_schema(
+            "music.note.insert",
+            json!({
+                "clipId": "midi-clip:1",
+                "notes": [{
+                    "pitch": "C4",
+                    "position": "1:1",
+                    "duration": "1/8",
+                    "velocity": 100,
+                    "channel": 1
+                }],
+                "clipToEnd": false
+            }),
+            true,
+        );
+        assert_schema(
+            "music.note.insert",
+            json!({"clipId": "midi-clip:1", "notes": [{"pitch": 60, "position": "1:1", "duration": "1/8"}]}),
+            false,
+        );
+        assert_schema(
+            "music.note.insert",
+            json!({"clipId": "midi-clip:1", "notes": [{"pitch": "C4", "position": 1, "duration": "1/8"}]}),
+            false,
+        );
+        assert_schema(
+            "music.note.insert",
+            json!({"clipId": "midi-clip:1", "notes": [], "unknown": true}),
+            false,
+        );
+        assert_schema(
+            "music.note.update",
+            json!({"clipId": "midi-clip:1", "noteId": "note:1", "lyric": null}),
+            true,
+        );
+        assert_schema(
+            "music.note.insert",
+            json!({"clipId": "midi-clip:1", "notes": [{"pitch": "C4", "position": "1:1", "duration": "1/8", "velocity": null}]}),
+            false,
+        );
+        assert_schema(
+            "session.settings.update",
+            json!({"projectName": null}),
+            true,
+        );
+        assert_schema("clip.audio.list", json!({}), true);
+        assert_schema("clip.audio.list", json!({"unexpected": 1}), false);
+        assert_schema(
+            "project.import",
+            json!({"path": "C:/tmp/project.riffra"}),
+            true,
+        );
+        assert_schema("job.get", json!({"id": "job:1"}), true);
+        assert_schema("job.get", json!({}), false);
+        assert_schema(
+            "plugin.state.set",
+            json!({
+                "owner": {"kind": "track", "id": "track:1"},
+                "deviceId": "device:1",
+                "state": {"schemaVersion": 1, "pluginPath": "Reverb.vst3", "parameterValues": [0.5]}
+            }),
+            true,
+        );
+        assert_schema(
+            "audio.driver.set",
+            json!({
+                "driver": "WASAPI",
+                "inputChannel": 0,
+                "inputDevice": null,
+                "outputDevice": null,
+                "sampleRate": null,
+                "bufferSize": null
+            }),
+            true,
+        );
+        assert_schema(
+            "clip.audio.trim",
+            json!({
+                "clipId": "clip:1",
+                "startTick": 0,
+                "sourceRange": {"start": 0, "end": 44100}
+            }),
+            true,
+        );
+        assert_schema(
+            "clip.audio.trim",
+            json!({
+                "clipId": "clip:1",
+                "startTick": "0",
+                "sourceRange": {"start": 0, "end": 44100}
+            }),
+            false,
+        );
+        assert_schema(
+            "automation.set",
+            json!({
+                "target": {"kind": "trackMix", "trackId": "track:1", "parameter": "volume"},
+                "interpolation": "linear",
+                "points": [{"id": "point:1", "tick": 0, "value": -6.0}]
+            }),
+            true,
+        );
+        assert_schema(
+            "automation.set",
+            json!({
+                "target": {"kind": "trackMix", "trackId": "track:1", "parameter": "Volume"},
+                "interpolation": "linear",
+                "points": []
+            }),
+            false,
+        );
+        assert_schema(
+            "clip.midi.update",
+            json!({"clipId": "midi-clip:1", "patch": {"notes": []}}),
+            true,
+        );
+        assert_schema(
+            "music.timebase.set-map",
+            json!({
+                "tempoChanges": [{"tick": 0, "bpm": 120.0}],
+                "timeSignatureChanges": [{"tick": 0, "numerator": 4, "denominator": 4}]
+            }),
+            true,
+        );
+        assert_schema(
+            "track.add",
+            json!({"name": "Lead", "kind": "instrument"}),
+            true,
+        );
+        assert_schema(
+            "track.add",
+            json!({"name": "Lead", "kind": "instrument", "__unexpected": true}),
+            false,
+        );
+        assert_schema("track.add", json!({"kind": "instrument"}), false);
+        assert_schema("session.apply", json!({"operations": []}), true);
+        assert_schema(
+            "session.apply",
+            json!({"operations": [], "__unexpected": true}),
+            false,
+        );
+        assert_schema(
+            "session.apply",
+            json!({"operations": [{"command": "track.add"}]}),
+            false,
+        );
+    }
+
+    #[test]
+    fn every_command_schema_reference_resolves_inside_its_own_definitions() {
+        // Arrange / Act / Assert
+        for name in command_names() {
+            let schema = schema_value(name);
+            let mut references = Vec::new();
+            collect_schema_references(&schema, &mut references);
+            for reference in references {
+                let pointer = reference
+                    .strip_prefix('#')
+                    .unwrap_or_else(|| panic!("{name} has a non-local reference {reference}"));
+                assert!(
+                    schema.pointer(pointer).is_some(),
+                    "{name} has an unresolved reference {reference}"
+                );
+            }
+        }
+    }
+
+    fn collect_schema_references(value: &Value, references: &mut Vec<String>) {
+        match value {
+            Value::Object(object) => {
+                if let Some(reference) = object.get("$ref").and_then(Value::as_str) {
+                    references.push(reference.to_owned());
+                }
+                for value in object.values() {
+                    collect_schema_references(value, references);
+                }
+            }
+            Value::Array(values) => {
+                for value in values {
+                    collect_schema_references(value, references);
+                }
+            }
+            _ => {}
+        }
+    }
 
     #[test]
     fn command_names_and_policies_match_the_wire_contract() {

@@ -88,7 +88,7 @@ pub struct PluginPresetInfo {
 }
 
 /// Opaque plugin state transported between the Host and the CLI.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginStateSnapshot {
     pub schema_version: u32,

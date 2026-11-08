@@ -65,7 +65,9 @@ impl ApplicationMutation {
 }
 
 /// Partial update for session-wide production settings.
-#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize, ts_rs::TS)]
+#[derive(
+    Clone, Debug, Default, serde::Deserialize, serde::Serialize, ts_rs::TS, schemars::JsonSchema,
+)]
 #[ts(optional_fields = nullable)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct SessionSettingsPatch {
@@ -80,7 +82,9 @@ pub struct SessionSettingsPatch {
 }
 
 /// Partial update for one MIDI note.
-#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize, ts_rs::TS)]
+#[derive(
+    Clone, Debug, Default, serde::Deserialize, serde::Serialize, ts_rs::TS, schemars::JsonSchema,
+)]
 #[ts(optional_fields = nullable)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MidiNotePatch {
@@ -90,6 +94,7 @@ pub struct MidiNotePatch {
         deserialize_with = "deserialize_present_option"
     )]
     #[ts(optional, type = "string | null")]
+    #[schemars(with = "Option<String>")]
     pub lyric: Option<Option<String>>,
     pub note: Option<u8>,
     #[ts(optional, type = "number")]
@@ -100,7 +105,7 @@ pub struct MidiNotePatch {
 }
 
 /// One note update within an atomic MIDI edit.
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, ts_rs::TS)]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, ts_rs::TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MidiNoteUpdate {
     pub note_id: String,
@@ -108,7 +113,7 @@ pub struct MidiNoteUpdate {
 }
 
 /// Identity-free MIDI note data accepted by a Core insertion operation.
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, ts_rs::TS)]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, ts_rs::TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MidiNoteInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]

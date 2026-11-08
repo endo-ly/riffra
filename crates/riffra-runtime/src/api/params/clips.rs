@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 /// Places an imported Asset as a new Clip.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(optional_fields = nullable)]
 pub struct ClipAddAssetParams {
@@ -18,33 +18,33 @@ pub struct ClipAddAssetParams {
     pub track_id: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct AudioClipUpdateParams {
     pub clip_id: String,
     pub patch: AudioClipPatch,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MidiClipUpdateParams {
     pub clip_id: String,
     pub patch: MidiClipPatch,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct AudioClipMoveParams {
     pub moves: Vec<AudioClipMove>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MidiClipMoveParams {
     pub moves: Vec<MidiClipMove>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct AudioClipTrimParams {
     pub clip_id: String,
@@ -52,21 +52,21 @@ pub struct AudioClipTrimParams {
     pub source_range: FrameRange,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ClipSplitParams {
     pub clip_id: String,
     pub split_tick: u64,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct AudioClipCrossfadeParams {
     pub first_clip_id: String,
     pub second_clip_id: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(optional_fields = nullable)]
 pub struct MidiClipCreateParams {
@@ -76,7 +76,7 @@ pub struct MidiClipCreateParams {
     pub name: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MidiClipTrimParams {
     pub clip_id: String,
@@ -84,7 +84,7 @@ pub struct MidiClipTrimParams {
     pub duration_ticks: u64,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MidiNoteAddParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -98,14 +98,14 @@ pub struct MidiNoteAddParams {
     pub channel: u8,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MidiNoteInsertParams {
     pub clip_id: String,
     pub notes: Vec<MidiNoteInput>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MidiNoteUpdateParams {
     pub clip_id: String,
@@ -113,7 +113,7 @@ pub struct MidiNoteUpdateParams {
     pub patch: MidiNotePatch,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MidiNoteUpdateManyParams {
     pub clip_id: String,
@@ -121,7 +121,7 @@ pub struct MidiNoteUpdateManyParams {
 }
 
 /// Identifies one Note in one MIDI Clip.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct NoteIdParams {
     pub clip_id: String,
@@ -129,14 +129,14 @@ pub struct NoteIdParams {
 }
 
 /// Identifies several Notes in one MIDI Clip.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct NoteIdsParams {
     pub clip_id: String,
     pub note_ids: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MidiNoteQuantizeParams {
     pub clip_id: String,
@@ -144,7 +144,7 @@ pub struct MidiNoteQuantizeParams {
     pub grid_ticks: u64,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MidiNoteTransformParams {
     pub clip_id: String,
@@ -153,7 +153,7 @@ pub struct MidiNoteTransformParams {
     pub velocity_offset: i16,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MidiNoteDuplicateParams {
     pub clip_id: String,
@@ -162,7 +162,7 @@ pub struct MidiNoteDuplicateParams {
 }
 
 /// Selects Audio and MIDI Clips together.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ClipRemoveParams {
     #[serde(default)]
@@ -171,7 +171,7 @@ pub struct ClipRemoveParams {
     pub midi_clip_ids: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ClipPasteParams {
     #[serde(default)]

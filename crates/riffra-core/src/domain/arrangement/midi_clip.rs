@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 /// A single MIDI note inside a [`MidiClip`].
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MidiNote {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -25,7 +25,7 @@ pub struct MidiNote {
 /// Note events are represented by [`MidiNote`] so their duration remains
 /// editable. The other event kinds are retained verbatim and are scheduled by
 /// the native timeline runtime at their musical tick.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum MidiEventKind {
     ControlChange,
@@ -33,7 +33,7 @@ pub enum MidiEventKind {
     ChannelPressure,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MidiEvent {
     pub id: String,
@@ -46,7 +46,7 @@ pub struct MidiEvent {
 }
 
 /// A lossless instrument performance control at a clip-relative tick.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct InstrumentControlEvent {
     pub id: String,
@@ -57,7 +57,7 @@ pub struct InstrumentControlEvent {
 }
 
 /// Native precision values used by the Instrument, independent of MIDI encoding.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[serde(tag = "type", deny_unknown_fields, rename_all = "camelCase")]
 pub enum InstrumentControlEventKind {
     SustainPedal {
@@ -241,7 +241,7 @@ impl MidiClip {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MidiClipMove {
     pub clip_id: String,
@@ -250,7 +250,7 @@ pub struct MidiClipMove {
     pub track_id: String,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MidiClipPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]

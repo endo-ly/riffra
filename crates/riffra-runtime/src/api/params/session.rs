@@ -5,7 +5,7 @@ use serde_json::Value;
 use ts_rs::TS;
 
 /// Params of `session.apply`.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct SessionApplyParams {
     pub operations: Vec<BatchOperation>,
@@ -19,7 +19,7 @@ pub struct SessionApplyParams {
 ///
 /// Operations may reference Tracks and Clips by `trackName` / `clipName`,
 /// which the batch resolves to IDs before decoding the command.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct BatchOperation {
     pub command: String,

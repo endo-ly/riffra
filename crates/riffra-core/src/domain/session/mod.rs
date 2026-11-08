@@ -29,7 +29,9 @@ pub struct SessionSettings {
 }
 
 /// Click sound played by the metronome and the count-in.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[derive(
+    Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize, TS, schemars::JsonSchema,
+)]
 #[serde(rename_all = "camelCase")]
 pub enum MetronomeSound {
     /// Short electronic tone.
@@ -139,7 +141,7 @@ impl CreativeSession {
 }
 
 /// Project-wide offline render conditions and master mix envelope.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MixdownSettings {
     pub musical_end_tick: u64,
@@ -171,7 +173,7 @@ impl Default for MixdownSettings {
 }
 
 /// Integrated loudness, peak ceiling, and optional loudness-range targets.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct LoudnessMastering {
     pub integrated_lufs: f64,

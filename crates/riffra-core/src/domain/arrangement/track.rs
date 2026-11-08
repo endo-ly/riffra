@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 /// The production source hosted by a timeline track.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum TrackKind {
     Audio,
@@ -85,7 +85,7 @@ pub struct TrackPatch {
 
 /// Audio Track input monitoring state. `Auto` monitors only while the track is
 /// armed; `On` always monitors; `Off` never monitors.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum MonitoringState {
     Off,
@@ -165,7 +165,9 @@ impl Track {
 }
 
 /// Stereo panning gain convention for a Track's output.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[derive(
+    Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize, TS, schemars::JsonSchema,
+)]
 #[serde(rename_all = "camelCase")]
 pub enum PanLaw {
     #[default]

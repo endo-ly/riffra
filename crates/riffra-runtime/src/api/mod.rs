@@ -4,16 +4,20 @@
 //! This module defines requests and results only; executing them is the job
 //! of the Standalone dispatcher and the live Host.
 
+pub mod agent_response;
 mod decode;
 pub mod output;
 pub mod params;
 mod policy;
 mod table;
 
+pub use agent_response::compact_agent_response;
 pub use decode::{CommandDecodeError, decode_params};
 pub(crate) use decode::{attach_input_value, json_pointer_segment};
 pub use output::ControlOutput;
 pub use policy::{CanonicalAccess, CommandExecutor, CommandPolicy, CommandScope};
 pub use table::{
-    CanonicalCommand, ControlCommand, ProjectCommand, RuntimeCommand, typescript_result_map,
+    CanonicalCommand, ControlCommand, ProjectCommand, RuntimeCommand, batchable_command_names,
+    command_names, command_params_allow_omitted, command_params_schema, command_params_subschema,
+    typescript_result_map,
 };

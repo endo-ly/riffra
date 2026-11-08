@@ -33,33 +33,33 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 /// Params of a command that takes no parameters.
-#[derive(Clone, Debug, Default, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EmptyParams {}
 
 /// Identifies one Track.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct TrackIdParams {
     pub track_id: String,
 }
 
 /// Identifies one timeline Clip.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ClipIdParams {
     pub clip_id: String,
 }
 
 /// Identifies one Track Device anywhere in the arrangement.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct DeviceIdParams {
     pub device_id: String,
 }
 
 /// Identifies one plugin device on its canonical channel.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct DeviceParams {
     pub owner: riffra_core::EffectOwner,
@@ -67,7 +67,7 @@ pub struct DeviceParams {
 }
 
 /// Identifies one recording take, background job, or Library asset.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct IdParams {
     pub id: String,
