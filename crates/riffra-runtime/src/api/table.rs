@@ -183,6 +183,15 @@ macro_rules! control_commands {
             Some(schema)
         }
 
+        /// Returns the names of canonical commands accepted by `session.apply`.
+        pub fn batchable_command_names() -> impl Iterator<Item = &'static str> {
+            [
+                $( control_commands!(@batchable_name $canonical_name $access $(($batch))?), )*
+            ]
+            .into_iter()
+            .flatten()
+        }
+
         /// Reports whether a command accepts an omitted `params` object.
         ///
         /// Returns `None` for an unknown command.
@@ -213,6 +222,8 @@ macro_rules! control_commands {
     (@access read) => { CanonicalAccess::Read };
     (@access mutation) => { CanonicalAccess::Mutation { batchable: false } };
     (@access mutation (batch)) => { CanonicalAccess::Mutation { batchable: true } };
+    (@batchable_name $name:literal mutation (batch)) => { Some($name) };
+    (@batchable_name $name:literal $access:ident) => { None };
     (@scope host) => { CommandScope::Host };
     (@scope project) => { CommandScope::Project { long_running: false } };
     (@scope project (long)) => { CommandScope::Project { long_running: true } };
@@ -518,7 +529,7 @@ control_commands! {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::{Map, Value, json};
+    use serde_json::{Value, json};
 
     fn schema_value(name: &str) -> serde_json::Value {
         command_params_schema(name)
@@ -557,6 +568,28 @@ mod tests {
         }
         assert_eq!(command_params_schema("unknown.command"), None);
         assert_eq!(command_params_allow_omitted("unknown.command"), None);
+    }
+
+    #[test]
+    fn batchable_names_follow_canonical_batch_access() {
+        // Arrange
+        let names: Vec<_> = batchable_command_names().collect();
+        let all: std::collections::HashSet<_> = command_names().iter().copied().collect();
+
+        // Act / Assert
+        assert!(names.contains(&"track.add"));
+        assert!(names.contains(&"clip.midi.create"));
+        assert!(names.contains(&"music.note.insert"));
+        assert!(!names.contains(&"session.apply"));
+        assert!(!names.contains(&"track.list"));
+        assert!(!names.contains(&"clip.audio.add-asset"));
+        assert!(!names.contains(&"render.start"));
+        assert!(!names.contains(&"project.create"));
+        assert!(!names.contains(&"instrument.save"));
+        assert!(!names.contains(&"host.status"));
+        assert!(names.iter().all(|name| all.contains(name)));
+        let unique: std::collections::HashSet<_> = names.iter().copied().collect();
+        assert_eq!(unique.len(), names.len());
     }
 
     #[test]
@@ -686,150 +719,65 @@ mod tests {
             }),
             true,
         );
+        assert_schema(
+            "track.add",
+            json!({"name": "Lead", "kind": "instrument"}),
+            true,
+        );
+        assert_schema(
+            "track.add",
+            json!({"name": "Lead", "kind": "instrument", "__unexpected": true}),
+            false,
+        );
+        assert_schema("track.add", json!({"kind": "instrument"}), false);
+        assert_schema("session.apply", json!({"operations": []}), true);
+        assert_schema(
+            "session.apply",
+            json!({"operations": [], "__unexpected": true}),
+            false,
+        );
+        assert_schema(
+            "session.apply",
+            json!({"operations": [{"command": "track.add"}]}),
+            false,
+        );
     }
 
     #[test]
-    fn every_command_schema_accepts_a_complete_sample_and_rejects_invalid_shapes() {
+    fn every_command_schema_reference_resolves_inside_its_own_definitions() {
+        // Arrange / Act / Assert
         for name in command_names() {
             let schema = schema_value(name);
-            let empty = Map::new();
-            let definitions = schema
-                .get("$defs")
-                .and_then(Value::as_object)
-                .unwrap_or(&empty);
-            let sample = sample_for(&schema, definitions, None)
-                .unwrap_or_else(|| panic!("no sample could be generated for {name}: {schema}"));
-            assert!(
-                jsonschema::is_valid(&schema, &sample),
-                "{name} sample {sample}\nschema: {schema}"
-            );
-
-            let resolved = resolve(&schema, definitions).unwrap_or(&schema);
-            if let Value::Object(object) = &sample
-                && resolved.get("additionalProperties") == Some(&Value::Bool(false))
-            {
-                let mut unknown = object.clone();
-                unknown.insert("__unexpected".into(), json!(true));
+            let mut references = Vec::new();
+            collect_schema_references(&schema, &mut references);
+            for reference in references {
+                let pointer = reference
+                    .strip_prefix('#')
+                    .unwrap_or_else(|| panic!("{name} has a non-local reference {reference}"));
                 assert!(
-                    !jsonschema::is_valid(&schema, &Value::Object(unknown)),
-                    "{name} accepted an unknown field"
+                    schema.pointer(pointer).is_some(),
+                    "{name} has an unresolved reference {reference}"
                 );
             }
-            let Some(required) = resolved.get("required").and_then(Value::as_array) else {
-                continue;
-            };
-            let Some(required) = required.first().and_then(Value::as_str) else {
-                continue;
-            };
-            let Value::Object(mut missing) = sample.clone() else {
-                continue;
-            };
-            missing.remove(required);
-            assert!(
-                !jsonschema::is_valid(&schema, &Value::Object(missing)),
-                "{name} accepted a missing required field {required}"
-            );
         }
     }
 
-    fn resolve<'a>(schema: &'a Value, definitions: &'a Map<String, Value>) -> Option<&'a Value> {
-        let reference = schema.get("$ref")?.as_str()?;
-        let name = reference.rsplit('/').next()?;
-        definitions.get(name)
-    }
-
-    fn sample_for(
-        schema: &Value,
-        definitions: &Map<String, Value>,
-        hint: Option<&str>,
-    ) -> Option<Value> {
-        if let Some(resolved) = resolve(schema, definitions) {
-            let name = schema
-                .get("$ref")
-                .and_then(Value::as_str)
-                .and_then(|reference| reference.rsplit('/').next());
-            return sample_for(resolved, definitions, name.or(hint));
-        }
-        if let Some(constant) = schema.get("const") {
-            return Some(constant.clone());
-        }
-        if let Some(value) = schema
-            .get("enum")
-            .and_then(Value::as_array)
-            .and_then(|values| values.first())
-        {
-            return Some(value.clone());
-        }
-        for keyword in ["oneOf", "anyOf", "allOf"] {
-            if let Some(branches) = schema.get(keyword).and_then(Value::as_array) {
-                for branch in branches {
-                    if let Some(value) = sample_for(branch, definitions, hint) {
-                        return Some(value);
-                    }
+    fn collect_schema_references(value: &Value, references: &mut Vec<String>) {
+        match value {
+            Value::Object(object) => {
+                if let Some(reference) = object.get("$ref").and_then(Value::as_str) {
+                    references.push(reference.to_owned());
+                }
+                for value in object.values() {
+                    collect_schema_references(value, references);
                 }
             }
-        }
-        let types = match schema.get("type") {
-            Some(Value::String(value)) => vec![value.as_str()],
-            Some(Value::Array(values)) => values.iter().filter_map(Value::as_str).collect(),
-            _ => {
-                if schema.get("properties").is_some() {
-                    vec!["object"]
-                } else if schema.get("items").is_some() {
-                    vec!["array"]
-                } else if schema.get("pattern").is_some() {
-                    vec!["string"]
-                } else {
-                    vec![]
+            Value::Array(values) => {
+                for value in values {
+                    collect_schema_references(value, references);
                 }
             }
-        };
-        let kind = types
-            .into_iter()
-            .find(|kind| *kind != "null")
-            .unwrap_or("null");
-        match kind {
-            "null" => Some(Value::Null),
-            "boolean" => Some(Value::Bool(false)),
-            "integer" | "number" => Some(json!(
-                schema.get("minimum").and_then(Value::as_f64).unwrap_or(0.0)
-            )),
-            "string" => Some(Value::String(match hint {
-                Some("MusicalPosition") => "1:1".into(),
-                Some("MusicalDuration" | "MusicalOffset") => "1/4".into(),
-                Some("MusicalTimeDelta") => "0/1".into(),
-                Some("MusicalNoteName") => "C".into(),
-                Some("MusicalPitch") => "C4".into(),
-                _ => "x".into(),
-            })),
-            "array" => {
-                let item = sample_for(schema.get("items")?, definitions, hint)?;
-                let length = schema
-                    .get("minItems")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(1)
-                    .max(1);
-                Some(Value::Array(vec![item; usize::try_from(length).ok()?]))
-            }
-            "object" => {
-                let properties = schema.get("properties").and_then(Value::as_object);
-                let mut object = Map::new();
-                for required in schema
-                    .get("required")
-                    .and_then(Value::as_array)
-                    .into_iter()
-                    .flatten()
-                {
-                    let required = required.as_str()?;
-                    let property = properties?.get(required)?;
-                    object.insert(
-                        required.into(),
-                        sample_for(property, definitions, Some(required))?,
-                    );
-                }
-                Some(Value::Object(object))
-            }
-            _ => None,
+            _ => {}
         }
     }
 

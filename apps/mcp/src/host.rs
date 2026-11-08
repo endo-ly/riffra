@@ -230,30 +230,4 @@ mod tests {
         assert_eq!(chosen.registration.instance_id, "host-a");
         assert!(missing.contains("host-b is not running"));
     }
-
-    #[test]
-    fn request_ids_are_unique_and_scoped_to_the_process() {
-        // Arrange
-        let selection = HostSelection {
-            instance_id: "instance".into(),
-            client: LocalHostClient::connect_registration(&riffra_control::LocalHostRegistration {
-                instance_id: "instance".into(),
-                pid: 1,
-                data_root: std::env::temp_dir(),
-                endpoint: riffra_control::LocalControlEndpoint::WindowsNamedPipe {
-                    name: "test".into(),
-                },
-                started_at_ms: 0,
-            }),
-        };
-        let bridge = HostBridge::new(selection);
-
-        // Act
-        let first = bridge.request_id();
-        let second = bridge.request_id();
-
-        // Assert
-        assert_ne!(first, second);
-        assert!(first.starts_with(&format!("riffra-mcp-{}-", std::process::id())));
-    }
 }

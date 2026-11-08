@@ -183,7 +183,7 @@ impl schemars::JsonSchema for MusicalPosition {
     fn json_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
         schemars::json_schema!({
             "type": "string",
-            "pattern": "^[0-9]+:[0-9]+(?:[+][0-9]+/[0-9]+)?$",
+            "pattern": r"^\s*\+?[0-9]+\s*:\s*[0-9]+\s*(?:\+\s*\+?[0-9]+\s*/\s*\+?[0-9]+\s*)?$",
             "description": "One-origin bar:beat position with an optional beat-relative fraction."
         })
     }
@@ -258,7 +258,7 @@ impl schemars::JsonSchema for MusicalDuration {
     fn json_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
         schemars::json_schema!({
             "type": "string",
-            "pattern": "^[0-9]+/[0-9]+$",
+            "pattern": r"^\s*\+?[0-9]+\s*/\s*\+?[0-9]+\s*$",
             "description": "A positive duration expressed as a fraction of a whole note."
         })
     }
@@ -330,7 +330,7 @@ impl schemars::JsonSchema for MusicalOffset {
     fn json_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
         schemars::json_schema!({
             "type": "string",
-            "pattern": "^[0-9]+/[0-9]+$",
+            "pattern": r"^\s*\+?[0-9]+\s*/\s*\+?[0-9]+\s*$",
             "description": "A non-negative offset expressed as a fraction of a whole note."
         })
     }
@@ -430,7 +430,7 @@ impl schemars::JsonSchema for MusicalTimeDelta {
     fn json_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
         schemars::json_schema!({
             "type": "string",
-            "pattern": "^[+-]?[0-9]+/[0-9]+$",
+            "pattern": r"^\s*[+-]?[0-9]+\s*/\s*\+?[0-9]+\s*$",
             "description": "A signed whole-note fraction used to move musical events."
         })
     }
@@ -889,5 +889,67 @@ mod tests {
                 })
                 .is_err()
         );
+    }
+
+    #[test]
+    fn schemas_accept_the_musical_time_strings_serde_accepts() {
+        // Arrange
+        assert_schema_matches_serde::<MusicalPosition>(&[
+            ("5:3+1/2", true),
+            (" 5 : 3 + 1 / 2 ", true),
+            ("+5:3++1/+2", true),
+            ("5:+3", false),
+            ("+5:+3++1/+2", false),
+            ("1:1", true),
+            ("5:3+", false),
+            ("5:3+1/2/3", false),
+            ("5-3", false),
+            ("a:b", false),
+        ]);
+        assert_schema_matches_serde::<MusicalDuration>(&[
+            ("1/8", true),
+            (" 1 / 8 ", true),
+            ("+1/+8", true),
+            ("01/08", true),
+            ("1", false),
+            ("1/8/2", false),
+            ("a/8", false),
+        ]);
+        assert_schema_matches_serde::<MusicalOffset>(&[
+            ("0/1", true),
+            (" 1 / 4 ", true),
+            ("1/8x", false),
+            ("-1/8", false),
+        ]);
+        assert_schema_matches_serde::<MusicalTimeDelta>(&[
+            ("-1/4", true),
+            ("+1/4", true),
+            (" 1 / 4 ", true),
+            ("-1/+4", true),
+            ("1", false),
+            ("- 1/4", false),
+            ("1/-4", false),
+            ("--1/4", false),
+        ]);
+    }
+
+    fn assert_schema_matches_serde<T>(cases: &[(&str, bool)])
+    where
+        T: serde::de::DeserializeOwned + schemars::JsonSchema,
+    {
+        let schema = schemars::schema_for!(T).to_value();
+        for (value, expected) in cases {
+            let value = serde_json::json!(value);
+            assert_eq!(
+                serde_json::from_value::<T>(value.clone()).is_ok(),
+                *expected,
+                "serde result for {value}: {schema}"
+            );
+            assert_eq!(
+                jsonschema::is_valid(&schema, &value),
+                *expected,
+                "schema result for {value}: {schema}"
+            );
+        }
     }
 }

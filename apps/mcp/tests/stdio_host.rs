@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tempfile::TempDir;
 
+/// Host discovery uses the current-user registry shared by both tests.
 static HOST_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 struct TestHost {
@@ -250,6 +251,7 @@ fn job_wait_times_out_without_cancelling_the_job() {
 #[test]
 fn stdio_tools_share_the_live_host_and_preserve_control_results() {
     // Arrange
+    let _host_test = HOST_TEST_LOCK.lock().expect("host test lock");
     let test_host = TestHost::start();
     let instance_id = test_host.host.identity().instance_id.clone();
     let mut mcp = McpProcess::start(&instance_id, test_host.stderr_path());
@@ -267,6 +269,21 @@ fn stdio_tools_share_the_live_host_and_preserve_control_results() {
     assert_eq!(tools[0]["name"], "host_info");
     assert_eq!(tools[47]["name"], "audio_safety");
     assert_eq!(tools[0]["inputSchema"]["type"], "object");
+    let session_edit = tools
+        .iter()
+        .find(|tool| tool["name"] == "session_edit")
+        .unwrap();
+    let commands = session_edit["inputSchema"]["$defs"]["BatchOperation"]["properties"]["command"]
+        ["enum"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|value| value.as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        commands,
+        riffra_runtime::api::batchable_command_names().collect::<Vec<_>>()
+    );
 
     // Act
     let status = mcp.tool("host_info", json!({"action": "status"}));
@@ -276,6 +293,13 @@ fn stdio_tools_share_the_live_host_and_preserve_control_results() {
         .as_str()
         .expect("the Host should expose its active Project")
         .to_owned();
+    let invalid_batch = mcp.tool(
+        "session_edit",
+        json!({
+            "action": "apply",
+            "params": {"operations": [{"command": "track.list", "params": {}}]}
+        }),
+    );
     let applied = mcp.tool(
         "session_edit",
         json!({
@@ -290,7 +314,7 @@ fn stdio_tools_share_the_live_host_and_preserve_control_results() {
                         "trackName": "Lead",
                         "clipName": "Verse",
                         "notes": [
-                            {"pitch": "C4", "position": "1:1", "duration": "1/4"},
+                            {"pitch": "C♯4", "position": "1:1", "duration": "1/4"},
                             {"pitch": "E4", "position": "1:2", "duration": "1/4"},
                             {"pitch": "G4", "position": "1:3", "duration": "1/4"}
                         ]
@@ -312,6 +336,12 @@ fn stdio_tools_share_the_live_host_and_preserve_control_results() {
         structured(&inspected)["result"]["value"]["counts"]["tracks"],
         0
     );
+    let invalid_batch = tool_error(&invalid_batch);
+    assert_eq!(invalid_batch["code"], "invalidRequest");
+    assert_eq!(
+        invalid_batch["details"]["path"],
+        "/params/operations/0/command"
+    );
     assert_eq!(structured(&applied)["command"], "session.apply");
     let created = &structured(&applied)["result"]["value"]["createdEntityIds"];
     let track_id = created["tracks"][0]
@@ -331,6 +361,20 @@ fn stdio_tools_share_the_live_host_and_preserve_control_results() {
         "music_note",
         json!({"action": "list", "params": {"trackId": track_id, "start": "1:1", "end": "5:1"}}),
     );
+    let failed_batch = mcp.tool(
+        "session_edit",
+        json!({
+            "action": "apply",
+            "params": {
+                "operations": [
+                    {"command": "track.add", "params": {"name": "Rollback", "kind": "audio"}},
+                    {"command": "track.remove", "params": {"trackId": "track:missing"}}
+                ]
+            }
+        }),
+    );
+    let tracks_after_failed_batch = mcp.tool("track", json!({"action": "list"}));
+
     let conflict = mcp.tool(
         "track",
         json!({
@@ -383,6 +427,32 @@ fn stdio_tools_share_the_live_host_and_preserve_control_results() {
             .any(|track| track["name"] == "Lead")
     );
     assert_eq!(structured(&notes)["result"]["value"]["count"], 3, "{notes}");
+    assert!(
+        structured(&notes)["result"]["value"]["clips"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|clip| clip["notes"].as_array().unwrap())
+            .any(|note| note["pitch"] == "C#4"),
+        "Unicode accidentals should round-trip through the musical Note view: {notes}"
+    );
+    let failed_batch = tool_error(&failed_batch);
+    assert_eq!(failed_batch["code"], "invalidRequest");
+    let tracks_after_failed_batch = structured(&tracks_after_failed_batch)["result"]["value"]
+        .as_array()
+        .unwrap();
+    assert_eq!(
+        tracks_after_failed_batch.len(),
+        structured(&listed_tracks)["result"]["value"]
+            .as_array()
+            .unwrap()
+            .len()
+    );
+    assert!(
+        tracks_after_failed_batch
+            .iter()
+            .all(|track| track["name"] != "Rollback")
+    );
     let project_conflict = tool_error(&project_conflict);
     assert_eq!(project_conflict["code"], "conflict");
     assert_eq!(

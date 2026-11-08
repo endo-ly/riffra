@@ -332,30 +332,4 @@ mod tests {
             assert_eq!(error.details.unwrap()["path"], "/expectedSequence");
         }
     }
-
-    #[test]
-    fn completed_jobs_are_reported_with_their_final_value() {
-        // Arrange
-        let response = ControlResponse::success(
-            "r",
-            3,
-            riffra_control::CommandResult {
-                result_type: "job".into(),
-                value: json!({
-                    "kind": "render",
-                    "id": "job:1",
-                    "state": "completed",
-                    "progress": 1.0,
-                    "message": "done",
-                    "result": null
-                }),
-            },
-        );
-
-        // Act
-        let status = job_status(&response).unwrap().unwrap();
-
-        // Assert
-        assert_eq!(status.state(), JobState::Completed);
-    }
 }

@@ -58,9 +58,9 @@ MCPツールは操作対象ごとにグループ化され、複数のControl Com
 
 `expectedProjectId` と `expectedSequence` は要求の事前条件であり、`params` には含めない。Projectに属する命令で `expectedProjectId` を省略すると、Hostの現在のactive Projectがその要求だけに適用される。複数の操作で同じProjectを編集する場合は、応答のsequenceを次の `expectedSequence` へ渡し、必要ならProject IDも引き回す。競合が返った場合は自動再送しない。
 
-複数の変更を一度に確定する場合は `session_edit` の `apply` を使う。`operations` にはControl Command名とその `params` を並べ、TrackとClipは `trackName`/`clipName`、Deviceは `bind`/`@name` で参照できる。全operationが成功したときだけ1回の変更として適用される。
+複数の変更を一度に確定する場合は `session_edit` の `apply` を使う。`operations` にはControl Command名とその `params` を並べ、TrackとClipは `trackName`/`clipName`、Deviceは `bind`/`@name` で参照できる。`operations[].command` に指定できるのは `session.apply` がバッチ実行できるCommandだけで、入力Schemaの `enum` に列挙される。全operationが成功したときだけ1回の変更として適用される。
 
-通常の状況把握には `session_read` の `inspect` を使う。`session.get` は正準Session全体が必要な場合だけ使う。音符やクリップの位置は、通常は音楽座標(`1:1`、`1/8`、`C4`)を使い、tickやMIDI値は必要な場合だけ扱う。
+通常の状況把握には `session_read` の `inspect` を使う。`session.get` は正準Session全体が必要な場合だけ使う。音符やクリップの位置は、通常は音楽座標(`1:1`、`1/8`、`C4`)を使い、tickやMIDI値は必要な場合だけ扱う。音名の臨時記号はASCIIの`#`/`b`のほか、`♯`/`♭`/`𝄪`/`𝄫`も使える。
 
 ## 応答
 

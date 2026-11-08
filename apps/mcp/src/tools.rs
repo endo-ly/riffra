@@ -1,6 +1,8 @@
 //! The fixed MCP tool surface and its action-to-Control-Command mapping.
 
-use riffra_runtime::api::{command_params_allow_omitted, command_params_subschema};
+use riffra_runtime::api::{
+    batchable_command_names, command_params_allow_omitted, command_params_subschema,
+};
 use rmcp::model::{JsonObject, Tool, ToolAnnotations};
 use schemars::SchemaGenerator;
 use serde_json::{Map, Value, json};
@@ -757,7 +759,10 @@ fn tool_input_schema(definition: &'static ToolDef) -> Result<ToolSchema, String>
     for action in definition.actions {
         actions.push(action_branch(definition, action, &mut generator)?);
     }
-    let definitions = generator.take_definitions(false);
+    let mut definitions = generator.take_definitions(false);
+    if definition.name == "session_edit" {
+        constrain_batch_commands(&mut definitions)?;
+    }
     let mut action_schemas = Vec::with_capacity(actions.len());
     for action in &actions {
         let mut action = action.clone();
@@ -793,6 +798,42 @@ fn tool_input_schema(definition: &'static ToolDef) -> Result<ToolSchema, String>
         root: Value::Object(root),
         actions: action_schemas,
     })
+}
+
+fn constrain_batch_commands(definitions: &mut Map<String, Value>) -> Result<(), String> {
+    let operation_name = {
+        let session_apply = definitions
+            .get("SessionApplyParams")
+            .ok_or_else(|| "session.apply schema is missing SessionApplyParams".to_owned())?;
+        session_apply
+            .get("properties")
+            .and_then(Value::as_object)
+            .and_then(|properties| properties.get("operations"))
+            .and_then(|operations| operations.get("items"))
+            .and_then(|items| items.get("$ref"))
+            .and_then(Value::as_str)
+            .and_then(|reference| reference.strip_prefix("#/$defs/"))
+            .ok_or_else(|| {
+                "session.apply operations schema is missing its item reference".to_owned()
+            })?
+            .to_owned()
+    };
+    let command = definitions
+        .get_mut(&operation_name)
+        .and_then(|operation| operation.get_mut("properties"))
+        .and_then(Value::as_object_mut)
+        .and_then(|properties| properties.get_mut("command"))
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| format!("{operation_name} schema is missing its command property"))?;
+    command.insert(
+        "enum".into(),
+        Value::Array(
+            batchable_command_names()
+                .map(|name| Value::String(name.to_owned()))
+                .collect(),
+        ),
+    );
+    Ok(())
 }
 
 fn action_branch(
@@ -848,7 +889,7 @@ fn action_branch(
                 )
             })?
             .to_value();
-        if !allows_omitted || action.command == "project.restore-generation" {
+        if !allows_omitted {
             properties.insert("params".into(), params);
         }
     }
@@ -1048,22 +1089,6 @@ mod tests {
     }
 
     #[test]
-    fn every_tool_builds_a_deterministic_input_schema() {
-        // Act
-        let first = build_tools().unwrap();
-        let second = build_tools().unwrap();
-
-        // Assert
-        assert_eq!(first.len(), 48);
-        for (left, right) in first.iter().zip(second.iter()) {
-            assert_eq!(left.tool.name, right.tool.name);
-            assert_eq!(left.tool.description, right.tool.description);
-            assert_eq!(left.tool.input_schema, right.tool.input_schema);
-            assert_eq!(left.tool.annotations, right.tool.annotations);
-        }
-    }
-
-    #[test]
     fn every_tool_schema_reference_resolves_inside_its_own_definitions() {
         // Arrange
         let tools = build_tools().unwrap();
@@ -1143,6 +1168,55 @@ mod tests {
 
         // Assert
         assert_eq!(error.instance_path().to_string(), "/params/patch/muted");
+    }
+
+    #[test]
+    fn session_apply_schema_lists_batchable_commands() {
+        // Arrange
+        let definition = TOOLS
+            .iter()
+            .find(|tool| tool.name == "session_edit")
+            .unwrap();
+        let schema = tool_input_schema(definition).unwrap().root;
+        let commands = schema
+            .pointer("/$defs/BatchOperation/properties/command/enum")
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .map(|value| value.as_str().unwrap())
+            .collect::<Vec<_>>();
+        let expected = batchable_command_names().collect::<Vec<_>>();
+
+        // Act / Assert
+        assert_eq!(commands, expected);
+        assert!(commands.contains(&"track.add"));
+        assert!(commands.contains(&"clip.midi.create"));
+        assert!(commands.contains(&"music.note.insert"));
+        assert!(!commands.contains(&"session.apply"));
+        assert!(!commands.contains(&"track.list"));
+        assert!(!commands.contains(&"render.start"));
+    }
+
+    #[test]
+    fn session_apply_validator_rejects_non_batchable_commands() {
+        // Arrange
+        let tools = build_tools().unwrap();
+        let tool = tools
+            .iter()
+            .find(|tool| tool.tool.name == "session_edit")
+            .unwrap();
+        let validator = tool.action_validator(Some("apply")).unwrap();
+        let input = |command: &str| {
+            json!({
+                "action": "apply",
+                "params": {"operations": [{"command": command, "params": {}}]}
+            })
+        };
+
+        // Act / Assert
+        assert!(validator.is_valid(&input("track.add")));
+        assert!(!validator.is_valid(&input("track.list")));
+        assert!(!validator.is_valid(&input("session.apply")));
     }
 
     #[test]

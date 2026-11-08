@@ -228,7 +228,7 @@ impl schemars::JsonSchema for MusicalNoteName {
     fn json_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
         schemars::json_schema!({
             "type": "string",
-            "pattern": "^[A-Ga-g](?:##|bb|#|b)?$",
+            "pattern": r"^\s*[A-Ga-g](?:[#♯]{1,2}|[b♭]{1,2}|𝄪|𝄫)?\s*$",
             "description": "A note name without an octave that retains its enharmonic spelling."
         })
     }
@@ -329,7 +329,7 @@ impl schemars::JsonSchema for MusicalPitch {
     fn json_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
         schemars::json_schema!({
             "type": "string",
-            "pattern": "^[A-Ga-g](?:##|bb|#|b)?-?[0-9]+$",
+            "pattern": r"^\s*[A-Ga-g](?:[#♯]{1,2}|[b♭]{1,2}|𝄪|𝄫)?[+-]?[0-9]+\s*$",
             "description": "A pitch name with an octave, retaining its enharmonic spelling."
         })
     }
@@ -442,5 +442,56 @@ mod tests {
             MusicalPitch::from_midi_pitch(127).unwrap().to_string(),
             "G9"
         );
+    }
+
+    #[test]
+    fn schemas_accept_the_pitch_spellings_serde_accepts() {
+        // Arrange
+        let cases = [
+            ("C#4", true),
+            ("C♯4", true),
+            ("G♭3", true),
+            ("F𝄪4", true),
+            (" C♯4 ", true),
+            ("C#+4", true),
+            ("invalid", false),
+            ("H4", false),
+            ("C#b4", false),
+            ("C###4", false),
+            ("C 4", false),
+        ];
+
+        // Act / Assert
+        assert_schema_matches_serde::<MusicalPitch>(&cases);
+        assert_schema_matches_serde::<MusicalNoteName>(&[
+            ("Bb", true),
+            ("B♭", true),
+            ("F##", true),
+            ("B𝄫", true),
+            (" c♯ ", true),
+            ("H", false),
+            ("C#b", false),
+            ("C4", false),
+        ]);
+    }
+
+    fn assert_schema_matches_serde<T>(cases: &[(&str, bool)])
+    where
+        T: serde::de::DeserializeOwned + schemars::JsonSchema,
+    {
+        let schema = schemars::schema_for!(T).to_value();
+        for (value, expected) in cases {
+            let value = serde_json::json!(value);
+            assert_eq!(
+                serde_json::from_value::<T>(value.clone()).is_ok(),
+                *expected,
+                "serde result for {value}: {schema}"
+            );
+            assert_eq!(
+                jsonschema::is_valid(&schema, &value),
+                *expected,
+                "schema result for {value}: {schema}"
+            );
+        }
     }
 }
