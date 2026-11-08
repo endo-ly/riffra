@@ -20,6 +20,8 @@ pub(crate) struct ToolDef {
     pub(crate) actions: &'static [ActionDef],
     /// True only when every action leaves the Host state unchanged.
     pub(crate) read_only: bool,
+    /// True when any action can remove or replace existing Project or library state.
+    /// Additive-only and transient runtime tools remain false.
     pub(crate) destructive: bool,
 }
 
@@ -116,7 +118,7 @@ pub(crate) const TOOLS: &[ToolDef] = &[
             action("redo", "history.redo"),
         ],
         read_only: false,
-        destructive: false,
+        destructive: true,
     },
     ToolDef {
         name: "track",
@@ -147,7 +149,7 @@ pub(crate) const TOOLS: &[ToolDef] = &[
             ),
         ],
         read_only: false,
-        destructive: false,
+        destructive: true,
     },
     ToolDef {
         name: "clip_audio",
@@ -163,7 +165,7 @@ pub(crate) const TOOLS: &[ToolDef] = &[
             action("crossfade", "clip.audio.crossfade"),
         ],
         read_only: false,
-        destructive: false,
+        destructive: true,
     },
     ToolDef {
         name: "clip_midi",
@@ -179,7 +181,7 @@ pub(crate) const TOOLS: &[ToolDef] = &[
             action("duplicate", "clip.midi.duplicate"),
         ],
         read_only: false,
-        destructive: false,
+        destructive: true,
     },
     ToolDef {
         name: "clip_midi_note",
@@ -447,7 +449,7 @@ pub(crate) const TOOLS: &[ToolDef] = &[
             action("scan_start", "plugin.scan.start"),
         ],
         read_only: false,
-        destructive: false,
+        destructive: true,
     },
     ToolDef {
         name: "plugin_preset",
@@ -458,7 +460,7 @@ pub(crate) const TOOLS: &[ToolDef] = &[
             action("set", "plugin.preset.set"),
         ],
         read_only: false,
-        destructive: false,
+        destructive: true,
     },
     ToolDef {
         name: "plugin_state",
@@ -908,6 +910,59 @@ mod tests {
                 .collect::<Vec<_>>(),
             [Some("get"), Some("cancel"), Some("wait")]
         );
+    }
+
+    #[test]
+    fn destructive_hints_mark_tools_that_remove_or_replace_state() {
+        // Arrange
+        let expected = [
+            "host_shutdown",
+            "project_restore",
+            "session_edit",
+            "history",
+            "track",
+            "track_input",
+            "clip_audio",
+            "clip_midi",
+            "clip_midi_note",
+            "clip_midi_event",
+            "clip_edit",
+            "music_note",
+            "music_timebase",
+            "music_structure",
+            "music_harmony",
+            "mixer_bus",
+            "mixer_send",
+            "mixer_sidechain",
+            "automation",
+            "instrument",
+            "instrument_collection",
+            "effect",
+            "plugin_catalog",
+            "plugin_preset",
+            "plugin_state",
+            "missing",
+            "record",
+            "render",
+            "job",
+        ];
+
+        // Act
+        let destructive: Vec<_> = TOOLS
+            .iter()
+            .filter(|tool| tool.destructive)
+            .map(|tool| tool.name)
+            .collect();
+
+        // Assert
+        assert_eq!(destructive, expected);
+        for tool in TOOLS {
+            assert!(
+                !(tool.read_only && tool.destructive),
+                "{} cannot be both read-only and destructive",
+                tool.name
+            );
+        }
     }
 
     #[test]
