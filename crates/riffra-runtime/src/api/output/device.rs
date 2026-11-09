@@ -99,6 +99,140 @@ pub struct PluginStateSnapshot {
     pub state_data: Option<String>,
 }
 
+/// A value stored in a JUCE `ValueTree` property.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize, TS, schemars::JsonSchema)]
+#[serde(untagged)]
+pub enum PluginStateValue {
+    Bool(bool),
+    Integer(i32),
+    Double(f64),
+    Text(String),
+    Encoded(PluginStateEncodedValue),
+}
+
+/// A `ValueTree` value without a plain JSON form.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize, TS, schemars::JsonSchema)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum PluginStateEncodedValue {
+    Void,
+    Int64 {
+        value: i64,
+    },
+    Binary {
+        #[serde(with = "standard_base64")]
+        #[ts(type = "string")]
+        #[schemars(with = "String")]
+        base64: Vec<u8>,
+    },
+    /// A JUCE `var` of a type that is carried over without interpretation.
+    Opaque {
+        marker: u8,
+        #[serde(with = "standard_base64")]
+        #[ts(type = "string")]
+        #[schemars(with = "String")]
+        base64: Vec<u8>,
+    },
+}
+
+mod standard_base64 {
+    use base64::Engine as _;
+    use base64::engine::general_purpose::STANDARD;
+    use serde::{Deserialize, Deserializer, Serializer, de::Error as _};
+
+    pub(super) fn serialize<S: Serializer>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&STANDARD.encode(bytes))
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Vec<u8>, D::Error> {
+        STANDARD
+            .decode(String::deserialize(deserializer)?)
+            .map_err(D::Error::custom)
+    }
+}
+
+/// One named `ValueTree` property. Property order is part of the encoded state.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize, TS, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PluginStateProperty {
+    pub name: String,
+    pub value: PluginStateValue,
+}
+
+/// A JUCE `ValueTree` decoded from plugin state.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize, TS, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PluginStateTree {
+    #[serde(rename = "type")]
+    pub tree_type: String,
+    pub properties: Vec<PluginStateProperty>,
+    pub children: Vec<PluginStateTree>,
+}
+
+/// How a plugin's component state is packaged.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum PluginStateContainer {
+    /// The plugin content is stored directly in the VST3 component.
+    Component,
+    /// The plugin content is stored in a VST2-compatible fxb bank chunk.
+    Fxb,
+}
+
+/// A size-bounded description of one state value.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum PluginStateContent {
+    Value {
+        value: PluginStateValue,
+    },
+    Xml {
+        root: String,
+        #[ts(type = "number")]
+        bytes: usize,
+    },
+    ValueTree {
+        tree: PluginStateTreeSummary,
+    },
+    Data {
+        #[ts(type = "number")]
+        bytes: usize,
+    },
+}
+
+/// A property within a [`PluginStateTreeSummary`].
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+pub struct PluginStatePropertySummary {
+    pub name: String,
+    pub content: PluginStateContent,
+}
+
+/// A `ValueTree` whose large values are reduced to their kind and size.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+pub struct PluginStateTreeSummary {
+    #[serde(rename = "type")]
+    pub tree_type: String,
+    pub properties: Vec<PluginStatePropertySummary>,
+    pub children: Vec<PluginStateTreeSummary>,
+}
+
+/// The decoded structure of a plugin's state.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+pub struct PluginStateInspection {
+    pub container: PluginStateContainer,
+    pub content: PluginStateContent,
+}
+
+/// One value read from a plugin's state.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum PluginStateReadResult {
+    Value { value: PluginStateValue },
+    Xml { text: String },
+    Tree { tree: PluginStateTree },
+}
+
 /// Plugin container format. The runtime currently hosts VST3 only; the enum
 /// keeps the TS literal narrow and leaves room for future formats.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize, TS)]

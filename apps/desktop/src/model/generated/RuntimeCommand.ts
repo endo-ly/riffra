@@ -29,6 +29,8 @@ import type { MuteParams } from './MuteParams';
 import type { PluginAuditionParams } from './PluginAuditionParams';
 import type { PluginPresetSetParams } from './PluginPresetSetParams';
 import type { PluginScanParams } from './PluginScanParams';
+import type { PluginStatePatchParams } from './PluginStatePatchParams';
+import type { PluginStateReadParams } from './PluginStateReadParams';
 import type { PluginStateSetParams } from './PluginStateSetParams';
 import type { ProjectRestoreParams } from './ProjectRestoreParams';
 import type { RecordListParams } from './RecordListParams';
@@ -100,6 +102,9 @@ export type RuntimeCommand =
   | { command: 'plugin.preset.set'; params: PluginPresetSetParams }
   | { command: 'plugin.state.get'; params: DeviceParams }
   | { command: 'plugin.state.set'; params: PluginStateSetParams }
+  | { command: 'plugin.state.inspect'; params: DeviceParams }
+  | { command: 'plugin.state.read'; params: PluginStateReadParams }
+  | { command: 'plugin.state.patch'; params: PluginStatePatchParams }
   | { command: 'missing.list'; params: EmptyParams }
   | { command: 'record.start'; params: RecordStartParams }
   | { command: 'record.stop'; params: EmptyParams }

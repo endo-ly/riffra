@@ -10,7 +10,8 @@ rust-version = "1.88"
 riffra-control = { path = "../riffra-control" }
 riffra-core = { path = "../riffra-core" }
 riffra-host = { path = "../riffra-host" }
-serde = { version = "1", features = ["derive"] }
+base64 = "0.22"
+serde ={ version = "1", features = ["derive"] }
 schemars = "1.2"
 serde_json = { version = "1", features = ["float_roundtrip", "preserve_order"] }
 yaml-rust2 = "0.10"

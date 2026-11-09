@@ -39,6 +39,8 @@ import type { MusicalRegionView } from './MusicalRegionView';
 import type { PhrasePreview } from './PhrasePreview';
 import type { PluginEntry } from './PluginEntry';
 import type { PluginPresetInfo } from './PluginPresetInfo';
+import type { PluginStateInspection } from './PluginStateInspection';
+import type { PluginStateReadResult } from './PluginStateReadResult';
 import type { PluginStateSnapshot } from './PluginStateSnapshot';
 import type { ProjectActivationResult } from './ProjectActivationResult';
 import type { ProjectExport } from './ProjectExport';
@@ -103,6 +105,8 @@ export type ControlOutput =
   | { type: 'deviceParameterMutation'; value: DeviceParameterMutationResult }
   | { type: 'deviceParameterText'; value: string }
   | { type: 'pluginState'; value: PluginStateSnapshot }
+  | { type: 'pluginStateInspection'; value: PluginStateInspection }
+  | { type: 'pluginStateRead'; value: PluginStateReadResult }
   | { type: 'pluginPresets'; value: Array<PluginPresetInfo> }
   | { type: 'pluginPreset'; value: PluginPresetInfo }
   | { type: 'plugins'; value: Array<PluginEntry> }

@@ -484,11 +484,14 @@ pub(crate) const TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "plugin_state",
-        description: "Read, replace, or import a saved VST3 device state.",
+        description: "Read, replace, or import a saved VST3 device state. For JUCE plugins, inspect shows the decoded structure, read returns one value, and patch edits ValueTree properties or embedded XML in place, so a large state never has to pass through the call.",
         actions: &[
             action("get", "plugin.state.get"),
             action("set", "plugin.state.set"),
             action("import", "plugin.state.import"),
+            action("inspect", "plugin.state.inspect"),
+            action("read", "plugin.state.read"),
+            action("patch", "plugin.state.patch"),
         ],
         read_only: false,
         destructive: true,
@@ -994,11 +997,11 @@ mod tests {
         // Assert
         assert_eq!(names, expected);
         let actions: Vec<_> = TOOLS.iter().flat_map(|tool| tool.actions.iter()).collect();
-        assert_eq!(actions.len(), 212);
+        assert_eq!(actions.len(), 215);
         let commands: std::collections::HashSet<_> =
             actions.iter().map(|action| action.command).collect();
-        assert_eq!(commands.len(), 211);
-        assert_eq!(command_names().len(), 215);
+        assert_eq!(commands.len(), 214);
+        assert_eq!(command_names().len(), 218);
         let public_commands: std::collections::HashSet<_> =
             command_names().iter().copied().collect();
         let mut unused = public_commands

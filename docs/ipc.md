@@ -410,12 +410,14 @@ Sidechain接続は `mixer.sidechain.list` が `sidechainSends` を返す。`mixe
 | Timeline / Arrangement | `clip remove`、`clip paste`、`music marker add/update/remove`、`music timebase update`、`transport loop set`、`record punch set`                                                                                                                                                                                                                                |
 | Automation             | `automation get/list`(Canonical read)、`automation set`、`automation clear`                                                                                                                                                                                                                                                                                     |
 | Asset / Project        | `asset import-midi`、`asset preview`、`project list/create/open/rename/export/import`                                                                                                                                                                                                                                                                           |
-| Instrument / Effect    | `plugin catalog list`、`instrument list/apply`、`instrument midi get/set`、`instrument vst3 set`、`plugin scan`、`instrument clear`、`effect add/remove/reorder`、`device bypass`、`device inspect`、`device parameter list/get/set`、`plugin preset list/get/set`、`plugin state save/load/import`                                                             |
+| Instrument / Effect    | `plugin catalog list`、`instrument list/apply`、`instrument midi get/set`、`instrument vst3 set`、`plugin scan`、`instrument clear`、`effect add/remove/reorder`、`device bypass`、`device inspect`、`device parameter list/get/set`、`plugin preset list/get/set`、`plugin state save/load/import/inspect/read/patch`                                          |
 | Runtime services       | `audio status/diagnostics/probe/probe-channels`、`audio driver get/set`、`audio recover/startup-retry`、`record start/stop/status/list/rename/archive/promote/tag/delete/duplicates`、`render start/stems/list/export/delete`、`job get/cancel`、`asset search/update/related`、`analysis inspect/measure`、`missing list/relink/disable-plugin/replace-plugin` |
 
 軽量投影の約束: `session inspect`、`track list`、`device inspect`、`music.note.*` は構造把握用であり、本文の取得は `session get`、`plugin.state.get` に委譲する。`device inspect` の応答範囲はmetadataとcapabilityである。
 
 Agent向けCLIの正準Mutation応答は `mutation` receipt(sequence・投影状態・構造IDのみ)へ変換する。Desktop同期の共有プロトコルではCanonical結果を維持する。`plugin state save` は結果をファイルへ保存し、標準出力には保存先のみ返す。
+
+Plugin Stateは通常は不透明なデータとして運ぶ。JUCE製Pluginに限り、`plugin.state.inspect/read/patch` が `VC2!` のHost XML、`<IComponent>`、fxbチャンク、ValueTree、埋め込みXMLを解釈する。`patch` は生きたPluginのStateを取得し、指定箇所だけを書き換えて全操作を1回のState置換として適用する。解釈できないComponentは `inspect` がサイズのみ返し、`patch` は失敗する。
 
 DesktopのTauri command境界とLive HostのControl Serverの機能分担は次の通りである。
 
