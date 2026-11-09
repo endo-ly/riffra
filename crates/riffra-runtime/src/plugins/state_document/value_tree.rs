@@ -30,14 +30,17 @@ const fn base64_values() -> [u8; 256] {
 }
 
 fn base64_char_count(byte_count: usize) -> usize {
-    (byte_count * 8).div_ceil(6)
+    byte_count / 3 * 4 + (byte_count % 3 * 8).div_ceil(6)
 }
 
 /// Decodes JUCE's `MemoryBlock::toBase64Encoding` text, which is `<size>.<characters>`.
 pub(super) fn decode_base64(text: &str) -> Option<Vec<u8>> {
+    if text.len() > 256 * 1024 * 1024 {
+        return None;
+    }
     let (size, characters) = text.split_once('.')?;
     let size = size.parse::<usize>().ok()?;
-    if characters.len() != base64_char_count(size) {
+    if characters.len() != size.checked_mul(8)?.div_ceil(6) {
         return None;
     }
     let mut decoded = vec![0_u8; size];
@@ -87,13 +90,6 @@ pub(super) fn read_tree(data: &[u8]) -> Option<(PluginStateTree, usize)> {
 /// unused capacity holds arbitrary data.
 pub(super) fn decode_tree(text: &str) -> Option<PluginStateTree> {
     read_tree(&decode_base64(text)?).map(|(tree, _)| tree)
-}
-
-/// Encodes one `ValueTree` as base64 text.
-pub(super) fn encode_tree(tree: &PluginStateTree) -> String {
-    let mut data = Vec::new();
-    write_tree(tree, &mut data);
-    encode_base64(&data)
 }
 
 /// Appends the binary form of `tree` to `out`.
@@ -274,6 +270,12 @@ fn decode_value(marker: u8, body: &[u8]) -> PluginStateValue {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn rejects_invalid_declared_lengths() {
+        for text in ["2305843009213693952.", "18446744073709551615.", "1.", "0.A"] {
+            assert!(super::decode_base64(text).is_none());
+        }
+    }
     use super::*;
 
     #[test]

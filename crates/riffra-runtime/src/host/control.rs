@@ -471,10 +471,16 @@ impl HostState {
         previous: GraphPluginState,
         next: GraphPluginState,
     ) -> Result<(ControlOutput, u64), ProtocolError> {
-        let persisted = next.clone();
         self.audio
             .set_plugin_state(owner, device_id, next)
             .map_err(audio_error)?;
+        let persisted = match self.audio.get_plugin_state(owner, device_id) {
+            Ok(state) => state,
+            Err(error) => {
+                let _ = self.audio.set_plugin_state(owner, device_id, previous);
+                return Err(audio_error(error));
+            }
+        };
         let commit = context.commit(|mut app| {
             app.persist_plugin_state(
                 owner,
@@ -1030,6 +1036,7 @@ impl HostState {
                 let (mut state, bypassed) =
                     self.live_plugin_state(&current, &params.owner, &params.device_id)?;
                 let previous_state = plugin_state_value(&state, bypassed);
+                state.parameter_values.clear();
                 state.state_data = Some(state_document::patch(
                     state.state_data.as_deref(),
                     &params.operations,

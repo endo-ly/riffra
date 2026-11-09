@@ -160,6 +160,9 @@ impl StateDocument {
         let encoded = state_data
             .filter(|data| !data.is_empty())
             .ok_or(PluginStateDocumentError::Empty)?;
+        if encoded.len() > 256 * 1024 * 1024 {
+            return Err(unsupported());
+        }
         let host = STANDARD.decode(encoded).map_err(|_| unsupported())?;
         let host_xml = xml_binary_range(&host).ok_or_else(unsupported)?;
         let text = std::str::from_utf8(&host[host_xml.clone()]).map_err(|_| unsupported())?;
@@ -335,9 +338,13 @@ fn visit_tree<R>(
     let PluginStateValue::Text(text) = value else {
         return Err(not_found());
     };
-    let mut nested = value_tree::decode_tree(text).ok_or_else(not_found)?;
+    let data = value_tree::decode_base64(text).ok_or_else(not_found)?;
+    let (mut nested, consumed) = value_tree::read_tree(&data).ok_or_else(not_found)?;
     let result = visit_tree(&mut nested, rest, path, action)?;
-    *value = PluginStateValue::Text(value_tree::encode_tree(&nested));
+    let mut edited = Vec::new();
+    value_tree::write_tree(&nested, &mut edited);
+    edited.extend_from_slice(&data[consumed..]);
+    *value = PluginStateValue::Text(value_tree::encode_base64(&edited));
     Ok(result)
 }
 
@@ -458,8 +465,14 @@ fn coerce(current: &PluginStateValue, next: PluginStateValue) -> Option<PluginSt
 fn replace_tree(target: Target<'_>, tree: &PluginStateTree, path: &str) -> Result<()> {
     match target {
         Target::Node(node) => *node = tree.clone(),
-        Target::Value(PluginStateValue::Text(text)) if value_tree::decode_tree(text).is_some() => {
-            *text = value_tree::encode_tree(tree);
+        Target::Value(PluginStateValue::Text(text)) => {
+            let not_tree = || PluginStateDocumentError::NotTree(path.to_owned());
+            let data = value_tree::decode_base64(text).ok_or_else(not_tree)?;
+            let (_, consumed) = value_tree::read_tree(&data).ok_or_else(not_tree)?;
+            let mut edited = Vec::new();
+            value_tree::write_tree(tree, &mut edited);
+            edited.extend_from_slice(&data[consumed..]);
+            *text = value_tree::encode_base64(&edited);
         }
         Target::Value(_) => return Err(PluginStateDocumentError::NotTree(path.to_owned())),
     }
@@ -625,7 +638,12 @@ mod tests {
                 ),
                 property(
                     "Amp",
-                    PluginStateValue::Text(value_tree::encode_tree(&nested)),
+                    PluginStateValue::Text({
+                        let mut data = Vec::new();
+                        value_tree::write_tree(&nested, &mut data);
+                        data.extend_from_slice(b"nested trailer");
+                        value_tree::encode_base64(&data)
+                    }),
                 ),
                 property("Gain", PluginStateValue::Double(0.5)),
                 property("Label", PluginStateValue::Text("one".into())),
@@ -713,6 +731,14 @@ mod tests {
         assert_eq!(
             tree.properties[1].value,
             binary(b"<Program a=\"22\"><X/></Program>\0\x9f".to_vec())
+        );
+        let PluginStateValue::Text(nested) = &tree.properties[2].value else {
+            panic!("expected nested tree")
+        };
+        assert!(
+            value_tree::decode_base64(nested)
+                .unwrap()
+                .ends_with(b"nested trailer")
         );
         assert_eq!(tree.properties[3].value, PluginStateValue::Double(0.75));
         assert_eq!(tree.properties[4].value, PluginStateValue::Text("3".into()));

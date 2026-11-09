@@ -17,6 +17,8 @@ pub(crate) enum XmlEditError {
     HasChildElements(String),
     #[error("two xml edits change the same text")]
     Overlap,
+    #[error("edited xml is not well-formed")]
+    Malformed,
 }
 
 #[derive(Debug)]
@@ -169,7 +171,9 @@ impl<'a> Document<'a> {
                 .into_iter()
                 .map(|(parent, children)| self.append_edit(parent, children)),
         );
-        self.splice(edits)
+        let output = self.splice(edits)?;
+        roxmltree::Document::parse(&output).map_err(|_| XmlEditError::Malformed)?;
+        Ok(output)
     }
 
     fn attribute_edit(&self, element: usize, name: &str, value: &str) -> Edit {
@@ -299,10 +303,11 @@ fn parse_segment(part: &str) -> Option<Segment<'_>> {
 }
 
 fn is_name(name: &str) -> bool {
-    !name.is_empty()
-        && name
-            .chars()
-            .all(|character| !character.is_whitespace() && !"<>&\"'=/@[]".contains(character))
+    fn start(c: char) -> bool {
+        matches!(c, ':' | '_' | 'A'..='Z' | 'a'..='z' | '\u{C0}'..='\u{D6}' | '\u{D8}'..='\u{F6}' | '\u{F8}'..='\u{2FF}' | '\u{370}'..='\u{37D}' | '\u{37F}'..='\u{1FFF}' | '\u{200C}'..='\u{200D}' | '\u{2070}'..='\u{218F}' | '\u{2C00}'..='\u{2FEF}' | '\u{3001}'..='\u{D7FF}' | '\u{F900}'..='\u{FDCF}' | '\u{FDF0}'..='\u{FFFD}' | '\u{10000}'..='\u{EFFFF}')
+    }
+    let mut chars = name.chars();
+    chars.next().is_some_and(start) && chars.all(|c| start(c) || matches!(c, '-' | '.' | '0'..='9' | '\u{B7}' | '\u{300}'..='\u{36F}' | '\u{203F}'..='\u{2040}'))
 }
 
 fn escape(text: &str, attribute: bool) -> String {
@@ -561,6 +566,16 @@ mod tests {
         assert!(matches!(
             document.set(&[("Part0/Name", "x"), ("Part0[0]/Name", "y")]),
             Err(XmlEditError::Overlap)
+        ));
+        for path in ["Part0/123", "Part0/@123", "Part0/a?b"] {
+            assert!(matches!(
+                document.set(&[(path, "x")]),
+                Err(XmlEditError::InvalidPath(_))
+            ));
+        }
+        assert!(matches!(
+            document.set(&[("Part0/Name", "\0")]),
+            Err(XmlEditError::Malformed)
         ));
         assert!(Document::parse(b"<a><b></a></b>").is_none());
     }
