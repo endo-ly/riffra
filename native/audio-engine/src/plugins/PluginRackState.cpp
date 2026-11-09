@@ -58,6 +58,14 @@ bool PluginRack::hasQueuedParameterChanges() const noexcept {
     return false;
 }
 
+float PluginRack::latestParameterValue(const std::size_t offset,
+                                       const juce::AudioProcessorParameter& parameter) const {
+    return parameterQueue != nullptr && offset < parameterQueue->capacity &&
+                   parameterQueue->dirty[offset].load(std::memory_order_acquire)
+               ? parameterQueue->values[offset].load(std::memory_order_acquire)
+               : parameter.getValue();
+}
+
 bool PluginRack::hasPrograms() const noexcept {
     return cachedProgramCount.load(std::memory_order_acquire) > 0;
 }
@@ -225,9 +233,8 @@ bool PluginRack::applyPersistedState(const PluginStateSpec& state, juce::String&
         error = "Fault injection interrupted VST3 state application.";
         return false;
     }
-    if (state.stateData.has_value() && state.stateData->isNotEmpty()) {
-        if (!applyStateData(*state.stateData, error)) return false;
-    }
+    const auto restoresOpaqueState = state.stateData.has_value() && state.stateData->isNotEmpty();
+    if (restoresOpaqueState && !applyStateData(*state.stateData, error)) return false;
     {
         const juce::SpinLock::ScopedLockType lock(pluginLock);
         if (plugin == nullptr) {
@@ -242,11 +249,7 @@ bool PluginRack::applyPersistedState(const PluginStateSpec& state, juce::String&
             const auto* parameter = available[index];
             if (parameter == nullptr) continue;
             const auto target = state.parameterValues[offset];
-            const auto current =
-                parameterQueue != nullptr && offset < parameterQueue->capacity &&
-                        parameterQueue->dirty[offset].load(std::memory_order_acquire)
-                    ? parameterQueue->values[offset].load(std::memory_order_acquire)
-                    : parameter->getValue();
+            const auto current = latestParameterValue(offset, *parameter);
             // VST instruments often expose thousands of parameters, most of
             // which are already at their saved/default value immediately
             // after construction. Avoid calling third-party automation hooks
@@ -262,7 +265,9 @@ bool PluginRack::applyPersistedState(const PluginStateSpec& state, juce::String&
     try {
         const juce::SpinLock::ScopedLockType lock(pluginLock);
         staticState = std::move(staticProjection);
-        staticStateDirty.store(false, std::memory_order_release);
+        // Without opaque data the projection only serves automation; the plugin's
+        // own state is still unread and the next capture must ask the plugin.
+        staticStateDirty.store(!restoresOpaqueState, std::memory_order_release);
     } catch (...) {
         error = "plugin static state projection could not be retained";
         return false;
@@ -293,8 +298,12 @@ std::optional<PluginStateSpec> PluginRack::persistedState(juce::String& error) c
     }
     const auto& parameters = plugin->getParameters();
     result.parameterValues.reserve(static_cast<std::size_t>(parameters.size()));
-    for (auto* parameter : parameters)
-        result.parameterValues.push_back(parameter != nullptr ? parameter->getValue() : 0.0f);
+    for (int index = 0; index < parameters.size(); ++index) {
+        const auto* parameter = parameters[index];
+        result.parameterValues.push_back(
+            parameter != nullptr ? latestParameterValue(static_cast<std::size_t>(index), *parameter)
+                                 : 0.0f);
+    }
     result.bypassed = bypassed.load(std::memory_order_acquire);
     if (staticState) {
         staticState = result;

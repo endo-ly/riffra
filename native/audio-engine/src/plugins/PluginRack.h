@@ -238,6 +238,8 @@ private:
     void queueParameterValue(int index, float value) noexcept;
     [[nodiscard]] bool canQueueParameterValue(int index, juce::String& error) const noexcept;
     [[nodiscard]] bool hasQueuedParameterChanges() const noexcept;
+    [[nodiscard]] float latestParameterValue(std::size_t offset,
+                                             const juce::AudioProcessorParameter& parameter) const;
     std::optional<float> parameterValueForText(int index, const juce::String& text,
                                                juce::String& error, bool nearest = false) const;
     [[nodiscard]] std::optional<juce::String> parameterDisplayValue(int index, float value,

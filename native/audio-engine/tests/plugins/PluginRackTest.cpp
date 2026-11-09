@@ -564,6 +564,48 @@ TEST(PluginRackTest, BindsStableParameterIdsAndAppliesAutomationBeforeRealVstPro
                     .has_value());
 }
 
+TEST(PluginRackTest, PersistedStateCapturesUnreadPluginAndCachesUntilChanged) {
+    // Arrange: a freshly inserted device has no persisted state to restore.
+    ProcessorTrace trace;
+    trace.opaqueState = 7;
+    juce::String error;
+    auto rack = PluginRackTestPeer::install(std::make_unique<TestProcessor>(trace, true),
+                                            kSampleRate, kBlockSize, error);
+    ASSERT_NE(rack, nullptr) << error;
+    ASSERT_TRUE(rack->applyPersistedState({}, error)) << error;
+
+    // Act
+    const auto captured = rack->persistedState(error);
+    const auto cached = rack->persistedState(error);
+
+    // Assert
+    ASSERT_TRUE(captured.has_value()) << error;
+    EXPECT_TRUE(captured->stateData.has_value());
+    EXPECT_EQ(cached, captured);
+    EXPECT_EQ(trace.stateCaptureCount, 1);
+
+    ASSERT_TRUE(rack->setParameter(0, 0.9f, error)) << error;
+    ASSERT_TRUE(rack->persistedState(error).has_value()) << error;
+    EXPECT_EQ(trace.stateCaptureCount, 2);
+
+    // A plugin reporting no state is a valid capture, not a reason to ask again.
+    trace.opaqueState = 0;
+    ASSERT_TRUE(rack->applyPersistedState({}, error)) << error;
+    const auto empty = rack->persistedState(error);
+    const auto emptyAgain = rack->persistedState(error);
+    ASSERT_TRUE(empty.has_value()) << error;
+    EXPECT_FALSE(empty->stateData.has_value());
+    EXPECT_EQ(emptyAgain, empty);
+    EXPECT_EQ(trace.stateCaptureCount, 3);
+
+    // State restored from the project stays authoritative without a capture.
+    PluginStateSpec restored;
+    restored.stateData = "c3RhdGU=";
+    ASSERT_TRUE(rack->applyPersistedState(restored, error)) << error;
+    ASSERT_TRUE(rack->persistedState(error).has_value()) << error;
+    EXPECT_EQ(trace.stateCaptureCount, 3);
+}
+
 TEST(PluginRackTest, AutomationBindingUsesProjectedStateWithoutCapturingPluginState) {
     // Arrange
     ProcessorTrace trace;
@@ -577,10 +619,6 @@ TEST(PluginRackTest, AutomationBindingUsesProjectedStateWithoutCapturingPluginSt
     PluginStateSpec projected;
     projected.parameterValues = {0.4f};
     ASSERT_TRUE(rack->applyPersistedState(projected, error)) << error;
-    const auto retained = rack->persistedState(error);
-    ASSERT_TRUE(retained.has_value()) << error;
-    EXPECT_FLOAT_EQ(retained->parameterValues[0], projected.parameterValues[0]);
-    EXPECT_EQ(trace.stateCaptureCount, 0);
     AutomationRuntime lane;
     lane.setPoints({{0, 0.25f}, {32, 0.75f}}, true);
 
