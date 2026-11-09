@@ -18,6 +18,9 @@ use std::time::Duration;
 const TRACK_DEVICE_COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
 /// The sidecar's budget for loading a VST3, which is the slowest step of an audition.
 const PLUGIN_AUDITION_TIMEOUT: Duration = Duration::from_secs(45);
+/// The sidecar's queue budget plus its watchdog for a plugin restoring its state; sample-based
+/// instruments load their sounds before returning.
+const PLUGIN_STATE_SET_TIMEOUT: Duration = Duration::from_secs(130);
 
 /// Programs exposed by a Track Device plugin.
 #[derive(Clone, Debug)]
@@ -441,7 +444,7 @@ impl AudioSupervisor {
                 device_id: device_id.into(),
                 state,
             },
-            TRACK_DEVICE_COMMAND_TIMEOUT,
+            PLUGIN_STATE_SET_TIMEOUT,
         )
     }
 
