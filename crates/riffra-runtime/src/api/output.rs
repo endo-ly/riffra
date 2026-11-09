@@ -80,6 +80,8 @@ pub enum ControlOutput {
     DeviceParameterMutation(DeviceParameterMutationResult),
     DeviceParameterText(String),
     PluginState(PluginStateSnapshot),
+    PluginStateInspection(PluginStateInspection),
+    PluginStateRead(PluginStateReadResult),
     PluginPresets(Vec<PluginPresetInfo>),
     PluginPreset(PluginPresetInfo),
     Plugins(Vec<PluginEntry>),

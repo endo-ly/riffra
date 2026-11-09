@@ -10,6 +10,7 @@ use crate::api::{
 };
 use crate::execution::GraphPluginState;
 use crate::instrument::{BuiltInInstrumentCatalog, UserInstrumentStore};
+use crate::plugins::state_document;
 
 impl HostState {
     fn failure(request_id: String, error: ProtocolError) -> ControlResponse {
@@ -444,6 +445,50 @@ impl HostState {
             .execute_read_canonical(command, current)
             .map_err(|error| error.protocol_error())?;
         Ok((result.output, result.sequence))
+    }
+
+    /// Returns the state the live plugin reports and whether the device is bypassed.
+    fn live_plugin_state(
+        &self,
+        current: &CanonicalState,
+        owner: &riffra_core::EffectOwner,
+        device_id: &str,
+    ) -> Result<(PluginStateSnapshot, bool), ProtocolError> {
+        let (plugin_path, bypassed) = canonical_plugin_device(current, owner, device_id)?;
+        self.wait_for_device_projection(current)?;
+        let state = self
+            .audio
+            .get_plugin_state(owner, device_id)
+            .map_err(audio_error)?;
+        Ok((plugin_state_snapshot(&plugin_path, state)?, bypassed))
+    }
+
+    /// Applies `next` to the live plugin and persists it, restoring `previous` if persisting fails.
+    fn replace_plugin_state(
+        &self,
+        context: &mut SessionContext<'_>,
+        (owner, device_id): (&riffra_core::EffectOwner, &str),
+        previous: GraphPluginState,
+        next: GraphPluginState,
+    ) -> Result<(ControlOutput, u64), ProtocolError> {
+        let persisted = next.clone();
+        self.audio
+            .set_plugin_state(owner, device_id, next)
+            .map_err(audio_error)?;
+        let commit = context.commit(|mut app| {
+            app.persist_plugin_state(
+                owner,
+                device_id,
+                persisted.parameter_values.clone(),
+                persisted.state_data.clone(),
+                persisted.bypassed,
+            )
+        });
+        if let Err(error) = commit {
+            let _ = self.audio.set_plugin_state(owner, device_id, previous);
+            return Err(error.protocol_error());
+        }
+        adapter_mutation(commit.map(|(mutation, _)| mutation))
     }
 
     fn dispatch_runtime(
@@ -944,14 +989,9 @@ impl HostState {
                 return adapter_mutation(commit.map(|(mutation, _)| mutation));
             }
             RuntimeCommand::PluginStateGet(params) => {
-                let (plugin_path, _) =
-                    canonical_plugin_device(&current, &params.owner, &params.device_id)?;
-                self.wait_for_device_projection(&current)?;
-                let state = self
-                    .audio
-                    .get_plugin_state(&params.owner, &params.device_id)
-                    .map_err(audio_error)?;
-                ControlOutput::PluginState(plugin_state_snapshot(&plugin_path, state)?)
+                let (state, _) =
+                    self.live_plugin_state(&current, &params.owner, &params.device_id)?;
+                ControlOutput::PluginState(state)
             }
             RuntimeCommand::PluginStateSet(params) => {
                 let (plugin_path, bypassed) =
@@ -962,29 +1002,45 @@ impl HostState {
                     .audio
                     .get_plugin_state(&params.owner, &params.device_id)
                     .map_err(audio_error)?;
-                let native_state = plugin_state_value(&params.state, bypassed);
                 let mut context = self.session_context(writer.take(), current.clone(), &publish)?;
-                self.audio
-                    .set_plugin_state(&params.owner, &params.device_id, native_state)
-                    .map_err(audio_error)?;
-                let commit = context.commit(|mut app| {
-                    app.persist_plugin_state(
-                        &params.owner,
-                        &params.device_id,
-                        params.state.parameter_values.clone(),
-                        params.state.state_data.clone(),
-                        bypassed,
-                    )
-                });
-                if let Err(error) = commit {
-                    let _ = self.audio.set_plugin_state(
-                        &params.owner,
-                        &params.device_id,
-                        previous_state,
-                    );
-                    return Err(error.protocol_error());
-                }
-                return adapter_mutation(commit.map(|(mutation, _)| mutation));
+                return self.replace_plugin_state(
+                    &mut context,
+                    (&params.owner, &params.device_id),
+                    previous_state,
+                    plugin_state_value(&params.state, bypassed),
+                );
+            }
+            RuntimeCommand::PluginStateInspect(params) => {
+                let (state, _) =
+                    self.live_plugin_state(&current, &params.owner, &params.device_id)?;
+                ControlOutput::PluginStateInspection(state_document::inspect(
+                    state.state_data.as_deref(),
+                )?)
+            }
+            RuntimeCommand::PluginStateRead(params) => {
+                let (state, _) =
+                    self.live_plugin_state(&current, &params.owner, &params.device_id)?;
+                ControlOutput::PluginStateRead(state_document::read(
+                    state.state_data.as_deref(),
+                    params.path.as_deref().unwrap_or_default(),
+                    params.xml_path.as_deref(),
+                )?)
+            }
+            RuntimeCommand::PluginStatePatch(params) => {
+                let (mut state, bypassed) =
+                    self.live_plugin_state(&current, &params.owner, &params.device_id)?;
+                let previous_state = plugin_state_value(&state, bypassed);
+                state.state_data = Some(state_document::patch(
+                    state.state_data.as_deref(),
+                    &params.operations,
+                )?);
+                let mut context = self.session_context(writer.take(), current.clone(), &publish)?;
+                return self.replace_plugin_state(
+                    &mut context,
+                    (&params.owner, &params.device_id),
+                    previous_state,
+                    plugin_state_value(&state, bypassed),
+                );
             }
 
             RuntimeCommand::MissingList(_) => ControlOutput::Missing(
