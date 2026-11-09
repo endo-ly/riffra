@@ -3109,7 +3109,7 @@ dependencies = [
 
 [[package]]
 name = "riffra-cli"
-version = "2026.11.8"
+version = "2026.11.9"
 dependencies = [
  "clap",
  "riffra-control",
@@ -3149,7 +3149,7 @@ dependencies = [
 
 [[package]]
 name = "riffra-desktop"
-version = "2026.11.8"
+version = "2026.11.9"
 dependencies = [
  "riffra-control",
  "riffra-core",
@@ -3189,7 +3189,7 @@ dependencies = [
 
 [[package]]
 name = "riffra-mcp"
-version = "2026.11.8"
+version = "2026.11.9"
 dependencies = [
  "clap",
  "jsonschema",
