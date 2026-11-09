@@ -480,6 +480,9 @@ control_commands! {
         PluginPresetSet = "plugin.preset.set" (PluginPresetSetParams) -> ArrangementMutation, project;
         PluginStateGet = "plugin.state.get" (DeviceParams) -> PluginState, project;
         PluginStateSet = "plugin.state.set" (PluginStateSetParams) -> ArrangementMutation, project;
+        PluginStateInspect = "plugin.state.inspect" (DeviceParams) -> PluginStateInspection, project;
+        PluginStateRead = "plugin.state.read" (PluginStateReadParams) -> PluginStateRead, project;
+        PluginStatePatch = "plugin.state.patch" (PluginStatePatchParams) -> ArrangementMutation, project;
         MissingList = "missing.list" (EmptyParams) -> Missing, project;
 
         RecordStart = "record.start" (RecordStartParams) -> AudioStatus, project;
@@ -552,7 +555,7 @@ mod tests {
         let names = command_names();
 
         // Act / Assert
-        assert_eq!(names.len(), 215);
+        assert_eq!(names.len(), 218);
         let unique: std::collections::HashSet<_> = names.iter().copied().collect();
         assert_eq!(unique.len(), names.len());
         for name in names {
@@ -790,7 +793,7 @@ mod tests {
             .filter_map(|line| line.split_once('\'').map(|(name, _)| name))
             .collect();
         let unique: std::collections::HashSet<_> = names.iter().copied().collect();
-        assert_eq!(names.len(), 215);
+        assert_eq!(names.len(), 218);
         assert_eq!(unique.len(), names.len());
 
         for (name, params) in [

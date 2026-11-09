@@ -662,6 +662,15 @@ mod tests {
                 "plugin.state.set",
                 json!({"owner":{"kind":"track","id":"track:1"}, "deviceId": "device:1", "state": {"schemaVersion": 1, "pluginPath": "p.vst3", "parameterValues": []}}),
             ),
+            ("plugin.state.inspect", device.clone()),
+            (
+                "plugin.state.read",
+                json!({"owner":{"kind":"track","id":"track:1"}, "deviceId": "device:1", "path": "Plugin"}),
+            ),
+            (
+                "plugin.state.patch",
+                json!({"owner":{"kind":"track","id":"track:1"}, "deviceId": "device:1", "operations": [{"op": "set", "path": "Gain", "value": 0.5}]}),
+            ),
             ("missing.list", json!({})),
             ("record.start", json!({})),
             ("record.stop", json!({})),

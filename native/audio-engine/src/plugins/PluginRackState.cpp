@@ -265,9 +265,8 @@ bool PluginRack::applyPersistedState(const PluginStateSpec& state, juce::String&
     try {
         const juce::SpinLock::ScopedLockType lock(pluginLock);
         staticState = std::move(staticProjection);
-        // Without opaque data the projection only serves automation; the plugin's
-        // own state is still unread and the next capture must ask the plugin.
-        staticStateDirty.store(!restoresOpaqueState, std::memory_order_release);
+        // Capture the processor's accepted state before persisting it.
+        staticStateDirty.store(true, std::memory_order_release);
     } catch (...) {
         error = "plugin static state projection could not be retained";
         return false;

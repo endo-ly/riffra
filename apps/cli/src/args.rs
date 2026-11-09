@@ -3,6 +3,7 @@ use riffra_core::application::{SessionInspectionQuery, SessionSettingsPatch};
 use riffra_core::{
     AudioClipPatch, FrameRange, MidiClipPatch, PhrasePattern, PhrasePlacement, TimelineTick,
 };
+use riffra_runtime::api::output::PluginStateValue;
 use riffra_runtime::api::params::*;
 use riffra_runtime::api::{
     CanonicalCommand as Canonical, CommandDecodeError, ControlCommand, ProjectCommand as Project,
@@ -2435,6 +2436,12 @@ pub enum PluginStateCommand {
     /// The state must match the assigned VST3. Works in Standalone and Live Host modes.
     /// Batch command: plugin.state.import.
     Import(PluginStateImportArgs),
+    /// Show the decoded structure of a JUCE plugin's live state; requires --attach.
+    Inspect(PluginDeviceArgs),
+    /// Read one value from a JUCE plugin's live state; requires --attach.
+    Read(PluginStateReadArgs),
+    /// Edit values in a JUCE plugin's live state as one replacement; requires --attach.
+    Patch(PluginStatePatchArgs),
 }
 
 #[derive(Debug, Args)]
@@ -2495,6 +2502,60 @@ pub struct PluginStateImportArgs {
     /// State JSON previously saved by plugin state save.
     #[arg(long)]
     pub file: PathBuf,
+}
+
+#[derive(Debug, Args)]
+pub struct PluginStateReadArgs {
+    #[command(flatten)]
+    pub owner: DeviceOwnerArgs,
+    /// Id of the plugin device to read.
+    #[arg(long)]
+    pub device_id: String,
+    /// ValueTree path such as PROJECT/Slot[1]/Level; omit for the whole state.
+    #[arg(long)]
+    pub path: Option<String>,
+    /// Path below the root of the XML held at --path, such as Part0/Name or Part0/@id.
+    #[arg(long)]
+    pub xml_path: Option<String>,
+    /// Write the text, XML, or tree JSON to this file instead of the response.
+    #[arg(long)]
+    pub output: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub struct PluginStatePatchArgs {
+    #[command(flatten)]
+    pub owner: DeviceOwnerArgs,
+    /// Id of the plugin device to edit.
+    #[arg(long)]
+    pub device_id: String,
+    /// Property holding the XML edited by --xml-set; omit for an XML component.
+    #[arg(long, requires = "xml_set")]
+    pub path: Option<String>,
+    /// PATH=VALUE property assignment; VALUE is converted to the property's type. Repeatable.
+    #[arg(
+        long = "set",
+        value_name = "PATH=VALUE",
+        conflicts_with = "operations_file"
+    )]
+    pub set: Vec<String>,
+    /// PATH=FILE replacement of the whole text or XML document held by a property. Repeatable.
+    #[arg(
+        long = "set-file",
+        value_name = "PATH=FILE",
+        conflicts_with = "operations_file"
+    )]
+    pub set_file: Vec<String>,
+    /// XMLPATH=VALUE assignment inside the XML at --path; a missing last element is appended. Repeatable.
+    #[arg(
+        long = "xml-set",
+        value_name = "XMLPATH=VALUE",
+        conflicts_with = "operations_file"
+    )]
+    pub xml_set: Vec<String>,
+    /// JSON array of plugin.state.patch operations, for setTree and multiple XML documents.
+    #[arg(long)]
+    pub operations_file: Option<PathBuf>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -2738,6 +2799,18 @@ impl Cli {
                         command: PluginStateCommand::Save(args),
                     },
             }) => Some(args.output.clone()),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn plugin_state_read_output(&self) -> Option<PathBuf> {
+        match self.command.as_ref() {
+            Some(CliCommand::Plugin {
+                command:
+                    PluginCommand::State {
+                        command: PluginStateCommand::Read(args),
+                    },
+            }) => args.output.clone(),
             _ => None,
         }
     }
@@ -3668,6 +3741,19 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
                     })
                     .into()
                 }
+                PluginStateCommand::Inspect(args) => Runtime::PluginStateInspect(DeviceParams {
+                    owner: args.owner.into_owner()?,
+                    device_id: args.device_id,
+                })
+                .into(),
+                PluginStateCommand::Read(args) => Runtime::PluginStateRead(PluginStateReadParams {
+                    owner: args.owner.into_owner()?,
+                    device_id: args.device_id,
+                    path: args.path,
+                    xml_path: args.xml_path,
+                })
+                .into(),
+                PluginStateCommand::Patch(args) => plugin_state_patch(args)?,
             },
         },
         CliCommand::Missing { command } => match command {
@@ -3930,6 +4016,71 @@ fn plugin_state_load(args: PluginStateLoadArgs) -> Result<ControlCommand, Reques
         state: field("/state", state)?,
     })
     .into())
+}
+
+fn plugin_state_patch(args: PluginStatePatchArgs) -> Result<ControlCommand, RequestError> {
+    let operations = match &args.operations_file {
+        Some(file) => {
+            let encoded = std::fs::read_to_string(file)
+                .map_err(|error| format!("--operations-file could not be read: {error}"))?;
+            serde_json::from_str(&encoded)
+                .map_err(|error| format!("--operations-file is invalid: {error}"))?
+        }
+        None => plugin_state_patch_flags(&args)?,
+    };
+    if operations.is_empty() {
+        return Err("plugin state patch requires at least one edit"
+            .to_owned()
+            .into());
+    }
+    Ok(Runtime::PluginStatePatch(PluginStatePatchParams {
+        owner: args.owner.into_owner()?,
+        device_id: args.device_id,
+        operations,
+    })
+    .into())
+}
+
+fn plugin_state_patch_flags(
+    args: &PluginStatePatchArgs,
+) -> Result<Vec<PluginStatePatchOperation>, RequestError> {
+    let assignment = |flag: &str, text: &str| -> Result<(String, String), RequestError> {
+        text.split_once('=')
+            .map(|(name, value)| (name.to_owned(), value.to_owned()))
+            .ok_or_else(|| format!("{flag} must be NAME=VALUE: {text}").into())
+    };
+    let mut operations = Vec::new();
+    for text in &args.set {
+        let (path, value) = assignment("--set", text)?;
+        operations.push(PluginStatePatchOperation::Set {
+            path,
+            value: PluginStateValue::Text(value),
+        });
+    }
+    for text in &args.set_file {
+        let (path, file) = assignment("--set-file", text)?;
+        let value = std::fs::read_to_string(&file)
+            .map_err(|error| format!("--set-file {file} could not be read: {error}"))?;
+        operations.push(PluginStatePatchOperation::Set {
+            path,
+            value: PluginStateValue::Text(value),
+        });
+    }
+    if !args.xml_set.is_empty() {
+        let values = args
+            .xml_set
+            .iter()
+            .map(|text| {
+                let (xml_path, value) = assignment("--xml-set", text)?;
+                Ok(PluginStateXmlValue { xml_path, value })
+            })
+            .collect::<Result<Vec<_>, RequestError>>()?;
+        operations.push(PluginStatePatchOperation::SetXml {
+            path: args.path.clone().unwrap_or_default(),
+            values,
+        });
+    }
+    Ok(operations)
 }
 
 fn harmony_update(args: MusicalHarmonyUpdateArgs) -> Result<ControlCommand, RequestError> {
@@ -4463,7 +4614,7 @@ mod tests {
         command.clone().debug_assert();
         assert_help(&command, "riffra");
         assert_eq!(command.get_subcommands().count(), 23);
-        assert_eq!(leaves(&command), 182);
+        assert_eq!(leaves(&command), 185);
     }
 
     #[test]
@@ -4665,6 +4816,57 @@ mod tests {
         assert_eq!(
             request.params,
             json!({"owner":{"kind":"track","id":"track:keys"},"deviceId":"device:synth"})
+        );
+
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "plugin",
+            "state",
+            "read",
+            "--track-id",
+            "track:keys",
+            "--device-id",
+            "device:synth",
+            "--path",
+            "Plugin",
+            "--output",
+            "multi.xml",
+        ])
+        .unwrap();
+        assert_eq!(
+            cli.plugin_state_read_output(),
+            Some(PathBuf::from("multi.xml"))
+        );
+        let request = wire(cli);
+        assert_eq!(request.name, "plugin.state.read");
+        assert_eq!(request.params["path"], "Plugin");
+        assert!(request.params.get("output").is_none());
+
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "plugin",
+            "state",
+            "patch",
+            "--track-id",
+            "track:keys",
+            "--device-id",
+            "device:synth",
+            "--set",
+            "Gain=0.5",
+            "--path",
+            "Plugin",
+            "--xml-set",
+            "Part0/InstrumentPath=a=b",
+        ])
+        .unwrap();
+        let request = wire(cli);
+        assert_eq!(request.name, "plugin.state.patch");
+        assert_eq!(
+            request.params["operations"],
+            json!([
+                {"op":"set","path":"Gain","value":"0.5"},
+                {"op":"setXml","path":"Plugin","values":[{"xmlPath":"Part0/InstrumentPath","value":"a=b"}]}
+            ])
         );
 
         let cli = Cli::try_parse_from([

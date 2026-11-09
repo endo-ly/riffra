@@ -168,9 +168,30 @@ Group・Return・Send・Sidechainの正準設定は `mixer get` でまとめて�
 
 EffectとDeviceのOwnerは `--track-id`、`--bus-id`、`--master` のいずれか1つで指定する。Master・BusにはEffectsだけを追加できる。
 
-`--plugin-id` は現在のDataRootのCatalogにあるValidated・Role一致のPluginへ解決され、Projectには解決後のパスが保存される。IDはインストールパスに依存するため、別PCへ持ち運べる識別子ではない。Standaloneではパスだけを登録し実体のロードはRuntimeが行うため、VST3が無い環境でも安全に実行できる。`device inspect`、`device parameter list/get/set`、`plugin state save/load`、`plugin preset` は実体のPluginを扱うため Live Host 専用である。
+`--plugin-id` は現在のDataRootのCatalogにあるValidated・Role一致のPluginへ解決され、Projectには解決後のパスが保存される。IDはインストールパスに依存するため、別PCへ持ち運べる識別子ではない。Standaloneではパスだけを登録し実体のロードはRuntimeが行うため、VST3が無い環境でも安全に実行できる。`device inspect`、`device parameter list/get/set`、`plugin state save/load/inspect/read/patch`、`plugin preset` は実体のPluginを扱うため Live Host 専用である。
 
 Built-in instrumentはparameter、state、preset、editorをサポートしない。
+
+JUCE製PluginのStateは、ファイルを受け渡さず構造を指定して読み書きできる。`inspect` で構造と値の種類を確認し、`read` で1つの値を取り出し、`patch` で指定箇所だけを変更する。
+
+```powershell
+riffra --attach plugin state inspect --track-id <t> --device-id <d>
+riffra --attach plugin state read --track-id <t> --device-id <d> --path Plugin --xml-path Part0/InstrumentPath
+riffra --attach plugin state read --track-id <t> --device-id <d> --path Plugin --output multi.xml
+riffra --attach plugin state patch --track-id <t> --device-id <d> --set PROJECT/Slot/Level=0.5
+riffra --attach plugin state patch --track-id <t> --device-id <d> --path Plugin --xml-set "Part0/InstrumentPath=//Instruments/a.st3i" --xml-set "Part0/@id=1"
+```
+
+| 記法                | 意味                                                                                                            |
+| ------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `--path`            | ValueTreeのパス。子は `Type` か `Type[1]`、最後はプロパティ名。エンコードされた入れ子のTreeも同じ書き方でたどる |
+| `--xml-path`        | `--path` のXMLのルート直下からのパス。属性は `@name`                                                            |
+| `--set`             | 既存プロパティへの代入。値はプロパティの型に変換される。XMLを持つプロパティへは文書全体の置換                   |
+| `--set-file`        | ファイルの中身で文字列・XML文書全体を置換                                                                       |
+| `--xml-set`         | XMLの要素・属性への代入。最後の要素が無ければ親の末尾へ追加。子要素を持つ要素には代入できない                   |
+| `--operations-file` | `set` / `setTree` / `setXml` のJSON配列。Treeの置換や複数のXML文書の編集に使う                                  |
+
+複数の変更は1回の `patch` にまとめる。Stateの適用は音源の読み込みを待つため、数十秒かかることがある。
 
 `device parameter list` の主要フィールドは次のとおり。
 

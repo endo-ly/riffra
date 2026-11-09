@@ -9,6 +9,7 @@ use std::{
 
 pub(crate) mod catalog;
 mod state;
+pub(crate) mod state_document;
 pub(crate) mod validation;
 pub(crate) use catalog::{
     load, reuse_cached_scan_results, save, selected_plugin_path, validated_catalog_plugin,

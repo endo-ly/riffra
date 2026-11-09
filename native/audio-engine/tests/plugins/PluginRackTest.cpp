@@ -309,6 +309,9 @@ TEST(PluginRackTest, RestoresPersistedPluginState) {
         const auto restored = rack->parameters();
         ASSERT_FALSE(restored.empty());
         EXPECT_NEAR(restored[0].value, 0.75f, 0.0001f);
+        const auto captured = rack->persistedState(error);
+        ASSERT_TRUE(captured.has_value()) << error;
+        EXPECT_NEAR(captured->parameterValues[0], 0.75f, 0.0001f);
     }
 }
 
@@ -598,12 +601,14 @@ TEST(PluginRackTest, PersistedStateCapturesUnreadPluginAndCachesUntilChanged) {
     EXPECT_EQ(emptyAgain, empty);
     EXPECT_EQ(trace.stateCaptureCount, 3);
 
-    // State restored from the project stays authoritative without a capture.
+    // Read back the state accepted by the processor after restoring opaque data.
     PluginStateSpec restored;
     restored.stateData = "c3RhdGU=";
     ASSERT_TRUE(rack->applyPersistedState(restored, error)) << error;
-    ASSERT_TRUE(rack->persistedState(error).has_value()) << error;
-    EXPECT_EQ(trace.stateCaptureCount, 3);
+    const auto accepted = rack->persistedState(error);
+    ASSERT_TRUE(accepted.has_value()) << error;
+    EXPECT_NE(accepted->stateData, restored.stateData);
+    EXPECT_EQ(trace.stateCaptureCount, 4);
 }
 
 TEST(PluginRackTest, AutomationBindingUsesProjectedStateWithoutCapturingPluginState) {
