@@ -67,8 +67,13 @@ impl UserInstrumentStore {
         }
     }
 
-    /// Lists all valid User Instrument packages in stable ID order.
-    pub fn list(&self) -> Result<Vec<ResolvedUserInstrument>, String> {
+    /// Scans User Instrument packages, retaining individual failures.
+    /// Successfully resolved packages are returned in stable directory-name order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the store root cannot be inspected or opened as a directory.
+    pub(crate) fn scan(&self) -> Result<Vec<Result<ResolvedUserInstrument, String>>, String> {
         let root = self.user_root();
         let metadata = match fs::symlink_metadata(&root) {
             Ok(metadata) => metadata,
@@ -80,23 +85,44 @@ impl UserInstrumentStore {
         if metadata.file_type().is_symlink() || !metadata.file_type().is_dir() {
             return Err("user instrument store root is not a directory".into());
         }
+        let mut results = Vec::new();
         let mut entries = fs::read_dir(&root)
             .map_err(|error| format!("user instrument store could not be read: {error}"))?
-            .map(|entry| {
-                entry.map_err(|error| {
-                    format!("user instrument store entry could not be read: {error}")
-                })
+            .filter_map(|entry| match entry {
+                Ok(entry) => Some(entry),
+                Err(error) => {
+                    results.push(Err(format!(
+                        "user instrument store entry could not be read: {error}"
+                    )));
+                    None
+                }
             })
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Vec<_>>();
         entries.sort_by_key(|entry| entry.file_name());
-        entries
-            .into_iter()
-            .filter(|entry| {
-                !entry.file_name().to_string_lossy().starts_with('.')
-                    && entry.file_type().is_ok_and(|file_type| file_type.is_dir())
-            })
-            .map(|entry| self.resolve_directory(&entry.path()))
-            .collect()
+        for entry in entries {
+            if entry.file_name().to_string_lossy().starts_with('.') {
+                continue;
+            }
+            let result = entry
+                .file_type()
+                .map_err(|error| format!("package type could not be read: {error}"))
+                .and_then(|file_type| {
+                    if file_type.is_dir() {
+                        self.resolve_directory(&entry.path()).map(Some)
+                    } else {
+                        Ok(None)
+                    }
+                });
+            match result {
+                Ok(Some(instrument)) => results.push(Ok(instrument)),
+                Ok(None) => {}
+                Err(error) => results.push(Err(format!(
+                    "user instrument package '{}': {error}",
+                    entry.file_name().to_string_lossy()
+                ))),
+            }
+        }
+        Ok(results)
     }
 
     /// Resolves one `user:<uuid>` identifier.
@@ -770,6 +796,29 @@ mod tests {
             .unwrap_err();
         assert!(error.contains("user:<canonical-lowercase-uuid>"));
         assert!(error.contains("omit instrumentId"));
+    }
+
+    #[test]
+    fn scan_preserves_package_failures_and_rejects_an_invalid_store_root() {
+        let root = std::env::temp_dir().join(format!("riffra-user-scan-{}", new_instance_id()));
+        let store = UserInstrumentStore::new(&root, Path::new(""));
+        let uuid = new_instance_id();
+        let package = store.user_root().join(&uuid);
+        fs::create_dir_all(&package).unwrap();
+
+        let results = store.scan().unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert!(results[0].as_ref().unwrap_err().contains(&uuid));
+
+        fs::remove_dir_all(store.user_root()).unwrap();
+        fs::write(store.user_root(), b"not a directory").unwrap();
+
+        assert_eq!(
+            store.scan().unwrap_err(),
+            "user instrument store root is not a directory"
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

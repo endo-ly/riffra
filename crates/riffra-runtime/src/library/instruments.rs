@@ -85,8 +85,15 @@ pub fn list(
     let categories = categories(catalog);
     items.extend(
         user_store
-            .list()?
+            .scan()?
             .into_iter()
+            .filter_map(|result| match result {
+                Ok(instrument) => Some(instrument),
+                Err(error) => {
+                    tracing::warn!(%error, "user instrument omitted from library");
+                    None
+                }
+            })
             .map(|instrument| read_user_item(&connection, &categories, instrument))
             .collect::<Result<Vec<_>, _>>()?,
     );
@@ -663,7 +670,7 @@ mod tests {
     }
 
     #[test]
-    fn user_instruments_share_library_preferences() {
+    fn valid_user_instruments_share_library_preferences_among_invalid_packages() {
         let root = TempRoot::new();
         let catalog = catalog(&root.0);
         let uuid = new_instance_id();
@@ -688,7 +695,45 @@ mod tests {
         )
         .unwrap();
 
+        let invalid_id = format!("user:{}", new_instance_id());
+        let invalid_package = root
+            .0
+            .join("instruments/user")
+            .join(invalid_id.strip_prefix("user:").unwrap());
+        fs::create_dir_all(&invalid_package).unwrap();
+        let manifest = crate::instrument::UserInstrumentManifest {
+            format_version: 1,
+            instrument_id: invalid_id.clone(),
+            definition_path: "definition.json".into(),
+            created_at_ms: 1,
+            updated_at_ms: 1,
+        };
+        fs::write(
+            invalid_package.join("definition.json"),
+            r#"{"metadata":{"name":"Invalid"},"layers":[{"generator":{"sample":{"zones":[{"asset":{"path":"../outside.wav"}}]}}}]}"#,
+        ).unwrap();
+        fs::write(
+            invalid_package.join(".riffra-instrument.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+
         let listed = list(&root.0, &catalog).unwrap();
+        assert_eq!(listed.len(), catalog.summaries().len() + 1);
+        assert_eq!(
+            listed
+                .iter()
+                .filter(|item| item.origin == InstrumentOrigin::BuiltIn)
+                .count(),
+            catalog.summaries().len()
+        );
+        assert!(!listed.iter().any(|item| item.id == invalid_id));
+        assert!(
+            get(&root.0, &catalog, &invalid_id)
+                .unwrap_err()
+                .contains("unsafe relative path")
+        );
+
         let user = listed.iter().find(|item| item.id == instrument_id).unwrap();
         assert_eq!(user.origin, InstrumentOrigin::User);
         assert_eq!(user.name, "User Piano");
