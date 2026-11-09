@@ -417,7 +417,7 @@ Sidechain接続は `mixer.sidechain.list` が `sidechainSends` を返す。`mixe
 
 Agent向けCLIの正準Mutation応答は `mutation` receipt(sequence・投影状態・構造IDのみ)へ変換する。Desktop同期の共有プロトコルではCanonical結果を維持する。`plugin state save` は結果をファイルへ保存し、標準出力には保存先のみ返す。
 
-Plugin Stateは通常は不透明なデータとして運ぶ。JUCE製Pluginに限り、`plugin.state.inspect/read/patch` が `VC2!` のHost XML、`<IComponent>`、fxbチャンク、ValueTree、埋め込みXMLを解釈する。`patch` は生きたPluginのStateを取得し、指定箇所だけを書き換えて全操作を1回のState置換として適用する。解釈できないComponentは `inspect` がサイズのみ返し、`patch` は失敗する。
+Plugin Stateは通常は不透明なデータとして運ぶ。JUCE製Pluginに限り、`plugin.state.inspect/read/patch` が `VC2!` のHost XML、`<IComponent>`、fxbチャンク、ValueTree、埋め込みXMLを解釈する。`patch` は生きたPluginのStateを取得し、指定箇所だけを書き換えて全操作を1回のState置換として適用する。構造編集ではState本体を復元し、公開パラメータを含む適用結果をPluginから再取得して正準状態へ保存する。`plugin.state.set` はState本体と指定パラメータを組にして復元する。読み戻しはPluginが受理した状態を示し、発音は保証しない。解釈できないComponentは `inspect` がサイズのみ返し、`patch` は失敗する。
 
 DesktopのTauri command境界とLive HostのControl Serverの機能分担は次の通りである。
 

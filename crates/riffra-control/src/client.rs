@@ -61,7 +61,7 @@ impl LocalHostClient {
     ///
     /// # Errors
     /// Fails when the endpoint is unreachable, the handshake identity does not
-    /// match, or no response arrives within [`COMMAND_TIMEOUT`].
+    /// match, or no response arrives within the command deadline (180 seconds for state writes).
     pub fn request(
         &self,
         request: &ControlRequest,
@@ -71,7 +71,13 @@ impl LocalHostClient {
             .map_err(|error| LocalHostClientError::InvalidRequest(error.message))?;
         let mut stream = self.open_command_stream()?;
         transport::write_frame(&mut *stream, request)?;
-        let response: ControlResponse = transport::read_frame_within(&*stream, COMMAND_TIMEOUT)?;
+        let response: ControlResponse = transport::read_frame_within(
+            &*stream,
+            match request.command.as_str() {
+                "plugin.state.patch" | "plugin.state.set" => Duration::from_secs(180),
+                _ => COMMAND_TIMEOUT,
+            },
+        )?;
         if response.request_id != request.request_id {
             return Err(LocalHostClientError::ResponseMismatch {
                 expected: request.request_id.clone(),
