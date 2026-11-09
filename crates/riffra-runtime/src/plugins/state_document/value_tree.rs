@@ -81,12 +81,12 @@ pub(super) fn read_tree(data: &[u8]) -> Option<(PluginStateTree, usize)> {
     Some((tree, reader.position))
 }
 
-/// Decodes base64 text that holds one `ValueTree`, allowing the zero padding of a JUCE memory block.
+/// Decodes base64 text that starts with a `ValueTree`.
+///
+/// Bytes after the tree are ignored because plugins may encode a whole JUCE memory block, whose
+/// unused capacity holds arbitrary data.
 pub(super) fn decode_tree(text: &str) -> Option<PluginStateTree> {
-    let data = decode_base64(text)?;
-    read_tree(&data)
-        .filter(|(_, used)| data[*used..].iter().all(|byte| *byte == 0))
-        .map(|(tree, _)| tree)
+    read_tree(&decode_base64(text)?).map(|(tree, _)| tree)
 }
 
 /// Encodes one `ValueTree` as base64 text.
@@ -329,9 +329,7 @@ mod tests {
 
         assert_eq!(decoded, tree);
         assert_eq!(used, encoded.len());
-        encoded.resize(encoded.len() + 16, 0);
+        encoded.extend_from_slice(&[0, 255, 7]);
         assert_eq!(decode_tree(&encode_base64(&encoded)), Some(tree));
-        encoded.push(1);
-        assert_eq!(decode_tree(&encode_base64(&encoded)), None);
     }
 }
