@@ -312,6 +312,7 @@ struct DesktopEventRouter {
     discarded_through: AtomicU64,
     delivery: Mutex<()>,
     pending: Mutex<BTreeMap<u64, Vec<HostEventFrame>>>,
+    active_project_id: RwLock<Option<String>>,
 }
 
 impl DesktopEventRouter {
@@ -322,6 +323,7 @@ impl DesktopEventRouter {
             discarded_through: AtomicU64::new(0),
             delivery: Mutex::new(()),
             pending: Mutex::new(BTreeMap::new()),
+            active_project_id: RwLock::new(None),
         })
     }
 
@@ -386,6 +388,7 @@ impl DesktopEventRouter {
             .lock()
             .expect("Host event buffer was poisoned")
             .retain(|queued_generation, _| *queued_generation >= generation);
+        self.set_active_project(&connection.bootstrap.project_state.active_project_id);
         self.outlet.emit_connection_changed(connection);
         let queued = self
             .pending
@@ -423,9 +426,30 @@ impl DesktopEventRouter {
         }
     }
 
+    /// Delivers a frame of the active generation to the WebView, keeping the
+    /// Project bound to Desktop commands aligned with what the WebView shows.
     fn emit_frame(&self, frame: HostEventFrame) {
+        if frame.event == "project-activated"
+            && let Some(project_id) = frame.payload["projectState"]["activeProjectId"].as_str()
+        {
+            self.set_active_project(project_id);
+        }
         self.outlet
             .emit_host_event(&frame.event.clone(), frame.payload);
+    }
+
+    fn set_active_project(&self, project_id: &str) {
+        *self
+            .active_project_id
+            .write()
+            .expect("active Project lock was poisoned") = Some(project_id.to_owned());
+    }
+
+    fn active_project(&self) -> Option<String> {
+        self.active_project_id
+            .read()
+            .expect("active Project lock was poisoned")
+            .clone()
     }
 }
 
@@ -444,7 +468,6 @@ impl HostEventSink for EmbeddedEventSink {
 pub struct HostConnectionManager {
     active: RwLock<ActiveHost>,
     bootstrap: RwLock<Option<HostBootstrap>>,
-    active_project_id: RwLock<Option<String>>,
     operation_barrier: RwLock<()>,
     switch_mutex: Mutex<()>,
     next_generation: AtomicU64,
@@ -488,7 +511,6 @@ impl HostConnectionManager {
                 reason: "Host is starting".into(),
             }),
             bootstrap: RwLock::new(None),
-            active_project_id: RwLock::new(None),
             operation_barrier: RwLock::new(()),
             switch_mutex: Mutex::new(()),
             next_generation: AtomicU64::new(1),
@@ -539,16 +561,6 @@ impl HostConnectionManager {
     fn handle_message(&self, message: ConnectionMessage) {
         match message {
             ConnectionMessage::Event { generation, frame } => {
-                if frame.event == "project-activated"
-                    && self.active_state().generation == generation
-                    && let Some(project_id) =
-                        frame.payload["projectState"]["activeProjectId"].as_str()
-                {
-                    *self
-                        .active_project_id
-                        .write()
-                        .expect("active Project lock was poisoned") = Some(project_id.to_owned());
-                }
                 self.router.receive(generation, frame);
             }
             ConnectionMessage::Disconnected { generation, reason } => {
@@ -650,18 +662,12 @@ impl HostConnectionManager {
                 .bootstrap
                 .write()
                 .map_err(|_| "Host bootstrap lock was poisoned".to_string())?;
-            let mut active_project_id = self
-                .active_project_id
-                .write()
-                .map_err(|_| "active Project lock was poisoned".to_string())?;
             let connection = HostConnectionBootstrap {
                 bootstrap: self.to_desktop_bootstrap(&state, &prepared.bootstrap),
                 state,
             };
             std::mem::swap(&mut *active, &mut prepared.active);
             *bootstrap = Some(prepared.bootstrap.clone());
-            *active_project_id = Some(prepared.bootstrap.project_state.active_project_id.clone());
-            drop(active_project_id);
             drop(bootstrap);
             drop(active);
             self.router.activate(generation, &connection);
@@ -986,16 +992,9 @@ impl HostConnectionManager {
         let mut request =
             command.into_request(format!("desktop-command-{}", new_instance_id()), None);
         if scope != CommandScope::Host {
-            let project_id = self
-                .active_project_id
-                .read()
-                .map_err(|_| {
-                    NativeCommandError::command_failed("active Project lock was poisoned")
-                })?
-                .clone()
-                .ok_or_else(|| {
-                    NativeCommandError::invalid_request("active Project is not available")
-                })?;
+            let project_id = self.router.active_project().ok_or_else(|| {
+                NativeCommandError::invalid_request("active Project is not available")
+            })?;
             request.expected_project_id = Some(project_id);
         }
         let (response, attached_generation) = {
@@ -1028,16 +1027,9 @@ impl HostConnectionManager {
             }
         };
         let output = response_output(response)?;
-        let active_project_id = match &output {
-            ControlOutput::ProjectActivation(activation) => {
-                Some(&activation.project_state.active_project_id)
-            }
-            _ => None,
-        };
-        if let Some(project_id) = active_project_id {
-            *self.active_project_id.write().map_err(|_| {
-                NativeCommandError::command_failed("active Project lock was poisoned")
-            })? = Some(project_id.clone());
+        if let ControlOutput::ProjectActivation(activation) = &output {
+            self.router
+                .set_active_project(&activation.project_state.active_project_id);
         }
         Ok(output)
     }
@@ -1749,6 +1741,50 @@ mod tests {
             host.data_root().to_path_buf(),
             manager.registry.root().to_path_buf(),
         ]);
+    }
+
+    #[test]
+    fn external_project_activation_rebinds_desktop_commands_to_the_new_project() {
+        // Arrange
+        let (manager, _outlet) = test_manager("external-activation");
+        let root = manager.settings.data_root.clone();
+        let generation = manager.state().generation;
+        let initial_project_id = manager.router.active_project().unwrap();
+        let external = LocalHostClient::connect_data_root(&root).unwrap();
+
+        // Act: another client of the embedded Host switches the Project.
+        let created = external
+            .request(
+                &ControlRequest::new(
+                    "external-project-create",
+                    "project.create",
+                    json!({"name": "From CLI"}),
+                    None,
+                )
+                .with_expected_project_id(initial_project_id.clone()),
+            )
+            .unwrap();
+        assert!(created.ok, "{:?}", created.error);
+        let active_project_id = manager.router.active_project().unwrap();
+
+        // Assert
+        assert_ne!(active_project_id, initial_project_id);
+        manager
+            .dispatch(add_track("After external switch"))
+            .unwrap();
+
+        // A Host this Desktop already left cannot rebind later commands.
+        manager.router.receive(
+            generation - 1,
+            HostEventFrame::new(
+                "project-activated",
+                json!({"projectState": {"activeProjectId": initial_project_id}}),
+            ),
+        );
+        assert_eq!(manager.router.active_project().unwrap(), active_project_id);
+
+        manager.shutdown();
+        cleanup(&[root, manager.registry.root().to_path_buf()]);
     }
 
     #[test]
