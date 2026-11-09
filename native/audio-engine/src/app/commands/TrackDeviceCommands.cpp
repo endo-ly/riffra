@@ -11,6 +11,8 @@ namespace riffra {
 namespace {
 
 constexpr auto kTrackDeviceWatchdogTimeout = std::chrono::seconds(10);
+// Sample-based instruments load their sounds before setState returns.
+constexpr auto kPluginStateRestoreWatchdogTimeout = std::chrono::seconds(120);
 // Queue budgets stay below the matching Rust-side response deadlines.
 constexpr auto kTrackDeviceQueueTimeout = std::chrono::seconds(8);
 constexpr auto kDeviceBypassQueueTimeout = std::chrono::seconds(2);
@@ -145,7 +147,7 @@ void AudioCommandDispatcher::handle(const SetPluginStateCommand& command,
             else
                 pending->fail("trackDevice", deviceError, "track.device.setPluginState");
         },
-        kTrackDeviceWatchdogTimeout, kTrackDeviceQueueTimeout,
+        kPluginStateRestoreWatchdogTimeout, kTrackDeviceQueueTimeout,
         [pending] { failExpiredTrackDeviceCommand(pending, "track.device.setPluginState"); });
     if (!submitted) {
         pending->fail("runtimeLifecycle", "The VST lifecycle executor is stopping.",
