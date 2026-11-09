@@ -112,6 +112,7 @@ fn run(cli: Cli) -> Result<(), RunFailure> {
     let attach = cli.attach;
     let data_root = cli.data_root.clone();
     let plugin_state_output = cli.plugin_state_save_output();
+    let plugin_state_read_output = cli.plugin_state_read_output();
     let audio_diagnostics_options = cli.audio_diagnostics_options();
     let host_id = cli.host.clone();
     let expected_sequence = cli.expected_sequence;
@@ -243,6 +244,7 @@ fn run(cli: Cli) -> Result<(), RunFailure> {
         }
         let response = annotate_batch_error(response, batch_operation_lines.as_deref());
         let response = save_plugin_state_response(plugin_state_output.as_deref(), response)?;
+        let response = save_plugin_state_read(plugin_state_read_output.as_deref(), response)?;
         let response = compact_agent_response(response);
         if let Some((json, _)) = audio_diagnostics_options {
             if !response.ok {
@@ -358,6 +360,39 @@ fn save_plugin_state_response(
         .map_err(|error| format!("plugin state file could not be written: {error}"))?;
     response.result = Some(CommandResult {
         result_type: "pluginStateSaved".into(),
+        value: serde_json::json!({"output": output.to_string_lossy()}),
+    });
+    Ok(response)
+}
+
+fn save_plugin_state_read(
+    output: Option<&Path>,
+    mut response: ControlResponse,
+) -> Result<ControlResponse, String> {
+    let Some(output) = output else {
+        return Ok(response);
+    };
+    if !response.ok {
+        return Ok(response);
+    }
+    let result = response
+        .result
+        .take()
+        .ok_or_else(|| "plugin state response did not contain a result".to_string())?;
+    let encoded = match result.value.get("kind").and_then(serde_json::Value::as_str) {
+        Some("xml") => result.value["text"].as_str().map(str::to_owned),
+        Some("value") => result.value["value"].as_str().map(str::to_owned),
+        _ => None,
+    };
+    let encoded = match encoded {
+        Some(text) => text.into_bytes(),
+        None => serde_json::to_vec_pretty(&result.value)
+            .map_err(|error| format!("plugin state value could not be encoded: {error}"))?,
+    };
+    std::fs::write(output, encoded)
+        .map_err(|error| format!("plugin state value could not be written: {error}"))?;
+    response.result = Some(CommandResult {
+        result_type: "pluginStateValueSaved".into(),
         value: serde_json::json!({"output": output.to_string_lossy()}),
     });
     Ok(response)
