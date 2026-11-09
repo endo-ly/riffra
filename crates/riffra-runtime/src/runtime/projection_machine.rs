@@ -228,6 +228,16 @@ impl Machine {
                     self.counters.error = None;
                     effects.push(Effect::Respond { result: Ok(None) });
                 } else {
+                    tracing::warn!(
+                        ?key,
+                        active_key = ?self.active.as_ref().map(|graph| graph.key),
+                        active_environment = ?self.active.as_ref().map(|graph| graph.environment),
+                        environment = ?self.environment,
+                        job_operation = ?self.job.as_ref().map(|job| job.request.operation),
+                        queued_operation = ?self.queued.as_ref().map(|request| request.operation),
+                        stopped = self.counters.stopped,
+                        "prepared runtime candidate could not be promoted"
+                    );
                     effects.push(Effect::Respond {
                         result: Err(RuntimeError::Internal(
                             "prepared runtime candidate is no longer available".into(),
@@ -443,18 +453,10 @@ impl Machine {
             self.counters.error = None;
             self.counters.operation = operation;
             self.counters.target = Some(key);
-            if self.active.as_ref().is_some_and(|active| {
-                active.environment == self.environment
-                    && same_projected_graph(&active.projection, &projection)
-            }) {
+            if self.active_holds(&projection) {
                 self.supersede_queued_canonical(effects);
-                let active = self.active.as_mut().expect("active checked");
-                active.key = key;
-                active.origin = Origin::Canonical;
-                if let Some(waiter) = waiter {
-                    self.complete(waiter, Ok(self.status()), effects);
-                }
-                return Ok(CanonicalSubmit::Adopted);
+                self.active.as_mut().expect("active checked").origin = Origin::Canonical;
+                return Ok(self.adopt_active(key, waiter, effects));
             }
             let matching_job = self
                 .job
@@ -493,6 +495,10 @@ impl Machine {
                     key,
                 }));
             }
+        } else if self.job.is_none() && self.active_holds(&projection) {
+            // The running graph already is the proposal, so its plugins are
+            // kept instead of being instantiated again.
+            return Ok(self.adopt_active(key, waiter, effects));
         }
         let request = Request {
             operation,
@@ -526,6 +532,26 @@ impl Machine {
             operation_id: operation,
             key,
         }))
+    }
+
+    fn active_holds(&self, projection: &ProjectedTimeline) -> bool {
+        self.active.as_ref().is_some_and(|active| {
+            active.environment == self.environment
+                && same_projected_graph(&active.projection, projection)
+        })
+    }
+
+    fn adopt_active(
+        &mut self,
+        key: ProjectionKey,
+        waiter: Option<OperationId>,
+        effects: &mut Vec<Effect>,
+    ) -> CanonicalSubmit {
+        self.active.as_mut().expect("active checked").key = key;
+        if let Some(waiter) = waiter {
+            self.complete(waiter, Ok(self.status()), effects);
+        }
+        CanonicalSubmit::Adopted
     }
 
     fn start(&mut self, request: Request, now: Instant) {
@@ -578,8 +604,11 @@ impl Machine {
     }
 
     fn install_committed_graph(&mut self, request: Request, environment: Environment) {
+        // A request newer than the canonical intent keeps its own identity:
+        // a Project reload proposes the same graph under the next sequence.
         let adopted = self.canonical.as_ref().filter(|intent| {
             environment == self.environment
+                && intent.key.sequence >= request.key.sequence
                 && same_projected_graph(&intent.projection, &request.projection)
         });
         self.active = Some(Graph {
@@ -1275,6 +1304,40 @@ mod tests {
         assert_eq!(machine.status(), before);
         assert_eq!(machine.status().active_projection_sequence, Some(1));
         assert_eq!(machine.status().state, RuntimeProjectionState::Active);
+    }
+    #[test]
+    fn promotes_a_candidate_that_repeats_the_current_graph_under_a_newer_key() {
+        // Arrange
+        let now = Instant::now();
+        let mut machine = machine(now);
+        let graph = snapshot(10);
+        active(&mut machine, graph.clone(), key(1, 10), now);
+
+        // Act: nothing is running, so the active graph satisfies the candidate.
+        let (_, effects) = submit(&mut machine, reidentify(&graph, 10), key(2, 10), false, now);
+        let promoted = machine.step(Input::PromoteCandidate { key: key(2, 10) }, now);
+
+        // Assert
+        no_prepare(&effects);
+        assert!(matches!(response(&promoted), Ok(None)));
+        assert_eq!(machine.status().active_projection_sequence, Some(2));
+        assert_eq!(machine.status().state, RuntimeProjectionState::Active);
+
+        // A candidate queued behind the canonical job for its graph keeps its key.
+        let running_graph = snapshot(11);
+        let (running, _) = submit(&mut machine, running_graph.clone(), key(3, 11), true, now);
+        let (candidate, _) = submit(
+            &mut machine,
+            reidentify(&running_graph, 11),
+            key(4, 11),
+            false,
+            now,
+        );
+        finish(&mut machine, running, now);
+        finish(&mut machine, candidate, now);
+        let promoted = machine.step(Input::PromoteCandidate { key: key(4, 11) }, now);
+        assert!(matches!(response(&promoted), Ok(None)));
+        assert_eq!(machine.status().active_projection_sequence, Some(4));
     }
     #[test]
     fn does_not_publish_candidate_status_before_canonical_promotion() {
