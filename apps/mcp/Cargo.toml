@@ -1,6 +1,6 @@
 [package]
 name = "riffra-mcp"
-version = "2026.11.9"
+version = "2026.11.10"
 description = "MCP stdio server for a running Riffra Host"
 authors = ["Riffra contributors"]
 edition = "2024"
