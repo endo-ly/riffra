@@ -311,6 +311,7 @@ fn response_name(response: &SidecarResponse) -> &'static str {
 
 fn event_name(event: &SidecarEvent) -> &'static str {
     match event {
+        SidecarEvent::TimelineLoadProgress { .. } => "timelineLoadProgress",
         SidecarEvent::Ready { .. } => "ready",
         SidecarEvent::AudioStatus(_) => "audioStatus",
         SidecarEvent::AudioMeters(_) => "audioMeters",
@@ -344,7 +345,7 @@ const RESPONSES: [&str; 12] = [
     "pluginState",
     "deviceProgramChanged",
 ];
-const EVENTS: [&str; 9] = [
+const EVENTS: [&str; 10] = [
     "ready",
     "audioStatus",
     "audioMeters",
@@ -352,6 +353,7 @@ const EVENTS: [&str; 9] = [
     "recordingComplete",
     "pluginStateChanged",
     "pluginStateFinal",
+    "timelineLoadProgress",
     "pluginParameterChanged",
     "fault",
 ];

@@ -1,13 +1,13 @@
 {
+  "requestId": 1,
   "command": {
-    "deviceId": "device-1",
-    "owner": {
-      "id": "track-1",
-      "kind": "track"
-    },
-    "parameterIndex": 2,
     "type": "getDeviceParameterDisplayValue",
+    "owner": {
+      "kind": "track",
+      "id": "track-1"
+    },
+    "deviceId": "device-1",
+    "parameterIndex": 2,
     "value": 0.5
-  },
-  "requestId": 1
+  }
 }

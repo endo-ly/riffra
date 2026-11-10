@@ -134,7 +134,8 @@ juce::AudioProcessor::BusesLayout layoutWithMainBuses(juce::AudioProcessor& proc
 std::optional<PluginLoadError> PluginRack::load(const juce::String& path, const double sampleRate,
                                                 const int blockSize,
                                                 const PluginProcessingMode mode,
-                                                const bool sidechainInput) {
+                                                const bool sidechainInput,
+                                                const PluginLoadObserver& observer) {
     const juce::File file(path);
     if (path.isEmpty() || !file.exists()) {
         return PluginLoadError{
@@ -144,6 +145,7 @@ std::optional<PluginLoadError> PluginRack::load(const juce::String& path, const 
     }
     if (formatManager.getNumFormats() == 0) juce::addDefaultFormatsToManager(formatManager);
 
+    if (observer) observer(LoadPhase::creating);
     const auto description = pluginDescriptionCache().findOrDescribe(file, path);
     if (!description.has_value()) {
         return PluginLoadError{
@@ -177,6 +179,7 @@ std::optional<PluginLoadError> PluginRack::load(const juce::String& path, const 
         };
     }
 
+    if (observer) observer(LoadPhase::preparing);
     candidate->setPlayHead(&playHead);
     ProcessorLayout layout;
     if (auto configurationError =

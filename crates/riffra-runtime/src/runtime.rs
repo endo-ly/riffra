@@ -12,8 +12,8 @@ pub(crate) use self::projection_coordinator::{ProjectionStatusHook, ProjectionWa
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
-/// Maximum time spent preparing one native graph.
-pub const TIMELINE_PREPARE_TIMEOUT: Duration = Duration::from_secs(30);
+/// Poll interval while another lifecycle operation owns the native loader.
+pub(crate) const PROJECTION_IDLE_POLL_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Returns whether a native failure kind left the runtime unchanged, so the same
 /// request may succeed when retried.
@@ -75,7 +75,6 @@ use crate::execution::ProjectedTimeline;
 use riffra_core::ProjectionKey;
 use serde_json::Value;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
 
 pub(crate) struct RuntimeReconciler<D: RuntimeDriver> {
     projection: ProjectionCoordinator<D>,
@@ -174,10 +173,7 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
         projection: Arc<ProjectedTimeline>,
         key: ProjectionKey,
     ) -> CanonicalProjectionOutcome {
-        match self
-            .projection
-            .submit_canonical_with_deadline(projection, key, None)
-        {
+        match self.projection.submit_canonical(projection, key) {
             Ok(CanonicalSubmit::Adopted) => CanonicalProjectionOutcome::Adopted,
             Ok(CanonicalSubmit::Deferred(_)) => CanonicalProjectionOutcome::Adopted,
             Ok(CanonicalSubmit::Queued(_)) => CanonicalProjectionOutcome::Queued,
@@ -220,18 +216,10 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
         &self,
         projection: Arc<ProjectedTimeline>,
         key: ProjectionKey,
-        timeout: Duration,
     ) -> Result<RuntimeProjectionStatus, RuntimeError> {
-        let deadline = Instant::now() + timeout;
-        match self
-            .projection
-            .submit_canonical_with_deadline(projection, key, Some(deadline))?
-        {
-            CanonicalSubmit::Adopted => Ok(self.status()),
-            CanonicalSubmit::Deferred(operation) | CanonicalSubmit::Queued(operation) => self
-                .projection
-                .wait_for_operation(operation.operation_id, operation.key, deadline, timeout),
-        }
+        let operation = self.projection.submit_operation(projection, key, true)?;
+        self.projection
+            .wait_for_operation(operation.operation_id, None)
     }
 
     /// Applies a proposed graph without making it the restart recovery source.
@@ -239,17 +227,10 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
         &self,
         projection: Arc<ProjectedTimeline>,
         key: ProjectionKey,
-        timeout: Duration,
     ) -> Result<RuntimeProjectionStatus, RuntimeError> {
-        let deadline = Instant::now() + timeout;
-        let operation = self.projection.submit_with_canonical_deadline(
-            projection,
-            key,
-            Some(deadline),
-            false,
-        )?;
+        let operation = self.projection.submit_operation(projection, key, false)?;
         self.projection
-            .wait_for_operation(operation.operation_id, operation.key, deadline, timeout)
+            .wait_for_operation(operation.operation_id, None)
     }
 
     /// Waits until the native timeline holds the projected graph for `key` so
@@ -260,14 +241,12 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
     /// # Errors
     ///
     /// Propagates the projection error when it failed or was replaced by a
-    /// newer canonical state, and [`RuntimeError::Timeout`] after
-    /// [`TIMELINE_PREPARE_TIMEOUT`].
+    /// newer canonical state. Waiting does not impose a load deadline.
     pub(crate) fn wait_for_native_projection(
         &self,
         key: ProjectionKey,
     ) -> Result<ProjectionWait, RuntimeError> {
-        self.projection
-            .wait_for_projection(key, TIMELINE_PREPARE_TIMEOUT)
+        self.projection.wait_for_projection(key, None)
     }
 
     /// Registers a Play intent without starting a new projection. Canonical
@@ -355,8 +334,6 @@ mod tests {
         loaded: Mutex<Vec<u64>>,
         pending: Mutex<Option<u64>>,
         prepare_delay: Duration,
-        prepare_timeout_ms: AtomicU64,
-        minimum_prepare_timeout_ms: AtomicU64,
         prepare_started: AtomicU64,
         transport_failure_once: AtomicU64,
         played: AtomicU64,
@@ -371,8 +348,6 @@ mod tests {
                 loaded: Mutex::new(Vec::new()),
                 pending: Mutex::new(None),
                 prepare_delay: load_delay,
-                prepare_timeout_ms: AtomicU64::new(0),
-                minimum_prepare_timeout_ms: AtomicU64::new(0),
                 prepare_started: AtomicU64::new(0),
                 transport_failure_once: AtomicU64::new(0),
                 played: AtomicU64::new(0),
@@ -386,17 +361,9 @@ mod tests {
         fn prepare_timeline_snapshot(
             &self,
             snapshot: &crate::execution::TimelineSnapshot,
-            timeout: Duration,
+            _progress: &dyn Fn(crate::api::output::RuntimeLoadStep),
         ) -> Result<(), RuntimeError> {
-            self.prepare_timeout_ms
-                .store(timeout.as_millis() as u64, Ordering::Release);
             self.prepare_started.fetch_add(1, Ordering::Release);
-            if timeout.as_millis() < self.minimum_prepare_timeout_ms.load(Ordering::Acquire) as u128
-            {
-                return Err(RuntimeError::Timeout {
-                    message: "VST prepare requires the full lifecycle budget.".into(),
-                });
-            }
             thread::sleep(self.prepare_delay);
             if self
                 .transport_failure_once
@@ -576,22 +543,5 @@ mod tests {
         let started = Instant::now();
         drop(reconciler);
         assert!(started.elapsed() < Duration::from_millis(100));
-    }
-
-    #[test]
-    fn supports_a_slow_vst_prepare_within_the_lifecycle_budget() {
-        let driver = Arc::new(FakeDriver::new(Duration::from_millis(5)));
-        driver
-            .minimum_prepare_timeout_ms
-            .store(15_000, Ordering::Release);
-        let reconciler = RuntimeReconciler::new(Arc::clone(&driver)).unwrap();
-
-        let status = reconciler
-            .apply_and_wait(snapshot(31), key(31, 31), Duration::from_secs(30))
-            .unwrap();
-
-        assert_eq!(status.active_session_revision, Some(31));
-        assert!(driver.prepare_timeout_ms.load(Ordering::Acquire) > 15_000);
-        assert_eq!(driver.runtime_generation(), 1);
     }
 }

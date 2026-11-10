@@ -1,5 +1,4 @@
 #pragma once
-
 #include <JuceHeader.h>
 
 #include <array>
@@ -27,6 +26,7 @@
 #include "concurrency/RealtimeCommandQueue.h"
 #include "concurrency/SeqLockFrame.h"
 #include "contract/ExecutionGraph.h"
+#include "contract/LoadProgress.h"
 #include "contract/SidecarMessages.h"
 #include "instruments/InstrumentRuntime.h"
 #include "instruments/SonalloyInstrumentRuntime.h"
@@ -109,7 +109,7 @@ public:
     // Graph preparation. Message thread.
     bool loadSnapshot(const TimelineSnapshotSpec& snapshot, juce::AudioFormatManager& formats,
                       double outputSampleRate, int maximumBlockSize, juce::String& error,
-                      bool commitImmediately = true);
+                      bool commitImmediately = true, const LoadObserver& observer = {});
     RealtimeRequest commitPreparedSnapshot(juce::String& error);
     void discardPreparedSnapshot() noexcept;
     [[nodiscard]] bool preparedOwnerReusesRuntimeDevices(const EffectOwnerSpec& deviceOwner) const;

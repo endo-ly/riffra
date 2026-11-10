@@ -99,6 +99,10 @@ pub(crate) struct SidecarError {
     deny_unknown_fields
 )]
 pub(crate) enum SidecarEvent {
+    TimelineLoadProgress {
+        request_id: u64,
+        progress: crate::api::output::RuntimeLoadStep,
+    },
     /// The first message of a sidecar generation.
     Ready {
         protocol_version: u32,

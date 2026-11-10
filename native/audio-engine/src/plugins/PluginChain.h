@@ -44,7 +44,7 @@ public:
     bool load(const std::vector<PluginDeviceSpec>& devices,
               const std::vector<SidechainSendSpec>& sidechainSends, double sampleRate,
               int blockSize, PluginProcessingMode mode, juce::String& error,
-              const juce::String& runtimeRole);
+              const juce::String& runtimeRole, const DeviceLoadObserver& observer = {});
     void reset() noexcept;
     void release() noexcept;
     void clear() noexcept;

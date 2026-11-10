@@ -5,12 +5,14 @@ import type { AudioDiagnosticsOutput } from './AudioDiagnosticsOutput';
 import type { AudioDiagnosticsRealtime } from './AudioDiagnosticsRealtime';
 import type { AudioInstrumentFault } from './AudioInstrumentFault';
 import type { AudioTrackLoad } from './AudioTrackLoad';
+import type { RuntimeLoadProgress } from './RuntimeLoadProgress';
 
 /**
  * Read-only diagnostic snapshot assembled from the live Host and Native
  * audio status without changing runtime state or resetting counters.
  */
 export type AudioDiagnosticsReport = {
+  preparation?: RuntimeLoadProgress;
   /**
    * Parameters that could not be bound in the active execution graph.
    */

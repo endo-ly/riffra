@@ -199,7 +199,8 @@ bool PluginRack::applyStateData(const juce::String& base64, juce::String& error)
     return true;
 }
 
-bool PluginRack::applyPersistedState(const PluginStateSpec& state, juce::String& error) noexcept {
+bool PluginRack::applyPersistedState(const PluginStateSpec& state, juce::String& error,
+                                     const PluginLoadObserver& observer) noexcept {
     if (isAutomationActive()) {
         error = "device state editing is unavailable during automation read";
         return false;
@@ -239,6 +240,7 @@ bool PluginRack::applyPersistedState(const PluginStateSpec& state, juce::String&
         return false;
     }
     const auto restoresOpaqueState = state.stateData.has_value() && state.stateData->isNotEmpty();
+    if (observer) observer(LoadPhase::restoring);
     if (restoresOpaqueState && !applyStateData(*state.stateData, error)) return false;
     {
         const juce::SpinLock::ScopedLockType lock(pluginLock);

@@ -1,13 +1,13 @@
 {
+  "requestId": 1,
   "command": {
-    "previewToken": 17,
+    "type": "previewAutomationValue",
     "target": {
       "kind": "trackMix",
-      "parameter": "volume",
-      "trackId": "track-1"
+      "trackId": "track-1",
+      "parameter": "volume"
     },
-    "type": "previewAutomationValue",
-    "value": -3.0
-  },
-  "requestId": 1
+    "value": -3.0,
+    "previewToken": 17
+  }
 }

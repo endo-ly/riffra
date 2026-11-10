@@ -1,6 +1,6 @@
 {
+  "requestId": 1,
   "command": {
     "type": "stopInstrumentPreview"
-  },
-  "requestId": 1
+  }
 }

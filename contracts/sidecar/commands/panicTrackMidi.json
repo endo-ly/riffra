@@ -1,7 +1,7 @@
 {
+  "requestId": 1,
   "command": {
-    "trackId": "track-1",
-    "type": "panicTrackMidi"
-  },
-  "requestId": 1
+    "type": "panicTrackMidi",
+    "trackId": "track-1"
+  }
 }

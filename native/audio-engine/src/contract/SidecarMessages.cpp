@@ -422,6 +422,21 @@ juce::var encodeResponseBody(const SidecarResponseSpec& response) {
 juce::var encodeEventBody(const SidecarEventSpec& event) {
     return std::visit(
         Overloaded{
+            [](const TimelineLoadProgressSpec& event) {
+                const auto& p = event.progress;
+                return ObjectBuilder{}
+                    .set("type", "timelineLoadProgress")
+                    .set("requestId", integer(event.requestId))
+                    .set("progress", ObjectBuilder{}
+                                         .set("phase", loadPhaseName(p.phase))
+                                         .set("ownerId", p.ownerId)
+                                         .set("deviceId", p.deviceId)
+                                         .set("pluginPath", p.pluginPath)
+                                         .set("completedDevices", integer(p.completedDevices))
+                                         .set("totalDevices", integer(p.totalDevices))
+                                         .build())
+                    .build();
+            },
             [](const ReadySpec& ready) {
                 return ObjectBuilder{}
                     .set("type", "ready")

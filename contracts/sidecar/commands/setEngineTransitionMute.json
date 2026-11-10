@@ -1,7 +1,7 @@
 {
+  "requestId": 1,
   "command": {
-    "active": true,
-    "type": "setEngineTransitionMute"
-  },
-  "requestId": 1
+    "type": "setEngineTransitionMute",
+    "active": true
+  }
 }

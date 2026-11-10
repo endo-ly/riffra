@@ -168,6 +168,8 @@ std::vector<SidecarEventSpec> events() {
                                    EffectOwnerSpec{EffectOwnerKindSpec::track, "track-1"},
                                    "device-1", 2, 0.5f},
         FaultSpec{error()},
+        TimelineLoadProgressSpec{
+            1, {LoadPhase::restoring, "track-1", "device-1", "Plugin.vst3", 1, 2}},
     };
 }
 

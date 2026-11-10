@@ -380,6 +380,18 @@ impl AudioSupervisor {
 
     fn apply_event(&self, generation: u64, event: SidecarEvent) {
         match event {
+            SidecarEvent::TimelineLoadProgress {
+                request_id,
+                progress,
+            } => {
+                if generation == self.sidecar_generation() {
+                    super::command_bus::report_load_progress(
+                        &self.command_bus.pending,
+                        request_id,
+                        progress,
+                    );
+                }
+            }
             SidecarEvent::Ready {
                 protocol_version,
                 status,
@@ -487,7 +499,7 @@ mod tests {
         assert!(matches!(
             supervisor.process.startup_failure(generation),
             Some(NativeAudioError::Protocol { message })
-                if message == "sidecar protocol version mismatch: expected 4, got 2"
+                if message == "sidecar protocol version mismatch: expected 5, got 2"
         ));
     }
 

@@ -10,7 +10,7 @@ use serde_json::Value;
 use std::sync::Arc;
 use std::time::Duration;
 
-const PROJECT_RUNTIME_TIMEOUT: Duration = Duration::from_secs(60);
+const PROJECT_EDITOR_CLOSE_TIMEOUT: Duration = Duration::from_secs(60);
 
 pub(super) fn dispatch(
     state: &HostState,
@@ -188,7 +188,7 @@ fn activate_project_inner(
     if !state.safe_mode {
         state
             .audio
-            .close_editor_before_project_switch(PROJECT_RUNTIME_TIMEOUT)
+            .close_editor_before_project_switch(PROJECT_EDITOR_CLOSE_TIMEOUT)
             .map_err(|error| command_error(error.to_string()))?;
     }
     state.take_closing_plugin_changes(writer)?;
@@ -302,7 +302,6 @@ fn apply_project_runtime_candidate(
                 .map_err(command_error)?,
             ),
             key,
-            PROJECT_RUNTIME_TIMEOUT,
         )
         .map(|_| ())
         .map_err(project_runtime_projection_error)
@@ -381,7 +380,6 @@ pub(super) fn apply_project_runtime_transition(
                 sequence: canonical.sequence,
                 session_revision: canonical.session.arrangement.revision,
             },
-            PROJECT_RUNTIME_TIMEOUT,
         )
         .map_err(project_runtime_projection_error)?;
     Ok(())

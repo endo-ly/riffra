@@ -1,7 +1,7 @@
 {
+  "requestId": 1,
   "command": {
-    "trackId": "track-1",
-    "type": "setLiveMidiTarget"
-  },
-  "requestId": 1
+    "type": "setLiveMidiTarget",
+    "trackId": "track-1"
+  }
 }

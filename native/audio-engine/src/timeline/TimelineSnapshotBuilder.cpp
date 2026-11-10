@@ -275,8 +275,30 @@ bool prepareDeviceAutomation(const ExecutionGraph& graph, PreparedTimeline& prep
 
 }  // namespace
 
-TimelineSnapshotBuilder::TimelineSnapshotBuilder(TimelineEngine& engine) noexcept
-    : engine(engine) {}
+TimelineSnapshotBuilder::TimelineSnapshotBuilder(TimelineEngine& engine, LoadObserver observer)
+    : engine(engine), observer(std::move(observer)) {}
+
+void TimelineSnapshotBuilder::report(const juce::String& owner, const juce::String& device,
+                                     const juce::String& path, const LoadPhase phase) {
+    progress.phase = phase;
+    progress.ownerId = owner;
+    progress.deviceId = device;
+    progress.pluginPath = path;
+    if (phase == LoadPhase::deviceReady) ++progress.completedDevices;
+    if (observer) observer(progress);
+}
+
+PluginLoadObserver TimelineSnapshotBuilder::pluginObserver(const juce::String& owner,
+                                                           const juce::String& device,
+                                                           const juce::String& path) {
+    return [this, owner, device, path](LoadPhase phase) { report(owner, device, path, phase); };
+}
+
+DeviceLoadObserver TimelineSnapshotBuilder::deviceObserver(const juce::String& owner) {
+    return [this, owner](const juce::String& device, const juce::String& path, LoadPhase phase) {
+        report(owner, device, path, phase);
+    };
+}
 
 bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
                                     juce::AudioFormatManager& formats,
@@ -293,6 +315,14 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
     }
 
     const auto& graph = snapshot.graph;
+    progress = {};
+    progress.totalDevices = static_cast<std::uint32_t>(graph.mixer.masterEffects.size());
+    for (const auto& track : graph.tracks)
+        progress.totalDevices += static_cast<std::uint32_t>(track.effects.size()) +
+                                 (track.instrument.has_value() ? 1u : 0u);
+    for (const auto& bus : graph.mixer.buses)
+        progress.totalDevices += static_cast<std::uint32_t>(bus.effects.size());
+    report({}, {}, {}, LoadPhase::queued);
     if (!validateMixerGraph(graph, error)) return false;
     const auto sendsByTargetDevice = collectSidechainTargets(graph.mixer.sidechainSends);
     const auto processingMode =
@@ -458,10 +488,15 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
                 if (reuseInstrument) track->runtime->shareInstrumentWith(*existing->runtime);
             });
         if (!track->reuseEffects &&
-            !track->runtime->effects().load(track->effects, graph.mixer.sidechainSends,
-                                            outputSampleRate, maximumBlockSize, processingMode,
-                                            error, track->id + "/track-effect"))
+            !track->runtime->effects().load(
+                track->effects, graph.mixer.sidechainSends, outputSampleRate, maximumBlockSize,
+                processingMode, error, track->id + "/track-effect", deviceObserver(track->id)))
             return false;
+        if (track->reuseEffects)
+            for (const auto& spec : track->effects)
+                report(track->id, spec.id, spec.path, LoadPhase::deviceReady);
+        if (reuseInstrument)
+            report(track->id, track->instrumentDeviceId, {}, LoadPhase::deviceReady);
         if (track->instrument.has_value() && !reuseInstrument) {
             const auto roleError = [&track, &error](const juce::String& role,
                                                     const juce::String& detail) {
@@ -471,20 +506,23 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
             };
             if (const auto* vst3 = std::get_if<Vst3InstrumentSpec>(&*track->instrument)) {
                 juce::String runtimeError;
-                track->runtime->setInstrument(
-                    Vst3InstrumentRuntime::create(vst3->path, outputSampleRate, maximumBlockSize,
-                                                  processingMode, vst3->state, runtimeError));
+                track->runtime->setInstrument(Vst3InstrumentRuntime::create(
+                    vst3->path, outputSampleRate, maximumBlockSize, processingMode, vst3->state,
+                    runtimeError,
+                    pluginObserver(track->id, track->instrumentDeviceId, vst3->path)));
                 if (track->runtime->instrument() == nullptr)
                     return roleError("instrument", runtimeError);
             } else {
                 const auto& internal = std::get<InternalInstrumentSpec>(*track->instrument);
                 juce::String runtimeError;
+                report(track->id, track->instrumentDeviceId, {}, LoadPhase::creating);
                 track->runtime->setInstrument(SonalloyInstrumentRuntime::create(
                     internal.definitionJson, internal.definitionBaseDir, outputSampleRate,
                     maximumBlockSize, runtimeError, &engine.instrumentCache));
                 if (track->runtime->instrument() == nullptr)
                     return roleError("instrument", runtimeError);
                 track->runtime->instrument()->setBypassed(internal.bypassed);
+                report(track->id, track->instrumentDeviceId, {}, LoadPhase::deviceReady);
             }
         }
         if (!reuseInstrument &&
@@ -695,7 +733,9 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
                 prepared->timebaseChangeSamples.push_back(change +
                                                           track->runtime->externalInputLatency);
     }
+    report({}, {}, {}, LoadPhase::routing);
     if (!prepareMixer(graph, *prepared, processingMode, sendsByTargetDevice, error)) return false;
+    report({}, {}, {}, LoadPhase::routing);
     organizeSidechainRoutes(*prepared, levels);
     if (!prepareDeviceAutomation(graph, *prepared, error)) return false;
     std::sort(prepared->timebaseChangeSamples.begin(), prepared->timebaseChangeSamples.end());
@@ -764,6 +804,7 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
             juce::Thread::sleep(1);
         }
     }
+    report({}, {}, {}, LoadPhase::prepared);
     return true;
 }
 
@@ -812,9 +853,13 @@ bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, Prepared
                 reused = true;
             }
         });
-        if (!reused && !bus->effects->load(spec.effects, graph.mixer.sidechainSends, sampleRate,
-                                           blockSize, mode, error, spec.id + "/bus-effect"))
+        if (!reused &&
+            !bus->effects->load(spec.effects, graph.mixer.sidechainSends, sampleRate, blockSize,
+                                mode, error, spec.id + "/bus-effect", deviceObserver(spec.id)))
             return false;
+        if (reused)
+            for (const auto& device : spec.effects)
+                report(spec.id, device.id, device.path, LoadPhase::deviceReady);
         prepared.summary.pluginCount += static_cast<std::uint64_t>(bus->effects->size());
         mixer.parallelChannels.push_back(bus.get());
         mixer.buses.push_back(std::move(bus));
@@ -831,10 +876,13 @@ bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, Prepared
             masterReused = true;
         }
     });
-    if (!masterReused &&
-        !mixer.masterEffects->load(mixer.masterEffectSpecs, graph.mixer.sidechainSends, sampleRate,
-                                   blockSize, mode, error, "master-effect"))
+    if (!masterReused && !mixer.masterEffects->load(
+                             mixer.masterEffectSpecs, graph.mixer.sidechainSends, sampleRate,
+                             blockSize, mode, error, "master-effect", deviceObserver("master")))
         return false;
+    if (masterReused)
+        for (const auto& device : mixer.masterEffectSpecs)
+            report("master", device.id, device.path, LoadPhase::deviceReady);
     prepared.summary.pluginCount += static_cast<std::uint64_t>(mixer.masterEffects->size());
     const auto hasPreparedSidechainTarget = [&](const juce::String& deviceId) {
         for (const auto& track : prepared.tracks)

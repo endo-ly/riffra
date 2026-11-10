@@ -3,13 +3,13 @@ use super::recovery::AudioDeviceReopenOutcome;
 use super::wire::{SidecarCommand, SidecarResponse, TakeComparisonVariant, WirePluginState};
 use super::{AUDIO_DEVICE_COMMAND_TIMEOUT, AudioSupervisor, COMMAND_ACK_TIMEOUT};
 use crate::api::output::InstrumentPreviewDefinition;
+use crate::api::output::RuntimeLoadStep;
 use crate::api::output::{
     AudioStatus, DeviceCapabilities, DeviceInspection, DeviceParameterInfo,
     DeviceSidechainCapability, PluginPresetInfo,
 };
 use crate::api::params::AudioDriverConfig;
 use crate::execution::{GraphPluginState, TimelineSnapshot};
-use crate::runtime::TIMELINE_PREPARE_TIMEOUT;
 use riffra_core::AudioTakeVariant;
 use serde_json::Value;
 use std::path::Path;
@@ -154,14 +154,17 @@ impl AudioSupervisor {
     pub(crate) fn prepare_timeline_snapshot(
         &self,
         snapshot: &TimelineSnapshot,
-        timeout: Duration,
+        progress: &dyn Fn(RuntimeLoadStep),
     ) -> NativeAudioResult<()> {
-        self.request_ack(
+        match self.request_load(
             SidecarCommand::PrepareTimelineSnapshot {
                 snapshot: Box::new(snapshot.clone()),
             },
-            timeout.min(TIMELINE_PREPARE_TIMEOUT),
-        )
+            progress,
+        )? {
+            SidecarResponse::TimelineAck {} => Ok(()),
+            response => Err(unexpected(&response)),
+        }
     }
 
     pub fn commit_timeline_snapshot(&self, timeout: Duration) -> NativeAudioResult<()> {

@@ -26,6 +26,10 @@ bool CommandResponder::claim() noexcept {
     return true;
 }
 
+void CommandResponder::progress(const LoadProgressSpec& progress) const {
+    if (!replied) writer(encodeEvent(TimelineLoadProgressSpec{requestId, progress}));
+}
+
 void CommandResponder::respond(const SidecarResponseSpec& response) {
     if (claim()) writer(encodeResponse(requestId, response));
 }

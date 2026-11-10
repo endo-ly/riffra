@@ -1,5 +1,4 @@
 #pragma once
-
 #include <JuceHeader.h>
 
 #include <array>
@@ -13,6 +12,7 @@
 #include "PluginTransportPosition.h"
 #include "concurrency/BoundedMpmcQueue.h"
 #include "contract/ExecutionGraph.h"
+#include "contract/LoadProgress.h"
 #include "timeline/AutomationRuntime.h"
 
 namespace riffra {
@@ -127,7 +127,8 @@ public:
 
     [[nodiscard]] std::optional<PluginLoadError> load(const juce::String& path, double sampleRate,
                                                       int blockSize, PluginProcessingMode mode,
-                                                      bool sidechainInput);
+                                                      bool sidechainInput,
+                                                      const PluginLoadObserver& observer = {});
     void release() noexcept;
     /// Reserves callback MIDI storage for prepared timeline events.
     [[nodiscard]] bool prepareTimelineMidiCapacity(std::size_t eventCapacity,
@@ -143,7 +144,8 @@ public:
     void setBypassed(bool shouldBypass) noexcept;
     bool setParameter(int index, float value, juce::String& error) noexcept;
     bool setProgram(int index, juce::String& error);
-    bool applyPersistedState(const PluginStateSpec& state, juce::String& error) noexcept;
+    bool applyPersistedState(const PluginStateSpec& state, juce::String& error,
+                             const PluginLoadObserver& observer = {}) noexcept;
     [[nodiscard]] std::optional<PluginStateSpec> persistedState(juce::String& error) const;
     void process(const float* const* inputChannelData, int numInputChannels,
                  const float* const* auxInputChannelData, int numAuxInputChannels,

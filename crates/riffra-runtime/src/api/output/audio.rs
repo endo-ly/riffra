@@ -206,6 +206,9 @@ pub struct AudioInstrumentFault {
 #[derive(Clone, Debug, Default, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct AudioDiagnosticsReport {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub preparation: Option<RuntimeLoadProgress>,
     /// Parameters that could not be bound in the active execution graph.
     pub automation_warnings: Vec<String>,
     pub device: AudioDiagnosticsDevice,
@@ -340,6 +343,9 @@ pub enum RuntimeProjectionState {
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeProjectionStatus {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub load_progress: Option<RuntimeLoadProgress>,
     pub state: RuntimeProjectionState,
     pub operation_id: u64,
     pub running_operation_id: Option<u64>,
@@ -369,4 +375,40 @@ pub struct RuntimeProjectionStatus {
 pub struct ProjectionDiagnostics {
     pub unavailable_clip_ids: Vec<String>,
     pub missing_device_ids: Vec<String>,
+}
+
+/// Last completed native load boundary; repeated transport heartbeats are not progress.
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RuntimeLoadStep {
+    pub phase: RuntimeLoadPhase,
+    pub owner_id: String,
+    pub device_id: String,
+    pub plugin_path: String,
+    pub completed_devices: u32,
+    pub total_devices: u32,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, TS, schemars::JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum RuntimeLoadPhase {
+    Dispatching,
+    Queued,
+    Creating,
+    Restoring,
+    Preparing,
+    DeviceReady,
+    Routing,
+    Prepared,
+}
+
+/// Rust-owned timing and stall suspicion for the current load operation.
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeLoadProgress {
+    pub operation_id: u64,
+    pub stage: RuntimeLoadStep,
+    pub elapsed_ms: u64,
+    pub phase_elapsed_ms: u64,
+    pub stalled: bool,
 }

@@ -1,12 +1,12 @@
 {
+  "requestId": 1,
   "command": {
-    "processedEndFrame": 48000,
-    "processedPath": "takes/processed.wav",
-    "processedStartFrame": 0,
-    "rawEndFrame": 48000,
+    "type": "startTakeComparison",
     "rawPath": "takes/raw.wav",
+    "processedPath": "takes/processed.wav",
     "rawStartFrame": 0,
-    "type": "startTakeComparison"
-  },
-  "requestId": 1
+    "rawEndFrame": 48000,
+    "processedStartFrame": 0,
+    "processedEndFrame": 48000
+  }
 }

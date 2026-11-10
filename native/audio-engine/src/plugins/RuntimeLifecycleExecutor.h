@@ -6,6 +6,7 @@
 #include <deque>
 #include <functional>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -17,13 +18,14 @@ namespace riffra {
 /// never joins a lifecycle worker or calls a plugin directly.
 ///
 /// A stuck third-party VST (constructor, destructor, editor, or parameter
-/// path) must never wedge the engine permanently. Each task therefore runs
+/// path) must never wedge the engine permanently. Bounded tasks run
 /// under a watchdog: when the running task exceeds its deadline the
 /// [`RuntimeLifecycleExecutor::setTimeoutHandler`] callback fires so the owner
 /// can terminate the process; the Rust supervisor treats the lost transport
 /// as a restart condition and recovers in emergency-mute state. The watchdog
 /// is deliberately coarse (third-party code cannot be interrupted safely);
-/// process-level isolation is the recovery boundary.
+/// process-level isolation is the recovery boundary. Graph loads have no native
+/// deadline; Rust owns their progress, stall reporting and termination.
 class RuntimeLifecycleExecutor final {
 public:
     using Task = std::function<void()>;
@@ -58,6 +60,8 @@ public:
     /// Enqueues a lifecycle task that must finish within `timeout` of starting
     /// to execute. Exceeding the timeout invokes the timeout handler once.
     [[nodiscard]] bool submit(Task task, std::chrono::milliseconds timeout);
+    /// Executes a load whose lifetime and stall reporting are owned by Rust.
+    [[nodiscard]] bool submitLoad(Task task);
     /// Enqueues owner-thread work with separate execution and queue-start
     /// deadlines. `onExpired` runs instead if `queueTimeout` passes while
     /// queued or waiting for the owner thread; `watchdogTimeout` remains the
@@ -98,14 +102,14 @@ public:
 private:
     struct TimedTask {
         Task task;
-        std::chrono::milliseconds watchdogTimeout{0};
+        std::optional<std::chrono::milliseconds> watchdogTimeout;
         bool usesProgressWatchdog = false;
         bool dispatchToOwner = true;
         std::chrono::steady_clock::time_point queueDeadline{};
         Task onExpired;
     };
 
-    [[nodiscard]] bool enqueue(Task task, std::chrono::milliseconds watchdogTimeout,
+    [[nodiscard]] bool enqueue(Task task, std::optional<std::chrono::milliseconds> watchdogTimeout,
                                std::chrono::milliseconds queueTimeout, bool usesProgressWatchdog,
                                bool dispatchToOwner, Task onExpired = {});
     void run();
@@ -126,7 +130,7 @@ private:
     bool currentTaskUsesProgressWatchdog = false;
     std::chrono::steady_clock::time_point currentTaskStarted{};
     std::chrono::steady_clock::time_point currentTaskLastProgress{};
-    std::chrono::milliseconds currentTaskTimeout{0};
+    std::optional<std::chrono::milliseconds> currentTaskTimeout;
     // Threads are declared after every piece of state they can observe and
     // are started in the constructor body, once the complete object exists.
     std::thread worker;

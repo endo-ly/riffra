@@ -87,9 +87,9 @@ InstrumentProcessContext TimelineEngine::instrumentProcessContext(const Prepared
 bool TimelineEngine::loadSnapshot(const TimelineSnapshotSpec& snapshot,
                                   juce::AudioFormatManager& formats, const double outputSampleRate,
                                   const int maximumBlockSize, juce::String& error,
-                                  const bool commitImmediately) {
+                                  const bool commitImmediately, const LoadObserver& observer) {
     std::unique_ptr<PreparedTimeline> prepared;
-    TimelineSnapshotBuilder builder(*this);
+    TimelineSnapshotBuilder builder(*this, observer);
     if (!builder.build(snapshot, formats, outputSampleRate, maximumBlockSize, prepared, error)) {
         prepared.reset();
         instrumentCache.trim();

@@ -1,5 +1,4 @@
 #pragma once
-
 #include <JuceHeader.h>
 
 #include <array>
@@ -10,11 +9,12 @@
 #include <vector>
 
 #include "ExecutionGraph.h"
+#include "LoadProgress.h"
 
 namespace riffra {
 
 /// Version announced by `ready` and required by every `riffra-render` request.
-inline constexpr std::uint32_t kSidecarProtocolVersion = 4;
+inline constexpr std::uint32_t kSidecarProtocolVersion = 5;
 
 enum class AudioStateSpec { ready, muted, faulted };
 enum class RecoveryStatusSpec { clean, partial };
@@ -238,6 +238,10 @@ struct TransportStatusSpec final {
 /// Completes `prepareTimelineSnapshot`, `commitTimelineSnapshot` and
 /// `discardTimelineSnapshot`.
 struct TimelineAckSpec final {};
+struct TimelineLoadProgressSpec final {
+    std::uint64_t requestId;
+    LoadProgressSpec progress;
+};
 /// Completes `waitForTimelineIdle`.
 struct TimelineIdleAckSpec final {};
 /// Completes `sendTrackMidi` and `panicTrackMidi`.
@@ -379,7 +383,7 @@ struct InputChannelDetailsSpec final {
 using SidecarEventSpec =
     std::variant<ReadySpec, AudioStatusSpec, AudioMetersSpec, TransportStatusSpec,
                  RecordingCompleteSpec, PluginStateChangedSpec, PluginParameterChangedSpec,
-                 FaultSpec>;
+                 FaultSpec, TimelineLoadProgressSpec>;
 
 struct OfflineRenderCompleteSpec final {
     std::uint64_t frames = 0;
@@ -396,7 +400,7 @@ inline constexpr std::array<std::string_view, 12> kSidecarResponseTypes{
 };
 
 /// Every event `type` written on stdout.
-inline constexpr std::array<std::string_view, 8> kSidecarEventTypes{
+inline constexpr std::array<std::string_view, 9> kSidecarEventTypes{
     "ready",
     "audioStatus",
     "audioMeters",
@@ -405,6 +409,7 @@ inline constexpr std::array<std::string_view, 8> kSidecarEventTypes{
     "pluginStateChanged",
     "pluginParameterChanged",
     "fault",
+    "timelineLoadProgress",
 };
 
 /// Returns the `type` written for one response.

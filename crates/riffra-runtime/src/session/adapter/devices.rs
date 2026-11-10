@@ -569,7 +569,7 @@ mod tests {
         fn prepare_timeline_snapshot(
             &self,
             snapshot: &crate::execution::TimelineSnapshot,
-            _timeout: Duration,
+            _progress: &dyn Fn(crate::api::output::RuntimeLoadStep),
         ) -> Result<(), crate::RuntimeError> {
             if self.fail_prepare.swap(false, Ordering::AcqRel) {
                 return Err(crate::RuntimeError::NativeRejected(

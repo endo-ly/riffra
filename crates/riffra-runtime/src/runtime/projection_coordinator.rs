@@ -1,8 +1,6 @@
 use super::ports::ProjectionDriver;
-use super::projection_machine::{
-    CanonicalSubmit, Effect, Input, Machine, ProjectionOperation, Request,
-};
-use super::{RuntimeError, TIMELINE_PREPARE_TIMEOUT, is_retryable_native_kind, now_ms};
+use super::projection_machine::{CanonicalSubmit, Effect, Input, Machine, ProjectionOperation};
+use super::{PROJECTION_IDLE_POLL_INTERVAL, RuntimeError, is_retryable_native_kind, now_ms};
 use crate::api::output::RuntimeProjectionStatus;
 use crate::execution::ProjectedTimeline;
 use riffra_core::ProjectionKey;
@@ -76,8 +74,8 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
         &self,
         projection: Arc<ProjectedTimeline>,
         key: ProjectionKey,
-        deadline: Option<Instant>,
         canonical: bool,
+        wait: bool,
     ) -> Result<CanonicalSubmit, RuntimeError> {
         let mut machine = self.state.state.lock().expect("projection lock poisoned");
         let mut effects = machine.step(
@@ -89,21 +87,19 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
             Input::SubmitCanonical {
                 key,
                 projection,
-                deadline,
-                waiter: Some(operation),
+                waiter: wait.then_some(operation),
             }
         } else {
             Input::SubmitCandidate {
                 key,
                 projection,
-                deadline,
-                waiter: Some(operation),
+                waiter: wait.then_some(operation),
             }
         };
         let submitted = machine.step(input, Instant::now());
         let result = response(&submitted);
         effects.extend(submitted);
-        if matches!(result, Ok(Some(CanonicalSubmit::Adopted)) | Err(_)) || deadline.is_none() {
+        if matches!(result, Ok(Some(CanonicalSubmit::Adopted)) | Err(_)) {
             machine.remove_waiter(operation);
         }
         let status = machine.status();
@@ -112,14 +108,13 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
         result.map(|result| result.expect("submission produces a submission result"))
     }
 
-    pub(crate) fn submit_with_canonical_deadline(
+    pub(crate) fn submit_operation(
         &self,
         projection: Arc<ProjectedTimeline>,
         key: ProjectionKey,
-        deadline: Option<Instant>,
         canonical: bool,
     ) -> Result<ProjectionOperation, RuntimeError> {
-        match self.submit(projection, key, deadline, canonical)? {
+        match self.submit(projection, key, canonical, true)? {
             CanonicalSubmit::Deferred(operation) | CanonicalSubmit::Queued(operation) => {
                 Ok(operation)
             }
@@ -130,13 +125,12 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
         }
     }
 
-    pub(crate) fn submit_canonical_with_deadline(
+    pub(crate) fn submit_canonical(
         &self,
         projection: Arc<ProjectedTimeline>,
         key: ProjectionKey,
-        deadline: Option<Instant>,
     ) -> Result<CanonicalSubmit, RuntimeError> {
-        self.submit(projection, key, deadline, true)
+        self.submit(projection, key, true, false)
     }
 
     fn step(&self, input: Input) {
@@ -173,9 +167,7 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
     pub(crate) fn wait_for_operation(
         &self,
         operation_id: u64,
-        _key: ProjectionKey,
-        deadline: Instant,
-        _timeout: Duration,
+        deadline: Option<Instant>,
     ) -> Result<RuntimeProjectionStatus, RuntimeError> {
         if operation_id == 0 {
             return Ok(self.status());
@@ -187,10 +179,12 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
                 machine.remove_waiter(operation_id);
                 return result;
             }
-            let remaining = deadline.saturating_duration_since(Instant::now());
+            let remaining = deadline.map_or(Duration::from_millis(50), |deadline| {
+                deadline.saturating_duration_since(Instant::now())
+            });
             if remaining.is_zero() {
                 drop(machine);
-                self.step(Input::DeadlineReached(operation_id));
+                self.step(Input::WaitExpired(operation_id));
                 continue;
             }
             let (next, _) = self
@@ -218,9 +212,9 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
     pub(crate) fn wait_for_projection(
         &self,
         key: ProjectionKey,
-        timeout: Duration,
+        timeout: Option<Duration>,
     ) -> Result<ProjectionWait, RuntimeError> {
-        let deadline = Instant::now() + timeout;
+        let deadline = timeout.map(|timeout| Instant::now() + timeout);
         loop {
             self.step(Input::GenerationObserved(self.driver.runtime_generation()));
             let machine = self.state.state.lock().expect("projection lock poisoned");
@@ -235,11 +229,13 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
                 }
                 return Err(unreachable_projection(key, status));
             }
-            let remaining = deadline.saturating_duration_since(Instant::now());
+            let remaining = deadline.map_or(Duration::from_millis(50), |deadline| {
+                deadline.saturating_duration_since(Instant::now())
+            });
             if remaining.is_zero() {
                 return Err(RuntimeError::Timeout {
                     message: format!(
-                        "projection for sequence {} did not become ready within {timeout:?}",
+                        "projection for sequence {} did not become ready before the caller deadline",
                         key.sequence
                     ),
                 });
@@ -349,21 +345,6 @@ fn response(effects: &[Effect]) -> Result<Option<CanonicalSubmit>, RuntimeError>
         .expect("command transition produces a response")
 }
 
-fn timeout(request: &Request, maximum: Duration) -> Result<Duration, RuntimeError> {
-    let remaining = request.deadline.map_or(maximum, |deadline| {
-        deadline
-            .saturating_duration_since(Instant::now())
-            .min(maximum)
-    });
-    if remaining.is_zero() {
-        Err(RuntimeError::Timeout {
-            message: "projection deadline expired".into(),
-        })
-    } else {
-        Ok(remaining)
-    }
-}
-
 fn unreachable_projection(key: ProjectionKey, status: RuntimeProjectionStatus) -> RuntimeError {
     let message = match status.last_error.as_deref() {
         Some(error) => format!(
@@ -421,14 +402,26 @@ fn worker_loop<D: ProjectionDriver>(
                     .expect("projection condition variable poisoned");
             }
         };
-        let result = timeout(&request, TIMELINE_PREPARE_TIMEOUT).and_then(|timeout| {
-            driver.prepare_timeline_snapshot(&request.projection.snapshot, timeout)
+        let result = driver.prepare_timeline_snapshot(&request.projection.snapshot, &|progress| {
+            transition(
+                &sync,
+                &hook,
+                Input::PreparationProgress {
+                    operation: request.operation,
+                    progress,
+                },
+            );
         });
         if matches!(&result, Err(RuntimeError::Native { kind, .. }) if is_retryable_native_kind(kind))
         {
-            let idle = timeout(&request, TIMELINE_PREPARE_TIMEOUT)
-                .and_then(|timeout| driver.wait_for_timeline_idle(timeout));
+            let idle = driver.wait_for_timeline_idle(PROJECTION_IDLE_POLL_INTERVAL);
             if let Err(error) = idle {
+                if matches!(error, RuntimeError::Timeout { .. })
+                    || matches!(&error, RuntimeError::Native { kind, operation, .. }
+                        if kind == "runtimeLifecycle" && operation == "runtime.timeline.waitForIdle")
+                {
+                    continue;
+                }
                 transition(
                     &sync,
                     &hook,
@@ -456,12 +449,10 @@ fn worker_loop<D: ProjectionDriver>(
         for effect in effects {
             match effect {
                 Effect::Commit(operation) => {
-                    let result = timeout(&request, Duration::from_secs(3))
-                        .and_then(|timeout| driver.commit_timeline_snapshot(timeout));
+                    let result = driver.commit_timeline_snapshot(Duration::from_secs(3));
                     if matches!(&result, Err(RuntimeError::Native { kind, .. }) if is_retryable_native_kind(kind))
                     {
-                        let _ = timeout(&request, TIMELINE_PREPARE_TIMEOUT)
-                            .and_then(|timeout| driver.wait_for_timeline_idle(timeout));
+                        let _ = driver.wait_for_timeline_idle(PROJECTION_IDLE_POLL_INTERVAL);
                     }
                     transition(
                         &sync,
@@ -519,7 +510,7 @@ mod tests {
         fn prepare_timeline_snapshot(
             &self,
             snapshot: &crate::execution::TimelineSnapshot,
-            _timeout: Duration,
+            _progress: &dyn Fn(crate::api::output::RuntimeLoadStep),
         ) -> Result<(), RuntimeError> {
             self.prepare_started.fetch_add(1, Ordering::Release);
             thread::sleep(self.prepare_delay);
@@ -636,7 +627,7 @@ mod tests {
         projection: Arc<ProjectedTimeline>,
         key: ProjectionKey,
     ) -> RuntimeProjectionStatus {
-        let _ = coordinator.submit_with_canonical_deadline(projection, key, None, true);
+        let _ = coordinator.submit_operation(projection, key, true);
         coordinator.status()
     }
 
@@ -655,6 +646,28 @@ mod tests {
             thread::sleep(Duration::from_millis(5));
         }
         assert!(predicate());
+    }
+
+    #[test]
+    fn a_caller_wait_expiring_does_not_cancel_a_queued_or_running_load() {
+        let driver = Arc::new(FakeProjectionDriver::new(Duration::from_millis(40)));
+        let coordinator = ProjectionCoordinator::new(driver.clone()).unwrap();
+        let operation = coordinator
+            .submit_operation(snapshot(1), key(1, 1), true)
+            .unwrap();
+        assert!(matches!(
+            coordinator.wait_for_operation(
+                operation.operation_id,
+                Some(Instant::now() + Duration::from_millis(5))
+            ),
+            Err(RuntimeError::Timeout { .. })
+        ));
+        assert!(matches!(
+            coordinator.wait_for_projection(key(1, 1), Some(Duration::from_secs(1))),
+            Ok(ProjectionWait::Ready)
+        ));
+        assert_eq!(coordinator.status().active_session_revision, Some(1));
+        assert!(coordinator.status().last_error.is_none());
     }
 
     #[test]
@@ -702,7 +715,7 @@ mod tests {
         // Resubmitting the same graph under a new revision is adopted instead of
         // prepared again, which clears the failure.
         let adopted = coordinator
-            .submit_canonical_with_deadline(reidentify(&busy, 6), key(6, 6), None)
+            .submit_canonical(reidentify(&busy, 6), key(6, 6))
             .unwrap();
 
         assert!(matches!(adopted, CanonicalSubmit::Adopted));
@@ -728,7 +741,7 @@ mod tests {
         submit_canonical(&coordinator, snapshot(1), key(1, 1));
 
         // Act
-        let wait = coordinator.wait_for_projection(key(1, 1), Duration::from_secs(2));
+        let wait = coordinator.wait_for_projection(key(1, 1), Some(Duration::from_secs(2)));
 
         // Assert
         assert!(matches!(wait, Ok(ProjectionWait::Ready)));
@@ -746,7 +759,7 @@ mod tests {
         // Nothing prepared or failed yet (Safe Mode or a fresh runtime):
         // device reads proceed with the live timeline state.
         assert!(matches!(
-            coordinator.wait_for_projection(key(1, 1), Duration::from_secs(1)),
+            coordinator.wait_for_projection(key(1, 1), Some(Duration::from_secs(1))),
             Ok(ProjectionWait::Missing)
         ));
     }
@@ -763,7 +776,7 @@ mod tests {
         submit_canonical(&coordinator, snapshot(2), key(2, 2));
 
         // Act
-        let wait = coordinator.wait_for_projection(key(1, 1), Duration::from_secs(2));
+        let wait = coordinator.wait_for_projection(key(1, 1), Some(Duration::from_secs(2)));
 
         // Assert
         assert!(matches!(
@@ -782,7 +795,7 @@ mod tests {
         submit_canonical(&coordinator, snapshot(1), key(1, 1));
 
         // Act
-        let wait = coordinator.wait_for_projection(key(1, 1), Duration::from_millis(30));
+        let wait = coordinator.wait_for_projection(key(1, 1), Some(Duration::from_millis(30)));
 
         // Assert
         assert!(matches!(

@@ -1,15 +1,15 @@
 {
+  "requestId": 1,
   "command": {
-    "deviceId": "device-1",
-    "display": null,
-    "nearest": false,
-    "owner": {
-      "id": "track-1",
-      "kind": "track"
-    },
-    "parameterIndex": 2,
     "type": "setDeviceParameter",
-    "value": 0.5
-  },
-  "requestId": 1
+    "owner": {
+      "kind": "track",
+      "id": "track-1"
+    },
+    "deviceId": "device-1",
+    "parameterIndex": 2,
+    "value": 0.5,
+    "display": null,
+    "nearest": false
+  }
 }

@@ -144,14 +144,14 @@ Desktopのイベントゲートは現在の接続世代のイベントだけをW
 {"kind": "event", "event": {"type": "audioMeters", ...}}
 ```
 
-- `response` と `error` は必ず `requestId` を持ち、`event` は持たない。Transportの応答はキューへの受け付けを示し、状態は独立した `transportStatus` eventで送る。要求に紐づかない失敗は `fault` イベントで送る
+- `response` と `error` は必ず `requestId` を持つ。ロードの受付・進捗イベント `timelineLoadProgress` も対応する `requestId` を持つ。Transportの応答はキューへの受け付けを示し、状態は独立した `transportStatus` eventで送る。要求に紐づかない失敗は `fault` イベントで送る
 - 1つの要求に対する応答は `response` か `error` のちょうど1回である。C++の `CommandResponder` が要求ごとに1つ作られ、非同期処理へmoveで渡る。応答のないまま破棄されると `noResponse` の `error` を送る
 - 命令ごとの応答型は1つに決まる(`SidecarCommand::expected_response`)。`command_bus.rs` は `requestId`(原子カウンタ)で要求を相関し、期待と異なる型の応答はその要求をプロトコルエラーで即座に失敗させ、Hostの状態へ反映しない。中身を持たない完了応答も命令の分類ごとに別の型とし、取り違えを型の不一致として検出する
-- 期限: 通常は `COMMAND_ACK_TIMEOUT`、デバイス操作は `AUDIO_DEVICE_COMMAND_TIMEOUT`、`prepareTimelineSnapshot` は `TIMELINE_PREPARE_TIMEOUT` と呼び出し側の残り時間の短い方、`waitForTimelineIdle` は呼び出し側の残り時間を使う。期限切れは失敗報告で確定する
+- 通常の応答は `COMMAND_ACK_TIMEOUT`、デバイス操作は `AUDIO_DEVICE_COMMAND_TIMEOUT` で待機を制限する。`prepareTimelineSnapshot` に全体の固定期限はなく、Rustが操作ID・世代・工程を管理し、nativeの完了応答後に音声構成を切り替える。呼び出し元の待機終了はロードを取り消さない
 
 ### 4.3 起動とプロトコル版
 
-- サイドカーはデバイスの接続後、最初のメッセージとして `ready` イベント(`protocolVersion` と初期 `AudioStatus`)を1回だけ送る。版は両言語の `SIDECAR_PROTOCOL_VERSION`(`4`)で一致させる
+- サイドカーはデバイスの接続後、最初のメッセージとして `ready` イベント(`protocolVersion` と初期 `AudioStatus`)を1回だけ送る。版は両言語の `SIDECAR_PROTOCOL_VERSION`(`5`)で一致させる
 - Rustは `ready` を受けたときだけその世代をreadyにする。版が異なる世代と、`ready` の前に終了したプロセスは起動失敗として扱う
 - 版の確認は `ready` に一本化され、個々の命令は版を持たない
 

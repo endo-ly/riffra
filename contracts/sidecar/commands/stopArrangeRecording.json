@@ -1,6 +1,6 @@
 {
+  "requestId": 1,
   "command": {
     "type": "stopArrangeRecording"
-  },
-  "requestId": 1
+  }
 }

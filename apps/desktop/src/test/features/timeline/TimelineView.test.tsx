@@ -459,6 +459,43 @@ describe('TimelineView', () => {
     expect(document.querySelector('[data-clip-id="clip:missing"]')).toBeInTheDocument();
   });
 
+  it('shows the current load phase and keeps a stalled load pending until activation', async () => {
+    const api = createFakeNativeApi();
+    api.emitRuntimeProjectionStatus({
+      ...api.runtimeProjection,
+      state: 'preparing',
+      loadProgress: {
+        operationId: 1,
+        stage: {
+          phase: 'restoring',
+          ownerId: '',
+          deviceId: 'instrument-1',
+          pluginPath: 'C:\\Plugins\\SampleTank 4.vst3',
+          completedDevices: 13,
+          totalDevices: 26,
+        },
+        elapsedMs: 120000,
+        phaseElapsedMs: 40000,
+        stalled: true,
+      },
+    });
+    renderWorkspace(api);
+    expect(
+      await screen.findByText(/Still waiting.*Restoring.*SampleTank 4.*13\/26.*120s/),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+    act(() =>
+      api.emitRuntimeProjectionStatus({
+        ...api.runtimeProjection,
+        state: 'active',
+        loadProgress: undefined,
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByText(/Still waiting.*SampleTank/)).not.toBeInTheDocument(),
+    );
+  });
+
   it('reports a projection failure in place and recovers through the retry action', async () => {
     // Arrange: the projection fails and its retry notice is shown.
     const api = createFakeNativeApi();

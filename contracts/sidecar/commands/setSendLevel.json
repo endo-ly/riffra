@@ -1,8 +1,8 @@
 {
+  "requestId": 1,
   "command": {
-    "levelDb": -6.0,
+    "type": "setSendLevel",
     "sendId": "send:1",
-    "type": "setSendLevel"
-  },
-  "requestId": 1
+    "levelDb": -6.0
+  }
 }

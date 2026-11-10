@@ -29,6 +29,22 @@ pub(crate) fn write_audio_diagnostics(
 
 fn print_audio_diagnostics(value: &Value) -> Result<(), String> {
     println!("Audio Engine");
+    if value
+        .get("preparation")
+        .is_some_and(|preparation| !preparation.is_null())
+    {
+        println!("Preparation");
+        field(value, &["preparation", "stage", "phase"]).print_line("  Phase");
+        field(value, &["preparation", "stage", "ownerId"]).print_line("  Owner");
+        field(value, &["preparation", "stage", "pluginPath"]).print_line("  Plugin");
+        field(value, &["preparation", "stage", "completedDevices"])
+            .print_line("  Completed Devices");
+        field(value, &["preparation", "stage", "totalDevices"]).print_line("  Total Devices");
+        field(value, &["preparation", "elapsedMs"]).print_line("  Elapsed ms");
+        field(value, &["preparation", "phaseElapsedMs"]).print_line("  Current Phase ms");
+        field(value, &["preparation", "stalled"]).print_line("  Waiting for Progress");
+        println!();
+    }
     field(value, &["device", "state"]).print_line("  State");
     field(value, &["device", "driver"]).print_line("  Driver");
     field(value, &["device", "inputDevice"]).print_line("  Input Device");

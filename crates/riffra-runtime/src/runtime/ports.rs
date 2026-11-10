@@ -8,7 +8,7 @@ pub(crate) trait ProjectionDriver: Send + Sync + 'static {
     fn prepare_timeline_snapshot(
         &self,
         snapshot: &TimelineSnapshot,
-        timeout: Duration,
+        progress: &dyn Fn(crate::api::output::RuntimeLoadStep),
     ) -> Result<(), RuntimeError>;
     fn commit_timeline_snapshot(&self, timeout: Duration) -> Result<(), RuntimeError>;
     fn discard_timeline_snapshot(&self, timeout: Duration) -> Result<(), RuntimeError>;

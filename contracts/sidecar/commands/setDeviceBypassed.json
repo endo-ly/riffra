@@ -1,12 +1,12 @@
 {
+  "requestId": 1,
   "command": {
-    "bypassed": true,
-    "deviceId": "device-1",
+    "type": "setDeviceBypassed",
     "owner": {
-      "id": "track-1",
-      "kind": "track"
+      "kind": "track",
+      "id": "track-1"
     },
-    "type": "setDeviceBypassed"
-  },
-  "requestId": 1
+    "deviceId": "device-1",
+    "bypassed": true
+  }
 }

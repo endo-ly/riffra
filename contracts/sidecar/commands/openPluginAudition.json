@@ -1,7 +1,7 @@
 {
+  "requestId": 1,
   "command": {
-    "path": "plugins/Synth.vst3",
-    "type": "openPluginAudition"
-  },
-  "requestId": 1
+    "type": "openPluginAudition",
+    "path": "plugins/Synth.vst3"
+  }
 }

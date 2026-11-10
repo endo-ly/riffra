@@ -1,12 +1,12 @@
 {
+  "requestId": 1,
   "command": {
-    "deviceId": "device-1",
+    "type": "setDeviceProgram",
     "owner": {
-      "id": "track-1",
-      "kind": "track"
+      "kind": "track",
+      "id": "track-1"
     },
-    "programIndex": 1,
-    "type": "setDeviceProgram"
-  },
-  "requestId": 1
+    "deviceId": "device-1",
+    "programIndex": 1
+  }
 }

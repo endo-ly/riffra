@@ -1,7 +1,7 @@
 {
+  "requestId": 1,
   "command": {
-    "active": false,
-    "type": "setFeedbackProtection"
-  },
-  "requestId": 1
+    "type": "setFeedbackProtection",
+    "active": false
+  }
 }

@@ -1,12 +1,12 @@
 {
+  "requestId": 1,
   "command": {
-    "gainDb": -3.0,
+    "type": "setChannelMix",
     "owner": {
-      "id": "track-1",
-      "kind": "track"
+      "kind": "track",
+      "id": "track-1"
     },
-    "pan": null,
-    "type": "setChannelMix"
-  },
-  "requestId": 1
+    "gainDb": -3.0,
+    "pan": null
+  }
 }

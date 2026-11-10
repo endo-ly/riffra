@@ -1,0 +1,15 @@
+{
+  "kind": "event",
+  "event": {
+    "type": "timelineLoadProgress",
+    "requestId": 1,
+    "progress": {
+      "phase": "restoring",
+      "ownerId": "track-1",
+      "deviceId": "device-1",
+      "pluginPath": "Plugin.vst3",
+      "completedDevices": 1,
+      "totalDevices": 2
+    }
+  }
+}
