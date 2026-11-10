@@ -303,15 +303,14 @@ TEST(PluginRackTest, RestoresPersistedPluginState) {
     // The saved snapshot and its opaque VST3 state alone each restore the plugin itself.
     for (const auto& state : {*saved, opaqueState}) {
         ASSERT_TRUE(rack->setParameter(0, 0.25f, error)) << error;
-        process();
         ASSERT_TRUE(rack->applyPersistedState(state, error)) << error;
+        const auto captured = rack->persistedState(error);
+        ASSERT_TRUE(captured.has_value()) << error;
+        EXPECT_NEAR(captured->parameterValues[0], 0.75f, 0.0001f);
         process();
         const auto restored = rack->parameters();
         ASSERT_FALSE(restored.empty());
         EXPECT_NEAR(restored[0].value, 0.75f, 0.0001f);
-        const auto captured = rack->persistedState(error);
-        ASSERT_TRUE(captured.has_value()) << error;
-        EXPECT_NEAR(captured->parameterValues[0], 0.75f, 0.0001f);
     }
 }
 
@@ -601,13 +600,38 @@ TEST(PluginRackTest, PersistedStateCapturesUnreadPluginAndCachesUntilChanged) {
     EXPECT_EQ(emptyAgain, empty);
     EXPECT_EQ(trace.stateCaptureCount, 3);
 
-    // Read back the state accepted by the processor after restoring opaque data.
+    // A plugin's serializer need not reproduce all inputs needed for restoration.
     PluginStateSpec restored;
     restored.stateData = "c3RhdGU=";
     ASSERT_TRUE(rack->applyPersistedState(restored, error)) << error;
     const auto accepted = rack->persistedState(error);
     ASSERT_TRUE(accepted.has_value()) << error;
-    EXPECT_NE(accepted->stateData, restored.stateData);
+    EXPECT_EQ(accepted->stateData, restored.stateData);
+    ASSERT_EQ(accepted->parameterValues.size(), 1u);
+    EXPECT_FLOAT_EQ(accepted->parameterValues[0], 0.5f);
+    EXPECT_EQ(trace.stateCaptureCount, 3);
+
+    // Host bypass and rejected edits must not rewrite the plugin's opaque data.
+    for (const auto bypass : {true, false}) {
+        rack->setBypassed(bypass);
+        const auto bypassed = rack->persistedState(error);
+        ASSERT_TRUE(bypassed.has_value()) << error;
+        EXPECT_EQ(bypassed->stateData, restored.stateData);
+        EXPECT_EQ(bypassed->bypassed, bypass);
+    }
+    EXPECT_FALSE(rack->setProgram(99, error));
+    auto invalid = restored;
+    invalid.stateData = "invalid!";
+    EXPECT_FALSE(rack->applyPersistedState(invalid, error));
+    EXPECT_EQ(rack->persistedState(error), accepted);
+    EXPECT_EQ(trace.stateCaptureCount, 3);
+
+    // Editing the restored device still captures its new state.
+    ASSERT_TRUE(rack->setParameter(0, 0.25f, error)) << error;
+    const auto edited = rack->persistedState(error);
+    ASSERT_TRUE(edited.has_value()) << error;
+    EXPECT_NE(edited->stateData, restored.stateData);
+    EXPECT_FLOAT_EQ(edited->parameterValues[0], 0.25f);
     EXPECT_EQ(trace.stateCaptureCount, 4);
 }
 

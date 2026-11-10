@@ -152,7 +152,6 @@ bool PluginRack::setProgram(const int index, juce::String& error) {
         error = "device state editing is unavailable during automation read";
         return false;
     }
-    staticStateDirty.store(true, std::memory_order_release);
     const juce::SpinLock::ScopedLockType lock(pluginLock);
     if (plugin == nullptr) {
         error = "No VST3 plugin is loaded.";
@@ -164,6 +163,7 @@ bool PluginRack::setProgram(const int index, juce::String& error) {
             error = "Plugin program index is out of range.";
             return false;
         }
+        staticStateDirty.store(true, std::memory_order_release);
         plugin->setCurrentProgram(index);
         updateParameterCount(*plugin);
         return true;
@@ -188,6 +188,12 @@ bool PluginRack::applyStateData(const juce::String& base64, juce::String& error)
         return false;
     }
     output.flush();
+    // Restoring opaque state supersedes edits queued for the previous state.
+    if (parameterQueue != nullptr) {
+        for (std::size_t index = 0; index < parameterQueue->capacity; ++index)
+            parameterQueue->dirty[index].store(false, std::memory_order_release);
+    }
+    staticStateDirty.store(true, std::memory_order_release);
     plugin->setStateInformation(state.getData(), static_cast<int>(state.getSize()));
     updateParameterCount(*plugin);
     return true;
@@ -222,7 +228,6 @@ bool PluginRack::applyPersistedState(const PluginStateSpec& state, juce::String&
         error = "plugin static state projection could not be prepared";
         return false;
     }
-    staticStateDirty.store(true, std::memory_order_release);
     try {
         FaultInjection::before(FaultStage::stateApply);
     } catch (const std::exception& exception) {
@@ -264,9 +269,22 @@ bool PluginRack::applyPersistedState(const PluginStateSpec& state, juce::String&
     setBypassed(state.bypassed);
     try {
         const juce::SpinLock::ScopedLockType lock(pluginLock);
+        if (restoresOpaqueState) {
+            const auto& parameters = plugin->getParameters();
+            staticProjection.parameterValues.clear();
+            staticProjection.parameterValues.reserve(static_cast<std::size_t>(parameters.size()));
+            for (int index = 0; index < parameters.size(); ++index) {
+                const auto* parameter = parameters[index];
+                staticProjection.parameterValues.push_back(
+                    parameter != nullptr
+                        ? latestParameterValue(static_cast<std::size_t>(index), *parameter)
+                        : 0.0f);
+            }
+        }
         staticState = std::move(staticProjection);
-        // Capture the processor's accepted state before persisting it.
-        staticStateDirty.store(true, std::memory_order_release);
+        // A plugin may omit restore inputs when serializing its state. Retain
+        // the restored opaque data until an edit requires a new capture.
+        staticStateDirty.store(!restoresOpaqueState, std::memory_order_release);
     } catch (...) {
         error = "plugin static state projection could not be retained";
         return false;
@@ -280,8 +298,12 @@ std::optional<PluginStateSpec> PluginRack::persistedState(juce::String& error) c
         error = "No VST3 plugin is loaded.";
         return std::nullopt;
     }
-    if (staticState && (!staticStateDirty.load(std::memory_order_acquire) || isAutomationActive()))
-        return staticState;
+    if (staticState &&
+        (!staticStateDirty.load(std::memory_order_acquire) || isAutomationActive())) {
+        auto result = *staticState;
+        result.bypassed = bypassed.load(std::memory_order_acquire);
+        return result;
+    }
     PluginStateSpec result;
     try {
         juce::MemoryBlock state;

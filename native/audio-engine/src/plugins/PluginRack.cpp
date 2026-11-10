@@ -403,7 +403,6 @@ void PluginRack::reset() noexcept {
 }
 
 void PluginRack::setBypassed(const bool shouldBypass) noexcept {
-    staticStateDirty.store(true, std::memory_order_release);
     bypassed.store(shouldBypass, std::memory_order_release);
 }
 
