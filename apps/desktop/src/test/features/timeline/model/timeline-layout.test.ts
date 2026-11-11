@@ -1,6 +1,11 @@
+import { defaultSession } from '@/native/browser-defaults';
 import { describe, expect, it } from 'vitest';
 import type { AudioClip, MidiClip } from '@/model/generated';
-import { buildTrackTimeline, timelineGridDensity } from '@/features/timeline/model/timeline-layout';
+import {
+  buildTrackTimeline,
+  timelineGridDensity,
+  timelineLengthTicks,
+} from '@/features/timeline/model/timeline-layout';
 import { countOffGridNotes, clipGridTicks, snapClipTick, snapGridTicks } from '@/model/clip-grid';
 import { toAssetId } from '@/model/asset-id';
 
@@ -11,6 +16,24 @@ const timebase = {
 };
 
 describe('arrange timeline layout', () => {
+  it('includes large automation sets in the timeline extent', () => {
+    const session = defaultSession();
+    session.arrangement.automationLanes = Array.from({ length: 20 }, (_, lane) => ({
+      id: `lane:${lane}`,
+      target: { kind: 'masterGain' },
+      interpolation: 'linear',
+      points: Array.from({ length: 10000 }, (_, index) => ({
+        id: `point:${lane}:${index}`,
+        tick: lane * 10000 + index,
+        value: 0,
+      })),
+    }));
+
+    const length = timelineLengthTicks(session.arrangement, session.arrangement.timebase);
+
+    expect(length).toBe(199999 + 3840 * 2);
+  });
+
   it('reduces grid detail as the timeline zooms out', () => {
     expect(timelineGridDensity(timebase, 0.01)).toEqual({
       showBeats: false,

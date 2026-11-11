@@ -59,6 +59,14 @@ pub struct ClipSplitParams {
     pub split_tick: u64,
 }
 
+/// Adjacent clips in timeline order.
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ClipMergeParams {
+    pub first_clip_id: String,
+    pub second_clip_id: String,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct AudioClipCrossfadeParams {

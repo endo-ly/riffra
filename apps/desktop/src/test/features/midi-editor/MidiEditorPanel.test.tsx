@@ -8,9 +8,21 @@ import { TRACK_COLOR_PALETTE } from '@/model/track-color';
 import type { MidiClip } from '@/model/generated';
 import { canonicalState, defaultSession } from '@/native/browser-defaults';
 import { MidiEditorPanel } from '@/features/midi-editor/MidiEditorPanel';
+import type { NoteLane } from '@/features/midi-editor/NoteLane';
 import { createFakeNativeApi, type FakeNativeApi } from '@/test/support/fake-native-api';
 import { renderWithSession } from '@/test/support/session-provider';
 import { renderWorkspace } from '@/test/support/workspace';
+
+const noteLaneRenders = vi.hoisted(() => ({ count: 0 }));
+vi.mock('@/features/midi-editor/NoteLane', async (importOriginal) => {
+  const original = await importOriginal<{ NoteLane: typeof NoteLane }>();
+  return {
+    NoteLane: (props: Parameters<typeof original.NoteLane>[0]) => {
+      noteLaneRenders.count += 1;
+      return original.NoteLane(props);
+    },
+  };
+});
 
 afterEach(cleanup);
 
@@ -337,11 +349,13 @@ describe('MidiEditorPanel', () => {
         await vi.advanceTimersByTimeAsync(0);
       });
       expect(viewport.scrollLeft).toBe(0);
+      const before = noteLaneRenders.count;
 
       await act(async () => {
         await vi.advanceTimersByTimeAsync(500);
       });
       expect(viewport.scrollLeft).toBeGreaterThan(0);
+      expect(noteLaneRenders.count).toBe(before);
     } finally {
       vi.useRealTimers();
     }
@@ -742,7 +756,7 @@ describe('MidiEditorPanel', () => {
         id: 'clip:melody',
         name: 'Melody Clip',
         trackId: 'track:melody',
-        startTick: 0,
+        startTick: 600,
         durationTicks: 1_920,
         notes: [],
         events: [],
@@ -777,6 +791,9 @@ describe('MidiEditorPanel', () => {
     const editor = await screen.findByLabelText('MIDI Editor');
 
     expect(editor.querySelector('[data-note-id]')).toBeNull();
+    const ghost = editor.querySelector<HTMLElement>('[data-ghost-note-id]')!;
+    expect(Number.parseFloat(ghost.style.left)).toBe(0);
+    expect(Number.parseFloat(ghost.style.width)).toBeCloseTo(120 * 0.18);
     expect(editor.querySelector('[data-ghost-note-id]')?.getAttribute('style')).toContain(
       `--ghost-color: ${TRACK_COLOR_PALETTE[1]}`,
     );

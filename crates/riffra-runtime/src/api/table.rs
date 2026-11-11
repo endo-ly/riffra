@@ -362,6 +362,7 @@ control_commands! {
         MidiClipUpdate = "clip.midi.update" (MidiClipUpdateParams) -> ArrangementMutation, mutation(batch), project;
         MidiClipMove = "clip.midi.move" (MidiClipMoveParams) -> ArrangementMutation, mutation(batch), project;
         MidiClipTrim = "clip.midi.trim" (MidiClipTrimParams) -> ArrangementMutation, mutation(batch), project;
+        MidiClipMerge = "clip.midi.merge" (ClipMergeParams) -> ArrangementMutation, mutation(batch), project;
         MidiClipSplit = "clip.midi.split" (ClipSplitParams) -> ArrangementMutation, mutation(batch), project;
         MidiClipDuplicate = "clip.midi.duplicate" (ClipIdParams) -> ArrangementMutation, mutation(batch), project;
         MidiNoteAdd = "clip.midi.note.add" (MidiNoteAddParams) -> ArrangementMutation, mutation(batch), project;
@@ -555,7 +556,7 @@ mod tests {
         let names = command_names();
 
         // Act / Assert
-        assert_eq!(names.len(), 218);
+        assert_eq!(names.len(), 219);
         let unique: std::collections::HashSet<_> = names.iter().copied().collect();
         assert_eq!(unique.len(), names.len());
         for name in names {
@@ -793,11 +794,15 @@ mod tests {
             .filter_map(|line| line.split_once('\'').map(|(name, _)| name))
             .collect();
         let unique: std::collections::HashSet<_> = names.iter().copied().collect();
-        assert_eq!(names.len(), 218);
+        assert_eq!(names.len(), 219);
         assert_eq!(unique.len(), names.len());
 
         for (name, params) in [
             ("clip.audio.list", json!({})),
+            (
+                "clip.midi.merge",
+                json!({"firstClipId":"left", "secondClipId":"right"}),
+            ),
             (
                 "music.note.remove",
                 json!({"clipId":"clip:1", "noteId":"note:1"}),

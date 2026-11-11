@@ -873,6 +873,110 @@ impl Arrangement {
         Ok(())
     }
 
+    /// Joins adjacent MIDI clips while preserving their performance events.
+    ///
+    /// # Errors
+    /// Returns an error if the clips cannot form one valid performance.
+    pub(crate) fn merge_midi_clips(
+        &mut self,
+        first_id: &str,
+        second_id: &str,
+    ) -> Result<(), DomainError> {
+        let find = |id: &str| {
+            self.midi_clips
+                .iter()
+                .find(|clip| clip.id == id)
+                .cloned()
+                .ok_or_else(|| DomainError::InvalidClip(format!("midi clip '{id}' not found.")))
+        };
+        let mut merged = find(first_id)?;
+        let second = find(second_id)?;
+        if first_id == second_id
+            || merged.track_id != second.track_id
+            || merged.start_tick.0.checked_add(merged.duration_ticks) != Some(second.start_tick.0)
+            || merged.muted != second.muted
+            || merged.loop_enabled
+            || second.loop_enabled
+            || self.is_recording_slot_clip(first_id)
+            || self.is_recording_slot_clip(second_id)
+        {
+            return Err(DomainError::InvalidClip("midi clips must be adjacent, non-looping performances on the same track with matching mute state; recording slots must be copied before merging.".into()));
+        }
+        let offset = merged.duration_ticks;
+        merged.duration_ticks = offset
+            .checked_add(second.duration_ticks)
+            .ok_or_else(|| DomainError::InvalidClip("midi clip range is too large.".into()))?;
+        let mut note_ids = merged
+            .notes
+            .iter()
+            .map(|note| note.id.clone())
+            .collect::<std::collections::HashSet<_>>();
+        let mut event_ids = merged
+            .events
+            .iter()
+            .map(|event| event.id.clone())
+            .collect::<std::collections::HashSet<_>>();
+        let mut control_ids = merged
+            .instrument_control_events
+            .iter()
+            .map(|event| event.id.clone())
+            .collect::<std::collections::HashSet<_>>();
+        for mut note in second.notes {
+            if !note_ids.insert(note.id.clone()) {
+                note.id = format!("note:{}", uuid::Uuid::now_v7());
+            }
+            note.start_tick.0 =
+                note.start_tick.0.checked_add(offset).ok_or_else(|| {
+                    DomainError::InvalidClip("midi note range is too large.".into())
+                })?;
+            merged.notes.push(note);
+        }
+        for mut event in second.events {
+            if !event_ids.insert(event.id.clone()) {
+                event.id = format!("event:{}", uuid::Uuid::now_v7());
+            }
+            event.tick.0 =
+                event.tick.0.checked_add(offset).ok_or_else(|| {
+                    DomainError::InvalidClip("midi event range is too large.".into())
+                })?;
+            merged.events.push(event);
+        }
+        let boundary_order = merged
+            .instrument_control_events
+            .iter()
+            .filter(|event| event.tick.0 == offset)
+            .map(|event| event.source_order)
+            .max();
+        for mut event in second.instrument_control_events {
+            if let Some(order) = boundary_order.filter(|_| event.tick.0 == 0) {
+                event.source_order = order
+                    .checked_add(1)
+                    .and_then(|base| base.checked_add(event.source_order))
+                    .ok_or_else(|| {
+                        DomainError::InvalidClip("instrument event order is too large.".into())
+                    })?;
+            }
+            if !control_ids.insert(event.id.clone()) {
+                event.id = format!("instrument-event:{}", uuid::Uuid::now_v7());
+            }
+            event.tick.0 = event.tick.0.checked_add(offset).ok_or_else(|| {
+                DomainError::InvalidClip("instrument event range is too large.".into())
+            })?;
+            merged.instrument_control_events.push(event);
+        }
+        merged
+            .validate_and_normalize(self.tracks.iter().find(|track| track.id == merged.track_id))
+            .map_err(DomainError::InvalidClip)?;
+        self.remove_timeline_clips(&[], &[second_id.to_owned()])?;
+        let first = self
+            .midi_clips
+            .iter_mut()
+            .find(|clip| clip.id == first_id)
+            .expect("the first clip is retained when removing the second clip");
+        *first = merged;
+        Ok(())
+    }
+
     pub fn split_midi_clip(
         &mut self,
         clip_id: &str,
@@ -2006,7 +2110,7 @@ mod tests {
     }
 
     #[test]
-    fn split_and_trim_preserve_control_order_precision_and_terminal_events() {
+    fn split_trim_and_merge_preserve_performance_events() {
         // Arrange
         let mut arrangement = Arrangement::default();
         arrangement
@@ -2019,8 +2123,29 @@ mod tests {
             asset_id: None,
             start_tick: TimelineTick(960),
             duration_ticks: 1920,
-            notes: vec![],
-            events: vec![],
+            notes: [120, 1020]
+                .into_iter()
+                .map(|tick| MidiNote {
+                    id: format!("note:{tick}"),
+                    lyric: None,
+                    note: 60,
+                    start_tick: TimelineTick(tick),
+                    duration_ticks: 120,
+                    velocity: 90,
+                    channel: 1,
+                })
+                .collect(),
+            events: [100, 1160]
+                .into_iter()
+                .map(|tick| MidiEvent {
+                    id: format!("midi:{tick}"),
+                    kind: super::midi_clip::MidiEventKind::ControlChange,
+                    tick: TimelineTick(tick),
+                    channel: 1,
+                    data1: 1,
+                    data2: 64,
+                })
+                .collect(),
             instrument_control_events: [0, 960, 1920]
                 .into_iter()
                 .enumerate()
@@ -2060,6 +2185,83 @@ mod tests {
         assert_eq!(trimmed.midi_clips[0].instrument_control_events, *right);
         assert!(right.iter().all(|event| event.kind
             == super::midi_clip::InstrumentControlEventKind::PitchBend { value: 0.12345 }));
+
+        // A rejected merge leaves both clips intact.
+        arrangement.midi_clips[1].muted = true;
+        let before = arrangement.clone();
+        assert!(arrangement.merge_midi_clips("clip", "right").is_err());
+        assert_eq!(arrangement, before);
+        arrangement.midi_clips[1].muted = false;
+
+        arrangement.merge_midi_clips("clip", "right").unwrap();
+        assert_eq!(
+            arrangement.midi_clips[0]
+                .notes
+                .iter()
+                .map(|note| note.start_tick.0)
+                .collect::<Vec<_>>(),
+            [120, 1020]
+        );
+        assert_eq!(
+            arrangement.midi_clips[0]
+                .events
+                .iter()
+                .map(|event| event.tick.0)
+                .collect::<Vec<_>>(),
+            [100, 1160]
+        );
+        assert_eq!(arrangement.midi_clips.len(), 1);
+        assert_eq!(arrangement.midi_clips[0].duration_ticks, 1920);
+        assert_eq!(
+            arrangement.midi_clips[0]
+                .instrument_control_events
+                .iter()
+                .map(|event| (event.tick.0, event.source_order))
+                .collect::<Vec<_>>(),
+            [(0, 0), (960, 1), (1920, 2)]
+        );
+
+        // Duplicating a clip retains clip-local identities; merging keeps them unique.
+        arrangement
+            .duplicate_midi_clip("clip", "copy".into())
+            .unwrap();
+        arrangement.merge_midi_clips("clip", "copy").unwrap();
+        let clip = &arrangement.midi_clips[0];
+        assert_eq!(
+            clip.instrument_control_events
+                .iter()
+                .filter(|event| event.tick.0 == 1920)
+                .map(|event| event.source_order)
+                .collect::<Vec<_>>(),
+            [2, 3]
+        );
+        assert_eq!(clip.notes.len(), 4);
+        assert_eq!(clip.events.len(), 4);
+        assert_eq!(clip.instrument_control_events.len(), 6);
+        assert_eq!(
+            clip.notes
+                .iter()
+                .map(|note| &note.id)
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
+            4
+        );
+        assert_eq!(
+            clip.events
+                .iter()
+                .map(|event| &event.id)
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
+            4
+        );
+        assert_eq!(
+            clip.instrument_control_events
+                .iter()
+                .map(|event| &event.id)
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
+            6
+        );
     }
 
     fn session_with_recording_relations() -> CreativeSession {

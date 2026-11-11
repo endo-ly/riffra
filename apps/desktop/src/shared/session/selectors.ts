@@ -28,3 +28,7 @@ export const selectTrackInstrumentPlayable = (state: SessionState, trackId: stri
     (source.disabledPlaceholder || selectMissingDeviceIds(state).includes(track.instrument.id))
   );
 };
+
+/** Position for views animated from the playhead ref while playback is running. */
+export const selectStoppedPlayheadTick = (state: SessionState): number | null =>
+  state.transport.status?.state === 'playing' ? null : state.transport.displayTick;

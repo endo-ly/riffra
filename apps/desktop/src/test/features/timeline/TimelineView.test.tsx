@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest';
-import { act, cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, renderHook, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type {
   ArrangementMutationResult,
   AudioClip,
+  AudioAnalysis,
   AudioClipMove,
   MidiClip,
   MidiEvent,
@@ -13,6 +14,10 @@ import type {
   Track,
 } from '@/model/generated';
 import type { TransportStatus } from '@/model/generated';
+import { useWaveformAnalyses } from '@/features/timeline/hooks/useWaveformAnalyses';
+import { useClipInteractions } from '@/features/timeline/hooks/useClipInteractions';
+import { TestSessionProvider } from '@/test/support/session-provider';
+import { renderWithSession } from '@/test/support/session-provider';
 import { canonicalState, defaultSession } from '@/native/browser-defaults';
 import { toAssetId } from '@/model/asset-id';
 import { createFakeNativeApi, type FakeNativeApi } from '@/test/support/fake-native-api';
@@ -113,6 +118,111 @@ function mergeMidiClip(
 }
 
 describe('TimelineView', () => {
+  it('selects the created split clip when another track starts at the same tick', async () => {
+    const session = defaultSession();
+    const clip = mergeAudioClip('source', 0, 0);
+    const api = createFakeNativeApi();
+    const select = vi.fn();
+    const next = structuredClone(session);
+    next.arrangement.audioClips = [
+      { ...clip, id: 'unrelated', trackId: 'other', startTick: 960 },
+      clip,
+      { ...clip, id: 'right', startTick: 960 },
+    ];
+    const mutation = api.mutationResult(next);
+    mutation.createdEntityIds.audioClips = ['right'];
+    vi.spyOn(api, 'splitAudioClip').mockResolvedValue(mutation);
+    const { result } = renderHook(
+      () =>
+        useClipInteractions({
+          session,
+          selectedClipIds: [],
+          setSelectedClipIds: select,
+          tool: 'select',
+          pixelsPerTick: 0.1,
+          analyses: {},
+          snapTick: (tick) => tick,
+          commit: async (operation) => operation,
+          setSnapGuide: vi.fn(),
+        }),
+      {
+        wrapper: ({ children }) => <TestSessionProvider api={api}>{children}</TestSessionProvider>,
+      },
+    );
+
+    await act(async () => result.current.splitClip(clip, 960));
+
+    expect(select).toHaveBeenCalledWith(['right']);
+  });
+
+  it('keeps the ruler aligned on scroll without rendering track rows', async () => {
+    const session = defaultSession();
+    session.arrangement.tracks.push(mergeTrack('track:audio', 'audio'));
+    const { container } = renderWorkspace(createFakeNativeApi(), { session });
+    await act(async () => undefined);
+    const scroller = container.querySelector('[class*="scroller"]') as HTMLDivElement;
+    const before = trackRenders.count;
+
+    fireEvent.scroll(scroller, { target: { scrollTop: 140 } });
+
+    expect(screen.getByLabelText('Timeline ruler')).toHaveStyle({ top: '140px' });
+    expect(trackRenders.count).toBe(before);
+  });
+
+  it('publishes an in-flight waveform after a clip edit and releases removed assets', async () => {
+    const api = createFakeNativeApi();
+    let resolveAnalysis!: (analysis: AudioAnalysis) => void;
+    const analyze = vi.fn(
+      () =>
+        new Promise<AudioAnalysis>((resolve) => {
+          resolveAnalysis = resolve;
+        }),
+    );
+    api.analyzeAsset = analyze;
+    const clip = mergeAudioClip('clip:audio', 0, 0);
+    const analysis: AudioAnalysis = {
+      path: '',
+      sampleRate: 48000,
+      channels: 1,
+      bitsPerSample: 16,
+      samples: 48000,
+      durationMs: 1000,
+      peakDb: -3,
+      truePeakDb: -3,
+      rmsDb: -12,
+      clippingSamples: 0,
+      dynamicRangeDb: 9,
+      zeroCrossings: 0,
+      phaseCorrelation: null,
+      spectrumPeakHz: null,
+      waveform: [0.5],
+    };
+    function WaveformProbe({ clips }: { clips: AudioClip[] }) {
+      const analyses = useWaveformAnalyses(clips);
+      return <output data-testid="analyses">{JSON.stringify(analyses)}</output>;
+    }
+    const { rerender } = renderWithSession(<WaveformProbe clips={[clip]} />, { api });
+
+    rerender(<WaveformProbe clips={[{ ...clip, startTick: 960 }]} />);
+    await act(async () => resolveAnalysis(analysis));
+
+    expect(analyze).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(screen.getByTestId('analyses').textContent!)[clip.assetId]).toEqual(analysis);
+
+    rerender(<WaveformProbe clips={[]} />);
+    expect(screen.getByTestId('analyses')).toHaveTextContent('{}');
+
+    rerender(<WaveformProbe clips={[clip]} />);
+    const resolveRemovedRequest = resolveAnalysis;
+    rerender(<WaveformProbe clips={[]} />);
+    rerender(<WaveformProbe clips={[clip]} />);
+    await act(async () => resolveRemovedRequest(analysis));
+    expect(screen.getByTestId('analyses')).toHaveTextContent('{}');
+    await act(async () => resolveAnalysis(analysis));
+    expect(JSON.parse(screen.getByTestId('analyses').textContent!)[clip.assetId]).toEqual(analysis);
+    expect(analyze).toHaveBeenCalledTimes(3);
+  });
+
   it('does not re-render the track rows when only the playhead moves', async () => {
     // Arrange
     const session = defaultSession();
@@ -175,10 +285,7 @@ describe('TimelineView', () => {
         mergeMidiClip('clip:midi:second', 960, 1_920, 'note:second', 60, 'event:second', 200),
       );
       const api = createFakeNativeApi();
-      const update = vi.spyOn(api, 'updateMidiClip').mockResolvedValue(api.mutationResult(session));
-      const remove = vi
-        .spyOn(api, 'removeTimelineClips')
-        .mockResolvedValue(api.mutationResult(session));
+      const merge = vi.spyOn(api, 'mergeMidiClips').mockResolvedValue(api.mutationResult(session));
       const { container } = renderWorkspace(api, { session });
       const selectedClipId = direction === 'next' ? 'clip:midi:first' : 'clip:midi:second';
 
@@ -189,18 +296,9 @@ describe('TimelineView', () => {
         }),
       );
 
-      await waitFor(() => expect(remove).toHaveBeenCalledWith([], ['clip:midi:second']));
-      expect(update).toHaveBeenCalledWith('clip:midi:first', {
-        durationTicks: 2_880,
-        notes: [
-          expect.objectContaining({ id: 'note:first', startTick: 120 }),
-          expect.objectContaining({ id: 'note:second', startTick: 1_020 }),
-        ],
-        events: [
-          expect.objectContaining({ id: 'event:first', tick: 100 }),
-          expect.objectContaining({ id: 'event:second', tick: 1_160 }),
-        ],
-      });
+      await waitFor(() =>
+        expect(merge).toHaveBeenCalledWith('clip:midi:first', 'clip:midi:second'),
+      );
     },
   );
 

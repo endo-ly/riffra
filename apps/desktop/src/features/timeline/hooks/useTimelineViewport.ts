@@ -19,7 +19,7 @@ export function useTimelineViewport({
   displayTickRef,
 }: UseTimelineViewportOptions) {
   const [zoom, setZoom] = useState(1);
-  const [scrollTop, setScrollTop] = useState(0);
+  const rulerRef = useRef<HTMLDivElement>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const programmaticScrollRef = useRef(false);
   const followPausedRef = useRef(false);
@@ -66,15 +66,13 @@ export function useTimelineViewport({
   useEffect(() => {
     const scroller = scrollerRef.current;
     if (!scroller) return;
-    let frame = 0;
     const onScroll = () => {
-      if (frame) cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(() => setScrollTop(scroller.scrollTop));
+      if (rulerRef.current) rulerRef.current.style.top = `${scroller.scrollTop}px`;
     };
     scroller.addEventListener('scroll', onScroll, { passive: true });
+    onScroll();
     return () => {
       scroller.removeEventListener('scroll', onScroll);
-      if (frame) cancelAnimationFrame(frame);
     };
   }, []);
 
@@ -134,5 +132,5 @@ export function useTimelineViewport({
     followPausedRef.current = false;
   }, [pixelsPerTick, transport]);
 
-  return { scrollerRef, zoom, pixelsPerTick, applyZoom, zoomToRange, scrollTop };
+  return { scrollerRef, rulerRef, zoom, pixelsPerTick, applyZoom, zoomToRange };
 }

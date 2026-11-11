@@ -1,58 +1,40 @@
 import { useEffect, useRef, useState } from 'react';
-import type { AudioAnalysis, AudioClip } from '@/model/generated';
-
+import type { AudioAnalysis, AudioClip, AssetId } from '@/model/generated';
 import { useSession, useSessionContext } from '@/shared/session/session-context';
 
 export function useWaveformAnalyses(clips: AudioClip[]) {
   const { api } = useSessionContext();
   const hostGeneration = useSession((state) => state.host.connection.generation);
   const [analyses, setAnalyses] = useState<Record<string, AudioAnalysis | null>>({});
-  const requestedRef = useRef<Set<string>>(new Set());
+  const requestsRef = useRef(new Map<AssetId, Promise<AudioAnalysis | null>>());
   useEffect(() => {
-    requestedRef.current.clear();
+    requestsRef.current = new Map();
     setAnalyses({});
-  }, [hostGeneration]);
+    return () => {
+      requestsRef.current.clear();
+    };
+  }, [api, hostGeneration]);
 
   useEffect(() => {
-    let active = true;
-    const present = new Set<string>(clips.map((clip) => clip.assetId));
-
-    // Drop cache entries for assetIds that no longer have any clip referencing
-    // them. Keeps the record bounded when the user removes many clips.
-    if (present.size) {
-      setAnalyses((current) => {
-        let pruned = false;
-        const next = { ...current };
-        for (const id of Object.keys(next)) {
-          if (!present.has(id) && next[id] !== null) {
-            delete next[id];
-            requestedRef.current.delete(id);
-            pruned = true;
-          }
-        }
-        return pruned ? next : current;
-      });
+    const requests = requestsRef.current;
+    const present = new Set(clips.map((clip) => clip.assetId));
+    for (const id of requests.keys()) {
+      if (!present.has(id)) requests.delete(id);
     }
+    setAnalyses((current) => {
+      const entries = Object.entries(current).filter(([id]) => present.has(id as AssetId));
+      return entries.length === Object.keys(current).length ? current : Object.fromEntries(entries);
+    });
 
     for (const assetId of present) {
-      if (requestedRef.current.has(assetId)) continue;
-      requestedRef.current.add(assetId);
-      void api
-        .analyzeAsset(assetId as AudioClip['assetId'])
-        .then((analysis) => {
-          if (active) {
-            setAnalyses((current) => ({ ...current, [assetId]: analysis }));
-          }
-        })
-        .catch(() => {
-          if (active) {
-            setAnalyses((current) => ({ ...current, [assetId]: null }));
-          }
-        });
+      if (requests.has(assetId)) continue;
+      const request = api.analyzeAsset(assetId).catch(() => null);
+      requests.set(assetId, request);
+      void request.then((analysis) => {
+        if (requestsRef.current.get(assetId) !== request) return;
+        setAnalyses((current) => ({ ...current, [assetId]: analysis }));
+      });
     }
-    return () => {
-      active = false;
-    };
   }, [api, clips, hostGeneration]);
 
   return analyses;

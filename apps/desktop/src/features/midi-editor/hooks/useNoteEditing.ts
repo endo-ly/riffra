@@ -10,7 +10,7 @@ import { countOffGridNotes, snapClipTick, type SnapGrid } from '@/model/clip-gri
 import { snapToBar } from '@/model/timebase';
 import { errorText } from '@/shared/errors';
 import { isEditableTypingTarget } from '@/shared/input';
-import { useSessionContext } from '@/shared/session/session-context';
+import { useSession, useSessionContext } from '@/shared/session/session-context';
 import { toast } from '@/shared/toasts';
 import type { ContextMenuItem } from '@/shared/ui/ContextMenu';
 import { PITCH_HIGH, PITCH_LOW, pitchFromClientY } from '../model/pitch-grid';
@@ -54,6 +54,16 @@ export function useNoteEditing(options: NoteEditingOptions) {
   const clipboardRef = useRef<{
     notes: (Omit<MidiNoteInput, 'startTick'> & { relativeStartTick: number })[];
   } | null>(null);
+
+  const hostGeneration = useSession((state) => state.host.connection.generation);
+  const sessionId = useSession((state) => state.project.boot?.canonical.session.sessionId);
+  const editGeneration = useRef(0);
+  useEffect(() => {
+    editGeneration.current += 1;
+    return () => {
+      editGeneration.current += 1;
+    };
+  }, [clip?.id, hostGeneration, sessionId]);
 
   const notes = clip?.notes ?? EMPTY_NOTES;
   const selectedNotes = useMemo(
@@ -133,9 +143,11 @@ export function useNoteEditing(options: NoteEditingOptions) {
 
   /** Selects the notes an edit adds to the clip once the edit lands. */
   const selectAddedNotes = (operation: NoteEdit): NoteEdit => {
+    const generation = editGeneration.current;
     if (clip)
       void operation.then((next) => {
-        if (next) setSelectedNoteIds(next.createdEntityIds.midiNotes ?? []);
+        if (next && generation === editGeneration.current)
+          setSelectedNoteIds(next.createdEntityIds.midiNotes ?? []);
       });
     return operation;
   };

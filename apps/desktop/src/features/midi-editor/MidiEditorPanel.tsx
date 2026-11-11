@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import type { MidiClip, MidiNote } from '@/model/generated';
 import type { MidiGhostNote } from './model/ghost-notes';
 import { clipGridTicks, snapClipTick, snapGridTicks, type SnapGrid } from '@/model/clip-grid';
@@ -7,7 +7,11 @@ import { musicalGridTicks, snapToBar, ticksPerBar, ticksPerBeat } from '@/model/
 import { midiNoteName } from '@/shared/midi';
 import { useSession, useSessionContext } from '@/shared/session/session-context';
 import { useInstrumentMidiInspection } from '@/shared/session/useInstrumentMidiInspection';
-import { selectRuntimeReady, selectTrackInstrumentPlayable } from '@/shared/session/selectors';
+import {
+  selectRuntimeReady,
+  selectTrackInstrumentPlayable,
+  selectStoppedPlayheadTick,
+} from '@/shared/session/selectors';
 import { logNativeError } from '@/native/invoke';
 import { usePointerGesture } from '@/shared/usePointerGesture';
 import { ContextMenu } from '@/shared/ui/ContextMenu';
@@ -34,10 +38,15 @@ interface MidiEditorPanelProps {
   trackColor: string | null;
 }
 
-export function MidiEditorPanel({ clip, trackColor }: MidiEditorPanelProps) {
+export const MidiEditorPanel = memo(function MidiEditorPanel({
+  clip,
+  trackColor,
+}: MidiEditorPanelProps) {
   const { api } = useSessionContext();
   const arrangement = useSession((state) => state.project.boot!.canonical.session.arrangement);
-  const transport = useSession((state) => state.transport);
+  const playhead = useSession((state) => state.transport.playhead);
+  const seek = useSession((state) => state.transport.seek);
+  const stoppedTick = useSession(selectStoppedPlayheadTick);
   const playing = useSession((state) => state.transport.status?.state === 'playing');
   const runtimeReady = useSession(selectRuntimeReady);
   const playable = useSession((state) =>
@@ -85,7 +94,7 @@ export function MidiEditorPanel({ clip, trackColor }: MidiEditorPanelProps) {
     rulerPlayheadRef,
     lanePlayheadRef,
     velocityPlayheadRef,
-  } = useMidiEditorViewport(clip, transport.displayTick, transport.playhead, playing);
+  } = useMidiEditorViewport(clip, stoppedTick, playhead, playing);
   const laneHeight = (PITCH_HIGH - PITCH_LOW) * rowHeight;
   const velocityLaneHeight = 88;
   const laneWidth = visibleTicks * pixelsPerTick;
@@ -158,7 +167,7 @@ export function MidiEditorPanel({ clip, trackColor }: MidiEditorPanelProps) {
     velocity: lastUsedVelocity,
     onVelocityChange: setLastUsedVelocity,
     placeTick,
-    playheadTickRef: transport.playhead,
+    playheadTickRef: playhead,
     auditionNote,
     onClearTransient: () => setMarquee(null),
   });
@@ -294,7 +303,7 @@ export function MidiEditorPanel({ clip, trackColor }: MidiEditorPanelProps) {
               visibleTicks={visibleTicks}
               pixelsPerTick={pixelsPerTick}
               playheadRef={rulerPlayheadRef}
-              onSeek={(tick) => void transport.seek(tick)}
+              onSeek={(tick) => void seek(tick)}
             />
           </div>
         </div>
@@ -383,4 +392,4 @@ export function MidiEditorPanel({ clip, trackColor }: MidiEditorPanelProps) {
       )}
     </div>
   );
-}
+});

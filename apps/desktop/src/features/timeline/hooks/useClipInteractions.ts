@@ -72,10 +72,7 @@ export function useClipInteractions(options: ClipInteractionOptions) {
       }
       const next = await commit(commands.splitAudioClip(clip.id, target));
       if (next) {
-        setSelectedClipIds([
-          next.canonical.session.arrangement.audioClips.find((item) => item.startTick === target)
-            ?.id ?? clip.id,
-        ]);
+        setSelectedClipIds(next.createdEntityIds.audioClips ?? []);
       }
     },
     [commands, commit, setSelectedClipIds, snapTick, timebase],
@@ -376,23 +373,7 @@ export function useClipInteractions(options: ClipInteractionOptions) {
       }
       const target = direction === 'next' ? clip : adjacent;
       const shifted = direction === 'next' ? adjacent : clip;
-      const offset = shifted.startTick - target.startTick;
-      const shiftedNotes = shifted.notes.map((note) => ({
-        ...note,
-        startTick: note.startTick + offset,
-      }));
-      const shiftedEvents = shifted.events.map((event) => ({
-        ...event,
-        tick: event.tick + offset,
-      }));
-      const updated = await commit(
-        commands.updateMidiClip(target.id, {
-          durationTicks: midiClipDurationTicks(target) + midiClipDurationTicks(shifted),
-          notes: [...target.notes, ...shiftedNotes],
-          events: [...target.events, ...shiftedEvents],
-        }),
-      );
-      if (updated) await commit(commands.removeTimelineClips([], [shifted.id]));
+      await commit(commands.mergeMidiClips(target.id, shifted.id));
     },
     [arrangement.midiClips, commands, commit],
   );

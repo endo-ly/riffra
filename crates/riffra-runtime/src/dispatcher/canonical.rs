@@ -617,6 +617,10 @@ impl HostDispatcher<'_> {
                 )?,
                 application,
             ),
+            CanonicalCommand::MidiClipMerge(params) => self.edited(
+                application.merge_midi_clips(&params.first_clip_id, &params.second_clip_id)?,
+                application,
+            ),
             CanonicalCommand::MidiClipSplit(params) => self.created(
                 application.split_midi_clip_with_created_ids(
                     &params.clip_id,

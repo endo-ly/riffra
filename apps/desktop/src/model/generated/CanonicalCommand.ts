@@ -11,6 +11,7 @@ import type { AutomationListParams } from './AutomationListParams';
 import type { AutomationSetParams } from './AutomationSetParams';
 import type { ClipAddAssetParams } from './ClipAddAssetParams';
 import type { ClipIdParams } from './ClipIdParams';
+import type { ClipMergeParams } from './ClipMergeParams';
 import type { ClipPasteParams } from './ClipPasteParams';
 import type { ClipRemoveParams } from './ClipRemoveParams';
 import type { ClipSplitParams } from './ClipSplitParams';
@@ -162,6 +163,7 @@ export type CanonicalCommand =
   | { command: 'clip.midi.update'; params: MidiClipUpdateParams }
   | { command: 'clip.midi.move'; params: MidiClipMoveParams }
   | { command: 'clip.midi.trim'; params: MidiClipTrimParams }
+  | { command: 'clip.midi.merge'; params: ClipMergeParams }
   | { command: 'clip.midi.split'; params: ClipSplitParams }
   | { command: 'clip.midi.duplicate'; params: ClipIdParams }
   | { command: 'clip.midi.note.add'; params: MidiNoteAddParams }

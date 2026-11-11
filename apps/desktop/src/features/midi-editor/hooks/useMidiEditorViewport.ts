@@ -7,7 +7,7 @@ export const LANE_LABEL_WIDTH = 48;
 
 export function useMidiEditorViewport(
   clip: MidiClip | null,
-  playheadTick: number,
+  playheadTick: number | null,
   playheadTickRef: MutableRefObject<number>,
   playing: boolean,
 ) {
@@ -22,6 +22,7 @@ export function useMidiEditorViewport(
   const programmaticScrollRef = useRef(false);
   const followPausedRef = useRef(false);
   const centeredClipIdRef = useRef<string | undefined>(undefined);
+  const previousPlayheadTickRef = useRef<number | null>(null);
   const clipId = clip?.id;
   const hasClip = clip !== null;
   const clipNoteCenter = clip?.notes.length
@@ -74,7 +75,7 @@ export function useMidiEditorViewport(
     [rowHeight],
   );
 
-  const playheadTickInClip = playheadTick - clipStartTick;
+  const playheadTickInClip = playheadTick === null ? null : playheadTick - clipStartTick;
 
   // The ruler and velocity lane sit outside the scrolling viewport, so their
   // content follows the lane scroll through transform updates.
@@ -158,6 +159,7 @@ export function useMidiEditorViewport(
     let frame = requestAnimationFrame(function follow() {
       updatePlayhead();
       const tick = playheadTickRef.current - clipStartTick;
+      previousPlayheadTickRef.current = tick;
       const headX = LANE_LABEL_WIDTH + tick * pixelsPerTick;
       const left = viewport.scrollLeft;
       const followOffset = viewport.clientWidth * 0.32;
@@ -195,8 +197,8 @@ export function useMidiEditorViewport(
   // On a seek, bring the playhead back into view the same way the arrange
   // timeline does. The ref keeps tracking during playback so the residual
   // position update right after a stop is not mistaken for a seek.
-  const previousPlayheadTickRef = useRef<number | null>(null);
   useEffect(() => {
+    if (playheadTickInClip === null) return;
     const previous = previousPlayheadTickRef.current;
     previousPlayheadTickRef.current = playheadTickInClip;
     const viewport = laneViewportRef.current;

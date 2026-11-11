@@ -344,6 +344,7 @@ impl HostState {
             | CanonicalCommand::MidiClipUpdate(_)
             | CanonicalCommand::MidiClipMove(_)
             | CanonicalCommand::MidiClipTrim(_)
+            | CanonicalCommand::MidiClipMerge(_)
             | CanonicalCommand::MidiClipSplit(_)
             | CanonicalCommand::MidiClipDuplicate(_)
             | CanonicalCommand::MidiNoteAdd(_)

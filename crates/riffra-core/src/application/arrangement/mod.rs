@@ -669,6 +669,22 @@ where
         })
     }
 
+    /// Merges two adjacent MIDI clips as one undoable edit.
+    ///
+    /// # Errors
+    /// Returns an error if the clips cannot be merged or committed.
+    pub fn merge_midi_clips(
+        &mut self,
+        first_id: &str,
+        second_id: &str,
+    ) -> Result<CreativeSession, ApplicationError> {
+        self.commit_arrangement(|arrangement| {
+            arrangement
+                .merge_midi_clips(first_id, second_id)
+                .map_err(Into::into)
+        })
+    }
+
     /// Splits a MIDI Clip and returns the newly created right-hand Clip ID.
     pub fn split_midi_clip_with_created_ids(
         &mut self,

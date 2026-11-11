@@ -71,6 +71,7 @@ export type ControlCommandResults = {
   'clip.midi.update': OutputValue<'arrangementMutation'>;
   'clip.midi.move': OutputValue<'arrangementMutation'>;
   'clip.midi.trim': OutputValue<'arrangementMutation'>;
+  'clip.midi.merge': OutputValue<'arrangementMutation'>;
   'clip.midi.split': OutputValue<'arrangementMutation'>;
   'clip.midi.duplicate': OutputValue<'arrangementMutation'>;
   'clip.midi.note.add': OutputValue<'arrangementMutation'>;

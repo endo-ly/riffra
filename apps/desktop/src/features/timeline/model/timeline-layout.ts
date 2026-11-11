@@ -116,18 +116,19 @@ export function trackLaneHeight(size: TrackSize) {
 /** Timeline width in ticks: the content extent padded by two bars, at least sixteen bars. */
 export function timelineLengthTicks(arrangement: Arrangement, timebase: ProjectTimebase) {
   const barTicks = ticksPerBar(timebase);
-  const contentEnd = Math.max(
-    ...arrangement.audioClips.map((clip) => timelineObjectEndTick(clip, timebase)),
-    ...arrangement.midiClips.map((clip) => timelineObjectEndTick(clip, timebase)),
-    ...arrangement.automationLanes.flatMap((lane) => lane.points.map((point) => point.tick)),
-    ...arrangement.markers.map((marker) => marker.tick),
-    arrangement.loopRange.startTick,
-    arrangement.loopRange.endTick,
-    ...(arrangement.punchRange
-      ? [arrangement.punchRange.startTick, arrangement.punchRange.endTick]
-      : []),
-    0,
-  );
+  let contentEnd = Math.max(arrangement.loopRange.startTick, arrangement.loopRange.endTick);
+  const include = (tick: number) => {
+    contentEnd = Math.max(contentEnd, tick);
+  };
+  for (const clip of arrangement.audioClips) include(timelineObjectEndTick(clip, timebase));
+  for (const clip of arrangement.midiClips) include(timelineObjectEndTick(clip, timebase));
+  for (const lane of arrangement.automationLanes)
+    for (const point of lane.points) include(point.tick);
+  for (const marker of arrangement.markers) include(marker.tick);
+  if (arrangement.punchRange) {
+    include(arrangement.punchRange.startTick);
+    include(arrangement.punchRange.endTick);
+  }
   return Math.max(barTicks * 16, contentEnd + barTicks * 2);
 }
 

@@ -66,6 +66,7 @@ export type { ChannelMixParams } from './ChannelMixParams';
 export type { ClipAddAssetParams } from './ClipAddAssetParams';
 export type { ClipIdParams } from './ClipIdParams';
 export type { ClipInspection } from './ClipInspection';
+export type { ClipMergeParams } from './ClipMergeParams';
 export type { ClipPasteParams } from './ClipPasteParams';
 export type { ClipRemoveParams } from './ClipRemoveParams';
 export type { ClipSplitParams } from './ClipSplitParams';

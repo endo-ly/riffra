@@ -64,7 +64,7 @@ export function TimelineView({ liveInput }: { liveInput: TimelineLiveInputContro
     if (value !== null && transportStatus?.state !== 'playing') return Promise.resolve();
     return api.previewAutomationValue(target, value, token).catch(() => undefined);
   };
-  const { scrollerRef, zoom, pixelsPerTick, applyZoom, zoomToRange, scrollTop } =
+  const { scrollerRef, rulerRef, zoom, pixelsPerTick, applyZoom, zoomToRange } =
     useTimelineViewport({ timebase, transport: transportStatus, displayTickRef: playhead });
   const analyses = useWaveformAnalyses(arrangement.audioClips);
   const timelineTicks = useMemo(
@@ -199,7 +199,7 @@ export function TimelineView({ liveInput }: { liveInput: TimelineLiveInputContro
             timelineWidth={timelineWidth}
             pixelsPerTick={pixelsPerTick}
             mode={rulerMode}
-            scrollTop={scrollTop}
+            rulerRef={rulerRef}
             loopRange={ruler.loopPreview ?? arrangement.loopRange}
             punchRange={ruler.punchPreview ?? arrangement.punchRange}
             markers={arrangement.markers}
