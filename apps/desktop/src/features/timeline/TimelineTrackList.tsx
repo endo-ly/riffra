@@ -1,9 +1,9 @@
-import { Fragment, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import type { AudioAnalysis, AutomationTarget } from '@/model/generated';
 import { useSession, useSessionContext } from '@/shared/session/session-context';
 import { AutomationLaneEditor } from './AutomationLaneEditor';
 import { TimelineTrack } from './TimelineTrack';
-import { buildTrackTimeline, type TrackSize } from './model/timeline-layout';
+import { buildTrackTimelines, type TrackSize } from './model/timeline-layout';
 import { isBrowserItemDrag, type useTimelineDrop } from './hooks/useTimelineDrop';
 import type { useTimelineEditor } from './hooks/useTimelineEditor';
 import type { useTimelineContextMenus } from './hooks/useTimelineContextMenus';
@@ -51,6 +51,16 @@ export function TimelineTrackList(props: TimelineTrackListProps) {
   const [newTrackDragOver, setNewTrackDragOver] = useState(false);
   const { sessionId } = session;
   const { timebase } = arrangement;
+  const trackTimelines = useMemo(
+    () =>
+      buildTrackTimelines(
+        arrangement.tracks,
+        arrangement.audioClips,
+        arrangement.midiClips,
+        timebase,
+      ),
+    [arrangement.tracks, arrangement.audioClips, arrangement.midiClips, timebase],
+  );
   const { pixelsPerTick, timelineWidth, analyses, unavailableClipIds } = props;
   const selectedClipIds = selection.kind === 'clips' ? selection.clipIds : [];
   const soloActive = arrangement.tracks.some((track) => track.solo);
@@ -114,12 +124,7 @@ export function TimelineTrackList(props: TimelineTrackListProps) {
               track={track}
               soloActive={soloActive}
               trackIndex={trackIndex}
-              timeline={buildTrackTimeline(
-                track.id,
-                arrangement.audioClips,
-                arrangement.midiClips,
-                timebase,
-              )}
+              timeline={trackTimelines.get(track.id)!}
               timebase={timebase}
               analyses={analyses}
               selectedClipIds={selectedClipIds}

@@ -76,12 +76,16 @@ function setup(startTick: number, lyric?: string) {
   api.updateMidiNote = updateMidiNote;
   api.updateMidiNotes = updateMidiNotes;
   api.insertMidiNotes = insertMidiNotes;
-  const { store } = renderWithSession(<MidiEditorPanel clip={clip} trackColor={null} />, { api });
+  const { store, rerender } = renderWithSession(<MidiEditorPanel clip={clip} trackColor={null} />, {
+    api,
+  });
   const lane = document.querySelector<HTMLElement>('[data-midi-lane]')!;
   Object.defineProperty(lane, 'getBoundingClientRect', {
     value: () => ({ left: 0, top: 0, width: 691.2, height: 1536 }),
   });
   return {
+    clip,
+    rerender,
     lane,
     addMidiNote,
     updateMidiNote,
@@ -98,6 +102,22 @@ function positions(root: Element, selector: string) {
 }
 
 describe('MidiEditorPanel', () => {
+  it('cancels a velocity drag when the edited clip changes', async () => {
+    const { clip, rerender, updateMidiNotes } = setup(0);
+    const velocityLane = document.querySelector<HTMLElement>('[data-velocity-lane]')!;
+    vi.spyOn(velocityLane, 'getBoundingClientRect').mockReturnValue({ height: 88 } as DOMRect);
+    const bar = velocityLane.querySelector<HTMLElement>('[data-velocity-note-id]')!;
+    fireEvent.pointerDown(bar, { pointerId: 1, clientY: 40 });
+    fireEvent.pointerMove(window, { pointerId: 1, clientY: 32 });
+
+    rerender(<MidiEditorPanel clip={{ ...clip, id: 'clip:other' }} trackColor={null} />);
+    fireEvent.pointerUp(window, { pointerId: 1, clientY: 32 });
+    await act(async () => undefined);
+
+    expect(updateMidiNotes).not.toHaveBeenCalled();
+    expect(screen.getByLabelText('C4 velocity 96')).toBeInTheDocument();
+  });
+
   it.each([1920, 2160])(
     'aligns all grid layers to Arrangement boundaries at clip tick %i',
     (startTick) => {
@@ -161,6 +181,8 @@ describe('MidiEditorPanel', () => {
     fireEvent.pointerDown(lane, { clientX: 70, clientY: 804, pointerId: 1 });
     fireEvent.pointerUp(window, { clientX: 320, clientY: 804, pointerId: 1 });
     expect(addMidiNote).toHaveBeenLastCalledWith('clip:1', 720, 60, 960, 96, 1);
+    fireEvent.doubleClick(lane, { clientX: 320, clientY: 804 });
+    expect(addMidiNote).toHaveBeenCalledTimes(2);
 
     fireEvent.click(screen.getByRole('button', { name: 'Pointer' }));
     fireEvent.pointerDown(note, { clientX: 100, clientY: 804, pointerId: 2 });

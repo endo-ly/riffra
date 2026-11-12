@@ -66,9 +66,10 @@ export function useNoteEditing(options: NoteEditingOptions) {
   }, [clip?.id, hostGeneration, sessionId]);
 
   const notes = clip?.notes ?? EMPTY_NOTES;
+  const selectedNoteIdSet = useMemo(() => new Set(selectedNoteIds), [selectedNoteIds]);
   const selectedNotes = useMemo(
-    () => notes.filter((note) => selectedNoteIds.includes(note.id)),
-    [notes, selectedNoteIds],
+    () => notes.filter((note) => selectedNoteIdSet.has(note.id)),
+    [notes, selectedNoteIdSet],
   );
   // New notes take the length of the note touched last, so a phrase keeps one rhythm.
   const newNoteLength = lastNoteLength ?? (snapTicks || beatTicks);
@@ -348,8 +349,7 @@ export function useNoteEditing(options: NoteEditingOptions) {
           disabled: snapTicks === 0,
           onClick: () => {
             setNoteContextMenu(null);
-            const ids = selectedNoteIds.length ? selectedNoteIds : [contextNote.id];
-            quantize(notes.filter((note) => ids.includes(note.id)));
+            quantize(selectedNoteIds.length ? selectedNotes : [contextNote]);
           },
         },
         {
@@ -374,6 +374,7 @@ export function useNoteEditing(options: NoteEditingOptions) {
     notes,
     selectedNotes,
     selectedNoteIds,
+    selectedNoteIdSet,
     setSelectedNoteIds,
     selectedVelocity,
     velocityDraft,

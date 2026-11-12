@@ -1,7 +1,15 @@
 import { createTestSessionStore, TestSessionProvider } from '@/test/support/session-provider';
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  renderHook,
+  screen,
+  waitFor,
+} from '@testing-library/react';
 import { Profiler, useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type {
@@ -17,6 +25,8 @@ import { defaultSession } from '@/native/browser-defaults';
 import { createFakeNativeApi, type FakeNativeApi } from '@/test/support/fake-native-api';
 import { resolveDeviceTarget } from '@/features/devices/device-target';
 import { DevicesPanelView } from '@/features/devices/DevicesPanel';
+import { useDeviceDetails } from '@/features/devices/useDeviceDetails';
+import { HostConnectionChangedError } from '@/native/invoke';
 
 afterEach(cleanup);
 const effect = {
@@ -151,6 +161,87 @@ function Harness({
 }
 
 describe('DevicesPanel', () => {
+  it.each(['metadata refresh', 'host change', 'device change', 'unmount'] as const)(
+    'handles a pending edit across %s',
+    async (change) => {
+      const api = runtimeApi();
+      const store = createTestSessionStore(api);
+      const { result, rerender, unmount } = renderHook(
+        ({ values, deviceId }) =>
+          useDeviceDetails({ kind: 'track', id: track.id }, deviceId, values, undefined),
+        {
+          initialProps: { values: [0.5, 0], deviceId: effect.id },
+          wrapper: ({ children }) => (
+            <TestSessionProvider api={api} store={store}>
+              {children}
+            </TestSessionProvider>
+          ),
+        },
+      );
+      await waitFor(() => expect(result.current.loading).toBe(false));
+      let resolve!: (value: ReturnType<typeof api.mutationResult>) => void;
+      let reject!: (error: Error) => void;
+      const pending = new Promise<ReturnType<typeof api.mutationResult>>((done, fail) => {
+        resolve = done;
+        reject = fail;
+      });
+      let saved!: Promise<boolean>;
+      act(() => {
+        saved = result.current.mutate(() => pending);
+      });
+
+      if (change === 'metadata refresh') {
+        rerender({ values: [0.75, 0], deviceId: effect.id });
+      } else if (change === 'device change') {
+        rerender({ values: [0.5, 0], deviceId: 'effect:other' });
+      } else if (change === 'unmount') {
+        unmount();
+      } else {
+        act(() =>
+          store.setState((state) => ({
+            host: {
+              ...state.host,
+              connection: {
+                ...state.host.connection,
+                generation: state.host.connection.generation + 1,
+              },
+            },
+          })),
+        );
+      }
+      await waitFor(() => expect(result.current.loading).toBe(false));
+      const previous = store.getState().project.boot!.canonical;
+      const next = api.mutationResult({
+        ...api.bootstrapState.canonical.session,
+        projectName: 'Saved edit',
+      });
+      await act(async () => {
+        if (change === 'host change') reject(new HostConnectionChangedError());
+        else resolve(next);
+      });
+
+      expect(await saved).toBe(change === 'metadata refresh');
+      expect(store.getState().project.boot!.canonical).toBe(
+        change === 'host change' ? previous : next.canonical,
+      );
+      if (change !== 'unmount') await waitFor(() => expect(result.current.saving).toBe(false));
+    },
+  );
+
+  it('keeps device metadata loaded when the same owner is rendered again', async () => {
+    const api = runtimeApi();
+    const { rerender } = render(<Harness api={api} />);
+    fireEvent.click(screen.getByRole('button', { name: effect.name }));
+    await screen.findByRole('slider', { name: 'Level' });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Reset Level' })).toBeEnabled());
+
+    rerender(<Harness api={api} />);
+    await act(async () => undefined);
+
+    expect(api.calls.filter((call) => call === 'inspectDevice')).toHaveLength(1);
+    expect(api.calls.filter((call) => call === 'listDeviceParameters')).toHaveLength(1);
+  });
+
   it.each(['track', 'bus', 'master'] as const)(
     'commits parameters, presets and editor actions on %s',
     async (kind) => {

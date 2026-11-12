@@ -1,4 +1,4 @@
-import type { Arrangement, AudioClip, MidiClip, ProjectTimebase } from '@/model/generated';
+import type { Arrangement, AudioClip, MidiClip, ProjectTimebase, Track } from '@/model/generated';
 import { timelineObjectEndTick } from '@/model/clip-time';
 import { ticksPerBeat, ticksPerBar } from '@/model/timebase';
 
@@ -73,40 +73,44 @@ function layoutClipLanes(clips: readonly { id: string; startTick: number; endTic
   return { lanes, count: Math.max(1, laneEnds.length) };
 }
 
-export function buildTrackTimeline(
-  trackId: string,
+/** Groups clips once, then lays out overlaps within each track. */
+export function buildTrackTimelines(
+  tracks: readonly Pick<Track, 'id'>[],
   audioClips: readonly AudioClip[],
   midiClips: readonly MidiClip[],
   timebase: ProjectTimebase,
-): TrackTimeline {
-  const items: TimelineItem[] = [
-    ...audioClips
-      .filter((clip) => clip.trackId === trackId)
-      .map((clip) => ({
-        kind: 'audio' as const,
-        key: `audio:${clip.id}`,
-        clip,
-        startTick: clip.startTick,
-        endTick: timelineObjectEndTick(clip, timebase),
-      })),
-    ...midiClips
-      .filter((clip) => clip.trackId === trackId)
-      .map((clip) => ({
-        kind: 'midi' as const,
-        key: `midi:${clip.id}`,
-        clip,
-        startTick: clip.startTick,
-        endTick: timelineObjectEndTick(clip, timebase),
-      })),
-  ];
-  const layout = layoutClipLanes(
-    items.map((item) => ({
-      id: item.key,
-      startTick: item.startTick,
-      endTick: item.endTick,
-    })),
+): ReadonlyMap<string, TrackTimeline> {
+  const tracksById = new Map(tracks.map((track) => [track.id, [] as TimelineItem[]]));
+  for (const clip of audioClips) {
+    tracksById.get(clip.trackId)?.push({
+      kind: 'audio',
+      key: `audio:${clip.id}`,
+      clip,
+      startTick: clip.startTick,
+      endTick: timelineObjectEndTick(clip, timebase),
+    });
+  }
+  for (const clip of midiClips) {
+    tracksById.get(clip.trackId)?.push({
+      kind: 'midi',
+      key: `midi:${clip.id}`,
+      clip,
+      startTick: clip.startTick,
+      endTick: timelineObjectEndTick(clip, timebase),
+    });
+  }
+  return new Map(
+    [...tracksById].map(([trackId, items]) => {
+      const layout = layoutClipLanes(
+        items.map((item) => ({
+          id: item.key,
+          startTick: item.startTick,
+          endTick: item.endTick,
+        })),
+      );
+      return [trackId, { items, lanes: layout.lanes, laneCount: layout.count }];
+    }),
   );
-  return { items, lanes: layout.lanes, laneCount: layout.count };
 }
 
 export function trackLaneHeight(size: TrackSize) {

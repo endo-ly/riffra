@@ -1,5 +1,5 @@
 import { errorText } from '@/shared/errors';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type {
   ArrangementMutationResult,
   DeviceInspection,
@@ -8,7 +8,7 @@ import type {
   PluginPresetInfo,
 } from '@/model/generated';
 import { HostConnectionChangedError } from '@/native/invoke';
-import { useSessionContext } from '@/shared/session/session-context';
+import { useSession, useSessionContext } from '@/shared/session/session-context';
 
 interface DeviceDetails {
   inspection: DeviceInspection;
@@ -18,19 +18,37 @@ interface DeviceDetails {
 }
 
 export function useDeviceDetails(
-  owner: EffectOwner,
+  requestedOwner: EffectOwner,
   deviceId: string,
   parameterValues: number[],
   stateData: string | undefined,
 ) {
   const { api, commit: sessionCommit } = useSessionContext();
+  const hostGeneration = useSession((state) => state.host.connection.generation);
+  const ownerKind = requestedOwner.kind;
+  const ownerId = 'id' in requestedOwner ? requestedOwner.id : null;
+  const owner = useMemo<EffectOwner>(
+    () => (ownerKind === 'master' ? { kind: 'master' } : { kind: ownerKind, id: ownerId! }),
+    [ownerKind, ownerId],
+  );
   const sequence = useRef(0);
+  const targetGeneration = useRef(0);
   const parameterRevision = parameterValues.join(',');
   const [details, setDetails] = useState<DeviceDetails | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refresh, setRefresh] = useState(0);
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    targetGeneration.current += 1;
+    setDetails(null);
+    setError(null);
+    setSaving(false);
+    return () => {
+      targetGeneration.current += 1;
+    };
+  }, [api, owner, deviceId, hostGeneration]);
 
   useEffect(() => {
     const request = ++sequence.current;
@@ -58,38 +76,32 @@ export function useDeviceDetails(
     return () => {
       sequence.current = request + 1;
     };
-  }, [api, owner, deviceId, parameterRevision, stateData, refresh]);
+  }, [api, owner, deviceId, hostGeneration, parameterRevision, stateData, refresh]);
 
   const mutate = async (operation: () => Promise<ArrangementMutationResult>) => {
-    const request = sequence.current;
+    const target = targetGeneration.current;
     setSaving(true);
     setError(null);
     try {
-      const guarded = operation().then((result) => {
-        if (sequence.current !== request) throw new HostConnectionChangedError();
-        return result;
-      });
-      const result = await sessionCommit(guarded, {
+      const result = await sessionCommit(operation(), {
         onError: (message) => {
-          if (sequence.current === request) setError(message);
+          if (targetGeneration.current === target) setError(message);
         },
       });
-      if (!result || sequence.current !== request) return false;
+      if (!result || targetGeneration.current !== target) return false;
       setLoading(true);
       setRefresh((value) => value + 1);
       return true;
     } finally {
-      // The component is keyed by Project / Track / Device. A metadata refresh
-      // may supersede the mutation's read sequence without changing its target.
-      setSaving(false);
+      if (targetGeneration.current === target) setSaving(false);
     }
   };
   const openEditor = async () => {
-    const request = sequence.current;
+    const target = targetGeneration.current;
     try {
       await api.openPluginEditor(owner, deviceId);
     } catch (failure) {
-      if (sequence.current === request && !(failure instanceof HostConnectionChangedError))
+      if (targetGeneration.current === target && !(failure instanceof HostConnectionChangedError))
         setError(errorText(failure));
     }
   };

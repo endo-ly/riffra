@@ -44,6 +44,8 @@ export const MidiEditorPanel = memo(function MidiEditorPanel({
 }: MidiEditorPanelProps) {
   const { api } = useSessionContext();
   const arrangement = useSession((state) => state.project.boot!.canonical.session.arrangement);
+  const sessionId = useSession((state) => state.project.boot!.canonical.session.sessionId);
+  const hostGeneration = useSession((state) => state.host.connection.generation);
   const playhead = useSession((state) => state.transport.playhead);
   const seek = useSession((state) => state.transport.seek);
   const stoppedTick = useSession(selectStoppedPlayheadTick);
@@ -53,9 +55,13 @@ export const MidiEditorPanel = memo(function MidiEditorPanel({
     selectTrackInstrumentPlayable(state, clip?.trackId ?? null),
   );
   const { inspection } = useInstrumentMidiInspection(clip?.trackId ?? null, arrangement.revision);
+  const [ghostsVisible, setGhostsVisible] = useState(true);
   const ghostNotes = useMemo(
-    () => collectGhostNotes(clip, arrangement.midiClips, arrangement.tracks),
-    [clip, arrangement.midiClips, arrangement.tracks],
+    () =>
+      ghostsVisible
+        ? collectGhostNotes(clip, arrangement.midiClips, arrangement.tracks)
+        : EMPTY_GHOSTS,
+    [clip, arrangement.midiClips, arrangement.tracks, ghostsVisible],
   );
   const instrumentSettings = inspection?.settings ?? null;
   const warnedNoteIds = useMemo(
@@ -68,7 +74,6 @@ export const MidiEditorPanel = memo(function MidiEditorPanel({
   const [lastUsedVelocity, setLastUsedVelocity] = useState(96);
   const [hoverPitch, setHoverPitch] = useState<number | null>(null);
   const [tool, setTool] = useState<MidiEditorTool>('pointer');
-  const [ghostsVisible, setGhostsVisible] = useState(true);
   const [previewEnabled, setPreviewEnabled] = useState(true);
   const [marquee, setMarquee] = useState<{
     left: number;
@@ -173,7 +178,7 @@ export const MidiEditorPanel = memo(function MidiEditorPanel({
   });
   const { dragging, handlePointerDown, suppressNoteClickRef, resetDrag } = useNoteDrag({
     clip,
-    selectedNoteIds: editing.selectedNoteIds,
+    selectedNoteIds: editing.selectedNoteIdSet,
     pixelsPerTick,
     rowHeight,
     placeTick,
@@ -189,7 +194,8 @@ export const MidiEditorPanel = memo(function MidiEditorPanel({
 
   useEffect(() => {
     if (!clipId) return;
-    requestAnimationFrame(() => editorRef.current?.focus());
+    const frame = requestAnimationFrame(() => editorRef.current?.focus());
+    return () => cancelAnimationFrame(frame);
   }, [clipId]);
 
   const { setSelectedNoteIds, setNoteContextMenu } = editing;
@@ -200,12 +206,20 @@ export const MidiEditorPanel = memo(function MidiEditorPanel({
     setMarquee(null);
     setDrawPreview(null);
     setNoteContextMenu(null);
-  }, [clipId, hasClip, startGesture, resetDrag, setSelectedNoteIds, setNoteContextMenu]);
+  }, [
+    clipId,
+    hasClip,
+    hostGeneration,
+    sessionId,
+    startGesture,
+    resetDrag,
+    setSelectedNoteIds,
+    setNoteContextMenu,
+  ]);
 
   if (!clip) return <div className={styles.empty} />;
 
   const notes = editing.notes;
-  const ghostLayer = ghostsVisible ? ghostNotes : EMPTY_GHOSTS;
   const noteBox = (note: MidiNote): CSSProperties => ({
     left: note.startTick * pixelsPerTick,
     top: pitchRowTop(note.note, rowHeight),
@@ -332,7 +346,7 @@ export const MidiEditorPanel = memo(function MidiEditorPanel({
               setDrawPreview={setDrawPreview}
               setMarquee={setMarquee}
               setSelectedNoteIds={editing.setSelectedNoteIds}
-              selectedNoteIds={editing.selectedNoteIds}
+              selectedNoteIds={editing.selectedNoteIdSet}
               placeTick={placeTick}
               newNoteLength={editing.newNoteLength}
               addNoteAt={editing.addNoteAt}
@@ -343,7 +357,7 @@ export const MidiEditorPanel = memo(function MidiEditorPanel({
               barLineTicks={barLineTicks}
               beatLineTicks={beatLineTicks}
               subdivisionLineTicks={subdivisionLineTicks}
-              ghostNotes={ghostLayer}
+              ghostNotes={ghostNotes}
               pitchRows={pitchRows}
               notes={notes}
               dragging={dragging}
@@ -364,8 +378,9 @@ export const MidiEditorPanel = memo(function MidiEditorPanel({
               style={{ width: laneWidth }}
             >
               <MidiVelocityLane
+                editScope={`${hostGeneration}:${sessionId}:${clip.id}`}
                 notes={notes}
-                selectedNoteIds={editing.selectedNoteIds}
+                selectedNoteIds={editing.selectedNoteIdSet}
                 visibleTicks={visibleTicks}
                 pixelsPerTick={pixelsPerTick}
                 barLineTicks={barLineTicks}

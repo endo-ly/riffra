@@ -75,7 +75,7 @@ export function MixerMasterChannelStrip(props: MixerMasterChannelStripProps) {
         </button>
       </div>
       <div className={styles.masterMixControl}>
-        <MixerMeter master mode="peak" />
+        <MixerMeter owner={{ kind: 'master' }} mode="peak" />
 
         <label className={styles.masterFader}>
           <span>MASTER GAIN</span>
