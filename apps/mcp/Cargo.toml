@@ -25,6 +25,4 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt"] }
 
 [dev-dependencies]
-riffra-core = { path = "../../crates/riffra-core" }
-riffra-host = { path = "../../crates/riffra-host" }
 tempfile = "3"

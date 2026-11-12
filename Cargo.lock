@@ -3194,8 +3194,6 @@ dependencies = [
  "clap",
  "jsonschema",
  "riffra-control",
- "riffra-core",
- "riffra-host",
  "riffra-runtime",
  "rmcp",
  "schemars 1.2.1",
