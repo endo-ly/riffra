@@ -355,6 +355,7 @@ control_commands! {
         AudioClipTrim = "clip.audio.trim" (AudioClipTrimParams) -> ArrangementMutation, mutation(batch), project;
         AudioClipSplit = "clip.audio.split" (ClipSplitParams) -> ArrangementMutation, mutation(batch), project;
         AudioClipDuplicate = "clip.audio.duplicate" (ClipIdParams) -> ArrangementMutation, mutation(batch), project;
+        AudioClipMerge = "clip.audio.merge" (ClipMergeParams) -> ArrangementMutation, mutation(batch), project;
         AudioClipCrossfade = "clip.audio.crossfade" (AudioClipCrossfadeParams) -> ArrangementMutation, mutation(batch), project;
         MidiClipList = "clip.midi.list" (EmptyParams) -> MidiClips, read, project;
         MidiClipCreate = "clip.midi.create" (MidiClipCreateParams) -> ArrangementMutation, mutation(batch), project;
@@ -402,6 +403,7 @@ control_commands! {
         InstrumentList = "instrument.list" (EmptyParams) -> InstrumentLibrary, read, host;
         InstrumentSave = "instrument.save" (InstrumentSaveParams) -> InstrumentLibraryItem, read, host;
         InstrumentExport = "instrument.export" (InstrumentExportParams) -> InstrumentExport, read, host;
+        InstrumentTrackCreate = "instrument.track.create" (InstrumentTrackCreateParams) -> ArrangementMutation, mutation, project;
         InstrumentApply = "instrument.apply" (InstrumentApplyParams) -> ArrangementMutation, mutation(batch), project;
         InstrumentMidiGet = "instrument.midi.get" (TrackIdParams) -> InstrumentMidi, read, project;
         InstrumentMidiSet = "instrument.midi.set" (InstrumentMidiSetParams) -> ArrangementMutation, mutation(batch), project;
@@ -556,7 +558,7 @@ mod tests {
         let names = command_names();
 
         // Act / Assert
-        assert_eq!(names.len(), 219);
+        assert_eq!(names.len(), 221);
         let unique: std::collections::HashSet<_> = names.iter().copied().collect();
         assert_eq!(unique.len(), names.len());
         for name in names {
@@ -794,7 +796,7 @@ mod tests {
             .filter_map(|line| line.split_once('\'').map(|(name, _)| name))
             .collect();
         let unique: std::collections::HashSet<_> = names.iter().copied().collect();
-        assert_eq!(names.len(), 219);
+        assert_eq!(names.len(), 221);
         assert_eq!(unique.len(), names.len());
 
         for (name, params) in [

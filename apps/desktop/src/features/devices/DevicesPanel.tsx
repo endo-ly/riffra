@@ -1,3 +1,4 @@
+import { useSessionCommand } from '@/shared/session/useSessionCommand';
 import { errorText } from '@/shared/errors';
 import { useEffect, useState, type CSSProperties } from 'react';
 import type {
@@ -27,8 +28,6 @@ interface DevicesPanelProps {
   sessionId: string;
   arrangement: Arrangement;
   automationLanes: AutomationLane[];
-  playing: boolean;
-  currentTick: number;
   onOpenAutomation: (target: AutomationTarget) => void;
   target: DeviceTarget | null;
   instruments: InstrumentLibraryItem[];
@@ -43,7 +42,6 @@ export function DevicesPanel() {
   const session = useSession((state) => state.project.boot!.canonical.session);
   const selection = useSession((state) => state.workspace.selection);
   const workspace = useSession((state) => state.workspace);
-  const transport = useSession((state) => state.transport);
   const catalog = useSession((state) => state.catalog);
   const missing = useSession((state) => state.missing);
   const missingDeviceIds = useSession(useShallow(selectMissingDeviceIds));
@@ -51,11 +49,10 @@ export function DevicesPanel() {
   const target = owner ? resolveDeviceTarget(session.arrangement, owner) : null;
   return (
     <DevicesPanelView
+      key={JSON.stringify([session.sessionId, owner])}
       sessionId={session.sessionId}
       arrangement={session.arrangement}
       automationLanes={session.arrangement.automationLanes}
-      playing={transport.status?.state === 'playing'}
-      currentTick={transport.displayTick}
       onOpenAutomation={workspace.openAutomation}
       target={target}
       instruments={catalog.instruments.items}
@@ -69,7 +66,8 @@ export function DevicesPanel() {
 }
 
 export function DevicesPanelView(props: DevicesPanelProps) {
-  const { api, commit: sessionCommit } = useSessionContext();
+  const { api } = useSessionContext();
+  const sessionCommit = useSessionCommand(JSON.stringify(props.target?.owner));
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { target } = props;
@@ -102,7 +100,6 @@ export function DevicesPanelView(props: DevicesPanelProps) {
 
   const { inspection: midiInspection, error: inspectionError } = useInstrumentMidiInspection(
     track?.kind === 'instrument' ? track.id : null,
-    props.arrangement.revision,
   );
   useEffect(() => {
     if (inspectionError) setError(inspectionError);
@@ -154,14 +151,6 @@ export function DevicesPanelView(props: DevicesPanelProps) {
               <DeviceParameterEditor
                 key={`${props.sessionId}:${JSON.stringify(target.owner)}:${device.id}:${plugin.path}`}
                 automationLanes={props.automationLanes}
-                automationReadActive={
-                  props.playing &&
-                  props.automationLanes.some(
-                    (lane) =>
-                      lane.target.kind === 'deviceParameter' && lane.target.deviceId === device.id,
-                  )
-                }
-                currentTick={props.currentTick}
                 onOpenAutomation={(parameter) => {
                   if (parameter.parameterId)
                     props.onOpenAutomation({
@@ -172,6 +161,7 @@ export function DevicesPanelView(props: DevicesPanelProps) {
                 }}
                 owner={target.owner}
                 deviceId={device.id}
+                pluginPath={plugin.path}
                 stateData={plugin.stateData}
                 parameterValues={plugin.parameterValues}
                 arrangement={props.arrangement}

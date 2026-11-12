@@ -1,5 +1,5 @@
 import { useSession } from '@/shared/session/session-context';
-import { selectActiveProjectId, selectHostReady } from '@/shared/session/selectors';
+import { selectHostReady } from '@/shared/session/selectors';
 import { useEffect, useState } from 'react';
 import { useAppShortcuts } from '@/app/useAppShortcuts';
 import { useSessionRuntime } from '@/app/runtime/useSessionRuntime';
@@ -29,7 +29,6 @@ export function AppShell() {
   const [commandOpen, setCommandOpen] = useState(false);
   useAppShortcuts(setCommandOpen);
   const sessionReady = useSession((state) => Boolean(state.project.boot?.canonical.session));
-  const activeProjectId = useSession(selectActiveProjectId);
   const bootstrapError = useSession((state) => state.project.bootstrapError);
   const bootstrapLoading = useSession((state) => state.project.bootstrapLoading);
   const retryBootstrap = useSession((state) => state.project.bootstrap);
@@ -118,7 +117,7 @@ export function AppShell() {
       >
         <section className={shellStyles.workspace}>
           <ProjectBoundRegion>
-            <EditorWorkspace key={activeProjectId ?? 'no-project'} />
+            <EditorWorkspace />
           </ProjectBoundRegion>
         </section>
       </LeftColumn>

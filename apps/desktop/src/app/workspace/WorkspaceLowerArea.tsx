@@ -1,14 +1,11 @@
-import type { CSSProperties, ReactNode } from 'react';
+import { Activity, type CSSProperties, type ReactNode } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { useSession } from '@/shared/session/session-context';
-import { selectTrack, selectMidiClip } from '@/shared/session/selectors';
 import type { useLivePlay } from '@/features/live-input/useLivePlay';
-import { PlaySurface } from '@/features/live-input/PlaySurface';
-import { MidiEditorPanel } from '@/features/midi-editor/MidiEditorPanel';
+import { WorkspacePlaySurface } from '@/features/live-input/PlaySurface';
+import { WorkspaceMidiEditor } from '@/features/midi-editor/MidiEditorPanel';
 import { DevicesPanel } from '@/features/devices/DevicesPanel';
 import { MixerPanel } from '@/features/mixer/MixerPanel';
-import { resolveDeviceTarget } from '@/features/devices/device-target';
-import { selectionOwner } from '@/model/editor-selection';
-import { resolveTrackColor } from '@/model/track-color';
 import { ToolbarButton } from '@/shared/ui/Toolbar';
 import { ResizeHandle } from '@/shared/ui/ResizeHandle';
 import { usePointerGesture } from '@/shared/usePointerGesture';
@@ -26,10 +23,7 @@ interface WorkspaceLowerAreaProps {
   onCollapsedChange: (collapsed: boolean) => void;
   onHeightChange: (height: number) => void;
   controls: ReactNode;
-  midiEditor: ReactNode;
-  mixer: ReactNode;
-  devices: ReactNode;
-  playSurface: ReactNode;
+  children: ReactNode;
 }
 
 function LowerAreaLayout({
@@ -41,10 +35,7 @@ function LowerAreaLayout({
   onCollapsedChange,
   onHeightChange,
   controls,
-  midiEditor,
-  mixer,
-  devices,
-  playSurface,
+  children,
 }: WorkspaceLowerAreaProps) {
   const startGesture = usePointerGesture();
   if (view === 'closed') return null;
@@ -99,51 +90,43 @@ function LowerAreaLayout({
       <div className={styles.actions} aria-label="Arrange lower area controls">
         {controls}
       </div>
-      <div className={styles.content} hidden={collapsed}>
-        {view === 'midiEditor' && midiEditor}
-        {view === 'mixer' && mixer}
-        {view === 'devices' && devices}
-        {view === 'playSurface' && playSurface}
-      </div>
+      <Activity mode={collapsed ? 'hidden' : 'visible'}>
+        <div className={styles.content}>{children}</div>
+      </Activity>
     </section>
   );
 }
 
 export function WorkspaceLowerArea({ play }: { play: ReturnType<typeof useLivePlay> }) {
-  const session = useSession((state) => state.project.boot!.canonical.session);
-  const workspace = useSession((state) => state.workspace);
-  const audio = useSession((state) => state.audio.status);
-  const generation = useSession((state) => state.host.connection.generation);
-  const { arrangement } = session;
-  const lower = workspace.lower;
+  const { lower, setLowerCollapsed, setLowerMaximized, setLowerHeight, closeLower } = useSession(
+    useShallow((state) => ({
+      lower: state.workspace.lower,
+      setLowerCollapsed: state.workspace.setLowerCollapsed,
+      setLowerMaximized: state.workspace.setLowerMaximized,
+      setLowerHeight: state.workspace.setLowerHeight,
+      closeLower: state.workspace.closeLower,
+    })),
+  );
   const heightKey = lower.view === 'mixer' || lower.view === 'playSurface' ? lower.view : 'detail';
-  const clip = useSession((state) => selectMidiClip(state, lower.activeMidiClipId));
-  const clipTrackIndex = clip
-    ? arrangement.tracks.findIndex((track) => track.id === clip.trackId)
-    : -1;
-  const clipTrack = arrangement.tracks[clipTrackIndex];
-  const focusedTrack = useSession((state) => selectTrack(state, workspace.focusedTrackId));
-  const owner = selectionOwner(workspace.selection);
-  const target = owner ? resolveDeviceTarget(arrangement, owner) : null;
   const controls = (
     <>
       <ToolbarButton
         icon={lower.collapsed ? 'expand' : 'collapse'}
         ariaLabel={lower.collapsed ? 'Restore lower area' : 'Collapse lower area'}
         title={lower.collapsed ? 'Restore lower area' : 'Collapse lower area'}
-        onClick={() => workspace.setLowerCollapsed(!lower.collapsed)}
+        onClick={() => setLowerCollapsed(!lower.collapsed)}
       />
       <ToolbarButton
         icon={lower.maximized ? 'restore' : 'maximize'}
         ariaLabel={lower.maximized ? 'Restore lower area size' : 'Maximize lower area'}
         title={lower.maximized ? 'Restore lower area size' : 'Maximize lower area'}
-        onClick={() => workspace.setLowerMaximized(!lower.maximized)}
+        onClick={() => setLowerMaximized(!lower.maximized)}
       />
       <ToolbarButton
         icon="close"
         ariaLabel="Close lower area"
         title="Close lower area"
-        onClick={workspace.closeLower}
+        onClick={closeLower}
       />
     </>
   );
@@ -154,36 +137,16 @@ export function WorkspaceLowerArea({ play }: { play: ReturnType<typeof useLivePl
       minimumHeight={lower.view === 'mixer' ? 240 : lower.view === 'playSurface' ? 220 : 180}
       collapsed={lower.collapsed}
       maximized={lower.maximized}
-      onCollapsedChange={workspace.setLowerCollapsed}
-      onHeightChange={workspace.setLowerHeight}
+      onCollapsedChange={setLowerCollapsed}
+      onHeightChange={setLowerHeight}
       controls={controls}
-      playSurface={
-        <PlaySurface
-          play={play}
-          trackColor={
-            focusedTrack
-              ? resolveTrackColor(focusedTrack, arrangement.tracks.indexOf(focusedTrack))
-              : null
-          }
-          audio={audio}
-          onChooseInstrument={() => {
-            if (focusedTrack) {
-              workspace.setSelection({ kind: 'track', trackId: focusedTrack.id });
-              workspace.openDevices();
-            }
-          }}
-        />
-      }
-      midiEditor={
-        <MidiEditorPanel
-          clip={clip}
-          trackColor={clipTrack ? resolveTrackColor(clipTrack, clipTrackIndex) : null}
-        />
-      }
-      devices={
-        <DevicesPanel key={`${session.sessionId}:${JSON.stringify(target?.owner)}:${generation}`} />
-      }
-      mixer={<MixerPanel />}
-    />
+    >
+      <>
+        {lower.view === 'playSurface' && <WorkspacePlaySurface play={play} />}
+        {lower.view === 'midiEditor' && <WorkspaceMidiEditor />}
+        {lower.view === 'devices' && <DevicesPanel />}
+        {lower.view === 'mixer' && <MixerPanel />}
+      </>
+    </LowerAreaLayout>
   );
 }

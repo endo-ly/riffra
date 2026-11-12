@@ -110,6 +110,8 @@ riffra --attach render settings set --settings-json '{"musicalEndTick":0,"tailSe
 
 Track・Clip・Marker・Rangeの編集コマンドの引数は `--help` を参照。複数IDはコンマ区切りとJSON形式のどちらでも渡せる。recording-slot由来などWindowsパスを含むIDは、コンマ区切りではなくJSON形式(`--*-ids-json`、またはfile)で渡すと安全である。
 
+`clip audio merge` / `clip midi merge` は `--first-clip-id` と `--second-clip-id` に時間順の隣接クリップを指定し、一回の編集として結合する。音声は同じ素材の連続範囲で音量・パン・ミュート・テイク・フェード形状が一致し、境界のフェードやループがないことを要する。MIDIは同じトラックでミュートが一致し、ループしていないことを要する。録音セッションのスロットはコピーを配置してから結合する。
+
 ミックスの正本は正準状態であり、Gain / VolumeはdB、Panは-1.0(左)..1.0(右)で指定する(Solo / Muteの挙動と値域は `track update --help` を参照)。RenderはTrackとClipのGain、Pan、Mute、Solo、Automation、Masterをすべて反映する。
 
 Group・Return・Send・Sidechainの正準設定は `mixer get` でまとめて参照する。Sidechainは別Track・Group・Return・Master上のEffect Deviceを指定し、Live Hostの `device inspect` で `capabilities.sidechain` を確認してから接続する。Instrument Deviceと送信元自身のTrack上のEffectは指定しない。Source TrackのMuteはSidechainも止め、Soloで主出力が分離されてもSidechainは維持する。Processed Variantに必要な制御信号が録音から再利用できない場合はRaw Takeを保持し、`record list` の `processedUnavailableReason` で理由を確認できる。
@@ -211,6 +213,8 @@ riffra --attach plugin state patch --track-id <t> --device-id <d> --path Plugin 
 `device parameter set` の応答は、`mutation`に正準変更、`parameter`に対象の読み戻し値、`changedParameters`に値が変わったほかのParameterをindex順で返す。`--display` はLive HostのPluginに文字列からの変換を依頼し、表示へ戻した結果が入力と等価な場合に適用する。数値表示には `--nearest` を併用でき、単位が一致する範囲で最も近い適用可能な表示値を選ぶ。適用値は応答の `parameter.value` と `displayValue` で確認できる。`session apply` 内では正規化値だけを正準状態へ書き、`--display` は使えない。
 
 `effect add` は Effect Chain の末尾へ追加し、応答の `createdEntityIds.devices` に新しい Device ID を返す。
+
+音源付きトラックの作成は `instrument create-track --name Keys --instrument-id builtin:<presetId>`、または `--instrument-id` の代わりに `--plugin-path` を使う。トラック作成と割り当てをまとめて確定し、準備や保存の失敗ではトラックも追加しない。一回のUndoで全体を戻せる。
 
 Instrumentの割り当ては `instrument apply`(`builtin:<presetId>` または `user:<id>`)で行う。Built-in instrumentの割り当てはSafe Modeでも実行できる。Instrument毎のMIDI設定は `instrument midi set --settings-json` で置換し、`transposeSemitones`、`playableNotes`(`{"type":"range","start":36,"end":84}`、`{"type":"set","notes":[...]}`、制限なしの`null`)、`keyswitches`(`[{"note":24,"name":"C0"}]`)を持つ。
 

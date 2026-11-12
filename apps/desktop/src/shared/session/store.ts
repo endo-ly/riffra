@@ -21,7 +21,15 @@ import {
 import { createProjectSlice, type ProjectSlice } from './slices/project';
 import { selectStartupRestoreReady } from './selectors';
 
+export interface SessionScope {
+  readonly generation: number;
+  readonly hostGeneration: number;
+  readonly projectId: string | null;
+  readonly sessionId: string | null;
+}
+
 export interface SessionState {
+  scope: SessionScope;
   project: ProjectSlice;
   runtime: RuntimeSlice;
   audio: AudioSlice;
@@ -45,11 +53,24 @@ export function createSessionStore(api: NativeApi): SessionStore {
   return createStore<SessionState>()(
     subscribeWithSelector((set, get) => {
       return {
+        scope: { generation: 0, hostGeneration: 0, projectId: null, sessionId: null },
         readModel: null,
         host: createHostSlice(
           api,
           () => get().host,
-          (patch) => set((state) => ({ host: { ...state.host, ...patch } })),
+          (patch) =>
+            set((state) => {
+              const host = { ...state.host, ...patch };
+              const scope =
+                host.connection.generation === state.scope.hostGeneration
+                  ? state.scope
+                  : {
+                      ...state.scope,
+                      generation: state.scope.generation + 1,
+                      hostGeneration: host.connection.generation,
+                    };
+              return { host, scope };
+            }),
           () => {
             get().project.reset();
             get().audio.reset();
@@ -141,9 +162,17 @@ export function createSessionStore(api: NativeApi): SessionStore {
               const workspace = !sameSession
                 ? { ...state.workspace, ...initialWorkspace() }
                 : session && session !== previousSession
-                  ? reconcileWorkspace(state.workspace, session)
+                  ? reconcileWorkspace(state.workspace, session, previousSession!)
                   : state.workspace;
-              return { project, workspace, readModel };
+              const scope = sameSession
+                ? state.scope
+                : {
+                    generation: state.scope.generation + 1,
+                    hostGeneration: state.host.connection.generation,
+                    projectId: nextId ?? null,
+                    sessionId: session?.sessionId ?? null,
+                  };
+              return { project, workspace, readModel, scope };
             }),
           (operation, options) => get().commit(operation, options),
           (started, finished) => get().runtime.acceptBootstrapStartup(started, finished),

@@ -251,12 +251,7 @@ describe('TimelineView', () => {
         mergeAudioClip('clip:audio:second', 1_920, 48_000),
       );
       const api = createFakeNativeApi();
-      const update = vi
-        .spyOn(api, 'updateAudioClip')
-        .mockResolvedValue(api.mutationResult(session));
-      const remove = vi
-        .spyOn(api, 'removeTimelineClips')
-        .mockResolvedValue(api.mutationResult(session));
+      const merge = vi.spyOn(api, 'mergeAudioClips').mockResolvedValue(api.mutationResult(session));
       const { container } = renderWorkspace(api, { session });
       const selectedClipId = direction === 'next' ? 'clip:audio:first' : 'clip:audio:second';
 
@@ -267,11 +262,9 @@ describe('TimelineView', () => {
         }),
       );
 
-      await waitFor(() => expect(remove).toHaveBeenCalledWith(['clip:audio:second'], []));
-      expect(update).toHaveBeenCalledWith('clip:audio:first', {
-        sourceRange: { start: 0, end: 96_000 },
-        timelineDuration: { frames: 96_000, sampleRate: 48_000 },
-      });
+      await waitFor(() =>
+        expect(merge).toHaveBeenCalledWith('clip:audio:first', 'clip:audio:second'),
+      );
     },
   );
 

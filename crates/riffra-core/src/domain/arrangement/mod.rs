@@ -1493,6 +1493,61 @@ impl Arrangement {
         Ok(())
     }
 
+    /// Joins contiguous source ranges without changing their audible mix.
+    pub(crate) fn merge_audio_clips(
+        &mut self,
+        first_id: &str,
+        second_id: &str,
+    ) -> Result<(), DomainError> {
+        let find = |id: &str| {
+            self.audio_clips
+                .iter()
+                .find(|clip| clip.id == id)
+                .cloned()
+                .ok_or_else(|| DomainError::InvalidClip(format!("audio clip '{id}' not found")))
+        };
+        let mut merged = find(first_id)?;
+        let second = find(second_id)?;
+        self.validate_audio_clip(&merged)?;
+        self.validate_audio_clip(&second)?;
+        if first_id == second_id
+            || merged.track_id != second.track_id
+            || merged.asset_id != second.asset_id
+            || merged.source_sample_rate != second.source_sample_rate
+            || merged.source_range.end != second.source_range.start
+            || merged.start_tick.0.checked_add(
+                self.timebase
+                    .duration_to_ticks(merged.start_tick, merged.timeline_duration),
+            ) != Some(second.start_tick.0)
+            || merged.loop_enabled
+            || second.loop_enabled
+            || merged.gain_db != second.gain_db
+            || merged.pan != second.pan
+            || merged.muted != second.muted
+            || merged.fade_shape != second.fade_shape
+            || merged.fade_out.frames != 0
+            || second.fade_in.frames != 0
+            || merged.recording_take_id != second.recording_take_id
+            || merged.take_variant != second.take_variant
+            || self.is_recording_slot_clip(first_id)
+            || self.is_recording_slot_clip(second_id)
+        {
+            return Err(DomainError::InvalidClip("audio clips must have contiguous source and timeline ranges, matching mix and take settings, and no loops or internal fades; recording slots must be copied before merging".into()));
+        }
+        merged.source_range.end = second.source_range.end;
+        merged.timeline_duration.frames = merged.source_range.len();
+        merged.fade_out = second.fade_out;
+        self.validate_audio_clip(&merged)?;
+        self.audio_clips.retain(|clip| clip.id != second_id);
+        *self
+            .audio_clips
+            .iter_mut()
+            .find(|clip| clip.id == first_id)
+            .unwrap() = merged;
+        self.revision = self.revision.saturating_add(1);
+        Ok(())
+    }
+
     pub fn split_audio_clip(
         &mut self,
         clip_id: &str,
@@ -2042,6 +2097,49 @@ mod tests {
     };
     use crate::domain::session::CreativeSession;
     use crate::domain::timeline::{ProjectTimebase, TIMELINE_PPQ, TimelineTick};
+
+    #[test]
+    fn merge_audio_clips_preserves_outer_fades_and_rejects_changes_to_the_sound() {
+        let mut arrangement = Arrangement::default();
+        arrangement
+            .tracks
+            .push(Track::audio("audio".into(), "Audio".into()));
+        let mut clip = AudioClip::full_source(
+            "left".into(),
+            "Clip".into(),
+            "audio".into(),
+            crate::domain::asset::mint_asset_id(),
+            TimelineTick(0),
+            48_000,
+            96_000,
+        );
+        clip.fade_in.frames = 240;
+        clip.fade_out.frames = 480;
+        arrangement.add_audio_clip(clip.clone(), |_| true).unwrap();
+        arrangement
+            .split_audio_clip("left", TimelineTick(1920), "right".into())
+            .unwrap();
+        let split = arrangement.clone();
+        for change in 0..5 {
+            let mut invalid = split.clone();
+            let right = &mut invalid.audio_clips[1];
+            match change {
+                0 => right.gain_db = -6.0,
+                1 => right.fade_in.frames = 10,
+                2 => right.start_tick.0 += 1,
+                3 => right.source_range.start += 1,
+                _ => right.loop_enabled = true,
+            }
+            let before = invalid.clone();
+            assert!(invalid.merge_audio_clips("left", "right").is_err());
+            assert_eq!(invalid, before);
+        }
+
+        arrangement.merge_audio_clips("left", "right").unwrap();
+
+        assert_eq!(arrangement.audio_clips, vec![clip]);
+        assert_eq!(arrangement.revision, split.revision + 1);
+    }
 
     #[test]
     fn quantize_notes_uses_arrangement_boundaries_and_preserves_unselected_notes() {

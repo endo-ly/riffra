@@ -669,6 +669,22 @@ where
         })
     }
 
+    /// Merges contiguous audio clips as one undoable edit.
+    ///
+    /// # Errors
+    /// Returns an error if the clips cannot be merged or committed.
+    pub fn merge_audio_clips(
+        &mut self,
+        first_id: &str,
+        second_id: &str,
+    ) -> Result<CreativeSession, ApplicationError> {
+        self.commit_arrangement(|arrangement| {
+            arrangement
+                .merge_audio_clips(first_id, second_id)
+                .map_err(Into::into)
+        })
+    }
+
     /// Merges two adjacent MIDI clips as one undoable edit.
     ///
     /// # Errors
@@ -1117,4 +1133,71 @@ pub(super) fn create_midi_clip_in_arrangement(
         })
         .map_err(Into::into)
         .map(|()| id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    struct Storage(AtomicBool);
+    impl SessionStorage for Storage {
+        fn save(&self, _: &CreativeSession) -> Result<(), crate::ports::PortError> {
+            if self.0.load(Ordering::Relaxed) {
+                Err(crate::ports::PortError::Storage("disk full".into()))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    #[test]
+    fn audio_merge_commits_once_and_preserves_state_on_storage_failure() {
+        let storage = Storage(AtomicBool::new(false));
+        let mut session = CreativeSession::new(1);
+        session
+            .arrangement
+            .tracks
+            .push(Track::audio("audio".into(), "Audio".into()));
+        session.arrangement.audio_clips.push(AudioClip::full_source(
+            "left".into(),
+            "Clip".into(),
+            "audio".into(),
+            crate::domain::asset::mint_asset_id(),
+            TimelineTick(0),
+            48_000,
+            96_000,
+        ));
+        session
+            .arrangement
+            .split_audio_clip("left", TimelineTick(1920), "right".into())
+            .unwrap();
+        let mut core = AppCore::new("project:test".into(), session.clone(), 0);
+        storage.0.store(true, Ordering::Relaxed);
+
+        assert!(
+            core.application(&storage)
+                .merge_audio_clips("left", "right")
+                .is_err()
+        );
+        assert_eq!(core.canonical_state().sequence, 0);
+        assert_eq!(core.canonical_state().session, session);
+        storage.0.store(false, Ordering::Relaxed);
+        core.application(&storage)
+            .merge_audio_clips("left", "right")
+            .unwrap();
+
+        assert_eq!(core.canonical_state().sequence, 1);
+        assert_eq!(
+            core.canonical_state().session.arrangement.audio_clips.len(),
+            1
+        );
+        let undone = core.undo(&storage).unwrap();
+        assert_eq!(
+            undone.arrangement.audio_clips,
+            session.arrangement.audio_clips
+        );
+        let redone = core.redo(&storage).unwrap();
+        assert_eq!(redone.arrangement.audio_clips.len(), 1);
+    }
 }

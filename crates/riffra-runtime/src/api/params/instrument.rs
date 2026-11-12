@@ -92,3 +92,26 @@ pub struct InstrumentCollectionMembershipParams {
     pub instrument_id: String,
     pub included: bool,
 }
+
+/// Creates a Track with an assigned instrument in one edit.
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct InstrumentTrackCreateParams {
+    pub name: String,
+    pub source: InstrumentTrackSource,
+}
+
+/// Instrument selection for a new Track.
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
+#[serde(
+    deny_unknown_fields,
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum InstrumentTrackSource {
+    /// A built-in preset or user instrument from the library.
+    Library { instrument_id: String },
+    /// A scanned VST3 instrument.
+    Vst3 { plugin_path: String },
+}

@@ -1,3 +1,4 @@
+import { ProjectBoundRegion } from '@/app/layout/ProjectBoundRegion';
 import type { ReactNode } from 'react';
 import type { CreativeSession } from '@/model/generated';
 import { defaultSession } from '@/native/browser-defaults';
@@ -31,7 +32,9 @@ export function renderWorkspace(api: FakeNativeApi, options: WorkspaceRenderOpti
       <>
         <RuntimeBinding />
         <ProjectionToast />
-        <EditorWorkspace />
+        <ProjectBoundRegion>
+          <EditorWorkspace />
+        </ProjectBoundRegion>
         <ToastStack />
       </>
     ) as ReactNode,

@@ -338,6 +338,7 @@ impl HostState {
             | CanonicalCommand::AudioClipTrim(_)
             | CanonicalCommand::AudioClipSplit(_)
             | CanonicalCommand::AudioClipDuplicate(_)
+            | CanonicalCommand::AudioClipMerge(_)
             | CanonicalCommand::AudioClipCrossfade(_)
             | CanonicalCommand::MidiClipCreate(_)
             | CanonicalCommand::MidiClipAddAsset(_)
@@ -372,6 +373,7 @@ impl HostState {
             | CanonicalCommand::MusicRegionAdd(_)
             | CanonicalCommand::MusicRegionUpdate(_)
             | CanonicalCommand::MusicRegionRemove(_)
+            | CanonicalCommand::InstrumentTrackCreate(_)
             | CanonicalCommand::InstrumentApply(_)
             | CanonicalCommand::PluginStateImport(_)) => {
                 return self.dispatch_shared_canonical(command, access, current, &mut context);

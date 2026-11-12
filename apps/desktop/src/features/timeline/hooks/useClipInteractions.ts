@@ -337,21 +337,8 @@ export function useClipInteractions(options: ClipInteractionOptions) {
         return;
       }
       const target = direction === 'next' ? clip : adjacent;
-      const removed = direction === 'next' ? adjacent : clip;
-      const sourceRange = {
-        start: direction === 'next' ? clip.sourceRange.start : adjacent.sourceRange.start,
-        end: direction === 'next' ? adjacent.sourceRange.end : clip.sourceRange.end,
-      };
-      const updated = await commit(
-        commands.updateAudioClip(target.id, {
-          sourceRange,
-          timelineDuration: {
-            frames: sourceRange.end - sourceRange.start,
-            sampleRate: clip.sourceSampleRate,
-          },
-        }),
-      );
-      if (updated) await commit(commands.removeTimelineClips([removed.id], []));
+      const second = direction === 'next' ? adjacent : clip;
+      await commit(commands.mergeAudioClips(target.id, second.id));
     },
     [arrangement.audioClips, commands, commit, timebase],
   );

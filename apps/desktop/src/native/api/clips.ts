@@ -48,6 +48,7 @@ export interface ClipApi {
     startTick: number,
     durationTicks: number,
   ): Promise<ArrangementMutationResult>;
+  mergeAudioClips(firstClipId: string, secondClipId: string): Promise<ArrangementMutationResult>;
   mergeMidiClips(firstClipId: string, secondClipId: string): Promise<ArrangementMutationResult>;
   splitMidiClip(clipId: string, splitTick: number): Promise<ArrangementMutationResult>;
   duplicateMidiClip(clipId: string): Promise<ArrangementMutationResult>;
@@ -157,6 +158,13 @@ async function trimMidiClip(
   });
 }
 
+async function mergeAudioClips(
+  firstClipId: string,
+  secondClipId: string,
+): Promise<ArrangementMutationResult> {
+  return dispatchControl({ command: 'clip.audio.merge', params: { firstClipId, secondClipId } });
+}
+
 async function mergeMidiClips(
   firstClipId: string,
   secondClipId: string,
@@ -209,6 +217,7 @@ export const clipsApi: ClipApi = {
   moveAudioClips,
   moveMidiClips,
   trimMidiClip,
+  mergeAudioClips,
   mergeMidiClips,
   splitMidiClip,
   duplicateMidiClip,

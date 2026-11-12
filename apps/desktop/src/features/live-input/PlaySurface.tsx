@@ -1,3 +1,6 @@
+import { useSession } from '@/shared/session/session-context';
+import { resolveTrackColor } from '@/model/track-color';
+import { selectTrack } from '@/shared/session/selectors';
 import type { CSSProperties } from 'react';
 import type { AudioStatus } from '@/model/generated';
 import { drumPadByNote } from './drum-map';
@@ -149,5 +152,26 @@ export function PlaySurface({ play, trackColor, audio, onChooseInstrument }: Pla
         </small>
       )}
     </div>
+  );
+}
+
+export function WorkspacePlaySurface({ play }: { play: LivePlay }) {
+  const track = useSession((state) => selectTrack(state, state.workspace.focusedTrackId));
+  const tracks = useSession((state) => state.project.boot!.canonical.session.arrangement.tracks);
+  const audio = useSession((state) => state.audio.status);
+  const setSelection = useSession((state) => state.workspace.setSelection);
+  const openDevices = useSession((state) => state.workspace.openDevices);
+  return (
+    <PlaySurface
+      play={play}
+      audio={audio}
+      trackColor={track ? resolveTrackColor(track, tracks.indexOf(track)) : null}
+      onChooseInstrument={() => {
+        if (track) {
+          setSelection({ kind: 'track', trackId: track.id });
+          openDevices();
+        }
+      }}
+    />
   );
 }

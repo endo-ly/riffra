@@ -149,6 +149,8 @@ export type { InstrumentRecommendedRange } from './InstrumentRecommendedRange';
 export type { InstrumentSaveParams } from './InstrumentSaveParams';
 export type { InstrumentSourceKind } from './InstrumentSourceKind';
 export type { InstrumentTagsParams } from './InstrumentTagsParams';
+export type { InstrumentTrackCreateParams } from './InstrumentTrackCreateParams';
+export type { InstrumentTrackSource } from './InstrumentTrackSource';
 export type { InternalInstrumentResource } from './InternalInstrumentResource';
 export type { JobKind } from './JobKind';
 export type { JobState } from './JobState';

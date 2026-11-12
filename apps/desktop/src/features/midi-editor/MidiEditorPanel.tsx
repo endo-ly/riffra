@@ -4,6 +4,8 @@ import type { MidiGhostNote } from './model/ghost-notes';
 import { clipGridTicks, snapClipTick, snapGridTicks, type SnapGrid } from '@/model/clip-grid';
 import { formatMusicalLength, formatMusicalPosition } from '@/model/time-format';
 import { musicalGridTicks, snapToBar, ticksPerBar, ticksPerBeat } from '@/model/timebase';
+import { resolveTrackColor } from '@/model/track-color';
+import { selectMidiClip, selectTrack } from '@/shared/session/selectors';
 import { midiNoteName } from '@/shared/midi';
 import { useSession, useSessionContext } from '@/shared/session/session-context';
 import { useInstrumentMidiInspection } from '@/shared/session/useInstrumentMidiInspection';
@@ -54,7 +56,7 @@ export const MidiEditorPanel = memo(function MidiEditorPanel({
   const playable = useSession((state) =>
     selectTrackInstrumentPlayable(state, clip?.trackId ?? null),
   );
-  const { inspection } = useInstrumentMidiInspection(clip?.trackId ?? null, arrangement.revision);
+  const { inspection } = useInstrumentMidiInspection(clip?.trackId ?? null);
   const [ghostsVisible, setGhostsVisible] = useState(true);
   const ghostNotes = useMemo(
     () =>
@@ -63,7 +65,9 @@ export const MidiEditorPanel = memo(function MidiEditorPanel({
         : EMPTY_GHOSTS,
     [clip, arrangement.midiClips, arrangement.tracks, ghostsVisible],
   );
-  const instrumentSettings = inspection?.settings ?? null;
+  const instrumentSettings = useSession(
+    (state) => selectTrack(state, clip?.trackId ?? null)?.instrument?.midi ?? null,
+  );
   const warnedNoteIds = useMemo(
     () => new Set(inspection?.warnings.map((warning) => warning.noteId) ?? []),
     [inspection],
@@ -408,3 +412,15 @@ export const MidiEditorPanel = memo(function MidiEditorPanel({
     </div>
   );
 });
+
+export function WorkspaceMidiEditor() {
+  const clip = useSession((state) => selectMidiClip(state, state.workspace.lower.activeMidiClipId));
+  const track = useSession((state) => selectTrack(state, clip?.trackId ?? null));
+  const tracks = useSession((state) => state.project.boot!.canonical.session.arrangement.tracks);
+  return (
+    <MidiEditorPanel
+      clip={clip}
+      trackColor={track ? resolveTrackColor(track, tracks.indexOf(track)) : null}
+    />
+  );
+}

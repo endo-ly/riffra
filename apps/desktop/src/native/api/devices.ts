@@ -4,12 +4,17 @@ import type {
   DeviceParameterInfo,
   EffectOwner,
   InstrumentMidiInspection,
+  InstrumentTrackSource,
   InstrumentMidiSettings,
   PluginPresetInfo,
 } from '@/model/generated';
 import { dispatchControl } from '../invoke';
 
 export interface DeviceApi {
+  createInstrumentTrack(
+    name: string,
+    source: InstrumentTrackSource,
+  ): Promise<ArrangementMutationResult>;
   applyInstrument(trackId: string, instrumentId: string): Promise<ArrangementMutationResult>;
   getInstrumentMidiSettings(trackId: string): Promise<InstrumentMidiInspection>;
   setInstrumentMidiSettings(
@@ -56,6 +61,13 @@ export interface DeviceApi {
     deviceId: string,
     presetIndex: number,
   ): Promise<ArrangementMutationResult>;
+}
+
+async function createInstrumentTrack(
+  name: string,
+  source: InstrumentTrackSource,
+): Promise<ArrangementMutationResult> {
+  return dispatchControl({ command: 'instrument.track.create', params: { name, source } });
 }
 
 async function applyInstrument(
@@ -179,6 +191,7 @@ function setPluginPreset(owner: EffectOwner, deviceId: string, presetIndex: numb
 }
 
 export const deviceApi: DeviceApi = {
+  createInstrumentTrack,
   applyInstrument,
   getInstrumentMidiSettings,
   setInstrumentMidiSettings,

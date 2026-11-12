@@ -36,6 +36,7 @@ import type { InstrumentEventUpdateParams } from './InstrumentEventUpdateParams'
 import type { InstrumentExportParams } from './InstrumentExportParams';
 import type { InstrumentMidiSetParams } from './InstrumentMidiSetParams';
 import type { InstrumentSaveParams } from './InstrumentSaveParams';
+import type { InstrumentTrackCreateParams } from './InstrumentTrackCreateParams';
 import type { MarkerAddParams } from './MarkerAddParams';
 import type { MarkerIdParams } from './MarkerIdParams';
 import type { MarkerUpdateParams } from './MarkerUpdateParams';
@@ -156,6 +157,7 @@ export type CanonicalCommand =
   | { command: 'clip.audio.trim'; params: AudioClipTrimParams }
   | { command: 'clip.audio.split'; params: ClipSplitParams }
   | { command: 'clip.audio.duplicate'; params: ClipIdParams }
+  | { command: 'clip.audio.merge'; params: ClipMergeParams }
   | { command: 'clip.audio.crossfade'; params: AudioClipCrossfadeParams }
   | { command: 'clip.midi.list'; params: EmptyParams }
   | { command: 'clip.midi.create'; params: MidiClipCreateParams }
@@ -201,6 +203,7 @@ export type CanonicalCommand =
   | { command: 'instrument.list'; params: EmptyParams }
   | { command: 'instrument.save'; params: InstrumentSaveParams }
   | { command: 'instrument.export'; params: InstrumentExportParams }
+  | { command: 'instrument.track.create'; params: InstrumentTrackCreateParams }
   | { command: 'instrument.apply'; params: InstrumentApplyParams }
   | { command: 'instrument.midi.get'; params: TrackIdParams }
   | { command: 'instrument.midi.set'; params: InstrumentMidiSetParams }

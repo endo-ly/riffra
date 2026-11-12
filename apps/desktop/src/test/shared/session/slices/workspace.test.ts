@@ -54,6 +54,7 @@ describe('workspace', () => {
       sequence: api.bootstrapState.canonical.sequence + 1,
       session: { ...session, arrangement: { ...session.arrangement, midiClips: [] } },
     });
+    expect(store.getState().workspace.selection).toEqual({ kind: 'none' });
     expect(store.getState().workspace.lower.activeMidiClipId).toBeNull();
     expect(store.getState().workspace.lower.view).toBe('closed');
   });

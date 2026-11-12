@@ -723,6 +723,8 @@ const arrangementMutationMethodNames = new Set<keyof NativeApi>([
   'moveAudioClips',
   'moveMidiClips',
   'trimMidiClip',
+  'mergeAudioClips',
+  'createInstrumentTrack',
   'mergeMidiClips',
   'splitMidiClip',
   'duplicateMidiClip',

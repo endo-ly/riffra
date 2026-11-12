@@ -29,6 +29,13 @@ pub(super) fn prepare_command(command: &mut ControlCommand) -> Result<(), String
             CanonicalCommand::AssetImportMidi(params) => resolve_path(&mut params.path)?,
             CanonicalCommand::InstrumentSave(params) => resolve_path(&mut params.definition_path)?,
             CanonicalCommand::InstrumentExport(params) => resolve_path(&mut params.output)?,
+            CanonicalCommand::InstrumentTrackCreate(params) => {
+                if let riffra_runtime::api::params::InstrumentTrackSource::Vst3 { plugin_path } =
+                    &mut params.source
+                {
+                    resolve_string(plugin_path)?;
+                }
+            }
             CanonicalCommand::InstrumentVst3Set(params) => {
                 resolve_optional(&mut params.plugin_path)?
             }

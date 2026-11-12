@@ -64,6 +64,7 @@ export type ControlCommandResults = {
   'clip.audio.trim': OutputValue<'arrangementMutation'>;
   'clip.audio.split': OutputValue<'arrangementMutation'>;
   'clip.audio.duplicate': OutputValue<'arrangementMutation'>;
+  'clip.audio.merge': OutputValue<'arrangementMutation'>;
   'clip.audio.crossfade': OutputValue<'arrangementMutation'>;
   'clip.midi.list': OutputValue<'midiClips'>;
   'clip.midi.create': OutputValue<'arrangementMutation'>;
@@ -109,6 +110,7 @@ export type ControlCommandResults = {
   'instrument.list': OutputValue<'instrumentLibrary'>;
   'instrument.save': OutputValue<'instrumentLibraryItem'>;
   'instrument.export': OutputValue<'instrumentExport'>;
+  'instrument.track.create': OutputValue<'arrangementMutation'>;
   'instrument.apply': OutputValue<'arrangementMutation'>;
   'instrument.midi.get': OutputValue<'instrumentMidi'>;
   'instrument.midi.set': OutputValue<'arrangementMutation'>;

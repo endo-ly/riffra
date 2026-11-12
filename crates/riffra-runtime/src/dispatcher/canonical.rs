@@ -588,6 +588,10 @@ impl HostDispatcher<'_> {
                 application.duplicate_audio_clip_with_created_ids(&params.clip_id)?,
                 application,
             ),
+            CanonicalCommand::AudioClipMerge(params) => self.edited(
+                application.merge_audio_clips(&params.first_clip_id, &params.second_clip_id)?,
+                application,
+            ),
             CanonicalCommand::AudioClipCrossfade(params) => self.edited(
                 application.crossfade_audio_clips(&params.first_clip_id, &params.second_clip_id)?,
                 application,
@@ -851,6 +855,9 @@ impl HostDispatcher<'_> {
                 self.edited(application.remove_region(&params.region_id)?, application)
             }
 
+            CanonicalCommand::InstrumentTrackCreate(params) => {
+                self.create_instrument_track(application, canonical, params)
+            }
             CanonicalCommand::InstrumentApply(params) => self.apply_instrument(application, params),
             CanonicalCommand::InstrumentMidiSet(params) => self.edited(
                 application.set_track_instrument_midi(&params.track_id, params.settings)?,

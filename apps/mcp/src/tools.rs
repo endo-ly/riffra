@@ -182,6 +182,7 @@ pub(crate) const TOOLS: &[ToolDef] = &[
             action("trim", "clip.audio.trim"),
             action("split", "clip.audio.split"),
             action("duplicate", "clip.audio.duplicate"),
+            action("merge", "clip.audio.merge"),
             action("crossfade", "clip.audio.crossfade"),
         ],
         read_only: false,
@@ -386,6 +387,7 @@ pub(crate) const TOOLS: &[ToolDef] = &[
         actions: &[
             action("save", "instrument.save"),
             action("export", "instrument.export"),
+            action("create_track", "instrument.track.create"),
             action("apply", "instrument.apply"),
             action("midi_get", "instrument.midi.get"),
             action("midi_set", "instrument.midi.set"),
@@ -998,11 +1000,11 @@ mod tests {
         // Assert
         assert_eq!(names, expected);
         let actions: Vec<_> = TOOLS.iter().flat_map(|tool| tool.actions.iter()).collect();
-        assert_eq!(actions.len(), 216);
+        assert_eq!(actions.len(), 218);
         let commands: std::collections::HashSet<_> =
             actions.iter().map(|action| action.command).collect();
-        assert_eq!(commands.len(), 215);
-        assert_eq!(command_names().len(), 219);
+        assert_eq!(commands.len(), 217);
+        assert_eq!(command_names().len(), 221);
         let public_commands: std::collections::HashSet<_> =
             command_names().iter().copied().collect();
         let mut unused = public_commands

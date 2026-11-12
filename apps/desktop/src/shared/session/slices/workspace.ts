@@ -57,6 +57,7 @@ export function initialWorkspace() {
 export function reconcileWorkspace(
   workspace: WorkspaceSlice,
   session: CreativeSession,
+  previousSession: CreativeSession,
 ): WorkspaceSlice {
   let { selection, focusedTrackId, lower } = workspace;
   const tracks = session.arrangement.tracks;
@@ -66,6 +67,19 @@ export function reconcileWorkspace(
       !tracks.some((track) => track.id === currentSelection.trackId)) ||
     (currentSelection.kind === 'bus' &&
       !session.arrangement.mixer.buses.some((bus) => bus.id === currentSelection.busId));
+  if (
+    currentSelection.kind === 'clips' &&
+    (session.arrangement.audioClips !== previousSession.arrangement.audioClips ||
+      session.arrangement.midiClips !== previousSession.arrangement.midiClips)
+  ) {
+    const remaining = new Set([
+      ...session.arrangement.audioClips.map((clip) => clip.id),
+      ...session.arrangement.midiClips.map((clip) => clip.id),
+    ]);
+    const clipIds = currentSelection.clipIds.filter((id) => remaining.has(id));
+    if (clipIds.length !== currentSelection.clipIds.length)
+      selection = clipIds.length ? { kind: 'clips', clipIds } : { kind: 'none' };
+  }
   if (invalidSelection) {
     selection = { kind: 'none' };
     if (lower.view === 'devices')

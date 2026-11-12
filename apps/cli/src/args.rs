@@ -237,7 +237,7 @@ pub enum SessionCommand {
     /// music.phrase.insert, music.region.add, music.region.update, music.region.remove;
     /// clip.remove, clip.paste; music.marker.add, music.marker.update, music.marker.remove; music.timebase.update,
     /// music.timebase.set-map; render.settings.set; clip.midi.instrument-event.add, clip.midi.instrument-event.set,
-    /// clip.midi.instrument-event.update, clip.midi.instrument-event.remove;
+    /// clip.midi.instrument-event.update, clip.midi.instrument-event.remove; clip.audio.merge, clip.midi.merge;
     /// transport.loop.set, record.punch.set; automation.set, automation.clear; instrument.apply,
     /// instrument.midi.set, instrument.vst3.set, plugin.state.import,
     /// instrument.clear; mixer.bus.add, mixer.bus.update, mixer.bus.remove, mixer.output.set, mixer.send.add, mixer.send.update, mixer.send.remove,
@@ -689,6 +689,8 @@ pub enum AudioClipCommand {
     Split(ClipSplitArgs),
     /// Duplicate one Audio Clip under a new identity.
     Duplicate(ClipIdArg),
+    /// Merge contiguous Audio Clips with matching mix settings as one edit.
+    Merge(ClipMergeArgs),
     /// Create an equal-power crossfade across the time overlap of two Audio Clips on the same Track.
     ///
     /// The two Clips must be different, live on the same Track, and overlap in time. The earlier
@@ -778,6 +780,16 @@ pub struct ClipIdArg {
 }
 
 #[derive(Debug, Args)]
+pub struct ClipMergeArgs {
+    /// Id of the earlier Clip.
+    #[arg(long)]
+    pub first_clip_id: String,
+    /// Id of the immediately following Clip.
+    #[arg(long)]
+    pub second_clip_id: String,
+}
+
+#[derive(Debug, Args)]
 pub struct AudioClipCrossfadeArgs {
     /// Id of one Clip in the crossfade pair.
     #[arg(long)]
@@ -814,6 +826,8 @@ pub enum MidiClipCommand {
     Trim(MidiClipTrimArgs),
     /// Split one MIDI Clip into two Clips at an arrangement tick.
     Split(ClipSplitArgs),
+    /// Merge adjacent MIDI Clips, including their notes and performance events.
+    Merge(ClipMergeArgs),
     /// Duplicate one MIDI Clip under a new identity.
     Duplicate(ClipIdArg),
 }
@@ -1830,6 +1844,8 @@ pub enum InstrumentCommand {
     Save(InstrumentSaveArgs),
     /// Export a User Instrument package to an output path.
     Export(InstrumentExportArgs),
+    /// Create an Instrument Track and assign its instrument as one undoable edit.
+    CreateTrack(InstrumentTrackCreateArgs),
     /// Apply a built-in or User Instrument to an Instrument Track.
     Apply(InstrumentApplyArgs),
     /// Read or update the assigned Instrument's MIDI note settings.
@@ -1839,6 +1855,26 @@ pub enum InstrumentCommand {
     },
     /// Clear the Instrument assignment from an Instrument Track.
     Clear(IdArg),
+}
+
+#[derive(Debug, Args)]
+pub struct InstrumentTrackCreateArgs {
+    /// Display name for the new Track.
+    #[arg(long)]
+    pub name: String,
+    #[command(flatten)]
+    pub source: InstrumentTrackSourceArgs,
+}
+
+#[derive(Debug, Args)]
+#[group(id = "instrument-source", required = true, multiple = false)]
+pub struct InstrumentTrackSourceArgs {
+    /// Built-in or User Instrument ID; mutually exclusive with --plugin-path.
+    #[arg(long)]
+    pub instrument_id: Option<String>,
+    /// VST3 instrument path; mutually exclusive with --instrument-id.
+    #[arg(long)]
+    pub plugin_path: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -3244,6 +3280,11 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
                 AudioClipCommand::Duplicate(args) => {
                     Canonical::AudioClipDuplicate(clip_id(args)).into()
                 }
+                AudioClipCommand::Merge(args) => Canonical::AudioClipMerge(ClipMergeParams {
+                    first_clip_id: args.first_clip_id,
+                    second_clip_id: args.second_clip_id,
+                })
+                .into(),
                 AudioClipCommand::Crossfade(args) => {
                     Canonical::AudioClipCrossfade(AudioClipCrossfadeParams {
                         first_clip_id: args.first_clip_id,
@@ -3342,6 +3383,11 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
                         .into()
                     }
                 },
+                MidiClipCommand::Merge(args) => Canonical::MidiClipMerge(ClipMergeParams {
+                    first_clip_id: args.first_clip_id,
+                    second_clip_id: args.second_clip_id,
+                })
+                .into(),
                 MidiClipCommand::List => Canonical::MidiClipList(empty).into(),
                 MidiClipCommand::Create(args) => Canonical::MidiClipCreate(MidiClipCreateParams {
                     track_id: args.track_id,
@@ -3513,6 +3559,18 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
                 Canonical::InstrumentExport(InstrumentExportParams {
                     instrument_id: args.instrument_id,
                     output: args.output,
+                })
+                .into()
+            }
+            InstrumentCommand::CreateTrack(args) => {
+                let source = match (args.source.instrument_id, args.source.plugin_path) {
+                    (Some(instrument_id), None) => InstrumentTrackSource::Library { instrument_id },
+                    (None, Some(plugin_path)) => InstrumentTrackSource::Vst3 { plugin_path },
+                    _ => unreachable!("clap requires exactly one instrument source"),
+                };
+                Canonical::InstrumentTrackCreate(InstrumentTrackCreateParams {
+                    name: args.name,
+                    source,
                 })
                 .into()
             }
@@ -4614,7 +4672,7 @@ mod tests {
         command.clone().debug_assert();
         assert_help(&command, "riffra");
         assert_eq!(command.get_subcommands().count(), 23);
-        assert_eq!(leaves(&command), 185);
+        assert_eq!(leaves(&command), 188);
     }
 
     #[test]
@@ -4737,6 +4795,55 @@ mod tests {
         let cli =
             Cli::try_parse_from(["riffra", "--data-root", "data", "instrument", "list"]).unwrap();
         assert_eq!(wire(cli).name, "instrument.list");
+
+        for (flag, value, expected_source) in [
+            (
+                "--instrument-id",
+                "builtin:01-clean-sub-bass",
+                json!({"kind":"library", "instrumentId":"builtin:01-clean-sub-bass"}),
+            ),
+            (
+                "--plugin-path",
+                "Keys.vst3",
+                json!({"kind":"vst3", "pluginPath":std::env::current_dir().unwrap().join("Keys.vst3")}),
+            ),
+        ] {
+            let request = wire(
+                Cli::try_parse_from([
+                    "riffra",
+                    "instrument",
+                    "create-track",
+                    "--name",
+                    "Keys",
+                    flag,
+                    value,
+                ])
+                .unwrap(),
+            );
+            assert_eq!(request.name, "instrument.track.create");
+            assert_eq!(
+                request.params,
+                json!({"name":"Keys", "source":expected_source})
+            );
+        }
+        assert!(
+            Cli::try_parse_from(["riffra", "instrument", "create-track", "--name", "Keys"])
+                .is_err()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "riffra",
+                "instrument",
+                "create-track",
+                "--name",
+                "Keys",
+                "--instrument-id",
+                "builtin:a",
+                "--plugin-path",
+                "Keys.vst3"
+            ])
+            .is_err()
+        );
 
         let cli = Cli::try_parse_from([
             "riffra",
@@ -5632,6 +5739,26 @@ mod tests {
 
     #[test]
     fn clip_edits_use_the_remaining_single_item_routes() {
+        for kind in ["audio", "midi"] {
+            let request = wire(
+                Cli::try_parse_from([
+                    "riffra",
+                    "clip",
+                    kind,
+                    "merge",
+                    "--first-clip-id",
+                    "left",
+                    "--second-clip-id",
+                    "right",
+                ])
+                .unwrap(),
+            );
+            assert_eq!(request.name, format!("clip.{kind}.merge"));
+            assert_eq!(
+                request.params,
+                json!({"firstClipId":"left", "secondClipId":"right"})
+            );
+        }
         // Arrange / Act
         let insert = wire(
             Cli::try_parse_from([

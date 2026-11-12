@@ -1,4 +1,4 @@
-//! Atomic `session.apply` batches.
+//! Atomic edits prepared against an isolated candidate session.
 
 use super::{DispatchError, HostDispatcher};
 use crate::api::output::BatchMutationResult;
@@ -24,6 +24,56 @@ impl riffra_core::ports::SessionStorage for BatchCandidateStorage {
 }
 
 impl HostDispatcher<'_> {
+    pub(super) fn create_instrument_track<S: riffra_core::SessionStorage + ?Sized>(
+        &self,
+        application: &mut riffra_core::application::Application<'_, S>,
+        canonical: riffra_core::CanonicalState,
+        params: crate::api::params::InstrumentTrackCreateParams,
+    ) -> Result<ControlOutput, DispatchError> {
+        use crate::api::params::InstrumentTrackSource;
+        let mut candidate =
+            riffra_core::AppCore::new(canonical.project_id, canonical.session, canonical.sequence);
+        let memory = BatchCandidateStorage;
+        let mut owned_snapshots = Vec::new();
+        let mut app = candidate.application(&memory);
+        let mut created = batch_operation(
+            self,
+            &mut app,
+            "track.add",
+            serde_json::json!({
+                "name": params.name, "kind": "instrument",
+            }),
+            &mut owned_snapshots,
+        )?;
+        let track_id = &created["tracks"][0];
+        let (command, assignment) = match params.source {
+            InstrumentTrackSource::Library { instrument_id } => (
+                "instrument.apply",
+                serde_json::json!({
+                    "trackId": track_id, "instrumentId": instrument_id,
+                }),
+            ),
+            InstrumentTrackSource::Vst3 { plugin_path } => (
+                "instrument.vst3.set",
+                serde_json::json!({
+                    "trackId": track_id, "pluginPath": plugin_path,
+                }),
+            ),
+        };
+        let assigned =
+            match batch_operation(self, &mut app, command, assignment, &mut owned_snapshots) {
+                Ok(assigned) => assigned,
+                Err(error) => return Err(with_snapshot_cleanup(error, &owned_snapshots)),
+            };
+        created.extend(assigned);
+        if let Err(error) =
+            application.commit_prepared_candidate(app.canonical_state().session, canonical.sequence)
+        {
+            return Err(with_snapshot_cleanup(error.into(), &owned_snapshots));
+        }
+        self.arrangement_mutation(created, application)
+    }
+
     pub(super) fn apply_batch<S: riffra_core::SessionStorage + ?Sized>(
         &self,
         application: &mut riffra_core::application::Application<'_, S>,
@@ -533,6 +583,69 @@ mod tests {
     use std::fs;
 
     #[test]
+    fn instrument_track_creation_commits_once_and_rolls_back_failed_assignment() {
+        let root =
+            std::env::temp_dir().join(format!("riffra-create-instrument-track-{}", now_ms()));
+        let dispatcher = Dispatcher::open(
+            root.clone(),
+            crate::test_support::prepare_built_in_resource_root(&root),
+        )
+        .unwrap();
+        let before = dispatcher
+            .dispatch(command("session.get", json!({})), None)
+            .unwrap();
+
+        let failed = dispatcher.dispatch(command("instrument.track.create", json!({
+            "name": "Keys", "source": {"kind": "library", "instrumentId": "builtin:missing"},
+        })), None);
+
+        assert!(failed.is_err());
+        let unchanged = dispatcher
+            .dispatch(command("session.get", json!({})), None)
+            .unwrap();
+        assert_eq!(unchanged.sequence, before.sequence);
+        assert_eq!(output_value(&unchanged), output_value(&before));
+        let created = dispatcher
+            .dispatch(
+                command(
+                    "instrument.track.create",
+                    json!({"name":"Keys", "source": {"kind":"vst3", "pluginPath":"Keys.vst3"}}),
+                ),
+                None,
+            )
+            .unwrap();
+        assert_eq!(created.sequence, before.sequence + 1);
+        let session = mutated_session(&created);
+        assert_eq!(session.arrangement.tracks.len(), 1);
+        assert!(session.arrangement.tracks[0].instrument.is_some());
+        assert_eq!(
+            output_value(&created)["createdEntityIds"]["tracks"][0],
+            session.arrangement.tracks[0].id
+        );
+        assert_eq!(
+            output_value(&created)["createdEntityIds"]["devices"][0],
+            session.arrangement.tracks[0]
+                .instrument
+                .as_ref()
+                .unwrap()
+                .id
+        );
+        let undone = dispatcher
+            .dispatch(command("history.undo", json!({})), None)
+            .unwrap();
+        assert!(mutated_session(&undone).arrangement.tracks.is_empty());
+        let redone = dispatcher
+            .dispatch(command("history.redo", json!({})), None)
+            .unwrap();
+        assert_eq!(
+            mutated_session(&redone).arrangement.tracks,
+            session.arrangement.tracks
+        );
+        drop(dispatcher);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn timebase_set_map_preserves_current_ppq_and_tempo_ticks() {
         for (ppq, tempo_tick, bpm) in [(960, 3840, 140.0), (3360, 6720, 150.0)] {
             let root = std::env::temp_dir().join(format!(
@@ -781,6 +894,27 @@ mod tests {
             output_value(&assigned)["canonical"]["session"]["arrangement"]["tracks"][0]["instrument"]
                 ["source"]["resource"]["presetId"],
             "01-clean-sub-bass"
+        );
+
+        let created = dispatcher.dispatch(command("instrument.track.create", json!({
+            "name":"Keys", "source":{"kind":"library", "instrumentId":"builtin:01-clean-sub-bass"},
+        })), None).unwrap();
+        assert_eq!(mutated_session(&created).arrangement.tracks.len(), 2);
+        assert!(
+            mutated_session(&created).arrangement.tracks[1]
+                .instrument
+                .is_some()
+        );
+        assert_ne!(
+            mutated_session(&created).arrangement.tracks[0].id,
+            mutated_session(&created).arrangement.tracks[1].id
+        );
+        let undone = dispatcher
+            .dispatch(command("history.undo", json!({})), None)
+            .unwrap();
+        assert_eq!(
+            mutated_session(&undone).arrangement.tracks,
+            mutated_session(&assigned).arrangement.tracks
         );
 
         let before = dispatcher
