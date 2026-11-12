@@ -30,11 +30,13 @@ pub struct ProjectImportParams {
     pub path: PathBuf,
 }
 
-/// Imports a Score document with explicit external instrument definitions.
+/// Imports a Score YAML file as a new active Project.
 #[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ProjectImportScoreParams {
+    /// Score YAML file.
     pub path: PathBuf,
+    /// Sonalloy definition JSON for each `external: true` instrument ID.
     #[serde(default)]
     pub bindings: std::collections::BTreeMap<String, PathBuf>,
 }

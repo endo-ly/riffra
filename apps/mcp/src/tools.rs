@@ -89,7 +89,7 @@ pub(crate) const TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "project",
-        description: "List, create, open, rename, import, or export Riffra Projects. Open switches the Host's active Project.",
+        description: "List, create, open, rename, or export Riffra Projects, or import a `.riffra` package or a Score YAML file as a new Project. Open switches the Host's active Project.",
         actions: &[
             action("list", "project.list"),
             action("create", "project.create"),
