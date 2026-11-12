@@ -60,6 +60,10 @@ MCPツールは操作対象ごとにグループ化され、複数のControl Com
 
 複数の変更を一度に確定する場合は `session_edit` の `apply` を使う。`operations` にはControl Command名とその `params` を並べ、TrackとClipは `trackName`/`clipName`、Deviceは `bind`/`@name` で参照できる。`operations[].command` に指定できるのは `session.apply` がバッチ実行できるCommandだけで、入力Schemaの `enum` に列挙される。全operationが成功したときだけ1回の変更として適用される。
 
+クリップの結合は `clip_audio` または `clip_midi` の `merge` を使い、`params.firstClipId` に先頭、`params.secondClipId` に直後のクリップを指定する。同じトラック上で隣接することを要し、音声では同じ素材の連続範囲と一致したミックス設定、ループや内部フェードがないことも検証する。結合全体を一回のUndoで戻せる。
+
+音源付きトラックの作成は `instrument` の `create_track` を使う。`params.name` と `params.source` を渡し、ライブラリ音源は `{"kind":"library","instrumentId":"builtin:<presetId>"}` または `user:<id>`、VST3は `{"kind":"vst3","pluginPath":"<absolute-path>"}` で選ぶ。VST3はHostのカタログで音源として検証済みのものを指定する。準備・検証・保存の失敗では空のトラックを残さず、成功時は `createdEntityIds.tracks` と `createdEntityIds.devices` で生成IDを返す。既存トラックへの割り当ては同じツールの `apply` または `vst3_set` を使う。
+
 通常の状況把握には `session_read` の `inspect` を使う。`session.get` は正準Session全体が必要な場合だけ使う。音符やクリップの位置は、通常は音楽座標(`1:1`、`1/8`、`C4`)を使い、tickやMIDI値は必要な場合だけ扱う。音名の臨時記号はASCIIの`#`/`b`のほか、`♯`/`♭`/`𝄪`/`𝄫`も使える。
 
 ## 応答

@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tempfile::TempDir;
 
-/// Host discovery uses the current-user registry shared by both tests.
+/// Host discovery uses the current-user registry shared by these tests.
 static HOST_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 struct TestHost {
@@ -23,9 +23,25 @@ impl TestHost {
         let root = tempfile::tempdir().expect("temporary data root should be created");
         let resources = root.path().join("resources");
         fs::create_dir(&resources).expect("resource root should be created");
+        fs::create_dir(resources.join("keys")).unwrap();
+        fs::write(
+            resources.join("keys/definition.json"),
+            br#"{"metadata":{"name":"Keys"}}"#,
+        )
+        .unwrap();
         fs::write(
             resources.join("manifest.json"),
-            br#"{"sourceRelease":"vtest","presets":[]}"#,
+            serde_json::to_vec(&json!({
+                "sourceRelease":"vtest", "presets":[{
+                    "id":"keys", "name":"Keys", "category":"Keys", "tags":["test"],
+                    "recommendedRange":{"minMidi":36,"maxMidi":84},
+                    "preview":{"tempoBpm":120.0,"ticksPerBeat":480,
+                        "timeSignature":{"numerator":4,"denominator":4},"lengthTicks":1920,
+                        "notes":[{"tick":0,"durationTicks":480,"note":60,"velocity":100}]},
+                    "definitionPath":"keys/definition.json", "resourceBasePath":"keys"
+                }]
+            }))
+            .unwrap(),
         )
         .expect("resource manifest should be written");
         let mut config = HostConfig::new(root.path().to_path_buf(), resources)
@@ -147,6 +163,14 @@ impl McpProcess {
 
     fn tool(&mut self, name: &str, arguments: Value) -> Value {
         self.request("tools/call", json!({"name": name, "arguments": arguments}))
+    }
+
+    fn tool_ok(&mut self, name: &str, arguments: Value) -> Value {
+        let response = self.tool(name, arguments);
+        assert!(response.get("error").is_none(), "{response}");
+        assert_ne!(response["result"]["isError"], true, "{response}");
+        assert!(structured(&response)["sequence"].is_u64(), "{response}");
+        structured(&response).clone()
     }
 }
 
@@ -477,4 +501,191 @@ fn stdio_tools_share_the_live_host_and_preserve_control_results() {
     // Assert
     let unavailable = tool_error(&unavailable);
     assert_eq!(unavailable["code"], "hostUnavailable");
+}
+
+#[test]
+fn compound_edit_tools_commit_once_and_undo_over_stdio() {
+    // Arrange
+    let _host_test = HOST_TEST_LOCK.lock().expect("host test lock");
+    let test_host = TestHost::start();
+    let wav = test_host.root.path().join("source.wav");
+    silent_wav(&wav, 2);
+    let asset_id = riffra_host::register(
+        test_host.root.path(),
+        riffra_core::AssetKind::Audio,
+        "Source",
+        wav.to_str().unwrap(),
+        None,
+    )
+    .unwrap();
+    let mut mcp = McpProcess::start(
+        &test_host.host.identity().instance_id,
+        test_host.stderr_path(),
+    );
+    mcp.initialize();
+    let session = |mcp: &mut McpProcess| {
+        mcp.tool_ok("session_read", json!({"action":"get"}))["result"]["value"].clone()
+    };
+
+    // Create one assigned Track, and reject invalid sources without leaving an empty Track.
+    let initial = session(&mut mcp);
+    let created = mcp.tool_ok(
+        "instrument",
+        json!({"action":"create_track", "params":{
+            "name":"Keys", "source":{"kind":"library", "instrumentId":"builtin:keys"}
+        }}),
+    );
+    assert_eq!(created["command"], "instrument.track.create");
+    let track_id = created["result"]["value"]["createdEntityIds"]["tracks"][0]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let assigned = session(&mut mcp);
+    assert_eq!(
+        assigned["arrangement"]["tracks"].as_array().unwrap().len(),
+        1
+    );
+    assert_eq!(
+        assigned["arrangement"]["tracks"][0]["instrument"]["source"]["resource"]["presetId"],
+        "keys"
+    );
+    assert_eq!(
+        created["result"]["value"]["createdEntityIds"]["devices"][0],
+        assigned["arrangement"]["tracks"][0]["instrument"]["id"]
+    );
+    for (source, code) in [
+        (
+            json!({"kind":"library", "pluginPath":"Keys.vst3"}),
+            "invalidRequest",
+        ),
+        (
+            json!({"kind":"library", "instrumentId":"builtin:missing"}),
+            "commandFailed",
+        ),
+        (
+            json!({"kind":"vst3", "pluginPath": test_host.root.path().join("missing.vst3")}),
+            "commandFailed",
+        ),
+    ] {
+        let failed = mcp.tool(
+            "instrument",
+            json!({"action":"create_track", "params":{"name":"Rejected", "source":source}}),
+        );
+        assert_eq!(tool_error(&failed)["code"], code);
+        assert_eq!(session(&mut mcp), assigned);
+    }
+    let undone = mcp.tool_ok("history", json!({"action":"undo"}));
+    assert_eq!(
+        undone["sequence"].as_u64(),
+        Some(created["sequence"].as_u64().unwrap() + 1)
+    );
+    assert_eq!(session(&mut mcp)["arrangement"], initial["arrangement"]);
+    mcp.tool_ok("history", json!({"action":"redo"}));
+    assert_eq!(session(&mut mcp)["arrangement"], assigned["arrangement"]);
+
+    // Merge MIDI performances through their advertised action.
+    let mut midi_ids = Vec::new();
+    for (start, pitch) in [(0, 60), (960, 64)] {
+        let clip = mcp.tool_ok(
+            "clip_midi",
+            json!({"action":"create", "params":{
+                "trackId":track_id, "startTick":start, "durationTicks":960
+            }}),
+        );
+        let id = clip["result"]["value"]["createdEntityIds"]["midiClips"][0]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        mcp.tool_ok("clip_midi_note", json!({"action":"insert", "params":{"clipId":id,
+            "notes":[{"pitch":pitch,"startTick":120,"durationTicks":240,"velocity":90,"channel":1}]
+        }}));
+        midi_ids.push(id);
+    }
+    let midi_before = session(&mut mcp);
+    let midi_sequence = mcp.tool_ok("history", json!({"action":"get"}))["sequence"]
+        .as_u64()
+        .unwrap();
+    let midi_merged = mcp.tool_ok(
+        "clip_midi",
+        json!({"action":"merge", "params":{
+            "firstClipId":midi_ids[0], "secondClipId":midi_ids[1]
+        }}),
+    );
+    assert_eq!(midi_merged["command"], "clip.midi.merge");
+    assert_eq!(midi_merged["sequence"].as_u64(), Some(midi_sequence + 1));
+    let midi_after = session(&mut mcp);
+    let clips = midi_after["arrangement"]["midiClips"].as_array().unwrap();
+    assert_eq!(clips.len(), 1);
+    assert_eq!(clips[0]["durationTicks"], 1920);
+    assert_eq!(clips[0]["notes"][0]["startTick"], 120);
+    assert_eq!(clips[0]["notes"][1]["startTick"], 1080);
+    mcp.tool_ok("history", json!({"action":"undo"}));
+    assert_eq!(session(&mut mcp)["arrangement"], midi_before["arrangement"]);
+    mcp.tool_ok("history", json!({"action":"redo"}));
+    assert_eq!(session(&mut mcp)["arrangement"], midi_after["arrangement"]);
+
+    // Rejoin a split audio source, preserving rejected edits and one-step history.
+    let placed = mcp.tool_ok(
+        "clip_audio",
+        json!({"action":"add_asset", "params":{
+            "assetId":asset_id, "name":"Audio", "startTick":0
+        }}),
+    );
+    let left = placed["result"]["value"]["createdEntityIds"]["audioClips"][0]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let whole = session(&mut mcp);
+    let split = mcp.tool_ok(
+        "clip_audio",
+        json!({"action":"split", "params":{"clipId":left, "splitTick":1920}}),
+    );
+    let right = split["result"]["value"]["createdEntityIds"]["audioClips"][0]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    mcp.tool_ok(
+        "clip_audio",
+        json!({"action":"update", "params":{"clipId":right, "patch":{"gainDb":-6}}}),
+    );
+    let invalid = session(&mut mcp);
+    let rejected = mcp.tool(
+        "clip_audio",
+        json!({"action":"merge", "params":{"firstClipId":left, "secondClipId":right}}),
+    );
+    assert_eq!(tool_error(&rejected)["code"], "commandFailed");
+    assert!(
+        tool_error(&rejected)["message"]
+            .as_str()
+            .unwrap()
+            .contains("audio clips must have contiguous")
+    );
+    assert_eq!(session(&mut mcp), invalid);
+    mcp.tool_ok(
+        "clip_audio",
+        json!({"action":"update", "params":{"clipId":right, "patch":{"gainDb":0}}}),
+    );
+    let before = session(&mut mcp);
+    let audio_sequence = mcp.tool_ok("history", json!({"action":"get"}))["sequence"]
+        .as_u64()
+        .unwrap();
+    let merged = mcp.tool_ok(
+        "clip_audio",
+        json!({"action":"merge", "params":{"firstClipId":left, "secondClipId":right}}),
+    );
+    assert_eq!(merged["command"], "clip.audio.merge");
+    assert_eq!(merged["sequence"].as_u64(), Some(audio_sequence + 1));
+    let audio_after = session(&mut mcp);
+    assert_eq!(
+        audio_after["arrangement"]["audioClips"],
+        whole["arrangement"]["audioClips"]
+    );
+    let undone = mcp.tool_ok("history", json!({"action":"undo"}));
+    assert_eq!(
+        undone["sequence"].as_u64(),
+        Some(merged["sequence"].as_u64().unwrap() + 1)
+    );
+    assert_eq!(session(&mut mcp)["arrangement"], before["arrangement"]);
+    mcp.tool_ok("history", json!({"action":"redo"}));
+    assert_eq!(session(&mut mcp)["arrangement"], audio_after["arrangement"]);
 }

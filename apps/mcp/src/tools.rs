@@ -173,7 +173,7 @@ pub(crate) const TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "clip_audio",
-        description: "List and edit Audio Clips. Move accepts several Clips in one command; use update for a single Clip.",
+        description: "List and edit Audio Clips. Merge rejoins contiguous ranges of one Asset with matching mix settings, no loops or internal fades. Move accepts several Clips in one command; use update for a single Clip.",
         actions: &[
             action("list", "clip.audio.list"),
             action("add_asset", "clip.audio.add-asset"),
@@ -383,7 +383,7 @@ pub(crate) const TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "instrument",
-        description: "Assign Instruments and edit Instrument MIDI settings or VST3 instrument slots.",
+        description: "Create an Instrument Track with its assignment atomically, assign Instruments to existing Tracks, and edit Instrument MIDI settings or VST3 instrument slots.",
         actions: &[
             action("save", "instrument.save"),
             action("export", "instrument.export"),
