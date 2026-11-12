@@ -80,7 +80,11 @@ export function reconcileWorkspace(
     if (lower.view === 'midiEditor')
       lower = { ...lower, view: 'closed', collapsed: false, maximized: false, returnView: null };
   }
-  return { ...workspace, selection, focusedTrackId, lower };
+  return selection === workspace.selection &&
+    focusedTrackId === workspace.focusedTrackId &&
+    lower === workspace.lower
+    ? workspace
+    : { ...workspace, selection, focusedTrackId, lower };
 }
 export function createWorkspaceSlice(
   get: () => WorkspaceSlice,

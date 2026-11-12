@@ -4,6 +4,7 @@ import type {
   ProjectActivationResult,
   ProjectState,
 } from '@/model/generated';
+import { reconcileCanonical } from '@/model/reconcile-canonical';
 
 export interface ProjectStore {
   boot: BootstrapState | null;
@@ -17,7 +18,7 @@ export function acceptBootstrap(store: ProjectStore, next: BootstrapState): Proj
     current.projectId === next.canonical.projectId &&
     current.sequence > next.canonical.sequence
       ? current
-      : next.canonical;
+      : reconcileCanonical(current, next.canonical);
   return {
     boot: { ...next, canonical },
     lastActivation: {
@@ -42,7 +43,13 @@ export function acceptCanonical(
   )
     return { result: 'rejected', store };
   if (canonical.sequence === boot.canonical.sequence) return { result: 'already-current', store };
-  return { result: 'applied', store: { ...store, boot: { ...boot, canonical } } };
+  return {
+    result: 'applied',
+    store: {
+      ...store,
+      boot: { ...boot, canonical: reconcileCanonical(boot.canonical, canonical) },
+    },
+  };
 }
 
 export function acceptActivation(
@@ -62,7 +69,7 @@ export function acceptActivation(
   return {
     boot: {
       ...boot,
-      canonical: activation.canonical,
+      canonical: reconcileCanonical(boot.canonical, activation.canonical),
       projectState: activation.projectState,
       recovery: activation.recovery,
     },

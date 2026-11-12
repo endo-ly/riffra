@@ -5,7 +5,7 @@ import { useSession, useSessionContext } from '@/shared/session/session-context'
 import { errorText } from '@/shared/errors';
 import { HostConnectionChangedError } from '@/native/invoke';
 import { showToast } from '@/shared/toasts';
-import { reorderTargetIndex, trackClipCounts } from '@/features/timeline/model/timeline-layout';
+import { reorderTargetIndex } from '@/features/timeline/model/timeline-layout';
 
 /** Track edit that needs the user's confirmation before it runs. */
 export interface WorkspaceConfirmRequest {
@@ -34,10 +34,11 @@ export function useTimelineTrackOperations(options: TrackOperationOptions) {
   const openMidiEditor = useSession((state) => state.workspace.openMidiEditor);
   const closeLower = useSession((state) => state.workspace.closeLower);
   const [confirmRequest, setConfirmRequest] = useState<WorkspaceConfirmRequest | null>(null);
-  const { audioClips, midiClips } = arrangement;
+  const clipsByTrack = useSession((state) => state.readModel!.clipsByTrack);
   const clipCounts = useMemo(
-    () => trackClipCounts({ audioClips, midiClips }),
-    [audioClips, midiClips],
+    () =>
+      new Map([...clipsByTrack].map(([id, clips]) => [id, clips.audio.length + clips.midi.length])),
+    [clipsByTrack],
   );
   const barTicks = ticksPerBar(arrangement.timebase);
 

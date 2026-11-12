@@ -1,5 +1,6 @@
 import type { CSSProperties, ReactNode } from 'react';
 import { useSession } from '@/shared/session/session-context';
+import { selectTrack, selectMidiClip } from '@/shared/session/selectors';
 import type { useLivePlay } from '@/features/live-input/useLivePlay';
 import { PlaySurface } from '@/features/live-input/PlaySurface';
 import { MidiEditorPanel } from '@/features/midi-editor/MidiEditorPanel';
@@ -116,13 +117,12 @@ export function WorkspaceLowerArea({ play }: { play: ReturnType<typeof useLivePl
   const { arrangement } = session;
   const lower = workspace.lower;
   const heightKey = lower.view === 'mixer' || lower.view === 'playSurface' ? lower.view : 'detail';
-  const clip = arrangement.midiClips.find((item) => item.id === lower.activeMidiClipId) ?? null;
+  const clip = useSession((state) => selectMidiClip(state, lower.activeMidiClipId));
   const clipTrackIndex = clip
     ? arrangement.tracks.findIndex((track) => track.id === clip.trackId)
     : -1;
   const clipTrack = arrangement.tracks[clipTrackIndex];
-  const focusedTrack =
-    arrangement.tracks.find((track) => track.id === workspace.focusedTrackId) ?? null;
+  const focusedTrack = useSession((state) => selectTrack(state, workspace.focusedTrackId));
   const owner = selectionOwner(workspace.selection);
   const target = owner ? resolveDeviceTarget(arrangement, owner) : null;
   const controls = (

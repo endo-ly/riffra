@@ -118,9 +118,11 @@ describe('arrange timeline layout', () => {
 
     const otherClip = { ...midiClip, id: 'clip:other', trackId: 'track:other' };
     const timelines = buildTrackTimelines(
-      [{ id: 'track:shared' }, { id: 'track:other' }, { id: 'track:empty' }],
-      [audioClip],
-      [midiClip, otherClip],
+      new Map([
+        ['track:shared', { audio: [audioClip], midi: [midiClip] }],
+        ['track:other', { audio: [], midi: [otherClip] }],
+        ['track:empty', { audio: [], midi: [] }],
+      ]),
       timebase,
     );
     const timeline = timelines.get('track:shared')!;
@@ -148,23 +150,32 @@ describe('arrange timeline layout', () => {
       loopEnabled: false,
     });
     const adjacent = buildTrackTimelines(
-      [{ id: 'track:shared' }],
-      [],
-      [midiClip('first', 0, 960), midiClip('second', 960, 960)],
+      new Map([
+        [
+          'track:shared',
+          { audio: [], midi: [midiClip('first', 0, 960), midiClip('second', 960, 960)] },
+        ],
+      ]),
       timebase,
     ).get('track:shared')!;
     expect(adjacent.laneCount).toBe(1);
 
     const equalStart = buildTrackTimelines(
-      [{ id: 'track:shared' }],
-      [],
-      [midiClip('long', 0, 1_920), midiClip('short', 0, 960)],
+      new Map([
+        [
+          'track:shared',
+          { audio: [], midi: [midiClip('long', 0, 1_920), midiClip('short', 0, 960)] },
+        ],
+      ]),
       timebase,
     ).get('track:shared')!;
     const equalStartReversed = buildTrackTimelines(
-      [{ id: 'track:shared' }],
-      [],
-      [midiClip('short', 0, 960), midiClip('long', 0, 1_920)],
+      new Map([
+        [
+          'track:shared',
+          { audio: [], midi: [midiClip('short', 0, 960), midiClip('long', 0, 1_920)] },
+        ],
+      ]),
       timebase,
     ).get('track:shared')!;
     expect(equalStart.lanes.get('midi:short')).toBe(0);

@@ -221,7 +221,7 @@ describe('DevicesPanel', () => {
       });
 
       expect(await saved).toBe(change === 'metadata refresh');
-      expect(store.getState().project.boot!.canonical).toBe(
+      expect(store.getState().project.boot!.canonical).toStrictEqual(
         change === 'host change' ? previous : next.canonical,
       );
       if (change !== 'unmount') await waitFor(() => expect(result.current.saving).toBe(false));

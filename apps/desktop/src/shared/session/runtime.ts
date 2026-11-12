@@ -10,6 +10,8 @@ import {
   resetAudioMeters,
 } from '@/shared/audio/audio-meters';
 import type { SessionStore } from './store';
+import { shallow } from 'zustand/vanilla/shallow';
+import { selectHostReady, selectStartupRestoreReady } from './selectors';
 
 export function bindSessionRuntime(store: SessionStore, api: NativeApi): () => void {
   let disposed = false;
@@ -17,15 +19,13 @@ export function bindSessionRuntime(store: SessionStore, api: NativeApi): () => v
   let startupUnlisten: (() => void) | null = null;
   let projectionRequest = 0;
   let projectionEvent = 0;
-  let generation = store.getState().host.connection.generation;
-  let meterKey = '';
-  let transportKey = '';
-  let lastBoot = store.getState().project.boot;
-  let projectId = lastBoot?.projectState.activeProjectId ?? null;
   let transportRequest = 0;
   let transportEvent = 0;
+  let audioEvent = 0;
+  let scopeGeneration = 0;
   let frame = 0;
   const loadTransportPosition = () => {
+    const transport = store.getState().transport;
     const request = ++transportRequest;
     const seenEvent = transportEvent;
     void api
@@ -35,22 +35,32 @@ export function bindSessionRuntime(store: SessionStore, api: NativeApi): () => v
           !disposed &&
           request === transportRequest &&
           seenEvent === transportEvent &&
+          store.getState().transport === transport &&
           status.timelineTick != null
         )
           store.getState().transport.seekLocally(status.timelineTick);
       })
       .catch(() => undefined);
   };
-  // The playhead clock runs only while a session provides a timebase.
+  const clockRunning = () => {
+    const state = store.getState();
+    return (
+      !disposed &&
+      selectHostReady(state) &&
+      !!state.project.boot &&
+      state.transport.status?.state === 'playing'
+    );
+  };
   const animate = (now: number) => {
     frame = 0;
-    const timebase = store.getState().project.boot?.canonical.session.arrangement.timebase;
-    if (!timebase) return;
-    store.getState().transport.advance(now, timebase);
-    frame = requestAnimationFrame(animate);
-  };
-  const startClock = () => {
-    if (frame === 0) frame = requestAnimationFrame(animate);
+    if (!clockRunning()) return;
+    store
+      .getState()
+      .transport.advance(
+        now,
+        store.getState().project.boot!.canonical.session.arrangement.timebase,
+      );
+    if (clockRunning() && frame === 0) frame = requestAnimationFrame(animate);
   };
   let initialLoadTimer: ReturnType<typeof setTimeout> | null = null;
   let audioTimer: ReturnType<typeof setTimeout> | null = null;
@@ -67,17 +77,11 @@ export function bindSessionRuntime(store: SessionStore, api: NativeApi): () => v
       })
       .catch(() => undefined);
   };
-  const updateMeters = () => {
-    const state = store.getState();
-    const key = JSON.stringify([
-      state.host.connection.generation,
-      state.project.boot?.projectState.activeProjectId,
-      state.project.boot?.canonical.session.sessionId,
-    ]);
-    if (key !== meterKey) {
-      meterKey = key;
-      resetAudioMeters();
-    }
+  const clearPendingAudio = () => {
+    if (audioTimer !== null) clearTimeout(audioTimer);
+    audioTimer = null;
+    pendingAudio = null;
+    audioBeforePending = null;
   };
   const scheduleInitialLoad = () => {
     const current = store.getState();
@@ -98,58 +102,125 @@ export function bindSessionRuntime(store: SessionStore, api: NativeApi): () => v
           !state.runtime.beginInitialLoad()
         )
           return;
-        const generationAtStart = store.getState().host.connection.generation;
+        const scopeAtStart = scopeGeneration;
+        const seenEvent = audioEvent;
+        const before = store.getState().audio.status;
         void store.getState().recording.reload().catch(logNativeError('listRecordings'));
         void store.getState().audio.refreshDevices().catch(logNativeError('probeAudioDevices'));
         void store.getState().audio.enableMidi().catch(logNativeError('enableMidi'));
         void api
           .getAudioStatus()
           .then((audio) => {
-            if (store.getState().host.connection.generation === generationAtStart)
+            if (
+              !disposed &&
+              scopeGeneration === scopeAtStart &&
+              audioEvent === seenEvent &&
+              store.getState().audio.status === before
+            )
               store.getState().audio.setStatus(audio);
           })
           .catch(logNativeError('getAudioStatus'));
       }, 150);
     }
   };
-  const unsubscribe = store.subscribe((state) => {
-    if (state.host.connection.generation !== generation) {
-      generation = state.host.connection.generation;
-      if (initialLoadTimer !== null) clearTimeout(initialLoadTimer);
-      initialLoadTimer = null;
-      if (audioTimer !== null) clearTimeout(audioTimer);
-      audioTimer = null;
-      pendingAudio = null;
-      loadProjection();
-      if (generation > 0) void store.getState().project.bootstrap();
-    }
-    const nextTransportKey = JSON.stringify([
-      state.host.connection.generation,
-      state.project.boot?.projectState.activeProjectId,
-    ]);
-    if (nextTransportKey !== transportKey) {
-      transportKey = nextTransportKey;
-      store.getState().transport.reset();
-      if (state.host.connection.generation > 0) loadTransportPosition();
-    }
-    const boot = store.getState().project.boot;
-    const nextProjectId = boot?.projectState.activeProjectId ?? null;
-    if (nextProjectId !== projectId) {
-      projectId = nextProjectId;
-      store.getState().missing.reset();
-    }
-    if (boot !== lastBoot) {
-      lastBoot = boot;
-      if (boot) {
-        startClock();
-        void store.getState().missing.reload().catch(logNativeError('getMissingDependencies'));
-      }
-    }
-    scheduleInitialLoad();
-    const current = store.getState();
-    current.runtime.tryStartupRestore();
-    updateMeters();
-  });
+  let scopeInitialized = false;
+  let missingScopeInitialized = false;
+  const subscriptions = [
+    store.subscribe(
+      (state) => [state.host.connection.generation, selectHostReady(state)] as const,
+      () => {
+        const state = store.getState();
+        projectionRequest += 1;
+        transportRequest += 1;
+        clearPendingAudio();
+        if (initialLoadTimer !== null) clearTimeout(initialLoadTimer);
+        initialLoadTimer = null;
+        if (selectHostReady(state) && !state.project.boot) void state.project.bootstrap();
+      },
+      { equalityFn: shallow, fireImmediately: true },
+    ),
+    store.subscribe(
+      (state) =>
+        [
+          state.host.connection.generation,
+          state.project.boot?.projectState.activeProjectId,
+          state.project.boot?.canonical.session.sessionId,
+          selectHostReady(state),
+        ] as const,
+      (scope, previous) => {
+        scopeGeneration += 1;
+        const changed =
+          !scopeInitialized || scope.slice(0, 3).some((value, index) => value !== previous[index]);
+        scopeInitialized = true;
+        if (changed) {
+          transportRequest += 1;
+          projectionRequest += 1;
+          clearPendingAudio();
+          store.getState().transport.reset();
+          resetAudioMeters();
+        }
+        if (!scope[3]) markAudioMetersUnavailable();
+        if (scope[3] && scope[1] !== undefined) {
+          loadTransportPosition();
+          loadProjection();
+        }
+      },
+      { equalityFn: shallow, fireImmediately: true },
+    ),
+    store.subscribe(
+      (state) =>
+        [
+          state.host.connection.generation,
+          state.project.boot?.projectState.activeProjectId,
+          state.project.boot?.canonical.session.sessionId,
+          state.readModel?.dependencyKey,
+          selectHostReady(state),
+        ] as const,
+      (scope, previous) => {
+        const changed =
+          !missingScopeInitialized ||
+          scope.slice(0, 3).some((value, index) => value !== previous[index]);
+        missingScopeInitialized = true;
+        if (changed) store.getState().missing.reset();
+        const state = store.getState();
+        if (selectHostReady(state) && state.readModel)
+          void state.missing.reload().catch(logNativeError('getMissingDependencies'));
+      },
+      { equalityFn: shallow, fireImmediately: true },
+    ),
+    store.subscribe(
+      (state) =>
+        selectHostReady(state) && !!state.project.boot && state.runtime.canBeginInitialLoad(),
+      (ready) => {
+        if (ready) scheduleInitialLoad();
+        else {
+          if (initialLoadTimer !== null) clearTimeout(initialLoadTimer);
+          initialLoadTimer = null;
+        }
+      },
+      { fireImmediately: true },
+    ),
+    store.subscribe(selectStartupRestoreReady, () => store.getState().runtime.tryStartupRestore(), {
+      fireImmediately: true,
+    }),
+    store.subscribe(
+      (state) =>
+        [
+          selectHostReady(state),
+          state.transport.status?.state === 'playing',
+          state.project.boot?.canonical.session.arrangement.timebase,
+        ] as const,
+      () => {
+        if (clockRunning()) {
+          if (frame === 0) frame = requestAnimationFrame(animate);
+        } else {
+          cancelAnimationFrame(frame);
+          frame = 0;
+        }
+      },
+      { equalityFn: shallow, fireImmediately: true },
+    ),
+  ];
   const stops = [
     api.onRuntimeRestarted(() => toast('Audio engine restarted.')),
     api.onRecordingFinalized((event) => {
@@ -171,6 +242,7 @@ export function bindSessionRuntime(store: SessionStore, api: NativeApi): () => v
       store.getState().runtime.acceptProjection(value);
     }),
     api.onAudioStatus((status) => {
+      audioEvent += 1;
       if (status.state === 'faulted' || status.state === 'offline' || status.state === 'starting')
         markAudioMetersUnavailable();
       publishAudioMeterSummary({
@@ -223,23 +295,10 @@ export function bindSessionRuntime(store: SessionStore, api: NativeApi): () => v
       else startupUnlisten = stop;
     })
     .catch(logNativeError('onRuntimeStartupFinished'));
-  updateMeters();
-  scheduleInitialLoad();
-  store.getState().runtime.tryStartupRestore();
-  if (lastBoot)
-    void store.getState().missing.reload().catch(logNativeError('getMissingDependencies'));
-  transportKey = JSON.stringify([
-    generation,
-    store.getState().project.boot?.projectState.activeProjectId,
-  ]);
-  if (generation > 0) loadTransportPosition();
-  startClock();
-  loadProjection();
-  if (generation > 0 && !store.getState().project.boot) void store.getState().project.bootstrap();
   void store.getState().host.refresh();
   return () => {
     disposed = true;
-    unsubscribe();
+    subscriptions.forEach((stop) => stop());
     cancelAnimationFrame(frame);
     if (initialLoadTimer !== null) clearTimeout(initialLoadTimer);
     if (audioTimer !== null) clearTimeout(audioTimer);
