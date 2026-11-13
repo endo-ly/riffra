@@ -58,6 +58,22 @@ impl HostDispatcher<'_> {
                 .map_err(|error| {
                     DispatchError::invalid_request_with_details(error.message, error.details)
                 })?;
+                if imported.source_changed() {
+                    return Err(DispatchError::InvalidRequest {
+                        message:
+                            "the Score file or a referenced file changed before it could be applied"
+                                .into(),
+                        details: Some(serde_json::json!({
+                            "domain": "score",
+                            "kind": "scoreSourceChanged",
+                                "path": imported
+                                    .session
+                                    .score_source
+                                    .as_ref()
+                                    .and_then(|source| source.path.clone()),
+                        })),
+                    });
+                }
                 let summary = self
                     .project_store
                     .as_ref()
@@ -93,6 +109,7 @@ impl HostDispatcher<'_> {
                 let changed = rebuilt.changed;
                 let yaml_changed = rebuilt.yaml_changed;
                 let link_changed = rebuilt.link_changed;
+                let diagnostics = rebuilt.diagnostics.clone();
                 let path = rebuilt
                     .session
                     .score_source
@@ -105,7 +122,7 @@ impl HostDispatcher<'_> {
                     link_changed,
                     sequence,
                     path: path.clone(),
-                    diagnostics: Vec::new(),
+                    diagnostics: diagnostics.clone(),
                 };
                 let Some(candidate) = rebuilt.candidate(&current.session) else {
                     return Ok(DispatchResult {
@@ -113,7 +130,7 @@ impl HostDispatcher<'_> {
                         sequence: current.sequence,
                     });
                 };
-                if crate::score_yaml_import::source_changed(&rebuilt.session) {
+                if rebuilt.source_changed() {
                     return Err(DispatchError::InvalidRequest {
                         message: "the linked Score file changed before it could be applied".into(),
                         details: Some(serde_json::json!({

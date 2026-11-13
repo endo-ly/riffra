@@ -569,6 +569,12 @@ pub(in crate::score) fn validate(plan: &crate::score::ScorePlan) -> Result<()> {
     let Some(mix) = &plan.mix else {
         return Ok(());
     };
+    if !(-90.0..=0.0).contains(&mix.master_gain_db) {
+        return Err(Error::new(
+            "mix.master.gain_db",
+            "master gain must be between -90 and 0 dB",
+        ));
+    }
     let is_track = |id: &str| {
         plan.kits.contains_key(id)
             || (plan.instruments.contains_key(id) && !plan.kit_members.contains_key(id))

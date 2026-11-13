@@ -21,7 +21,9 @@ use crate::plugins::validation::DisplayRequest;
 use crate::score::{self, ScoreLane, ScorePlan, events::MusicalEvent, syntax};
 use riffra_core::*;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
+use std::io::Read as _;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, thiserror::Error)]
@@ -38,6 +40,43 @@ impl From<String> for ImportError {
             details: Value::Null,
         }
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Fingerprint {
+    bytes: u64,
+    digest: [u8; 32],
+}
+
+type Dependencies = BTreeMap<PathBuf, Fingerprint>;
+
+fn fingerprint(path: &Path) -> Result<Fingerprint, String> {
+    let mut file =
+        std::fs::File::open(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    let mut bytes = 0_u64;
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .map_err(|error| format!("{}: {error}", path.display()))?;
+        if read == 0 {
+            break;
+        }
+        bytes += read as u64;
+        hasher.update(&buffer[..read]);
+    }
+    Ok(Fingerprint {
+        bytes,
+        digest: hasher.finalize().into(),
+    })
+}
+
+fn record_dependency(dependencies: &mut Dependencies, path: &Path) -> Result<(), String> {
+    let path =
+        std::fs::canonicalize(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    dependencies.insert(path.clone(), fingerprint(&path)?);
+    Ok(())
 }
 
 /// A built-in source a Score instrument resolves to.
@@ -107,6 +146,7 @@ struct ScoreDocument {
     sources: BTreeMap<String, Source>,
     production: ResolvedProductionMap,
     automation: ResolvedAutomationMap,
+    dependencies: Dependencies,
 }
 
 fn is_production_instrument(plan: &ScorePlan, id: &str) -> bool {
@@ -115,7 +155,11 @@ fn is_production_instrument(plan: &ScorePlan, id: &str) -> bool {
         || plan.audio_instruments.contains(id)
 }
 
-fn validate_audio(plan: &ScorePlan, base: &Path) -> Result<(), ImportError> {
+fn validate_audio(
+    plan: &ScorePlan,
+    base: &Path,
+    dependencies: &mut Dependencies,
+) -> Result<(), ImportError> {
     use num_traits::ToPrimitive;
     for (section, clips) in &plan.audio_clips {
         for (index, clip) in clips.iter().enumerate() {
@@ -125,6 +169,7 @@ fn validate_audio(plan: &ScorePlan, base: &Path) -> Result<(), ImportError> {
                 message,
             };
             let path = base.join(&clip.file);
+            record_dependency(dependencies, &path).map_err(fail)?;
             let (rate, total) = riffra_host::read_wav_metadata(&path)
                 .map_err(|error| fail(format!("{}: {error}", path.display())))?;
             let frames = |seconds: f64| (seconds * f64::from(rate)).round().to_u64();
@@ -243,13 +288,14 @@ fn resolve_production(
     base: &Path,
     data_root: &Path,
     scanner: &Path,
+    dependencies: &mut Dependencies,
 ) -> Result<(ResolvedProductionMap, ResolvedAutomationMap), ImportError> {
     let library = library::Library::new(base);
     let mut uses = BTreeMap::<String, PendingUse>::new();
     let mut insert_source =
         |field: String, source: &score::production::SourceSpec| -> Result<(), ImportError> {
-            let resolve = || -> Result<SourceResolution, String> {
-                let resolved = library.instrument(source)?;
+            let mut resolve = || -> Result<SourceResolution, String> {
+                let resolved = library.instrument(source, dependencies)?;
                 let vst3 = resolved
                     .source
                     .vst3
@@ -259,6 +305,7 @@ fn resolve_production(
                     data_root,
                     &vst3,
                     crate::api::output::PluginRole::Instrument,
+                    dependencies,
                 )?;
                 plugin.range = resolved.range;
                 plugin.notes = resolved.notes;
@@ -295,8 +342,8 @@ fn resolve_production(
         |field: String, effects: &[score::production::EffectSpec]| -> Result<(), ImportError> {
             for (index, effect) in effects.iter().enumerate() {
                 let path = format!("{field}[{index}]");
-                let resolve = || -> Result<EffectResolution, String> {
-                    let effect = library.effect(effect)?;
+                let mut resolve = || -> Result<EffectResolution, String> {
+                    let effect = library.effect(effect, dependencies)?;
                     let vst3 = effect
                         .vst3
                         .clone()
@@ -305,6 +352,7 @@ fn resolve_production(
                         data_root,
                         &vst3,
                         crate::api::output::PluginRole::Effect,
+                        dependencies,
                     )?;
                     Ok((plugin, vst3, effect.bypassed.unwrap_or(false)))
                 };
@@ -574,6 +622,9 @@ pub(crate) struct ScoreOutcome {
     pub(crate) changed: bool,
     /// Whether the linked file path or external instrument bindings differ.
     pub(crate) link_changed: bool,
+    /// Warnings produced while resolving the Score.
+    pub(crate) diagnostics: Vec<ScoreDiagnostic>,
+    dependencies: Dependencies,
     staged: StagedResources,
 }
 
@@ -605,6 +656,19 @@ impl ScoreOutcome {
     pub(crate) fn retain(&mut self) {
         self.staged.clear();
     }
+
+    /// Reports whether a dependency changed while the candidate was prepared.
+    pub(crate) fn source_changed(&self) -> bool {
+        if let Some(source) = self.session.score_source.as_ref()
+            && let Some(path) = source.path.as_deref()
+            && std::fs::read_to_string(path).map_or(true, |text| text != source.yaml)
+        {
+            return true;
+        }
+        self.dependencies
+            .iter()
+            .any(|(path, expected)| fingerprint(path).map_or(true, |current| current != *expected))
+    }
 }
 
 /// Imports a Score YAML file as a new Session.
@@ -635,6 +699,8 @@ pub(crate) fn import(
         yaml_changed: true,
         changed: true,
         link_changed: true,
+        diagnostics: warnings(&document.plan),
+        dependencies: std::mem::take(&mut document.dependencies),
         staged,
     })
 }
@@ -690,6 +756,8 @@ pub(crate) fn rebuild(
         &mut staged,
         BuildMode::Stage,
     )?;
+    let diagnostics = warnings(&document.plan);
+    let dependencies = std::mem::take(&mut document.dependencies);
     let yaml_changed = previous
         .score_source
         .as_ref()
@@ -699,6 +767,8 @@ pub(crate) fn rebuild(
         link_changed: link_changed(previous, &session),
         session,
         yaml_changed,
+        diagnostics,
+        dependencies,
         staged,
     })
 }
@@ -710,17 +780,6 @@ fn link_changed(previous: &CreativeSession, next: &CreativeSession) -> bool {
         }
         _ => true,
     }
-}
-
-/// Reports whether the linked Score file no longer matches the accepted body.
-pub(crate) fn source_changed(session: &CreativeSession) -> bool {
-    let Some(source) = session.score_source.as_ref() else {
-        return false;
-    };
-    let Some(path) = source.path.as_deref() else {
-        return false;
-    };
-    std::fs::read_to_string(path).map_or(true, |text| text != source.yaml)
 }
 
 /// Validates a Score document without creating a Project or snapshot.
@@ -1088,8 +1147,11 @@ fn read(
     let path = std::fs::canonicalize(path).map_err(|error| error.to_string())?;
     let plan = score::compile(&yaml).map_err(score_error)?;
     let base = path.parent().expect("canonical file has a parent");
-    validate_audio(&plan, base)?;
-    let (production, automation) = resolve_production(&plan, base, data_root, scanner)?;
+    let mut dependencies = Dependencies::new();
+    record_dependency(&mut dependencies, &path).map_err(ImportError::from)?;
+    validate_audio(&plan, base, &mut dependencies)?;
+    let (production, automation) =
+        resolve_production(&plan, base, data_root, scanner, &mut dependencies)?;
     let missing: Vec<_> = plan
         .instruments
         .iter()
@@ -1140,6 +1202,10 @@ fn read(
             )?;
         let canonical =
             std::fs::canonicalize(&definition).map_err(|error| format!("{field}: {error}"))?;
+        record_dependency(&mut dependencies, &canonical).map_err(|message| ImportError {
+            details: plan.source_detail(&field, &message),
+            message,
+        })?;
         if spec["external"] == true {
             effective.insert(id.clone(), canonical.clone());
         }
@@ -1177,6 +1243,7 @@ fn read(
         sources,
         production,
         automation,
+        dependencies,
     })
 }
 
@@ -1250,6 +1317,7 @@ fn build(
         sources,
         production,
         automation: resolved_automation,
+        dependencies: _,
     } = document;
     let sources = sources.clone();
     for (id, spec) in &plan.instruments {
@@ -2764,6 +2832,7 @@ fn match_tracks<'a>(plan: &ScorePlan, previous: &[&'a Track]) -> BTreeMap<usize,
     for (index, lane) in plan.lanes.iter().enumerate() {
         if let Some(track) = previous.iter().find(|track| {
             !claimed.contains(&track.id)
+                && track.kind == TrackKind::Instrument
                 && track.score_instrument.as_deref() == Some(lane.id.as_str())
                 && track.gain_db.to_bits() == lane.gain_db.to_bits()
         }) {
@@ -2785,6 +2854,7 @@ fn match_tracks<'a>(plan: &ScorePlan, previous: &[&'a Track]) -> BTreeMap<usize,
             .iter()
             .filter(|track| {
                 !claimed.contains(&track.id)
+                    && track.kind == TrackKind::Instrument
                     && track.score_instrument.as_deref() == Some(lane.id.as_str())
             })
             .collect::<Vec<_>>();
@@ -3269,6 +3339,7 @@ mod tests {
             sources,
             production: BTreeMap::new(),
             automation: BTreeMap::new(),
+            dependencies: Dependencies::new(),
         }
     }
 
@@ -3376,6 +3447,7 @@ mod tests {
             sources: BTreeMap::new(),
             production,
             automation: BTreeMap::new(),
+            dependencies: Dependencies::new(),
         }
     }
 
@@ -3623,7 +3695,8 @@ mod tests {
 
         let changed = PRODUCTION
             .replace("3 - - -", "4 - - -")
-            .replace(r#""drums":{"gain_db":-2"#, r#""drums":{"gain_db":-4"#);
+            .replace(r#""drums":{"gain_db":-2"#, r#""drums":{"gain_db":-4"#)
+            .replace(r#""master":{"gain_db":-1"#, r#""master":{"gain_db":-3"#);
         let mut second = production_document(&changed);
         let rebuilt = build(
             &mut second,
@@ -3704,6 +3777,7 @@ mod tests {
         );
         assert_eq!(rebuilt.arrangement.midi_clips[0].notes[1].note, 65);
         assert_eq!(rebuilt.arrangement.tracks[1].gain_db, -4.0);
+        assert_eq!(rebuilt.settings.master_db, -3.0);
         assert!(rebuilt.score_performance_equals(&rebuilt));
         assert!(!session.score_performance_equals(&rebuilt));
         let _ = std::fs::remove_dir_all(root);
@@ -4286,6 +4360,34 @@ mod tests {
     }
 
     #[test]
+    fn source_changes_are_detected_from_dependency_content() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-score-dependencies-{}",
+            riffra_control::new_instance_id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let library = root.join("state.json");
+        std::fs::write(&library, "one").unwrap();
+        let mut dependencies = Dependencies::new();
+        record_dependency(&mut dependencies, &library).unwrap();
+        let outcome = ScoreOutcome {
+            session: CreativeSession::new(1),
+            yaml_changed: false,
+            changed: false,
+            link_changed: false,
+            diagnostics: Vec::new(),
+            dependencies,
+            staged: StagedResources::new(&root),
+        };
+        assert!(!outcome.source_changed());
+        std::fs::write(&library, "two").unwrap();
+        assert!(outcome.source_changed());
+        std::fs::remove_file(&library).unwrap();
+        assert!(outcome.source_changed());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn rebuild_decisions_distinguish_performance_body_and_link_changes() {
         let mut session = CreativeSession::new(1);
         session.score_source = Some(ScoreSource {
@@ -4301,6 +4403,8 @@ mod tests {
             yaml_changed: false,
             changed: false,
             link_changed: false,
+            diagnostics: Vec::new(),
+            dependencies: Dependencies::new(),
             staged: StagedResources::new(Path::new("")),
         };
         assert!(unchanged.candidate(&session).is_none());
@@ -4314,6 +4418,8 @@ mod tests {
             yaml_changed: false,
             changed: false,
             link_changed: true,
+            diagnostics: Vec::new(),
+            dependencies: Dependencies::new(),
             staged: StagedResources::new(Path::new("")),
         };
         let candidate = outcome.candidate(&session).expect("a link change commits");

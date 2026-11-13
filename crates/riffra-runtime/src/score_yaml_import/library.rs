@@ -27,6 +27,7 @@ pub(super) fn resolve_plugin(
     data_root: &Path,
     vst3: &Vst3Spec,
     role: PluginRole,
+    dependencies: &mut super::Dependencies,
 ) -> Result<ResolvedPlugin, String> {
     let name = vst3
         .plugin
@@ -40,6 +41,7 @@ pub(super) fn resolve_plugin(
     )?;
     let mut plugin = Vst3Plugin::new(entry.path.clone());
     if let Some(path) = &vst3.state {
+        super::record_dependency(dependencies, Path::new(path))?;
         let bytes = std::fs::read(path)
             .map_err(|error| format!("could not read plugin state {path}: {error}"))?;
         let mut snapshot: PluginStateSnapshot = serde_json::from_slice(&bytes)
@@ -78,12 +80,18 @@ impl<'a> Library<'a> {
         Self { score_dir, root }
     }
 
-    fn template(&self, category: &str, name: &str) -> Result<(PathBuf, String), String> {
+    fn template(
+        &self,
+        category: &str,
+        name: &str,
+        dependencies: &mut super::Dependencies,
+    ) -> Result<(PathBuf, String), String> {
         let root = self
             .root
             .as_ref()
             .ok_or_else(|| "no library directory exists above the score".to_owned())?;
         let path = root.join(category).join(format!("{name}.yaml"));
+        super::record_dependency(dependencies, &path)?;
         let text = std::fs::read_to_string(&path).map_err(|error| {
             format!(
                 "could not read library template {}: {error}",
@@ -93,7 +101,11 @@ impl<'a> Library<'a> {
         Ok((path, text))
     }
 
-    pub(super) fn instrument(&self, source: &SourceSpec) -> Result<Instrument, String> {
+    pub(super) fn instrument(
+        &self,
+        source: &SourceSpec,
+        dependencies: &mut super::Dependencies,
+    ) -> Result<Instrument, String> {
         let mut overlay = source.clone();
         if let Some(vst3) = &mut overlay.vst3 {
             rebase_state(vst3, self.score_dir)?;
@@ -105,7 +117,7 @@ impl<'a> Library<'a> {
                 notes: None,
             });
         };
-        let (path, text) = self.template("instruments", name)?;
+        let (path, text) = self.template("instruments", name, dependencies)?;
         let mut template = production::parse_instrument_template(&text)
             .map_err(|error| library_error(&path, &error))?;
         if let Some(vst3) = &mut template.source.vst3 {
@@ -123,7 +135,11 @@ impl<'a> Library<'a> {
         })
     }
 
-    pub(super) fn effect(&self, effect: &EffectSpec) -> Result<EffectSpec, String> {
+    pub(super) fn effect(
+        &self,
+        effect: &EffectSpec,
+        dependencies: &mut super::Dependencies,
+    ) -> Result<EffectSpec, String> {
         let mut overlay = effect.clone();
         if let Some(vst3) = &mut overlay.vst3 {
             rebase_state(vst3, self.score_dir)?;
@@ -131,7 +147,7 @@ impl<'a> Library<'a> {
         let Some(name) = &effect.library else {
             return Ok(overlay);
         };
-        let (path, text) = self.template("effects", name)?;
+        let (path, text) = self.template("effects", name, dependencies)?;
         let mut template = production::parse_effect_template(&text)
             .map_err(|error| library_error(&path, &error))?;
         rebase_state(&mut template.vst3, path.parent().expect("template parent"))?;
@@ -229,7 +245,8 @@ mod tests {
             }),
             velocity: Some(vec![(1, 2), (127, 127)]),
         };
-        let result = library.instrument(&source).unwrap();
+        let mut dependencies = super::super::Dependencies::new();
+        let result = library.instrument(&source, &mut dependencies).unwrap();
         let vst3 = result.source.vst3.unwrap();
         assert_eq!(vst3.plugin.as_deref(), Some("Synth"));
         assert_eq!(
@@ -244,7 +261,12 @@ mod tests {
 
         let mut source = source;
         source.vst3.as_mut().unwrap().state = None;
-        let inherited = library.instrument(&source).unwrap().source.vst3.unwrap();
+        let inherited = library
+            .instrument(&source, &mut dependencies)
+            .unwrap()
+            .source
+            .vst3
+            .unwrap();
         assert_eq!(
             Path::new(inherited.state.as_deref().unwrap()),
             templates.join("../states/base.json")
@@ -299,24 +321,28 @@ mod tests {
             patch: Vec::new(),
             params: BTreeMap::new(),
         };
-        let resolved = resolve_plugin(&root, &spec, PluginRole::Instrument).unwrap();
+        let mut dependencies = super::super::Dependencies::new();
+        let resolved =
+            resolve_plugin(&root, &spec, PluginRole::Instrument, &mut dependencies).unwrap();
         assert_eq!(resolved.plugin.path, plugin_path.to_string_lossy());
         assert_eq!(resolved.plugin.parameter_values, [0.75]);
         assert_eq!(resolved.plugin.state_data.as_deref(), Some("c3RhdGU="));
-        assert!(resolve_plugin(&root, &spec, PluginRole::Effect).is_err());
+        assert!(resolve_plugin(&root, &spec, PluginRole::Effect, &mut dependencies).is_err());
 
         let mut patched = spec.clone();
         patched.patch = vec![crate::api::params::PluginStatePatchOperation::Set {
             path: "Plugin/Mode".into(),
             value: crate::api::output::PluginStateValue::Text("Warm".into()),
         }];
-        assert!(resolve_plugin(&root, &patched, PluginRole::Instrument).is_err());
+        assert!(
+            resolve_plugin(&root, &patched, PluginRole::Instrument, &mut dependencies).is_err()
+        );
 
         let mut invalid = snapshot;
         invalid.state_data = Some("invalid-base64".into());
         std::fs::write(&state_path, serde_json::to_vec(&invalid).unwrap()).unwrap();
         assert!(
-            resolve_plugin(&root, &spec, PluginRole::Instrument)
+            resolve_plugin(&root, &spec, PluginRole::Instrument, &mut dependencies)
                 .err()
                 .unwrap()
                 .contains("base64")

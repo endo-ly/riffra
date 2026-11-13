@@ -141,6 +141,7 @@ impl CreativeSession {
             && self.project_name == other.project_name
             && self.arrangement.timebase == other.arrangement.timebase
             && self.arrangement.mixer == other.arrangement.mixer
+            && self.settings.master_db == other.settings.master_db
             && self.settings.mixdown == other.settings.mixdown
             && self.arrangement.audio_clips == other.arrangement.audio_clips
             && self.arrangement.regions == other.arrangement.regions
@@ -398,6 +399,11 @@ mod tests {
         let mut automated = work.clone();
         automated.arrangement.automation_lanes[0].points[0].value = 0.75;
         assert!(!session.score_owned_state_equals(&automated));
+
+        // Master gain is Score-owned and differs from temporary mix state.
+        let mut mastered = work.clone();
+        mastered.settings.master_db = -6.0;
+        assert!(!session.score_owned_state_equals(&mastered));
     }
 
     #[test]

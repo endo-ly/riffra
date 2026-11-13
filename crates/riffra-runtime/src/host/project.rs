@@ -90,6 +90,14 @@ pub(super) fn dispatch(
                 &state.binaries.sonalloy,
             )
             .map_err(|error| command_error(error.message).with_details(error.details))?;
+            if imported.source_changed() {
+                let path = imported
+                    .session
+                    .score_source
+                    .as_ref()
+                    .and_then(|source| source.path.clone());
+                return Err(score_source_changed(path));
+            }
             let summary = state
                 .project_store
                 .create_from_session(&imported.session)
@@ -404,6 +412,7 @@ fn rebuild_score(
     let changed = rebuilt.changed;
     let yaml_changed = rebuilt.yaml_changed;
     let link_changed = rebuilt.link_changed;
+    let diagnostics = rebuilt.diagnostics.clone();
     let result = |sequence: u64| ScoreRebuild {
         project_id: current.project_id.clone(),
         changed,
@@ -411,13 +420,13 @@ fn rebuild_score(
         link_changed,
         sequence,
         path: path.clone(),
-        diagnostics: Vec::new(),
+        diagnostics: diagnostics.clone(),
     };
     let Some(candidate) = rebuilt.candidate(&current.session) else {
         state.set_score_sync(super::state::initial_score_sync(&current));
         return Ok(result(current.sequence));
     };
-    if crate::score_yaml_import::source_changed(&rebuilt.session) {
+    if rebuilt.source_changed() {
         return Err(score_source_changed(path.clone()));
     }
     let key = project_projection_key(current.sequence, &candidate);
@@ -427,7 +436,7 @@ fn rebuild_score(
         {
             return Err(rebuild_failure(state, &current, error));
         }
-        if crate::score_yaml_import::source_changed(&rebuilt.session) {
+        if rebuilt.source_changed() {
             return Err(restore_source_changed(state, &current, path));
         }
         if let Err(error) = state.runtime.commit_candidate_as_canonical(key) {
