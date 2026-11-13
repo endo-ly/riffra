@@ -3907,6 +3907,18 @@ mod tests {
     }"#;
 
     #[test]
+    fn velocity_maps_interpolate_and_keep_the_endpoints() {
+        let map = [(1, 18), (64, 68), (127, 120)];
+
+        assert_eq!(mapped_velocity(None, 100), 100);
+        assert_eq!(mapped_velocity(Some(&map), 1), 18);
+        assert_eq!(mapped_velocity(Some(&map), 32), 43);
+        assert_eq!(mapped_velocity(Some(&map), 64), 68);
+        assert_eq!(mapped_velocity(Some(&map), 96), 94);
+        assert_eq!(mapped_velocity(Some(&map), 127), 120);
+    }
+
+    #[test]
     fn production_build_aggregates_kits_applies_velocity_and_builds_the_mixer() {
         let root = std::env::temp_dir().join(format!(
             "riffra-score-production-build-{}",
