@@ -169,8 +169,8 @@ int describeParameters(const juce::String& path, const juce::String& requestPath
     for (const auto& parameter : parameters) {
         auto* item = new juce::DynamicObject();
         item->setProperty("index", parameter.index);
-        item->setProperty("parameterId", parameter.parameterId ? juce::var(*parameter.parameterId)
-                                                              : juce::var());
+        item->setProperty("parameterId",
+                          parameter.parameterId ? juce::var(*parameter.parameterId) : juce::var());
         item->setProperty("name", parameter.name);
         item->setProperty("defaultValue", parameter.defaultValue);
         item->setProperty("automatable", parameter.automatable);
