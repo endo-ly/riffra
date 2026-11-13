@@ -55,6 +55,33 @@ struct Source {
     built_in: Option<BuiltIn>,
 }
 
+/// A production source or effect resolved from the library and plugin catalog.
+enum ResolvedProduction {
+    Source {
+        plugin: library::ResolvedPlugin,
+        velocity: Option<Vec<(u8, u8)>>,
+    },
+    Effect {
+        plugin: library::ResolvedPlugin,
+        bypassed: bool,
+    },
+}
+
+impl ResolvedProduction {
+    fn plugin(&self) -> &library::ResolvedPlugin {
+        match self {
+            Self::Source { plugin, .. } | Self::Effect { plugin, .. } => plugin,
+        }
+    }
+
+    fn velocity(&self) -> Option<&[(u8, u8)]> {
+        match self {
+            Self::Source { velocity, .. } => velocity.as_deref(),
+            Self::Effect { .. } => None,
+        }
+    }
+}
+
 /// One validated Score file with every instrument source resolved.
 struct ScoreDocument {
     path: PathBuf,
@@ -62,7 +89,7 @@ struct ScoreDocument {
     plan: ScorePlan,
     bindings: BTreeMap<String, PathBuf>,
     sources: BTreeMap<String, Source>,
-    production: BTreeMap<String, library::ResolvedPlugin>,
+    production: BTreeMap<String, ResolvedProduction>,
 }
 
 fn is_production_instrument(plan: &ScorePlan, id: &str) -> bool {
@@ -113,13 +140,13 @@ fn resolve_production(
     base: &Path,
     data_root: &Path,
     scanner: &Path,
-) -> Result<BTreeMap<String, library::ResolvedPlugin>, ImportError> {
+) -> Result<BTreeMap<String, ResolvedProduction>, ImportError> {
     let library = library::Library::new(base);
     let mut plugins = BTreeMap::new();
     let mut cache = parameters::ProbeCache::default();
     let mut insert_source =
         |field: String, source: &score::production::SourceSpec| -> Result<(), ImportError> {
-            let mut resolve = || -> Result<library::ResolvedPlugin, String> {
+            let mut resolve = || -> Result<ResolvedProduction, String> {
                 let resolved = library.instrument(source)?;
                 let vst3 = resolved
                     .source
@@ -135,7 +162,10 @@ fn resolve_production(
                 )?;
                 plugin.range = resolved.range;
                 plugin.notes = resolved.notes;
-                Ok(plugin)
+                Ok(ResolvedProduction::Source {
+                    plugin,
+                    velocity: resolved.source.velocity,
+                })
             };
             let result = resolve().map_err(|message| ImportError {
                 details: plan.source_detail(&field, &message),
@@ -154,19 +184,23 @@ fn resolve_production(
         |field: String, effects: &[score::production::EffectSpec]| -> Result<(), ImportError> {
             for (index, effect) in effects.iter().enumerate() {
                 let path = format!("{field}[{index}]");
-                let mut resolve = || -> Result<library::ResolvedPlugin, String> {
+                let mut resolve = || -> Result<ResolvedProduction, String> {
                     let effect = library.effect(effect)?;
                     let vst3 = effect
                         .vst3
                         .as_ref()
                         .ok_or_else(|| "effect requires a VST3 plugin".to_owned())?;
-                    library::resolve_plugin(
+                    let plugin = library::resolve_plugin(
                         data_root,
                         vst3,
                         crate::api::output::PluginRole::Effect,
                         scanner,
                         &mut cache,
-                    )
+                    )?;
+                    Ok(ResolvedProduction::Effect {
+                        plugin,
+                        bypassed: effect.bypassed.unwrap_or(false),
+                    })
                 };
                 let result = resolve().map_err(|message| ImportError {
                     details: plan.source_detail(&path, &message),
@@ -200,7 +234,7 @@ pub(crate) struct ScoreOutcome {
     pub(crate) changed: bool,
     /// Whether the linked file path or external instrument bindings differ.
     pub(crate) link_changed: bool,
-    staged: BTreeSet<PathBuf>,
+    staged: StagedResources,
 }
 
 impl ScoreOutcome {
@@ -227,19 +261,9 @@ impl ScoreOutcome {
         })
     }
 
-    /// Keeps the staged snapshots because canonical state now references them.
+    /// Keeps the staged resources because canonical state now references them.
     pub(crate) fn retain(&mut self) {
         self.staged.clear();
-    }
-}
-
-impl Drop for ScoreOutcome {
-    fn drop(&mut self) {
-        for snapshot in &self.staged {
-            if let Err(error) = std::fs::remove_dir_all(snapshot) {
-                tracing::warn!(%error, "score instrument snapshot cleanup failed");
-            }
-        }
     }
 }
 
@@ -264,8 +288,8 @@ pub(crate) fn import(
         sonalloy,
     )?;
     let store = UserInstrumentStore::new(data_root, sonalloy);
-    let mut staged = BTreeSet::new();
-    let session = build(&mut document, None, &store, &mut staged)?;
+    let mut staged = StagedResources::new(data_root);
+    let session = build(&mut document, None, &store, &mut staged, BuildMode::Stage)?;
     Ok(ScoreOutcome {
         session,
         yaml_changed: true,
@@ -318,8 +342,14 @@ pub(crate) fn rebuild(
         sonalloy,
     )?;
     let store = UserInstrumentStore::new(data_root, sonalloy);
-    let mut staged = BTreeSet::new();
-    let session = build(&mut document, Some(previous), &store, &mut staged)?;
+    let mut staged = StagedResources::new(data_root);
+    let session = build(
+        &mut document,
+        Some(previous),
+        &store,
+        &mut staged,
+        BuildMode::Stage,
+    )?;
     let yaml_changed = previous
         .score_source
         .as_ref()
@@ -365,7 +395,7 @@ pub(crate) fn validate(
     scanner: &Path,
     sonalloy: &Path,
 ) -> ScoreValidation {
-    match read(
+    let mut document = match read(
         path,
         bindings,
         &bindings.keys().cloned().collect(),
@@ -373,15 +403,29 @@ pub(crate) fn validate(
         catalog,
         scanner,
         sonalloy,
-    )
-    .and_then(|document| {
-        validate_performance(&document.plan, &document.sources)?;
-        Ok((summary(&document.plan), warnings(&document.plan)))
-    }) {
-        Ok((summary, diagnostics)) => ScoreValidation {
+    ) {
+        Ok(document) => document,
+        Err(error) => {
+            return ScoreValidation {
+                valid: false,
+                diagnostics: vec![diagnostic(&error)],
+                summary: None,
+            };
+        }
+    };
+    let store = UserInstrumentStore::new(data_root, sonalloy);
+    let mut staged = StagedResources::new(data_root);
+    match build(
+        &mut document,
+        None,
+        &store,
+        &mut staged,
+        BuildMode::Validate,
+    ) {
+        Ok(_) => ScoreValidation {
             valid: true,
-            diagnostics,
-            summary: Some(summary),
+            diagnostics: warnings(&document.plan),
+            summary: Some(summary(&document.plan)),
         },
         Err(error) => ScoreValidation {
             valid: false,
@@ -404,7 +448,7 @@ pub(crate) fn inspect(
     scanner: &Path,
     sonalloy: &Path,
 ) -> Result<ScoreInspection, ImportError> {
-    let document = read(
+    let mut document = read(
         path,
         bindings,
         &bindings.keys().cloned().collect(),
@@ -412,6 +456,15 @@ pub(crate) fn inspect(
         catalog,
         scanner,
         sonalloy,
+    )?;
+    let store = UserInstrumentStore::new(data_root, sonalloy);
+    let mut staged = StagedResources::new(data_root);
+    let _session = build(
+        &mut document,
+        None,
+        &store,
+        &mut staged,
+        BuildMode::Validate,
     )?;
     validate_performance(&document.plan, &document.sources)?;
     let plan = &document.plan;
@@ -545,7 +598,10 @@ pub(crate) fn inspect(
                         || format!("instruments.{id}.source"),
                         |kit| format!("kits.{kit}.source"),
                     );
-                    let plugin = document.production.get(&path);
+                    let plugin = document
+                        .production
+                        .get(&path)
+                        .map(ResolvedProduction::plugin);
                     ScoreInstrumentInspection {
                         id: id.clone(),
                         name: plugin.map_or_else(|| id.clone(), |plugin| plugin.entry.name.clone()),
@@ -694,29 +750,14 @@ fn read(
     let base = path.parent().expect("canonical file has a parent");
     validate_audio(&plan, base)?;
     let production = resolve_production(&plan, base, data_root, scanner)?;
-    if plan.mix.as_ref().is_some_and(|mix| {
-        mix.automation.iter().any(|lane| {
-            matches!(
-                lane.target,
-                score::production::mix::AutomationTarget::Effect { .. }
-                    | score::production::mix::AutomationTarget::Source { .. }
-            )
-        })
-    }) {
-        let message = "plugin parameter automation is not implemented for Score import".to_owned();
-        return Err(ImportError {
-            details: plan.source_detail("mix.automation", &message),
-            message,
-        });
-    }
     if plan
         .mix
         .as_ref()
-        .is_some_and(|mix| !mix.sidechain.is_empty())
+        .is_some_and(|mix| !mix.automation.is_empty())
     {
-        let message = "sidechain routing is not implemented for Score import".to_owned();
+        let message = "Score mix automation is not implemented".to_owned();
         return Err(ImportError {
-            details: plan.source_detail("mix.sidechain", &message),
+            details: plan.source_detail("mix.automation", &message),
             message,
         });
     }
@@ -809,33 +850,82 @@ fn read(
     })
 }
 
+/// How a Score build treats resources that outlive the candidate Session.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BuildMode {
+    /// Stage snapshots and assets for a candidate that may be accepted.
+    Stage,
+    /// Resolve the same structure without writing persistent resources.
+    Validate,
+}
+
+/// Snapshots staged for a candidate and discarded unless it is accepted.
+struct StagedResources {
+    snapshots: BTreeSet<PathBuf>,
+}
+
+impl StagedResources {
+    fn new(_data_root: &Path) -> Self {
+        Self {
+            snapshots: BTreeSet::new(),
+        }
+    }
+
+    fn clear(&mut self) {
+        self.snapshots.clear();
+    }
+
+    #[cfg(test)]
+    fn is_empty(&self) -> bool {
+        self.snapshots.is_empty()
+    }
+}
+
+impl Drop for StagedResources {
+    fn drop(&mut self) {
+        for snapshot in &self.snapshots {
+            if let Err(error) = std::fs::remove_dir_all(snapshot) {
+                tracing::warn!(%error, "score instrument snapshot cleanup failed");
+            }
+        }
+    }
+}
+
 /// Builds the canonical Session for one resolved Score document.
 fn build(
     document: &mut ScoreDocument,
     previous: Option<&CreativeSession>,
     store: &UserInstrumentStore,
-    staged: &mut BTreeSet<PathBuf>,
+    staged: &mut StagedResources,
+    mode: BuildMode,
 ) -> Result<CreativeSession, ImportError> {
-    if !document.production.is_empty()
-        || document.plan.mix.is_some()
-        || !document.plan.audio_instruments.is_empty()
-        || !document.plan.kits.is_empty()
-    {
-        return Err("production Score project generation is not implemented"
+    validate_performance(&document.plan, &document.sources)?;
+    if !document.plan.audio_clips.is_empty() {
+        return Err("Score audio clip import is not implemented"
             .to_owned()
             .into());
     }
-    validate_performance(&document.plan, &document.sources)?;
+    if document
+        .plan
+        .mix
+        .as_ref()
+        .is_some_and(|mix| !mix.automation.is_empty())
+    {
+        return Err("Score mix automation is not implemented".to_owned().into());
+    }
     let ScoreDocument {
         path,
         yaml,
         plan,
         bindings,
         sources,
-        ..
+        production,
     } = document;
     let sources = sources.clone();
     for (id, spec) in &plan.instruments {
+        if plan.audio_instruments.contains(id) || plan.kit_members.contains_key(id) {
+            continue;
+        }
         if plan.lanes.iter().any(|lane| lane.id == *id) {
             continue;
         }
@@ -863,18 +953,50 @@ fn build(
         })
         .unwrap_or_default();
     let claims = match_tracks(plan, &previous_tracks);
+    let mut claimed_tracks = claims
+        .values()
+        .map(|track| track.id.clone())
+        .collect::<BTreeSet<_>>();
     let mut assignment = BTreeMap::<PathBuf, TrackInstrument>::new();
-    let mut tracks = Vec::with_capacity(plan.lanes.len());
-    let mut clips = Vec::with_capacity(plan.lanes.len());
+    let mut tracks = Vec::with_capacity(
+        plan.lanes.len() + plan.kits.len() + plan.audio_instruments.len() + previous_tracks.len(),
+    );
+    let mut clips = Vec::with_capacity(plan.lanes.len() + plan.kits.len());
     let mut automation = Vec::new();
-    let mut tracks_by_part = BTreeMap::<String, Vec<String>>::new();
+    let mut instrument_tracks = BTreeMap::<String, Vec<String>>::new();
+    let mut kit_tracks = BTreeMap::<String, String>::new();
     for (index, lane) in plan.lanes.iter().enumerate() {
+        if plan.kit_members.contains_key(&lane.id) || plan.audio_instruments.contains(&lane.id) {
+            continue;
+        }
         let spec = &plan.instruments[&lane.id];
-        let source = &sources[&lane.id];
         let claimed = claims.get(&index).copied();
-        let (mut instrument, reused) = match claimed.and_then(|track| track.instrument.as_ref()) {
-            Some(existing) if compatible(existing, source, store)? => (existing.clone(), true),
-            _ => (assigned(source, store, staged, &mut assignment)?, false),
+        let resolved = production.get(&format!("instruments.{}.source", lane.id));
+        let velocity = resolved.and_then(ResolvedProduction::velocity);
+        let mut instrument = if let Some(ResolvedProduction::Source { plugin, .. }) = resolved {
+            let (instrument, _) = vst3_instrument(plugin, claimed)?;
+            instrument
+        } else {
+            let source = sources
+                .get(&lane.id)
+                .ok_or_else(|| format!("instrument '{}' has no resolved source", lane.id))?;
+            let (mut instrument, reused) = match claimed.and_then(|track| track.instrument.as_ref())
+            {
+                Some(existing) if compatible(existing, source, store)? => (existing.clone(), true),
+                _ => (
+                    assigned(source, store, staged, mode, &mut assignment)?,
+                    false,
+                ),
+            };
+            if !reused {
+                instrument.id = format!("score:device:{}", riffra_control::new_instance_id());
+            }
+            instrument
+        };
+        instrument.name = if let Some(ResolvedProduction::Source { plugin, .. }) = resolved {
+            plugin.entry.name.clone()
+        } else {
+            sources[&lane.id].name.clone()
         };
         let mut track = match claimed {
             Some(previous) => previous.clone(),
@@ -883,45 +1005,36 @@ fn build(
                 lane.id.clone(),
             ),
         };
-        if !reused {
-            instrument.id = format!("score:device:{}", riffra_control::new_instance_id());
-        }
         track.instrument = Some(instrument);
         track.kind = TrackKind::Instrument;
         track.gain_db = lane.gain_db;
         track.pan = spec["pan"].as_f64().unwrap_or(0.0);
         track.pan_law = PanLaw::LinearBalance;
+        track.effects.clear();
         track.score_instrument = Some(lane.id.clone());
-        tracks_by_part
-            .entry(lane.id.clone())
-            .or_default()
-            .push(track.id.clone());
-        tracks.push(track);
-    }
-    for (index, lane) in plan.lanes.iter().enumerate() {
-        let spec = &plan.instruments[&lane.id];
-        let source = &sources[&lane.id];
-        let track_id = tracks[index].id.clone();
         if let Some(input) = spec["audio_input"].as_str() {
-            let source_tracks = tracks_by_part
+            let source_tracks = instrument_tracks
                 .get(input)
                 .ok_or_else(|| format!("unknown audio input part '{input}'"))?
                 .clone();
-            tracks[index].external_audio_source_track_ids = source_tracks;
+            track.external_audio_source_track_ids = source_tracks;
         } else {
-            tracks[index].external_audio_source_track_ids.clear();
+            track.external_audio_source_track_ids.clear();
         }
-        let required_channels = source.report["external_audio"]["required_input_channels"]
-            .as_u64()
-            .unwrap_or(0);
-        if (required_channels > 0) != !tracks[index].external_audio_source_track_ids.is_empty() {
-            return Err(format!(
-                "instrument '{}' audio input does not match its source routes",
-                lane.id
-            )
-            .into());
+        if resolved.is_none() {
+            let source = &sources[&lane.id];
+            let required_channels = source.report["external_audio"]["required_input_channels"]
+                .as_u64()
+                .unwrap_or(0);
+            if (required_channels > 0) != !track.external_audio_source_track_ids.is_empty() {
+                return Err(format!(
+                    "instrument '{}' audio input does not match its source routes",
+                    lane.id
+                )
+                .into());
+            }
         }
-        let previous_clip = claims.get(&index).and_then(|claimed| {
+        let previous_clip = claimed.and_then(|claimed| {
             previous.and_then(|session| {
                 session
                     .arrangement
@@ -930,134 +1043,151 @@ fn build(
                     .find(|clip| clip.track_id == claimed.id)
             })
         });
-        let mut clip = previous_clip.cloned().unwrap_or_else(|| MidiClip {
-            id: format!("score:clip:{}", riffra_control::new_instance_id()),
-            name: lane.id.clone(),
-            track_id: track_id.clone(),
-            asset_id: None,
-            start_tick: TimelineTick(0),
-            duration_ticks: plan.length_ticks,
-            notes: Vec::new(),
-            events: Vec::new(),
-            instrument_control_events: Vec::new(),
-            muted: false,
-            loop_enabled: false,
-            recording_take_id: None,
-        });
-        clip.name = lane.id.clone();
-        clip.track_id = track_id.clone();
-        clip.start_tick = TimelineTick(0);
-        clip.duration_ticks = plan.length_ticks;
-        clip.notes.clear();
-        clip.events.clear();
-        clip.instrument_control_events.clear();
-        let events = reset_events(lane, plan, &source.report)?;
-        for (order, event) in events.iter().enumerate() {
-            let control = match event {
-                MusicalEvent::Note {
-                    tick,
-                    duration_ticks,
-                    note,
-                    velocity,
-                } => {
-                    clip.notes.push(MidiNote {
-                        lyric: None,
-                        id: format!("{}:{order}", clip.id),
-                        note: *note,
-                        start_tick: TimelineTick(*tick),
-                        duration_ticks: *duration_ticks,
-                        velocity: *velocity,
-                        channel: 1,
-                    });
-                    continue;
-                }
-                MusicalEvent::SustainPedal { tick, down } => (
-                    *tick,
-                    InstrumentControlEventKind::SustainPedal { down: *down },
-                ),
-                MusicalEvent::PitchBend { tick, value } => (
-                    *tick,
-                    InstrumentControlEventKind::PitchBend { value: *value },
-                ),
-                MusicalEvent::ModWheel { tick, value } => (
-                    *tick,
-                    InstrumentControlEventKind::ModWheel { value: *value },
-                ),
-                MusicalEvent::Aftertouch { tick, value } => (
-                    *tick,
-                    InstrumentControlEventKind::Aftertouch { value: *value },
-                ),
-                MusicalEvent::ParameterChange {
-                    tick,
-                    parameter,
-                    native_value,
-                } => (
-                    *tick,
-                    InstrumentControlEventKind::ParameterChange {
-                        parameter: parameter.clone(),
-                        native_value: *native_value,
-                    },
-                ),
-                MusicalEvent::ParameterRamp {
-                    tick,
-                    duration_ticks,
-                    parameter,
-                    from_value,
-                    to_value,
-                } => (
-                    *tick,
-                    InstrumentControlEventKind::ParameterRamp {
-                        parameter: parameter.clone(),
-                        from_value: *from_value,
-                        to_value: *to_value,
-                        duration_ticks: *duration_ticks,
-                    },
-                ),
-            };
-            clip.instrument_control_events.push(InstrumentControlEvent {
-                id: format!("{}:{order}", clip.id),
-                tick: TimelineTick(control.0),
-                source_order: u32::try_from(order)
-                    .map_err(|_| "too many score events".to_string())?,
-                kind: control.1,
-            });
-        }
+        let events = if resolved.is_some() {
+            lane.pattern.events.clone()
+        } else {
+            reset_events(lane, plan, &sources[&lane.id].report)?
+        };
+        let clip = midi_clip(
+            previous_clip,
+            &lane.id,
+            &track.id,
+            plan.length_ticks,
+            &events,
+            velocity,
+        )?;
+        instrument_tracks
+            .entry(lane.id.clone())
+            .or_default()
+            .push(track.id.clone());
+        tracks.push(track);
         clips.push(clip);
-        let previous_lane = claims.get(&index).and_then(|claimed| {
+        automation.push(auto_volume_lane(
+            plan,
+            previous,
+            claimed,
+            lane,
+            &clips.last().expect("clip was inserted").track_id,
+        ));
+    }
+    for (kit_id, kit) in &plan.kits {
+        let score_key = format!("kit:{kit_id}");
+        let claimed = claim_track(&previous_tracks, &mut claimed_tracks, |track| {
+            track.kind == TrackKind::Instrument
+                && track.score_instrument.as_deref() == Some(score_key.as_str())
+        });
+        let key = format!("kits.{kit_id}.source");
+        let Some(ResolvedProduction::Source { plugin, velocity }) = production.get(&key) else {
+            let message = format!("kit {kit_id} has no resolved VST3 source");
+            return Err(ImportError {
+                details: plan.source_detail(&key, &message),
+                message,
+            });
+        };
+        let (mut instrument, _) = vst3_instrument(plugin, claimed)?;
+        instrument.name = plugin.entry.name.clone();
+        let mut track = match claimed {
+            Some(previous) => previous.clone(),
+            None => Track::instrument(
+                format!("score:track:{}", riffra_control::new_instance_id()),
+                kit_id.clone(),
+            ),
+        };
+        track.name = kit_id.clone();
+        track.instrument = Some(instrument);
+        track.kind = TrackKind::Instrument;
+        let track_mix = plan.mix.as_ref().and_then(|mix| mix.tracks.get(kit_id));
+        track.gain_db = track_mix.and_then(|track| track.gain_db).unwrap_or(0.0);
+        track.pan = track_mix.and_then(|track| track.pan).unwrap_or(0.0);
+        track.pan_law = PanLaw::LinearBalance;
+        track.effects.clear();
+        track.external_audio_source_track_ids.clear();
+        track.score_instrument = Some(score_key.clone());
+        let mut events = Vec::new();
+        for lane in plan
+            .lanes
+            .iter()
+            .filter(|lane| plan.kit_members.get(&lane.id) == Some(kit_id))
+        {
+            events.extend(
+                lane.pattern
+                    .events
+                    .iter()
+                    .filter(|event| matches!(event, MusicalEvent::Note { .. }))
+                    .cloned(),
+            );
+        }
+        events.sort_by_key(|event| match event {
+            MusicalEvent::Note { tick, .. } => *tick,
+            _ => 0,
+        });
+        let previous_clip = claimed.and_then(|claimed| {
             previous.and_then(|session| {
-                session.arrangement.automation_lanes.iter().find(|lane| {
-                    lane.target
-                        == AutomationTarget::TrackMix {
-                            track_id: claimed.id.clone(),
-                            parameter: TrackMixParameter::Volume,
-                        }
-                })
+                session
+                    .arrangement
+                    .midi_clips
+                    .iter()
+                    .find(|clip| clip.track_id == claimed.id)
             })
         });
-        automation.push(AutomationLane {
-            id: previous_lane.map_or_else(
-                || format!("score:volume:{}", riffra_control::new_instance_id()),
-                |lane| lane.id.clone(),
-            ),
-            target: AutomationTarget::TrackMix {
-                track_id,
-                parameter: TrackMixParameter::Volume,
-            },
-            interpolation: AutomationInterpolation::LinearAmplitude {
-                duration_seconds: 0.005,
-            },
-            points: plan
-                .sections
-                .iter()
-                .enumerate()
-                .map(|(section_index, section)| AutomationPoint {
-                    id: format!("score:gain:{}:{section_index}", lane.id),
-                    tick: TimelineTick(section.start_tick),
-                    value: lane.gain_db + section.part_gains.get(&lane.id).copied().unwrap_or(0.0),
-                })
-                .collect(),
-        });
+        let clip = midi_clip(
+            previous_clip,
+            kit_id,
+            &track.id,
+            plan.length_ticks,
+            &events,
+            velocity.as_deref(),
+        )?;
+        kit_tracks.insert(kit_id.clone(), track.id.clone());
+        tracks.push(track);
+        clips.push(clip);
+        let _ = kit;
     }
+    for id in &plan.audio_instruments {
+        let spec = &plan.instruments[id];
+        let claimed = claim_track(&previous_tracks, &mut claimed_tracks, |track| {
+            track.kind == TrackKind::Audio && track.score_instrument.as_deref() == Some(id.as_str())
+        });
+        let mut track = claimed.map_or_else(
+            || {
+                Track::audio(
+                    format!("score:track:{}", riffra_control::new_instance_id()),
+                    id.clone(),
+                )
+            },
+            |track| track.clone(),
+        );
+        track.name = id.clone();
+        track.kind = TrackKind::Audio;
+        track.instrument = None;
+        track.gain_db = spec["gain_db"].as_f64().unwrap_or(0.0);
+        track.pan = spec["pan"].as_f64().unwrap_or(0.0);
+        track.pan_law = PanLaw::LinearBalance;
+        track.effects.clear();
+        track.external_audio_source_track_ids.clear();
+        track.score_instrument = Some(id.clone());
+        instrument_tracks
+            .entry(id.clone())
+            .or_default()
+            .push(track.id.clone());
+        tracks.push(track);
+    }
+    attach_track_effects(
+        plan,
+        production,
+        &mut tracks,
+        &instrument_tracks,
+        &kit_tracks,
+    )?;
+    let mixer = build_mixer(
+        plan,
+        production,
+        previous,
+        &mut tracks,
+        &instrument_tracks,
+        &kit_tracks,
+    )?;
+
     let regions = plan
         .sections
         .iter()
@@ -1130,6 +1260,7 @@ fn build(
             })
             .collect(),
     };
+    session.settings.master_db = plan.mix.as_ref().map_or(0.0, |mix| mix.master_gain_db);
     session.settings.mixdown.musical_end_tick = plan.length_ticks;
     session.settings.mixdown.fade_out_seconds = plan.fade_out_seconds;
     session.settings.mixdown.mastering = plan.master.as_ref().map(|master| LoudnessMastering {
@@ -1155,7 +1286,7 @@ fn build(
         .iter()
         .map(|track| track.id.as_str())
         .collect::<BTreeSet<_>>();
-    let (retained_clips, retained_automation) = previous.map_or_else(
+    let (retained_clips, retained_audio_clips) = previous.map_or_else(
         || (Vec::new(), Vec::new()),
         |previous| {
             (
@@ -1168,9 +1299,9 @@ fn build(
                     .collect::<Vec<_>>(),
                 previous
                     .arrangement
-                    .automation_lanes
+                    .audio_clips
                     .iter()
-                    .filter(|lane| !targets_track(&lane.target, &previous_track_ids))
+                    .filter(|clip| retained_track_ids.contains(clip.track_id.as_str()))
                     .cloned()
                     .collect::<Vec<_>>(),
             )
@@ -1178,23 +1309,642 @@ fn build(
     );
     tracks.extend(retained_tracks);
     clips.extend(retained_clips);
-    automation.extend(retained_automation);
+    if let Some(previous) = previous {
+        let track_ids = tracks
+            .iter()
+            .map(|track| track.id.as_str())
+            .collect::<BTreeSet<_>>();
+        let bus_ids = mixer
+            .buses
+            .iter()
+            .map(|bus| bus.id.as_str())
+            .collect::<BTreeSet<_>>();
+        let send_ids = mixer
+            .sends
+            .iter()
+            .map(|send| send.id.as_str())
+            .collect::<BTreeSet<_>>();
+        let sidechain_ids = mixer
+            .sidechain_sends
+            .iter()
+            .map(|send| send.id.as_str())
+            .collect::<BTreeSet<_>>();
+        let mut device_ids = tracks
+            .iter()
+            .flat_map(|track| track.effects.iter().map(|effect| effect.id.as_str()))
+            .collect::<BTreeSet<_>>();
+        device_ids.extend(
+            tracks
+                .iter()
+                .filter_map(|track| track.instrument.as_ref())
+                .map(|instrument| instrument.id.as_str()),
+        );
+        device_ids.extend(
+            mixer
+                .buses
+                .iter()
+                .flat_map(|bus| bus.effects.iter().map(|effect| effect.id.as_str())),
+        );
+        device_ids.extend(mixer.master_effects.iter().map(|effect| effect.id.as_str()));
+        automation.extend(
+            previous
+                .arrangement
+                .automation_lanes
+                .iter()
+                .filter(|lane| {
+                    let score_owned = targets_track(&lane.target, &previous_track_ids);
+                    !score_owned
+                        && match &lane.target {
+                            AutomationTarget::TrackMix { track_id, .. } => {
+                                track_ids.contains(track_id.as_str())
+                            }
+                            AutomationTarget::BusMix { bus_id, .. } => {
+                                !bus_id.starts_with("score:bus:")
+                                    && bus_ids.contains(bus_id.as_str())
+                            }
+                            AutomationTarget::MasterGain => false,
+                            AutomationTarget::SendLevel { send_id } => {
+                                !send_id.starts_with("score:send:")
+                                    && send_ids.contains(send_id.as_str())
+                            }
+                            AutomationTarget::SidechainSendLevel { sidechain_send_id } => {
+                                !sidechain_send_id.starts_with("score:sidechain:")
+                                    && sidechain_ids.contains(sidechain_send_id.as_str())
+                            }
+                            AutomationTarget::DeviceParameter { device_id, .. } => {
+                                !device_id.starts_with("score:")
+                                    && device_ids.contains(device_id.as_str())
+                            }
+                        }
+                })
+                .cloned(),
+        );
+    }
     session.arrangement.tracks = tracks;
     session.arrangement.midi_clips = clips;
+    session.arrangement.audio_clips = retained_audio_clips;
     session.arrangement.automation_lanes = automation;
     session.arrangement.regions = regions;
     session.arrangement.harmony_events = harmony;
+    session.arrangement.mixer = mixer;
     session.validate_and_normalize().map_err(ImportError::from)
 }
 
 fn targets_track(target: &AutomationTarget, track_ids: &BTreeSet<&str>) -> bool {
     match target {
         AutomationTarget::TrackMix { track_id, .. } => track_ids.contains(track_id.as_str()),
-        AutomationTarget::DeviceParameter { device_id, .. } => {
-            track_ids.contains(device_id.as_str())
+        AutomationTarget::DeviceParameter { device_id, .. } => device_id.starts_with("score:"),
+        AutomationTarget::BusMix { bus_id, .. } => bus_id.starts_with("score:bus:"),
+        AutomationTarget::SendLevel { send_id } => send_id.starts_with("score:send:"),
+        AutomationTarget::SidechainSendLevel { sidechain_send_id } => {
+            sidechain_send_id.starts_with("score:sidechain:")
         }
-        _ => false,
+        AutomationTarget::MasterGain => true,
     }
+}
+
+/// Claims one previous Score track matching a semantic key.
+fn claim_track<'a>(
+    previous: &[&'a Track],
+    claimed: &mut BTreeSet<String>,
+    predicate: impl Fn(&Track) -> bool,
+) -> Option<&'a Track> {
+    previous
+        .iter()
+        .copied()
+        .find(|track| !claimed.contains(&track.id) && predicate(track))
+        .inspect(|track| {
+            claimed.insert(track.id.clone());
+        })
+}
+
+/// Builds a VST3 instrument, keeping the previous device when the plugin matches.
+fn vst3_instrument(
+    plugin: &library::ResolvedPlugin,
+    previous: Option<&Track>,
+) -> Result<(TrackInstrument, bool), ImportError> {
+    let reused = previous
+        .and_then(|track| track.instrument.as_ref())
+        .and_then(TrackInstrument::as_vst3)
+        .is_some_and(|existing| existing.path == plugin.plugin.path);
+    let mut instrument = if reused {
+        previous
+            .and_then(|track| track.instrument.clone())
+            .expect("a reused instrument exists")
+    } else {
+        TrackInstrument::vst3(
+            format!("score:device:{}", riffra_control::new_instance_id()),
+            plugin.entry.name.clone(),
+            plugin.plugin.path.clone(),
+        )?
+    };
+    instrument.name = plugin.entry.name.clone();
+    match &mut instrument.source {
+        TrackInstrumentSource::Vst3(state) => *state = plugin.plugin.clone(),
+        TrackInstrumentSource::Internal { .. } => {
+            unreachable!("VST3 instrument source was created or reused")
+        }
+    }
+    Ok((instrument, reused))
+}
+
+/// Creates one full-length MIDI clip from expanded Score events.
+fn midi_clip(
+    previous: Option<&MidiClip>,
+    name: &str,
+    track_id: &str,
+    duration_ticks: u64,
+    events: &[MusicalEvent],
+    velocity_map: Option<&[(u8, u8)]>,
+) -> Result<MidiClip, ImportError> {
+    let mut clip = previous.cloned().unwrap_or_else(|| MidiClip {
+        id: format!("score:clip:{}", riffra_control::new_instance_id()),
+        name: name.to_owned(),
+        track_id: track_id.to_owned(),
+        asset_id: None,
+        start_tick: TimelineTick(0),
+        duration_ticks,
+        notes: Vec::new(),
+        events: Vec::new(),
+        instrument_control_events: Vec::new(),
+        muted: false,
+        loop_enabled: false,
+        recording_take_id: None,
+    });
+    clip.name = name.to_owned();
+    clip.track_id = track_id.to_owned();
+    clip.start_tick = TimelineTick(0);
+    clip.duration_ticks = duration_ticks;
+    clip.notes.clear();
+    clip.events.clear();
+    clip.instrument_control_events.clear();
+    for (order, event) in events.iter().enumerate() {
+        let control = match event {
+            MusicalEvent::Note {
+                tick,
+                duration_ticks,
+                note,
+                velocity,
+            } => {
+                clip.notes.push(MidiNote {
+                    lyric: None,
+                    id: format!("{}:{order}", clip.id),
+                    note: *note,
+                    start_tick: TimelineTick(*tick),
+                    duration_ticks: *duration_ticks,
+                    velocity: mapped_velocity(velocity_map, *velocity),
+                    channel: 1,
+                });
+                continue;
+            }
+            MusicalEvent::SustainPedal { tick, down } => (
+                *tick,
+                InstrumentControlEventKind::SustainPedal { down: *down },
+            ),
+            MusicalEvent::PitchBend { tick, value } => (
+                *tick,
+                InstrumentControlEventKind::PitchBend { value: *value },
+            ),
+            MusicalEvent::ModWheel { tick, value } => (
+                *tick,
+                InstrumentControlEventKind::ModWheel { value: *value },
+            ),
+            MusicalEvent::Aftertouch { tick, value } => (
+                *tick,
+                InstrumentControlEventKind::Aftertouch { value: *value },
+            ),
+            MusicalEvent::ParameterChange {
+                tick,
+                parameter,
+                native_value,
+            } => (
+                *tick,
+                InstrumentControlEventKind::ParameterChange {
+                    parameter: parameter.clone(),
+                    native_value: *native_value,
+                },
+            ),
+            MusicalEvent::ParameterRamp {
+                tick,
+                duration_ticks,
+                parameter,
+                from_value,
+                to_value,
+            } => (
+                *tick,
+                InstrumentControlEventKind::ParameterRamp {
+                    parameter: parameter.clone(),
+                    from_value: *from_value,
+                    to_value: *to_value,
+                    duration_ticks: *duration_ticks,
+                },
+            ),
+        };
+        clip.instrument_control_events.push(InstrumentControlEvent {
+            id: format!("{}:{order}", clip.id),
+            tick: TimelineTick(control.0),
+            source_order: u32::try_from(order).map_err(|_| "too many score events".to_string())?,
+            kind: control.1,
+        });
+    }
+    Ok(clip)
+}
+
+/// Applies a monotonic Score velocity map once to one expanded note.
+fn mapped_velocity(map: Option<&[(u8, u8)]>, velocity: u8) -> u8 {
+    let Some(map) = map else {
+        return velocity;
+    };
+    let value = f64::from(velocity);
+    for pair in map.windows(2) {
+        let [(input_a, output_a), (input_b, output_b)] = [pair[0], pair[1]];
+        if velocity <= input_b {
+            if input_b == input_a {
+                return output_b.clamp(1, 127);
+            }
+            let t = (value - f64::from(input_a)) / f64::from(input_b - input_a);
+            let mapped = f64::from(output_a) + t * f64::from(output_b - output_a);
+            return mapped.round().clamp(1.0, 127.0) as u8;
+        }
+    }
+    map.last()
+        .map_or(velocity, |(_, output)| (*output).clamp(1, 127))
+}
+
+/// Builds the volume lane generated from the Score's section gains.
+fn auto_volume_lane(
+    plan: &ScorePlan,
+    previous: Option<&CreativeSession>,
+    claimed: Option<&Track>,
+    lane: &ScoreLane,
+    track_id: &str,
+) -> AutomationLane {
+    let previous_lane = claimed.and_then(|track| {
+        previous.and_then(|session| {
+            session.arrangement.automation_lanes.iter().find(|lane| {
+                lane.target
+                    == AutomationTarget::TrackMix {
+                        track_id: track.id.clone(),
+                        parameter: TrackMixParameter::Volume,
+                    }
+            })
+        })
+    });
+    AutomationLane {
+        id: previous_lane.map_or_else(
+            || format!("score:volume:{}", riffra_control::new_instance_id()),
+            |lane| lane.id.clone(),
+        ),
+        target: AutomationTarget::TrackMix {
+            track_id: track_id.to_owned(),
+            parameter: TrackMixParameter::Volume,
+        },
+        interpolation: AutomationInterpolation::LinearAmplitude {
+            duration_seconds: 0.005,
+        },
+        points: plan
+            .sections
+            .iter()
+            .enumerate()
+            .map(|(section_index, section)| AutomationPoint {
+                id: format!("score:gain:{}:{section_index}", lane.id),
+                tick: TimelineTick(section.start_tick),
+                value: lane.gain_db + section.part_gains.get(&lane.id).copied().unwrap_or(0.0),
+            })
+            .collect(),
+    }
+}
+
+fn owner_instrument(id: &str) -> String {
+    format!("instrument:{id}")
+}
+
+fn owner_kit(id: &str) -> String {
+    format!("kit:{id}")
+}
+
+fn owner_bus(id: &str) -> String {
+    format!("bus:{id}")
+}
+
+fn effect_device_id(owner: &str, id: &str) -> String {
+    format!("score:effect:{owner}:{id}")
+}
+
+/// Builds one ordered effect chain from resolved production effects.
+fn effect_chain(
+    plan: &ScorePlan,
+    production: &BTreeMap<String, ResolvedProduction>,
+    owner: &str,
+    field: &str,
+    effects: &[score::production::EffectSpec],
+) -> Result<Vec<EffectDevice>, ImportError> {
+    let mut chain = Vec::with_capacity(effects.len());
+    for (index, effect) in effects.iter().enumerate() {
+        let key = format!("{field}[{index}]");
+        let Some(ResolvedProduction::Effect { plugin, bypassed }) = production.get(&key) else {
+            let message = format!("effect {key} was not resolved");
+            return Err(ImportError {
+                details: plan.source_detail(&key, &message),
+                message,
+            });
+        };
+        chain.push(EffectDevice {
+            id: effect_device_id(owner, &effect.id),
+            name: plugin.entry.name.clone(),
+            bypassed: *bypassed,
+            plugin: plugin.plugin.clone(),
+        });
+    }
+    Ok(chain)
+}
+
+/// Attaches Score-owned effect chains to their owning tracks.
+fn attach_track_effects(
+    plan: &ScorePlan,
+    production: &BTreeMap<String, ResolvedProduction>,
+    tracks: &mut [Track],
+    instrument_tracks: &BTreeMap<String, Vec<String>>,
+    kit_tracks: &BTreeMap<String, String>,
+) -> Result<(), ImportError> {
+    for (id, effects) in &plan.production_effects {
+        let (owner, field, track_ids) = if let Some(track_ids) = instrument_tracks.get(id) {
+            (
+                owner_instrument(id),
+                format!("instruments.{id}.effects"),
+                track_ids.clone(),
+            )
+        } else {
+            let track_id = kit_tracks
+                .get(id)
+                .ok_or_else(|| format!("effect owner '{id}' has no track"))?;
+            (
+                owner_kit(id),
+                format!("kits.{id}.effects"),
+                vec![track_id.clone()],
+            )
+        };
+        if track_ids.len() > 1 && !effects.is_empty() {
+            let message = "effects on a multi-lane instrument have no single owner".to_owned();
+            return Err(ImportError {
+                details: plan.source_detail(&field, &message),
+                message,
+            });
+        }
+        let chain = effect_chain(plan, production, &owner, &field, effects)?;
+        if let Some(track) = tracks.iter_mut().find(|track| track.id == track_ids[0]) {
+            track.effects = chain;
+        }
+    }
+    for (id, kit) in &plan.kits {
+        let track_id = kit_tracks
+            .get(id)
+            .ok_or_else(|| format!("kit '{id}' has no track"))?;
+        let chain = effect_chain(
+            plan,
+            production,
+            &owner_kit(id),
+            &format!("kits.{id}.effects"),
+            &kit.effects,
+        )?;
+        if let Some(track) = tracks.iter_mut().find(|track| track.id == *track_id) {
+            track.effects = chain;
+        }
+    }
+    Ok(())
+}
+
+/// Builds the mixer, routing, and sidechains owned by the Score.
+fn build_mixer(
+    plan: &ScorePlan,
+    production: &BTreeMap<String, ResolvedProduction>,
+    previous: Option<&CreativeSession>,
+    tracks: &mut [Track],
+    instrument_tracks: &BTreeMap<String, Vec<String>>,
+    kit_tracks: &BTreeMap<String, String>,
+) -> Result<Mixer, ImportError> {
+    let empty = score::production::mix::Mix {
+        tracks: BTreeMap::new(),
+        buses: BTreeMap::new(),
+        sidechain: Vec::new(),
+        automation: Vec::new(),
+        master_gain_db: 0.0,
+        master_effects: Vec::new(),
+    };
+    let mix = plan.mix.as_ref().unwrap_or(&empty);
+    let mut buses = BTreeMap::<String, MixBus>::new();
+    let mut bus_ids = BTreeMap::<String, String>::new();
+    for (id, bus) in &mix.buses {
+        let canonical = format!(
+            "score:bus:{}:{id}",
+            match bus.kind {
+                score::production::mix::BusKind::Group => "group",
+                score::production::mix::BusKind::Return => "return",
+            }
+        );
+        let (muted, solo) = previous
+            .and_then(|session| {
+                session.arrangement.mixer.buses.iter().find(|candidate| {
+                    candidate.name == *id
+                        && candidate.kind
+                            == match bus.kind {
+                                score::production::mix::BusKind::Group => MixBusKind::Group,
+                                score::production::mix::BusKind::Return => MixBusKind::Return,
+                            }
+                })
+            })
+            .map_or((false, false), |bus| (bus.muted, bus.solo));
+        buses.insert(
+            canonical.clone(),
+            MixBus {
+                id: canonical.clone(),
+                name: id.clone(),
+                kind: match bus.kind {
+                    score::production::mix::BusKind::Group => MixBusKind::Group,
+                    score::production::mix::BusKind::Return => MixBusKind::Return,
+                },
+                gain_db: bus.gain_db,
+                pan: bus.pan,
+                pan_law: PanLaw::LinearBalance,
+                muted,
+                solo,
+                effects: effect_chain(
+                    plan,
+                    production,
+                    &owner_bus(id),
+                    &format!("mix.buses.{id}.effects"),
+                    &bus.effects,
+                )?,
+            },
+        );
+        bus_ids.insert(id.clone(), canonical);
+    }
+    if let Some(previous) = previous {
+        for bus in &previous.arrangement.mixer.buses {
+            if bus.id.starts_with("score:bus:") {
+                continue;
+            }
+            buses.insert(bus.id.clone(), bus.clone());
+            bus_ids
+                .entry(bus.name.clone())
+                .or_insert_with(|| bus.id.clone());
+        }
+    }
+    let mut sends = Vec::new();
+    for track in tracks
+        .iter_mut()
+        .filter(|track| track.score_instrument.is_some())
+    {
+        let score_id = track
+            .score_instrument
+            .as_deref()
+            .expect("score track")
+            .strip_prefix("kit:")
+            .unwrap_or_else(|| track.score_instrument.as_deref().expect("score track"));
+        let Some(track_mix) = mix.tracks.get(score_id) else {
+            track.output_bus_id = None;
+            continue;
+        };
+        track.output_bus_id = track_mix.output.as_deref().and_then(|output| {
+            if output == "master" {
+                None
+            } else {
+                bus_ids.get(output).cloned()
+            }
+        });
+        for (bus, send) in &track_mix.sends {
+            let Some(return_bus_id) = bus_ids.get(bus) else {
+                continue;
+            };
+            sends.push(Send {
+                id: format!("score:send:{}:{return_bus_id}", track.id),
+                track_id: track.id.clone(),
+                return_bus_id: return_bus_id.clone(),
+                level_db: send.level_db,
+                position: match send.position {
+                    score::production::mix::SendPosition::Pre => SendPosition::PreFader,
+                    score::production::mix::SendPosition::Post => SendPosition::PostFader,
+                },
+                enabled: send.enabled,
+            });
+        }
+    }
+    let master_effects = effect_chain(
+        plan,
+        production,
+        "master",
+        "mix.master.effects",
+        &mix.master_effects,
+    )?;
+    let previous_score_tracks = previous
+        .map(|previous| {
+            previous
+                .arrangement
+                .tracks
+                .iter()
+                .filter(|track| track.score_instrument.is_some())
+                .map(|track| track.id.as_str())
+                .collect::<BTreeSet<_>>()
+        })
+        .unwrap_or_default();
+    let mut all_track_ids = tracks
+        .iter()
+        .map(|track| track.id.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut all_effect_ids = tracks
+        .iter()
+        .flat_map(|track| &track.effects)
+        .chain(buses.values().flat_map(|bus| &bus.effects))
+        .chain(&master_effects)
+        .map(|effect| effect.id.as_str())
+        .collect::<BTreeSet<_>>();
+    if let Some(previous) = previous {
+        all_track_ids.extend(
+            previous
+                .arrangement
+                .tracks
+                .iter()
+                .filter(|track| track.score_instrument.is_none())
+                .map(|track| track.id.as_str()),
+        );
+        all_effect_ids.extend(
+            previous
+                .arrangement
+                .tracks
+                .iter()
+                .filter(|track| track.score_instrument.is_none())
+                .flat_map(|track| &track.effects)
+                .map(|effect| effect.id.as_str()),
+        );
+        let bus_ids = buses.keys().cloned().collect::<BTreeSet<_>>();
+        for send in &previous.arrangement.mixer.sends {
+            if send.id.starts_with("score:send:")
+                || previous_score_tracks.contains(send.track_id.as_str())
+                || !all_track_ids.contains(send.track_id.as_str())
+                || !bus_ids.contains(&send.return_bus_id)
+            {
+                continue;
+            }
+            sends.push(send.clone());
+        }
+    }
+    let mut sidechain_sends = Vec::new();
+    for route in &mix.sidechain {
+        let source_tracks = if let Some(track) = kit_tracks.get(&route.from) {
+            vec![track.clone()]
+        } else if let Some(tracks) = instrument_tracks.get(&route.from) {
+            tracks.clone()
+        } else {
+            let message = format!("undefined sidechain source '{}'", route.from);
+            return Err(ImportError {
+                details: plan.source_detail("mix.sidechain", &message),
+                message,
+            });
+        };
+        let target = match &route.to.owner {
+            score::production::mix::Owner::Instrument(id) => {
+                effect_device_id(&owner_instrument(id), &route.to.id)
+            }
+            score::production::mix::Owner::Kit(id) => {
+                effect_device_id(&owner_kit(id), &route.to.id)
+            }
+            score::production::mix::Owner::Bus(id) => {
+                effect_device_id(&owner_bus(id), &route.to.id)
+            }
+            score::production::mix::Owner::Master => effect_device_id("master", &route.to.id),
+        };
+        for source in source_tracks {
+            sidechain_sends.push(SidechainSend {
+                id: format!("score:sidechain:{source}:{target}"),
+                source_track_id: source,
+                target_device_id: target.clone(),
+                level_db: route.send.level_db,
+                position: match route.send.position {
+                    score::production::mix::SendPosition::Pre => SendPosition::PreFader,
+                    score::production::mix::SendPosition::Post => SendPosition::PostFader,
+                },
+                enabled: route.send.enabled,
+            });
+        }
+    }
+    if let Some(previous) = previous {
+        for send in &previous.arrangement.mixer.sidechain_sends {
+            if send.id.starts_with("score:sidechain:")
+                || previous_score_tracks.contains(send.source_track_id.as_str())
+                || !all_track_ids.contains(send.source_track_id.as_str())
+                || !all_effect_ids.contains(send.target_device_id.as_str())
+            {
+                continue;
+            }
+            sidechain_sends.push(send.clone());
+        }
+    }
+    Ok(Mixer {
+        master_effects,
+        buses: buses.into_values().collect(),
+        sends,
+        sidechain_sends,
+    })
 }
 
 /// Pairs previous Score tracks with new lanes, preferring exact lane keys.
@@ -1266,7 +2016,8 @@ fn compatible(
 fn assigned(
     source: &Source,
     store: &UserInstrumentStore,
-    staged: &mut BTreeSet<PathBuf>,
+    staged: &mut StagedResources,
+    mode: BuildMode,
     assignments: &mut BTreeMap<PathBuf, TrackInstrument>,
 ) -> Result<TrackInstrument, ImportError> {
     if let Some(instrument) = assignments.get(&source.definition) {
@@ -1279,9 +2030,19 @@ fn assigned(
             built_in.preset_id.clone(),
             built_in.definition_json.clone(),
         )?
+    } else if mode == BuildMode::Validate {
+        let definition_json = std::fs::read_to_string(&source.definition)
+            .map_err(|error| format!("instrument definition could not be read: {error}"))?;
+        TrackInstrument::user_snapshot(
+            "score:instrument".into(),
+            source.name.clone(),
+            format!("user:{}", riffra_control::new_instance_id()),
+            riffra_control::new_instance_id(),
+            definition_json,
+        )?
     } else {
         let snapshot = store.snapshot_definition(&source.definition)?;
-        staged.insert(snapshot.package_root.clone());
+        staged.snapshots.insert(snapshot.package_root.clone());
         TrackInstrument::user_snapshot(
             "score:instrument".into(),
             source.name.clone(),
@@ -1700,6 +2461,112 @@ mod tests {
         }
     }
 
+    fn resolved_plugin(name: &str) -> library::ResolvedPlugin {
+        use crate::api::output::{PluginEntry, PluginFormat, PluginRole, PluginScanState};
+        library::ResolvedPlugin {
+            entry: PluginEntry {
+                id: name.to_lowercase(),
+                name: name.into(),
+                vendor: None,
+                version: None,
+                identifier: Some(format!("{name}-class")),
+                format: PluginFormat::Vst3,
+                role: Some(PluginRole::Instrument),
+                path: format!("/plugins/{name}.vst3"),
+                bundle: true,
+                modified_at_ms: None,
+                scan_state: PluginScanState::Validated,
+            },
+            plugin: Vst3Plugin::new(format!("/plugins/{name}.vst3")),
+            range: None,
+            notes: None,
+        }
+    }
+
+    fn effect_name(effect: &score::production::EffectSpec) -> String {
+        effect
+            .vst3
+            .as_ref()
+            .and_then(|vst3| vst3.plugin.clone())
+            .unwrap_or_else(|| "Effect".into())
+    }
+
+    fn insert_effects(
+        production: &mut BTreeMap<String, ResolvedProduction>,
+        field: &str,
+        effects: &[score::production::EffectSpec],
+    ) {
+        for (index, effect) in effects.iter().enumerate() {
+            production.insert(
+                format!("{field}[{index}]"),
+                ResolvedProduction::Effect {
+                    plugin: resolved_plugin(&effect_name(effect)),
+                    bypassed: effect.bypassed.unwrap_or(false),
+                },
+            );
+        }
+    }
+
+    fn production_document(yaml: &str) -> ScoreDocument {
+        let plan = score::compile(yaml).expect("production score compiles");
+        let mut production = BTreeMap::new();
+        for (id, source) in &plan.production_sources {
+            let name = source
+                .vst3
+                .as_ref()
+                .and_then(|vst3| vst3.plugin.clone())
+                .expect("inline plugin");
+            production.insert(
+                format!("instruments.{id}.source"),
+                ResolvedProduction::Source {
+                    plugin: resolved_plugin(&name),
+                    velocity: source.velocity.clone(),
+                },
+            );
+        }
+        for (id, kit) in &plan.kits {
+            let name = kit
+                .source
+                .vst3
+                .as_ref()
+                .and_then(|vst3| vst3.plugin.clone())
+                .expect("kit plugin");
+            production.insert(
+                format!("kits.{id}.source"),
+                ResolvedProduction::Source {
+                    plugin: resolved_plugin(&name),
+                    velocity: kit.source.velocity.clone(),
+                },
+            );
+            insert_effects(&mut production, &format!("kits.{id}.effects"), &kit.effects);
+        }
+        for (id, effects) in &plan.production_effects {
+            insert_effects(
+                &mut production,
+                &format!("instruments.{id}.effects"),
+                effects,
+            );
+        }
+        if let Some(mix) = &plan.mix {
+            for (id, bus) in &mix.buses {
+                insert_effects(
+                    &mut production,
+                    &format!("mix.buses.{id}.effects"),
+                    &bus.effects,
+                );
+            }
+            insert_effects(&mut production, "mix.master.effects", &mix.master_effects);
+        }
+        ScoreDocument {
+            path: PathBuf::from("/scores/production.yaml"),
+            yaml: yaml.into(),
+            plan,
+            bindings: BTreeMap::new(),
+            sources: BTreeMap::new(),
+            production,
+        }
+    }
+
     fn store(root: &Path) -> UserInstrumentStore {
         UserInstrumentStore::new(root, Path::new("sonalloy"))
     }
@@ -1789,6 +2656,247 @@ mod tests {
             .collect()
     }
 
+    const PRODUCTION: &str = r#"{
+        "meta":{"title":"Production","bpm":120,"meter":"4/4","tuning":"12edo","gate":1},
+        "form":[{"section":"verse","bars":1,"tonic":"C","scale":"ionian"}],
+        "instruments":{
+            "bass":{"source":{"vst3":{"plugin":"Bass"},"velocity":[[1,64],[127,64]]},"effects":[{"id":"duck","vst3":{"plugin":"Compressor"}}]},
+            "kick":{"kit":"drums","trigger_note_midi":36},
+            "snare":{"kit":"drums","trigger_note_midi":38},
+            "ambience":{"audio":true,"gain_db":-5}
+        },
+        "kits":{"drums":{"source":{"vst3":{"plugin":"Drums"},"velocity":[[1,40],[127,40]]},"effects":[{"id":"kit-eq","vst3":{"plugin":"EQ"}}]}},
+        "drums":{"beat":{"parts":{"kick":"x...|....|....|....","snare":"....|x...|....|...."}}},
+        "sections":{"verse":{"drums":"beat","lines":{"main":{"instrument":"bass","melody":"theme"}}}},
+        "melodies":{"theme":["1 - - - | 3 - - - | 5 - - - | 1' - - -"]},
+        "mix":{
+            "tracks":{
+                "bass":{"output":"rhythm","sends":{"room":-18}},
+                "drums":{"gain_db":-2,"pan":0.0,"output":"rhythm","sends":{"room":{"level_db":-14,"position":"pre","enabled":true}}}
+            },
+            "buses":{
+                "rhythm":{"kind":"group","gain_db":-2,"pan":0},
+                "room":{"kind":"return","effects":[{"id":"reverb","vst3":{"plugin":"Reverb"}}]}
+            },
+            "sidechain":[{"from":"drums","to":{"instrument":"bass","effect":"duck"},"level_db":0,"position":"post"}],
+            "master":{"gain_db":-1,"effects":[{"id":"limiter","vst3":{"plugin":"Limiter"}}]}
+        }
+    }"#;
+
+    #[test]
+    fn production_build_aggregates_kits_applies_velocity_and_builds_the_mixer() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-score-production-build-{}",
+            riffra_control::new_instance_id()
+        ));
+        let store = store(&root);
+        let mut document = production_document(PRODUCTION);
+        let mut staged = StagedResources::new(&root);
+        let session = build(&mut document, None, &store, &mut staged, BuildMode::Stage)
+            .expect("production build");
+
+        assert_eq!(session.arrangement.tracks.len(), 3);
+        let bass = &session.arrangement.tracks[0];
+        assert_eq!(bass.score_instrument.as_deref(), Some("bass"));
+        assert!(matches!(
+            bass.instrument.as_ref().expect("bass device").source,
+            TrackInstrumentSource::Vst3(_)
+        ));
+        assert_eq!(bass.effects[0].id, "score:effect:instrument:bass:duck");
+        assert_eq!(session.arrangement.midi_clips[0].notes.len(), 4);
+        assert!(
+            session.arrangement.midi_clips[0]
+                .notes
+                .iter()
+                .all(|note| note.velocity == 64)
+        );
+
+        let drums = &session.arrangement.tracks[1];
+        assert_eq!(drums.score_instrument.as_deref(), Some("kit:drums"));
+        assert_eq!(drums.gain_db, -2.0);
+        assert_eq!(drums.effects[0].id, "score:effect:kit:drums:kit-eq");
+        let kit_clip = &session.arrangement.midi_clips[1];
+        assert_eq!(kit_clip.notes.len(), 2);
+        assert!(kit_clip.notes.iter().all(|note| note.velocity == 40));
+        assert_eq!(
+            kit_clip
+                .notes
+                .iter()
+                .map(|note| note.note)
+                .collect::<Vec<_>>(),
+            [36, 38]
+        );
+
+        let ambience = &session.arrangement.tracks[2];
+        assert_eq!(ambience.kind, TrackKind::Audio);
+        assert_eq!(ambience.score_instrument.as_deref(), Some("ambience"));
+        assert_eq!(ambience.gain_db, -5.0);
+
+        let mixer = &session.arrangement.mixer;
+        assert_eq!(mixer.buses.len(), 2);
+        assert_eq!(mixer.sends.len(), 2);
+        assert_eq!(mixer.sidechain_sends.len(), 1);
+        assert_eq!(mixer.master_effects.len(), 1);
+        assert_eq!(session.settings.master_db, -1.0);
+        assert_eq!(
+            bass.output_bus_id.as_deref(),
+            Some("score:bus:group:rhythm")
+        );
+        assert_eq!(
+            mixer.sidechain_sends[0].target_device_id,
+            "score:effect:instrument:bass:duck"
+        );
+        assert!(staged.is_empty());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn production_rebuild_keeps_semantic_ids_and_updates_only_the_change() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-score-production-rebuild-{}",
+            riffra_control::new_instance_id()
+        ));
+        let store = store(&root);
+        let mut first = production_document(PRODUCTION);
+        let mut staged = StagedResources::new(&root);
+        let session = build(&mut first, None, &store, &mut staged, BuildMode::Stage)
+            .expect("initial production build");
+        let track_ids = session
+            .arrangement
+            .tracks
+            .iter()
+            .map(|track| track.id.clone())
+            .collect::<Vec<_>>();
+        let device_ids = session
+            .arrangement
+            .tracks
+            .iter()
+            .filter_map(|track| track.instrument.as_ref())
+            .map(|instrument| instrument.id.clone())
+            .collect::<Vec<_>>();
+        let clip_ids = session
+            .arrangement
+            .midi_clips
+            .iter()
+            .map(|clip| clip.id.clone())
+            .collect::<Vec<_>>();
+        let effect_ids = session
+            .arrangement
+            .tracks
+            .iter()
+            .flat_map(|track| &track.effects)
+            .map(|effect| effect.id.clone())
+            .collect::<Vec<_>>();
+        let bus_ids = session
+            .arrangement
+            .mixer
+            .buses
+            .iter()
+            .map(|bus| bus.id.clone())
+            .collect::<Vec<_>>();
+        let send_ids = session
+            .arrangement
+            .mixer
+            .sends
+            .iter()
+            .map(|send| send.id.clone())
+            .collect::<Vec<_>>();
+        let sidechain_ids = session
+            .arrangement
+            .mixer
+            .sidechain_sends
+            .iter()
+            .map(|send| send.id.clone())
+            .collect::<Vec<_>>();
+
+        let changed = PRODUCTION
+            .replace("3 - - -", "4 - - -")
+            .replace(r#""drums":{"gain_db":-2"#, r#""drums":{"gain_db":-4"#);
+        let mut second = production_document(&changed);
+        let rebuilt = build(
+            &mut second,
+            Some(&session),
+            &store,
+            &mut staged,
+            BuildMode::Stage,
+        )
+        .expect("production rebuild");
+
+        assert_eq!(
+            rebuilt
+                .arrangement
+                .tracks
+                .iter()
+                .map(|track| track.id.clone())
+                .collect::<Vec<_>>(),
+            track_ids
+        );
+        assert_eq!(
+            rebuilt
+                .arrangement
+                .tracks
+                .iter()
+                .filter_map(|track| track.instrument.as_ref())
+                .map(|instrument| instrument.id.clone())
+                .collect::<Vec<_>>(),
+            device_ids
+        );
+        assert_eq!(
+            rebuilt
+                .arrangement
+                .midi_clips
+                .iter()
+                .map(|clip| clip.id.clone())
+                .collect::<Vec<_>>(),
+            clip_ids
+        );
+        assert_eq!(
+            rebuilt
+                .arrangement
+                .tracks
+                .iter()
+                .flat_map(|track| &track.effects)
+                .map(|effect| effect.id.clone())
+                .collect::<Vec<_>>(),
+            effect_ids
+        );
+        assert_eq!(
+            rebuilt
+                .arrangement
+                .mixer
+                .buses
+                .iter()
+                .map(|bus| bus.id.clone())
+                .collect::<Vec<_>>(),
+            bus_ids
+        );
+        assert_eq!(
+            rebuilt
+                .arrangement
+                .mixer
+                .sends
+                .iter()
+                .map(|send| send.id.clone())
+                .collect::<Vec<_>>(),
+            send_ids
+        );
+        assert_eq!(
+            rebuilt
+                .arrangement
+                .mixer
+                .sidechain_sends
+                .iter()
+                .map(|send| send.id.clone())
+                .collect::<Vec<_>>(),
+            sidechain_ids
+        );
+        assert_eq!(rebuilt.arrangement.midi_clips[0].notes[1].note, 65);
+        assert_eq!(rebuilt.arrangement.tracks[1].gain_db, -4.0);
+        assert!(rebuilt.score_performance_equals(&rebuilt));
+        assert!(!session.score_performance_equals(&rebuilt));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     #[test]
     fn rebuilding_keeps_project_identity_work_state_and_device_ids() {
         let root = std::env::temp_dir().join(format!(
@@ -1797,8 +2905,9 @@ mod tests {
         ));
         let store = store(&root);
         let mut first = document(SCORE);
-        let mut staged = BTreeSet::new();
-        let mut session = build(&mut first, None, &store, &mut staged).expect("initial build");
+        let mut staged = StagedResources::new(&root);
+        let mut session =
+            build(&mut first, None, &store, &mut staged, BuildMode::Stage).expect("initial build");
         let session_id = session.session_id.clone();
         let track = session.arrangement.tracks[0].clone();
         let device = track.instrument.as_ref().expect("device").id.clone();
@@ -1818,7 +2927,14 @@ mod tests {
 
         let changed = SCORE.replace("3 - - -", "4 - - -");
         let mut second = document(&changed);
-        let rebuilt = build(&mut second, Some(&session), &store, &mut staged).expect("rebuild");
+        let rebuilt = build(
+            &mut second,
+            Some(&session),
+            &store,
+            &mut staged,
+            BuildMode::Stage,
+        )
+        .expect("rebuild");
 
         assert_eq!(rebuilt.session_id, session_id);
         assert_eq!(rebuilt.arrangement.tracks[0].id, track.id);
@@ -1857,15 +2973,22 @@ mod tests {
         ));
         let store = store(&root);
         let mut first = document(SCORE);
-        let mut staged = BTreeSet::new();
-        let session = build(&mut first, None, &store, &mut staged).expect("initial build");
+        let mut staged = StagedResources::new(&root);
+        let session =
+            build(&mut first, None, &store, &mut staged, BuildMode::Stage).expect("initial build");
 
         let mut second = document(&format!(
             "{SCORE}
 # Only the text changed."
         ));
-        let rebuilt =
-            build(&mut second, Some(&session), &store, &mut staged).expect("text-only rebuild");
+        let rebuilt = build(
+            &mut second,
+            Some(&session),
+            &store,
+            &mut staged,
+            BuildMode::Stage,
+        )
+        .expect("text-only rebuild");
 
         assert!(session.score_performance_equals(&rebuilt));
         assert_eq!(rebuilt.arrangement.regions, session.arrangement.regions);
@@ -1888,8 +3011,9 @@ mod tests {
             r#""instruments":{"lead":{"preset":"TEST/001-lead"},"pad":{"preset":"TEST/002-pad"}}"#,
         );
         let mut first = document(&yaml);
-        let mut staged = BTreeSet::new();
-        let session = build(&mut first, None, &store, &mut staged).expect("initial build");
+        let mut staged = StagedResources::new(&root);
+        let session =
+            build(&mut first, None, &store, &mut staged, BuildMode::Stage).expect("initial build");
         let lead = session
             .arrangement
             .tracks
@@ -1904,8 +3028,14 @@ mod tests {
             r#""instruments":{"lead""#,
             r#""instruments":{"bass":{"preset":"TEST/003-bass"},"lead""#,
         ));
-        let rebuilt = build(&mut inserted, Some(&session), &store, &mut staged)
-            .expect("lane insertion rebuild");
+        let rebuilt = build(
+            &mut inserted,
+            Some(&session),
+            &store,
+            &mut staged,
+            BuildMode::Stage,
+        )
+        .expect("lane insertion rebuild");
         let rebuilt_lead = rebuilt
             .arrangement
             .tracks
@@ -1924,8 +3054,14 @@ mod tests {
             r#"{"instrument":"lead","melody":"theme"}"#,
             r#"{"instrument":"lead","melody":"theme","gain_db":-6}"#,
         ));
-        let rebuilt =
-            build(&mut changed_gain, Some(&rebuilt), &store, &mut staged).expect("gain rebuild");
+        let rebuilt = build(
+            &mut changed_gain,
+            Some(&rebuilt),
+            &store,
+            &mut staged,
+            BuildMode::Stage,
+        )
+        .expect("gain rebuild");
         let rebuilt_lead = rebuilt
             .arrangement
             .tracks
@@ -1956,8 +3092,9 @@ mod tests {
         std::fs::write(snapshot.join("definition.json"), r#"{"name":"Lead"}"#).unwrap();
         let store = store(&root);
         let mut first = document(SCORE);
-        let mut staged = BTreeSet::new();
-        let mut session = build(&mut first, None, &store, &mut staged).expect("initial build");
+        let mut staged = StagedResources::new(&root);
+        let mut session =
+            build(&mut first, None, &store, &mut staged, BuildMode::Stage).expect("initial build");
         let snapshot_name = snapshot_id.clone();
         session.arrangement.tracks[0].instrument = Some(
             TrackInstrument::user_snapshot(
@@ -1986,8 +3123,14 @@ mod tests {
                 built_in: None,
             },
         );
-        let rebuilt = build(&mut second, Some(&session), &store, &mut staged)
-            .expect("a matching snapshot is reused");
+        let rebuilt = build(
+            &mut second,
+            Some(&session),
+            &store,
+            &mut staged,
+            BuildMode::Stage,
+        )
+        .expect("a matching snapshot is reused");
 
         assert!(staged.is_empty(), "no new snapshot is staged");
         assert_eq!(
@@ -2024,7 +3167,7 @@ mod tests {
             yaml_changed: false,
             changed: false,
             link_changed: false,
-            staged: BTreeSet::new(),
+            staged: StagedResources::new(Path::new("")),
         };
         assert!(unchanged.candidate(&session).is_none());
 
@@ -2037,7 +3180,7 @@ mod tests {
             yaml_changed: false,
             changed: false,
             link_changed: true,
-            staged: BTreeSet::new(),
+            staged: StagedResources::new(Path::new("")),
         };
         let candidate = outcome.candidate(&session).expect("a link change commits");
         assert_eq!(candidate.arrangement.revision, session.arrangement.revision);
