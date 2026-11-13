@@ -168,6 +168,9 @@ public:
     /// parameter, read back to verify an application.
     [[nodiscard]] std::optional<PluginParameterReadback> parameterReadback(
         int index, juce::String& error) const;
+    /// Resolves plugin display text to a normalized parameter value.
+    [[nodiscard]] std::optional<float> resolveParameterDisplay(int index, const juce::String& text,
+                                                               juce::String& error) const;
     /// Compares requested display text with the plugin-rendered text, allowing
     /// unit continuations and display precision to differ.
     [[nodiscard]] static bool equivalentDisplayText(const juce::String& input,

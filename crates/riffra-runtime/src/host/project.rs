@@ -86,6 +86,7 @@ pub(super) fn dispatch(
                 &params,
                 &state.data_root,
                 &state.built_in_instruments,
+                &state.binaries.plugin_scan,
                 &state.binaries.sonalloy,
             )
             .map_err(|error| command_error(error.message).with_details(error.details))?;
@@ -391,6 +392,7 @@ fn rebuild_score(
         &params.bindings,
         &state.data_root,
         &state.built_in_instruments,
+        &state.binaries.plugin_scan,
         &state.binaries.sonalloy,
     )
     .map_err(|error| command_error(error.message).with_details(error.details))?;

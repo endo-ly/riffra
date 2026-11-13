@@ -27,6 +27,8 @@ pub(super) fn resolve_plugin(
     data_root: &Path,
     vst3: &Vst3Spec,
     role: PluginRole,
+    scanner: &Path,
+    cache: &mut super::parameters::ProbeCache,
 ) -> Result<ResolvedPlugin, String> {
     let name = vst3
         .plugin
@@ -61,9 +63,7 @@ pub(super) fn resolve_plugin(
                 .map_err(|error| error.to_string())?,
         );
     }
-    if !vst3.params.is_empty() {
-        return Err("plugin parameter values are not implemented for Score import".to_owned());
-    }
+    cache.apply(scanner, &mut plugin, &vst3.params)?;
     Ok(ResolvedPlugin {
         entry,
         plugin,
@@ -302,17 +302,29 @@ mod tests {
             patch: Vec::new(),
             params: BTreeMap::new(),
         };
-        let resolved = resolve_plugin(&root, &spec, PluginRole::Instrument).unwrap();
+        let mut cache = super::super::parameters::ProbeCache::default();
+        let scanner = Path::new("unused-scanner");
+        let resolved =
+            resolve_plugin(&root, &spec, PluginRole::Instrument, scanner, &mut cache).unwrap();
         assert_eq!(resolved.plugin.path, plugin_path.to_string_lossy());
         assert_eq!(resolved.plugin.parameter_values, [0.75]);
         assert_eq!(resolved.plugin.state_data.as_deref(), Some("c3RhdGU="));
-        assert!(resolve_plugin(&root, &spec, PluginRole::Effect).is_err());
+        assert!(resolve_plugin(&root, &spec, PluginRole::Effect, scanner, &mut cache).is_err());
+
+        let mut patched = spec.clone();
+        patched.patch = vec![crate::api::params::PluginStatePatchOperation::Set {
+            path: "Plugin/Mode".into(),
+            value: crate::api::output::PluginStateValue::Text("Warm".into()),
+        }];
+        assert!(
+            resolve_plugin(&root, &patched, PluginRole::Instrument, scanner, &mut cache).is_err()
+        );
 
         let mut invalid = snapshot;
         invalid.state_data = Some("invalid-base64".into());
         std::fs::write(&state_path, serde_json::to_vec(&invalid).unwrap()).unwrap();
         assert!(
-            resolve_plugin(&root, &spec, PluginRole::Instrument)
+            resolve_plugin(&root, &spec, PluginRole::Instrument, scanner, &mut cache)
                 .err()
                 .unwrap()
                 .contains("base64")

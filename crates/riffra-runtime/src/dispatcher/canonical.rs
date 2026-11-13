@@ -152,6 +152,7 @@ impl HostDispatcher<'_> {
                     &params.bindings,
                     &self.data_root,
                     &self.built_in_instruments,
+                    &self.plugin_scan,
                     &self.sonalloy,
                 ),
             )),
@@ -162,6 +163,7 @@ impl HostDispatcher<'_> {
                     params.events,
                     &self.data_root,
                     &self.built_in_instruments,
+                    &self.plugin_scan,
                     &self.sonalloy,
                 )
                 .map_err(|error| {

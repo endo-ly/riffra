@@ -456,6 +456,14 @@ if(BUILD_TESTING)
   add_test(
     NAME PluginScannerTest.RiffraTestSidechain
     COMMAND riffra-plugin-scan --validate-load "${RIFFRA_TEST_SIDECHAIN_BUNDLE}")
+  add_test(
+    NAME PluginScannerTest.ParameterStateAndDisplay
+    COMMAND ${CMAKE_COMMAND}
+      "-DSCAN=$<TARGET_FILE:riffra-plugin-scan>"
+      "-DBUNDLE=${RIFFRA_TEST_EFFECT_BUNDLE}"
+      "-DREQUEST=${CMAKE_CURRENT_BINARY_DIR}/parameter-probe-test.json"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/plugins/PluginParameterProbeTest.cmake")
+  set_tests_properties(PluginScannerTest.ParameterStateAndDisplay PROPERTIES TIMEOUT 40)
 
   add_test(
     NAME RealVstRuntimeTest.LoadsMultipleRuntimeRoles

@@ -7,6 +7,7 @@
 //! not change.
 
 mod library;
+mod parameters;
 
 use crate::api::output::{
     ScoreAudioClipInspection, ScoreBusInspection, ScoreChordInspection, ScoreDiagnostic,
@@ -111,12 +112,14 @@ fn resolve_production(
     plan: &ScorePlan,
     base: &Path,
     data_root: &Path,
+    scanner: &Path,
 ) -> Result<BTreeMap<String, library::ResolvedPlugin>, ImportError> {
     let library = library::Library::new(base);
     let mut plugins = BTreeMap::new();
+    let mut cache = parameters::ProbeCache::default();
     let mut insert_source =
         |field: String, source: &score::production::SourceSpec| -> Result<(), ImportError> {
-            let resolve = || -> Result<library::ResolvedPlugin, String> {
+            let mut resolve = || -> Result<library::ResolvedPlugin, String> {
                 let resolved = library.instrument(source)?;
                 let vst3 = resolved
                     .source
@@ -127,6 +130,8 @@ fn resolve_production(
                     data_root,
                     vst3,
                     crate::api::output::PluginRole::Instrument,
+                    scanner,
+                    &mut cache,
                 )?;
                 plugin.range = resolved.range;
                 plugin.notes = resolved.notes;
@@ -149,13 +154,19 @@ fn resolve_production(
         |field: String, effects: &[score::production::EffectSpec]| -> Result<(), ImportError> {
             for (index, effect) in effects.iter().enumerate() {
                 let path = format!("{field}[{index}]");
-                let resolve = || -> Result<library::ResolvedPlugin, String> {
+                let mut resolve = || -> Result<library::ResolvedPlugin, String> {
                     let effect = library.effect(effect)?;
                     let vst3 = effect
                         .vst3
                         .as_ref()
                         .ok_or_else(|| "effect requires a VST3 plugin".to_owned())?;
-                    library::resolve_plugin(data_root, vst3, crate::api::output::PluginRole::Effect)
+                    library::resolve_plugin(
+                        data_root,
+                        vst3,
+                        crate::api::output::PluginRole::Effect,
+                        scanner,
+                        &mut cache,
+                    )
                 };
                 let result = resolve().map_err(|message| ImportError {
                     details: plan.source_detail(&path, &message),
@@ -240,6 +251,7 @@ pub(crate) fn import(
     params: &ProjectImportScoreParams,
     data_root: &Path,
     catalog: &BuiltInInstrumentCatalog,
+    scanner: &Path,
     sonalloy: &Path,
 ) -> Result<ScoreOutcome, ImportError> {
     let mut document = read(
@@ -248,6 +260,7 @@ pub(crate) fn import(
         &params.bindings.keys().cloned().collect(),
         data_root,
         catalog,
+        scanner,
         sonalloy,
     )?;
     let store = UserInstrumentStore::new(data_root, sonalloy);
@@ -275,6 +288,7 @@ pub(crate) fn rebuild(
     bindings: &BTreeMap<String, PathBuf>,
     data_root: &Path,
     catalog: &BuiltInInstrumentCatalog,
+    scanner: &Path,
     sonalloy: &Path,
 ) -> Result<ScoreOutcome, ImportError> {
     let source = previous.score_source.as_ref().ok_or_else(|| {
@@ -300,6 +314,7 @@ pub(crate) fn rebuild(
         &bindings.keys().cloned().collect(),
         data_root,
         catalog,
+        scanner,
         sonalloy,
     )?;
     let store = UserInstrumentStore::new(data_root, sonalloy);
@@ -347,6 +362,7 @@ pub(crate) fn validate(
     bindings: &BTreeMap<String, PathBuf>,
     data_root: &Path,
     catalog: &BuiltInInstrumentCatalog,
+    scanner: &Path,
     sonalloy: &Path,
 ) -> ScoreValidation {
     match read(
@@ -355,6 +371,7 @@ pub(crate) fn validate(
         &bindings.keys().cloned().collect(),
         data_root,
         catalog,
+        scanner,
         sonalloy,
     )
     .and_then(|document| {
@@ -384,6 +401,7 @@ pub(crate) fn inspect(
     events: bool,
     data_root: &Path,
     catalog: &BuiltInInstrumentCatalog,
+    scanner: &Path,
     sonalloy: &Path,
 ) -> Result<ScoreInspection, ImportError> {
     let document = read(
@@ -392,6 +410,7 @@ pub(crate) fn inspect(
         &bindings.keys().cloned().collect(),
         data_root,
         catalog,
+        scanner,
         sonalloy,
     )?;
     validate_performance(&document.plan, &document.sources)?;
@@ -665,6 +684,7 @@ fn read(
     explicit: &BTreeSet<String>,
     data_root: &Path,
     catalog: &BuiltInInstrumentCatalog,
+    scanner: &Path,
     sonalloy: &Path,
 ) -> Result<ScoreDocument, ImportError> {
     let yaml = std::fs::read_to_string(path)
@@ -673,7 +693,7 @@ fn read(
     let plan = score::compile(&yaml).map_err(score_error)?;
     let base = path.parent().expect("canonical file has a parent");
     validate_audio(&plan, base)?;
-    let production = resolve_production(&plan, base, data_root)?;
+    let production = resolve_production(&plan, base, data_root, scanner)?;
     if plan.mix.as_ref().is_some_and(|mix| {
         mix.automation.iter().any(|lane| {
             matches!(
@@ -1732,6 +1752,7 @@ mod tests {
             &BTreeMap::new(),
             &root,
             catalog,
+            Path::new("unused-scanner"),
             Path::new("unavailable-sonalloy"),
         );
         assert!(validation.valid, "{:?}", validation.diagnostics);
@@ -1741,6 +1762,7 @@ mod tests {
             false,
             &root,
             catalog,
+            Path::new("unused-scanner"),
             Path::new("unavailable-sonalloy"),
         )
         .unwrap();

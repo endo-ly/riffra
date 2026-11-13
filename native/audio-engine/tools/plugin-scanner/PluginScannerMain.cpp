@@ -1,5 +1,6 @@
 #include <JuceHeader.h>
 
+#include <cmath>
 #include <optional>
 
 #include "contract/SidecarMessages.h"
@@ -7,6 +8,12 @@
 #include "protocol/ProtocolChannel.h"
 
 namespace {
+
+constexpr auto kUsage =
+    "Usage: riffra-plugin-scan --scan <vst3-path>\n"
+    "       riffra-plugin-scan --validate-load <vst3-path>\n"
+    "       riffra-plugin-scan --probe-sidechain <vst3-path>\n"
+    "       riffra-plugin-scan --describe-parameters <vst3-path> <request.json>";
 
 void writeJson(const juce::var& value) {
     riffra::writeProtocolLine(juce::JSON::toString(value, true).toStdString());
@@ -107,6 +114,112 @@ int probeSidechainCapability(const juce::String& path) {
     return 0;
 }
 
+int describeParameters(const juce::String& path, const juce::String& requestPath) {
+    juce::var request;
+    const auto parsed = juce::JSON::parse(juce::File(requestPath).loadFileAsString(), request);
+    if (parsed.failed() || !request.isObject()) {
+        writeJson(makeError(path, "Parameter request is not a JSON object."));
+        return 2;
+    }
+    auto* object = request.getDynamicObject();
+    const auto values = object->getProperty("parameterValues");
+    const auto data = object->getProperty("stateData");
+    const auto displays = object->getProperty("displayRequests");
+    if (!values.isArray() || (!data.isVoid() && !data.isString()) || !displays.isArray()) {
+        writeJson(makeError(path, "Parameter request has invalid state or display requests."));
+        return 2;
+    }
+    riffra::PluginStateSpec state;
+    if (data.isString()) state.stateData = data.toString();
+    for (const auto& item : *values.getArray()) {
+        if ((!item.isDouble() && !item.isInt() && !item.isInt64()) ||
+            !std::isfinite(static_cast<double>(item)) || static_cast<double>(item) < 0.0 ||
+            static_cast<double>(item) > 1.0) {
+            writeJson(makeError(path, "Parameter state contains an invalid normalized value."));
+            return 2;
+        }
+        state.parameterValues.push_back(static_cast<float>(static_cast<double>(item)));
+    }
+    riffra::PluginRack rack;
+    if (const auto error =
+            rack.load(path, 44100.0, 512, riffra::PluginProcessingMode::realtime, false)) {
+        writeJson(makeError(path, error->message));
+        return 4;
+    }
+    juce::String error;
+    if ((state.stateData.has_value() || !state.parameterValues.empty()) &&
+        !rack.applyPersistedState(state, error)) {
+        writeJson(makeError(path, error));
+        return 4;
+    }
+    // Persisted parameter writes are queued for the audio owner. Flush that queue
+    // before reading the plugin's parameter values and display metadata.
+    rack.setBypassed(true);
+    juce::AudioBuffer<float> scratch(1, 512);
+    rack.process(nullptr, 0, nullptr, 0, scratch.getArrayOfWritePointers(), 1, 512);
+    const auto parameters = rack.parameters();
+    const auto captured = rack.persistedState(error);
+    if (!captured.has_value()) {
+        writeJson(makeError(path, error));
+        return 4;
+    }
+    juce::Array<juce::var> currentValues;
+    for (const auto value : captured->parameterValues) currentValues.add(juce::var(value));
+    juce::Array<juce::var> encoded;
+    for (const auto& parameter : parameters) {
+        auto* item = new juce::DynamicObject();
+        item->setProperty("index", parameter.index);
+        item->setProperty("name", parameter.name);
+        juce::Array<juce::var> choices;
+        for (const auto& choice : parameter.choices) {
+            auto* entry = new juce::DynamicObject();
+            entry->setProperty("value", choice.value);
+            entry->setProperty("displayValue", choice.displayValue);
+            choices.add(juce::var(entry));
+        }
+        item->setProperty("choices", juce::var(choices));
+        encoded.add(juce::var(item));
+    }
+    juce::Array<juce::var> conversions;
+    for (const auto& display : *displays.getArray()) {
+        auto* query = display.getDynamicObject();
+        if (query == nullptr || !query->getProperty("name").isString() ||
+            !query->getProperty("display").isString()) {
+            writeJson(makeError(path, "Invalid parameter display request."));
+            return 2;
+        }
+        const auto name = query->getProperty("name").toString();
+        const auto requestedIndex = query->getProperty("index");
+        if (!requestedIndex.isVoid() && !requestedIndex.isInt()) {
+            writeJson(makeError(path, "Invalid parameter display index."));
+            return 2;
+        }
+        juce::Array<juce::var> candidates;
+        for (const auto& parameter : parameters) {
+            const auto matchesIndex =
+                requestedIndex.isVoid() || parameter.index == static_cast<int>(requestedIndex);
+            if (parameter.name != name || !matchesIndex) continue;
+            juce::String conversionError;
+            const auto text = query->getProperty("display").toString();
+            const auto value = rack.resolveParameterDisplay(parameter.index, text, conversionError);
+            auto* candidate = new juce::DynamicObject();
+            candidate->setProperty("index", parameter.index);
+            candidate->setProperty("value", value ? juce::var(*value) : juce::var());
+            candidate->setProperty("error", value ? juce::var() : juce::var(conversionError));
+            candidates.add(juce::var(candidate));
+        }
+        conversions.add(juce::var(candidates));
+    }
+    auto* result = new juce::DynamicObject();
+    result->setProperty("type", "pluginParameters");
+    result->setProperty("path", path);
+    result->setProperty("parameters", juce::var(encoded));
+    result->setProperty("parameterValues", juce::var(currentValues));
+    result->setProperty("conversions", juce::var(conversions));
+    writeJson(juce::var(result));
+    return 0;
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -116,28 +229,24 @@ int main(int argc, char* argv[]) {
     }
     juce::ScopedJuceInitialiser_GUI juceInitialiser;
     if (argc < 2) {
-        writeJson(makeError(
-            {}, "Usage: riffra-plugin-scan --scan|--validate-load|--probe-sidechain <vst3-path>"));
+        writeJson(makeError({}, kUsage));
         return 1;
     }
     const auto mode = juce::String(argv[1]);
     if (mode == "--help" || mode == "-h") {
-        writeJson(makeError({},
-                            "Usage: riffra-plugin-scan --scan <vst3-path>\n"
-                            "       riffra-plugin-scan --validate-load <vst3-path>\n"
-                            "       riffra-plugin-scan --probe-sidechain <vst3-path>"));
+        writeJson(makeError({}, kUsage));
         return 0;
     }
+    if (mode == "--describe-parameters" && argc == 4)
+        return describeParameters(juce::String::fromUTF8(argv[2]), juce::String::fromUTF8(argv[3]));
     if (argc != 3) {
-        writeJson(makeError(
-            {}, "Usage: riffra-plugin-scan --scan|--validate-load|--probe-sidechain <vst3-path>"));
+        writeJson(makeError({}, kUsage));
         return 1;
     }
     const auto path = juce::String::fromUTF8(argv[2]);
     if (mode == "--scan") return scan(path);
     if (mode == "--validate-load") return validateLoad(path);
     if (mode == "--probe-sidechain") return probeSidechainCapability(path);
-    writeJson(makeError(
-        {}, "Usage: riffra-plugin-scan --scan|--validate-load|--probe-sidechain <vst3-path>"));
+    writeJson(makeError({}, kUsage));
     return 1;
 }

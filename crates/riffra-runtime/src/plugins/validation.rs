@@ -2,7 +2,8 @@ use crate::api::output::{
     DeviceSidechainCapability, PluginRole, PluginScanState, ScanIssue, ScanReport,
 };
 use crate::audio::wire::{PluginScanMessage, PluginScanMetadata};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use std::ffi::OsStr;
 use std::io::Read;
 use std::path::Path;
 use std::process::Stdio;
@@ -30,9 +31,22 @@ pub(crate) fn probe_sidechain_capability(
     let expected_path = plugin_path
         .to_str()
         .ok_or_else(|| "VST3 path is not valid UTF-8".to_string())?;
+    let stdout = run_scanner(
+        scanner,
+        &[OsStr::new("--probe-sidechain"), plugin_path.as_os_str()],
+        "sidechain capability probe",
+    )?;
+    let probe: SidechainCapabilityProbe = serde_json::from_slice(&stdout)
+        .map_err(|error| format!("invalid capability result: {error}"))?;
+    if probe.kind != "pluginSidechainCapability" || probe.path != expected_path {
+        return Err("isolated scanner returned a mismatched sidechain capability".into());
+    }
+    Ok(probe.sidechain)
+}
+
+fn run_scanner(scanner: &Path, args: &[&OsStr], operation: &str) -> Result<Vec<u8>, String> {
     let mut child = crate::process::sidecar_command(scanner)
-        .arg("--probe-sidechain")
-        .arg(plugin_path)
+        .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -74,7 +88,7 @@ pub(crate) fn probe_sidechain_capability(
         .map_err(|_| "isolated scanner stderr reader panicked".to_string())??;
     if timed_out {
         return Err(format!(
-            "sidechain capability probe exceeded {} seconds",
+            "{operation} exceeded {} seconds",
             SCANNER_TIMEOUT.as_secs()
         ));
     }
@@ -84,23 +98,142 @@ pub(crate) fn probe_sidechain_capability(
         {
             return Err(message);
         }
-        return Err(scanner_failure(
-            "sidechain capability probe failed",
-            &stdout,
-            &stderr,
+        return Err(format!(
+            "{operation} failed; stdout: {}; stderr: {}",
+            excerpt(&stdout),
+            excerpt(&stderr)
         ));
     }
-    let probe: SidechainCapabilityProbe = serde_json::from_slice(&stdout).map_err(|error| {
-        scanner_failure(
-            &format!("invalid capability result ({error})"),
-            &stdout,
-            &stderr,
-        )
-    })?;
-    if probe.kind != "pluginSidechainCapability" || probe.path != expected_path {
-        return Err("isolated scanner returned a mismatched sidechain capability".into());
+    Ok(stdout)
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DisplayRequest {
+    pub(crate) name: String,
+    pub(crate) index: Option<u32>,
+    pub(crate) display: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct ParameterChoice {
+    pub(crate) value: f32,
+    pub(crate) display_value: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct ParameterInfo {
+    pub(crate) index: u32,
+    pub(crate) name: String,
+    pub(crate) choices: Vec<ParameterChoice>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct DisplayConversion {
+    pub(crate) index: u32,
+    pub(crate) value: Option<f32>,
+    pub(crate) error: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct ParameterDescription {
+    #[serde(rename = "type")]
+    kind: String,
+    path: String,
+    pub(crate) parameters: Vec<ParameterInfo>,
+    pub(crate) parameter_values: Vec<f32>,
+    pub(crate) conversions: Vec<Vec<DisplayConversion>>,
+}
+
+struct TemporaryRequest(std::path::PathBuf);
+
+impl Drop for TemporaryRequest {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
     }
-    Ok(probe.sidechain)
+}
+
+pub(crate) fn describe_parameters(
+    scanner: &Path,
+    plugin: &riffra_core::Vst3Plugin,
+    displays: &[DisplayRequest],
+) -> Result<ParameterDescription, String> {
+    use std::io::Write;
+    let path = std::env::temp_dir().join(format!(
+        "riffra-parameter-request-{}.json",
+        uuid::Uuid::now_v7()
+    ));
+    let guard = TemporaryRequest(path);
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&guard.0)
+        .map_err(|error| format!("parameter request could not be created: {error}"))?;
+    serde_json::to_writer(
+        &mut file,
+        &serde_json::json!({
+            "stateData": plugin.state_data,
+            "parameterValues": plugin.parameter_values,
+            "displayRequests": displays,
+        }),
+    )
+    .map_err(|error| format!("parameter request could not be encoded: {error}"))?;
+    file.flush()
+        .map_err(|error| format!("parameter request could not be written: {error}"))?;
+    drop(file);
+    let output = run_scanner(
+        scanner,
+        &[
+            OsStr::new("--describe-parameters"),
+            OsStr::new(&plugin.path),
+            guard.0.as_os_str(),
+        ],
+        "parameter probe",
+    )?;
+    let description: ParameterDescription = serde_json::from_slice(&output)
+        .map_err(|error| format!("invalid parameter probe result: {error}"))?;
+    if description.kind != "pluginParameters"
+        || description.path != plugin.path
+        || description.conversions.len() != displays.len()
+    {
+        return Err("isolated scanner returned a mismatched parameter result".into());
+    }
+    let mut indices = std::collections::BTreeSet::new();
+    if description
+        .parameter_values
+        .iter()
+        .any(|v| !v.is_finite() || !(0.0..=1.0).contains(v))
+    {
+        return Err("isolated scanner returned invalid parameter values".into());
+    }
+    for parameter in &description.parameters {
+        if !indices.insert(parameter.index)
+            || usize::try_from(parameter.index)
+                .ok()
+                .is_none_or(|index| index >= description.parameter_values.len())
+            || parameter
+                .choices
+                .iter()
+                .any(|choice| !choice.value.is_finite() || !(0.0..=1.0).contains(&choice.value))
+        {
+            return Err("isolated scanner returned invalid parameter metadata".into());
+        }
+    }
+    for conversion in description.conversions.iter().flatten() {
+        if !indices.contains(&conversion.index)
+            || conversion
+                .value
+                .is_some_and(|value| !value.is_finite() || !(0.0..=1.0).contains(&value))
+            || conversion.value.is_some() == conversion.error.is_some()
+        {
+            return Err("isolated scanner returned invalid display conversion".into());
+        }
+    }
+    Ok(description)
 }
 
 #[derive(Debug)]

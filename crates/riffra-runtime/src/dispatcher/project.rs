@@ -52,6 +52,7 @@ impl HostDispatcher<'_> {
                     &params,
                     &self.data_root,
                     &self.built_in_instruments,
+                    &self.plugin_scan,
                     &self.sonalloy,
                 )
                 .map_err(|error| {
@@ -83,6 +84,7 @@ impl HostDispatcher<'_> {
                     &params.bindings,
                     &self.data_root,
                     &self.built_in_instruments,
+                    &self.plugin_scan,
                     &self.sonalloy,
                 )
                 .map_err(|error| {
