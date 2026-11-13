@@ -166,6 +166,12 @@ Group・Return・Send・Sidechainの正準設定は `mixer get` でまとめて�
 
 取り込んだMIDI Asset(`asset import-midi`)の配置は `clip audio add-asset` / `clip midi add-asset` で行う。
 
+### Score YAML
+
+Score YAML を正本にする Project は `project import-score` で作り、`project rebuild-score` で同じ Project を更新する。`rebuild-score` は Project を切り替えず、`--path` を省略するとリンク先のファイルを読む。`.riffra` へ書き出すとリンクは無効になり、持ち出し先では `project rebuild-score --path ... --bind ...` で結び直す。
+
+`score validate` は Project を作らずに診断だけを返し、`score inspect` は展開済みのセクション・楽器・レーン・イベントを来源位置つきで返す。どちらも `--bind` を受け取る。リンクされた Project では YAML が所有する部分を直接編集できない。失敗した同期は直前の状態を維持し、Desktop では診断と再試行・再リンクを表示する。コマンドの値域とエラーは `riffra project rebuild-score --help` と `riffra score validate --help` を正とする。
+
 ### Channel Device (Instrument / Effect)
 
 EffectとDeviceのOwnerは `--track-id`、`--bus-id`、`--master` のいずれか1つで指定する。Master・BusにはEffectsだけを追加できる。

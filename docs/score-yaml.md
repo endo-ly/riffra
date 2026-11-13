@@ -1,26 +1,98 @@
-# Score YAML のインポート
+# Score YAML
 
-Score YAML を読み込み、通常の Riffra プロジェクトとして編集・保存・再生・レンダリングできる。
-楽譜の反復や度数表記はインポート時に演奏イベントへ展開する。以後の編集と演奏は、生成された CreativeSession を正準状態として扱う。
+Score YAML を曲の編集正本とし、Riffra の Project をそこから生成される保存可能な実行用派生物として扱う。
+楽譜の反復や度数表記は読み込み時に演奏イベントへ展開する。以後の演奏は、生成された CreativeSession を正準状態として実行する。
 
-## 読み込みと音源の指定
+## 正本とのリンク
 
-Desktop のプロジェクトメニューで **Import Score YAML…** を選び、Score YAML ファイルを開く。ファイル選択ダイアログは `.yaml` と `.yml` を表示し、インポート可否はファイル名や拡張子ではなく内容で決まる。CLI では別の拡張子のファイルも指定できる。
-外部楽器の Definition が必要な場合は、表示された楽器 ID ごとに JSON ファイルを選択する。
-CLI では次のコマンドを使う。実行中の Host への読み込みには `--attach` を指定する。
+Desktop のプロジェクトメニューで **Import Score YAML…** を選ぶと、Score YAML を新しい Project として読み込み、そのファイルへリンクする。ファイル選択ダイアログは `.yaml` と `.yml` を表示し、読み込み可否はファイル名や拡張子ではなく内容で決まる。CLI では次のコマンドを使う。実行中の Host への読み込みには `--attach` を指定する。
 
 ```bash
 riffra project import-score ./song.yaml
 riffra project import-score ./song.score.yaml --bind lead=./lead/definition.json
 ```
 
-`--bind` は楽器ごとに繰り返し指定できる。バインドは `external: true` の楽器だけに指定する。
-Definition の相対パスは Score ファイルのディレクトリを基準に解決する。
-プリセットは Score の上位ディレクトリにある `presets/CATEGORY/NNN-name/definition.json` を参照し、
-参照元がない場合は同梱カタログの対応する ID を利用する。
+`--bind` は `external: true` の楽器へ Definition を結び付ける。繰り返し指定でき、指定できるのは外部楽器だけである。Definition の相対パスは Score ファイルのディレクトリを基準に解決する。
+プリセットは Score の上位ディレクトリにある `presets/CATEGORY/NNN-name/definition.json` を参照し、参照元がない場合は同梱カタログの対応する ID を利用する。
 
-読み込みに成功すると、新しいプロジェクトを作成して有効化する。
-解析や音源検証に失敗した場合は、元のプロジェクトを継続して使用できる。
+リンクは `ScoreSource` が保持する。絶対パス、楽器 ID ごとの Definition パス、最後に成功して確定された YAML 本文である。リンク先の YAML をプロジェクトフォルダへ移すことはしない。パスやハッシュを Project ID の代わりには使わない。
+ファイル名だけの `file_name` は、リンクが切れた後も表示に使う。
+
+## 再構築
+
+YAML を編集して保存し、次のコマンドで同じ Project を更新する。新しい Project は作らない。
+
+```bash
+riffra project rebuild-score
+riffra project rebuild-score --path ./moved/song.yaml
+riffra project rebuild-score --bind lead=./lead/definition.json
+```
+
+- `--path` を省略すると、Project がリンクしているファイルを読む
+- `--path` を指定すると、そのファイルへリンクを切り替える
+- `--bind` は既存の対応を置き換え・追加する。Score で使われなくなった対応は取り除かれる
+- 必要な Definition が未指定なら、`scoreBindingsRequired` として不足する楽器 ID を返す
+
+Live Host では開いている Project の YAML を監視する。保存した内容が 500 ms 安定すると再構築し、結果を `score-sync-status-changed` で通知する。監視はリンクされた 1 ファイルだけで、保存した内容が確定済みの本文と同じなら何もしない。エディタの一時ファイルや途中の書き込みでは前回の Session を維持する。恒久的な誤りは一度だけ診断として報告し、内容が変わるまで同じ診断を繰り返さない。
+
+同期状態は「未リンク / 正常 / 読み込み中 / 失敗」と、対象 Project・パス・受理した sequence と更新時刻、最新の診断を保持する。Desktop は失敗したときだけ診断と再試行・別ファイルへのリンク操作を表示する。
+
+### 同一性と再利用
+
+再構築は Project ID・Session ID を変えず、sequence を進める。
+
+- トラックは Score の楽器 ID とレーンのゲインで前回のトラックへ対応付ける。トラック順の変更では取り違えない
+- 同じ楽器で前後ともレーンが 1 つだけ残る場合は、ゲイン変更として対応付ける
+- 対応が曖昧なレーンは新しいトラックとして扱い、別の楽器の ID を再利用しない
+- 対応したトラックは Track ID と Device ID を維持する。演奏内容だけの変更では音源スナップショットを増やさず、Native の既存インスタンスを共有する
+- 楽器定義や参照素材が変わった場合だけ、新しいスナップショットを作る。過去の generation が参照するスナップショットは削除しない
+- 対応しなかった古いトラックと、それが所有するクリップは取り除く
+
+ループ・パンチ、メトロノーム・カウントイン、マーカー、各トラックのミュート・ソロ・armed・monitoring、MIDI/Audio 入力、表示色、Desktop の選択と表示は引き継ぐ。PPQ を変更する場合は音楽的位置を維持するよう既存の換算規則で Tick を移す。作業用マーカーと Score 由来の `regions` は別のものとして扱う。
+
+録音中または録音後の処理中は自動再構築を開始しない。録音による正本外の音声クリップ確定など、YAML で表せない変更もリンクされた Project では制限する。
+
+### 確定と履歴
+
+Live Host は候補の解析・音源解決・Native 準備を済ませてから、Writer のロック下で確定する。Native の昇格に失敗した場合も、Core の保存に失敗した場合も、直前の正準状態と音声グラフを維持し、復元に失敗した場合はその事実も診断へ含める。確定後に成功応答を返さない片側だけの更新は行わない。
+
+確定に成功すると、その時点までの Undo / Redo を空にする。YAML の編集を Riffra の `history.undo` で巻き戻す操作は、GUI から YAML を書き戻す仕組みと一緒に扱う。
+
+リンクされた Project では、YAML が所有する部分を変更する操作を拒否する。対象は時間軸、Score 由来のトラック構造・楽器・演奏イベント・和声・Region・Score 由来の Automation・ミックス構造・楽曲パラメータ・ScoreSource 本文である。ミュート・ソロ・armed・monitoring などの作業状態だけを変更できる。GUI のボタン抑止だけに依存せず、Core の確定境界で判定する。
+
+## 展開前の検証
+
+Project を作らずに Score を確認する。
+
+```bash
+riffra score validate ./song.yaml
+riffra score inspect ./song.yaml
+```
+
+`score validate` は文法・構造・楽器参照・音源の解決・実行可能範囲を診断し、`valid` と簡潔な展開サマリーを返す。`score inspect` は展開済みのセクション・楽器・レーン・音符・イベントを来源位置つきで返す。どちらも Project を作成せず、音源スナップショットも増やさない。誤りはファイル・行・列と項目パスで返す。
+`session inspect` は既に確定した Session を調べる操作であり、役割が異なる。
+
+## 拡張の契約
+
+Riffra の機能のうち、Sonalloy が解釈できない項目を既知の拡張として列挙する。Sonalloy は列挙された項目だけを無視し、種類ごとに 1 回の警告を返す。列挙にない未知の項目と未知のイベント種別は、両方でエラーにする。
+
+| 位置                                                                         | 内容                   |
+| ---------------------------------------------------------------------------- | ---------------------- |
+| 最上位 `kits` / `lyrics` / `mix`                                             | キット・歌詞・ミックス |
+| `instruments.<id>.source`                                                    | 本番の音源             |
+| `instruments.<id>.effects`                                                   | 楽器のエフェクト       |
+| `instruments.<id>.kit`                                                       | キットの参照           |
+| `instruments.<id>.audio`                                                     | 録音素材を置く楽器     |
+| `sections.<name>.audio_clips`                                                | 音声クリップ           |
+| `sections.<name>.lines.<name>.lyrics`                                        | 旋律へ当てる歌詞       |
+| イベント `articulation` / `cc` / `breath` / `voice_dynamics` / `voice_style` | 奏法・制御・歌の表現   |
+
+- Riffra は既知の拡張を、項目パスと行・列を含む `notImplemented` 診断で拒否する
+- Sonalloy は既知の拡張を無視し、内蔵音源（`preset` / `definition`）か `external` を持つ楽器だけを演奏する。`source` のみ、`audio: true` のみの楽器は音楽構造だけを残して解決・実行の対象から外す
+- 同じ楽器に内蔵音源と拡張の指定が並ぶ場合は、拡張を無視して内蔵音源を使う
+- `source` だけを持つ楽器は、Riffra では未実装として扱う
+
+表示用の項目 `instruments.<id>.sound` と `sections.<name>.notes` は共通の項目であり、文字列として検証するが展開・演奏には影響させない。
 
 ## 演奏内容の対応
 
@@ -43,7 +115,7 @@ Score の解析と展開は Runtime の `score/` が行い、`score_yaml_import.
 | マスタリング・フェード                                     | MixdownSettings にラウドネス・True Peak の目標とフェード時間を保持する。LRA 目標は任意の測定・警告条件として扱う                                                         |
 | セクション                                                 | 各出現を独立した TimelineRegion として保持する                                                                                                                           |
 | 和声                                                       | Score の主音とコード構成音を HarmonyEvent に投影する。和声イベントは編集・参照用であり、展開済みの音符を再生成しない                                                     |
-| 元 Score                                                   | ScoreSource にファイル名と元 YAML 全文を保持する。元の記法・制作ノート・再利用素材は参照情報として保存する                                                               |
+| 元 Score                                                   | ScoreSource にファイル名・絶対パス・Definition の対応・最後に確定した元 YAML 全文を保持する。元の記法・制作ノート・再利用素材は参照情報として保存する                    |
 
 ## 保存と再利用
 
@@ -53,10 +125,17 @@ Definition 本体と実際に参照するアセットだけを収集し、保存
 参照先にシンボリックリンクや読み込めないリソースがある場合はエラーにする。
 同じ Definition を使う複数のレーンはスナップショットを共有する。
 
-元の Score・Definition・サンプルを移動しても、保存済みプロジェクトはそれらを参照しない。
+再構築で音源を再利用するかは段落「同一性と再利用」の規則で決める。判断は既存の Track とスナップショットの内容を比較して行い、別のキャッシュや索引は作らない。
+
 `.riffra` のエクスポート・インポートには、音源スナップショットと ScoreSource も含まれる。
-元 YAML は参照用として保持し、トラックやクリップの編集によって書き換えない。
+パッケージに書き出す Session のコピーでは、リンクの `path` を消して楽器の対応を空にする。元 PC の絶対パスを有効なリンクとして持ち込まないためであり、エクスポート元の Project は変更しない。インポート後に必要なら `project rebuild-score --path ... --bind ...` でリンクし直す。
+
+## 失敗時の扱い
+
+Score の構文・意味・音源参照の誤り、リンク先の欠損、Native 準備の失敗では、最後に成功した Session と `ScoreSource.yaml` を維持する。勝手にファイルを探索したり、ハッシュで別ファイルを結び付けたりしない。
+リンク先がない場合は、確定済みの Session と本文をそのまま読み取れる。以前のリンクを持たない ScoreSource もそのまま読み取れ、`rebuild-score --path` で明示的にリンクできる。
 
 時間軸の PPQ を変更すると、既存の音符・制御・範囲・録音位置と、テンポ・拍子の変更位置を新しい PPQ へ換算する。
 PPQ の変更時はテンポ・拍子マップの値と変更点の列をそのまま指定する。マップの編集は PPQ の変更とは別の操作で行い、その時点の PPQ に基づく Tick を指定する。同時編集と、既存の音楽的位置を整数 Tick で正確に表せない変更は拒否する。
+
 データモデル全体の規則は [data-model.md](data-model.md)、音声実行は [audio-engine.md](audio-engine.md) を参照。

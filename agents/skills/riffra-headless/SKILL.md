@@ -57,6 +57,17 @@ MCPを使う場合もHostは同じで、`riffra-mcp` がstdio経由でControl Co
 
 生成したJSONLでSessionを作り直すときは `--replace` を指定する。楽曲の初期構築や、事前に決めた複数の正準編集は `session apply` を第一候補にする。全operationが成功したときだけ1回のcommitとして適用されるため、途中で失敗してもそれまでのoperationは残らない。途中結果を確認して次の編集を決める場合や、1操作ずつUndoしたい場合は `session apply` ではなく `--interactive` を使う。
 
+### Score YAML を正本にする
+
+Score YAML から Project を作ると、Project はそのファイルへリンクされ、YAML が曲の編集正本になる。YAML を直したら `project rebuild-score` で同じ Project を更新する。新しい Project は作らない。Live Host では保存を検知して自動で更新されるため、通常は明示操作も不要である。
+
+- `project import-score <path>`: YAML を新しい Project として読み込み、リンクする。`--bind ID=DEFINITION` で外部楽器の Definition を結び付ける
+- `project rebuild-score [--path PATH] [--bind ID=DEFINITION]`: アクティブな Project をリンク先の YAML で更新する。`--path` を省略するとリンク先を読む
+- `score validate <path>`: Project を作らずに文法・参照・実行可能範囲を診断する
+- `score inspect <path>`: Project を作らずに展開結果を確認する
+
+リンクされた Project では YAML が所有する部分（時間軸・Score 由来の構成・演奏・和声・ミックス構造など）を直接編集できない。作業状態（ループ・パンチ・ミュート・ソロ・armed・monitoring など）だけを変更できる。YAML に Riffra がまだ実装していない拡張を書いた場合は、項目パスと行・列を持つ `notImplemented` 診断で拒否される。拡張の一覧は [docs/score-yaml.md](../../../docs/score-yaml.md) を参照する。
+
 ### 音源選択
 
 楽曲内の役割(リード、ベースライン、コードなど)とプリセットの `category` は直接対応しない。`category` はライブラリ上の主分類であり、候補は `instrument list` が返す全プリセットから `description`、`tags`、`recommended_range` を見て選ぶ。たとえば主旋律には `Lead` だけでなく `Pluck`、`Mallet`、`Keys` も候補になる。
