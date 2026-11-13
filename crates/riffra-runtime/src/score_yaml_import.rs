@@ -1794,7 +1794,7 @@ fn build(
         clips.push(clip);
         volume_tracks.push((index, track_id, claimed.map(|track| track.id.clone())));
     }
-    for (kit_id, kit) in &plan.kits {
+    for kit_id in plan.kits.keys() {
         let score_key = format!("kit:{kit_id}");
         let claimed = claim_track(&previous_tracks, &mut claimed_tracks, |track| {
             track.kind == TrackKind::Instrument
@@ -1867,7 +1867,6 @@ fn build(
         kit_tracks.insert(kit_id.clone(), track.id.clone());
         tracks.push(track);
         clips.push(clip);
-        let _ = kit;
     }
     for id in &plan.audio_instruments {
         let spec = &plan.instruments[id];
@@ -2535,14 +2534,29 @@ fn build_automation(
                 }
                 for (point_index, point) in automation.points.iter().enumerate() {
                     let tick = plan.position_tick(occurrence, &point.at);
-                    let value = values.map(|values| values[point_index]).unwrap_or_else(|| {
-                        match &point.value {
+                    let value = match values {
+                        Some(values) => *values.get(point_index).ok_or_else(|| ImportError {
+                            details: plan.source_detail(
+                                &format!("mix.automation[{index}].points[{point_index}]"),
+                                "automation value was not resolved",
+                            ),
+                            message: "automation value was not resolved".to_owned(),
+                        })?,
+                        None => match &point.value {
                             score::production::ParameterValue::Normalized(value) => *value,
                             score::production::ParameterValue::Display(_) => {
-                                unreachable!("display values require a plugin target")
+                                let message =
+                                    "display values require a plugin parameter target".to_owned();
+                                return Err(ImportError {
+                                    details: plan.source_detail(
+                                        &format!("mix.automation[{index}].points[{point_index}]"),
+                                        &message,
+                                    ),
+                                    message,
+                                });
                             }
-                        }
-                    });
+                        },
+                    };
                     for target in &targets {
                         let key = automation_key(target);
                         let entry = lanes.entry(key).or_insert_with(|| LaneAccumulator {
