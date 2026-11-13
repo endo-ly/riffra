@@ -42,6 +42,7 @@ struct Event {
     kind: MusicalEvent,
     source: String,
     origin: Origin,
+    trigger: bool,
     spelling: Option<String>,
     token_offset: Option<usize>,
     source_bar: Option<usize>,
@@ -60,7 +61,7 @@ struct Builder<'a> {
     control_ramps: Vec<(String, String, Quarter, Quarter, String)>,
 }
 
-pub(super) fn lower(doc: &Value) -> Result<ScorePlan> {
+pub(super) fn lower(doc: &Value, additional_times: &[Quarter]) -> Result<ScorePlan> {
     let meta = &doc["meta"];
     let bpm = number(required(meta, "bpm", "meta")?, "meta.bpm")?;
     if bpm <= 0.0 {
@@ -133,7 +134,15 @@ pub(super) fn lower(doc: &Value) -> Result<ScorePlan> {
     builder.validate_control_ramps()?;
     builder.offset_timing(&start)?;
     builder.validate_controls()?;
-    let timeline = compile_timeline(meta, &builder, &sections, &start, &tempos, &meters)?;
+    let timeline = compile_timeline(
+        meta,
+        &builder,
+        &sections,
+        &start,
+        &tempos,
+        &meters,
+        additional_times,
+    )?;
     let part_windows = compile_part_windows(
         std::mem::take(&mut builder.part_windows),
         timeline.ticks_per_beat,
@@ -144,6 +153,13 @@ pub(super) fn lower(doc: &Value) -> Result<ScorePlan> {
         source: super::Source::default(),
         title: text_field(meta, "title", "meta")?.into(),
         instruments: object(&doc["instruments"], "instruments")?.clone(),
+        production_sources: BTreeMap::new(),
+        production_effects: BTreeMap::new(),
+        kits: BTreeMap::new(),
+        kit_members: BTreeMap::new(),
+        audio_instruments: BTreeSet::new(),
+        audio_clips: BTreeMap::new(),
+        mix: None,
         lanes,
         sections: occurrences,
         length_ticks: timeline.length_ticks,
@@ -501,6 +517,7 @@ impl Builder<'_> {
             },
             source: path.into(),
             origin,
+            trigger: false,
             spelling: None,
             token_offset: None,
             source_bar: None,
@@ -545,7 +562,12 @@ impl Builder<'_> {
             0.0,
             path,
             origin,
-        )
+        )?;
+        self.events
+            .last_mut()
+            .expect("trigger note was inserted")
+            .trigger = true;
+        Ok(())
     }
     fn resolve_rolls(&mut self) -> Result<()> {
         let mut roll_positions = BTreeSet::new();
@@ -1604,6 +1626,7 @@ impl Builder<'_> {
                     kind,
                     source: path.into(),
                     origin: Origin::Musical,
+                    trigger: false,
                     spelling: None,
                     token_offset: None,
                     source_bar: None,
@@ -1662,6 +1685,7 @@ impl Builder<'_> {
             kind: event,
             source: path.into(),
             origin: Origin::Musical,
+            trigger: false,
             spelling: None,
             token_offset: None,
             source_bar: None,
@@ -2267,6 +2291,7 @@ fn compile_lanes(
         lanes[index].pattern.events.push(event.kind);
         lanes[index].sources.push(super::EventSource {
             path: event.source,
+            trigger: event.trigger,
             spelling: event.spelling,
             token_offset: event.token_offset,
             source_bar: event.source_bar,
@@ -2407,8 +2432,10 @@ fn compile_timeline(
     start: &Quarter,
     tempos: &[(Quarter, f64)],
     meters: &[(Quarter, (u8, u8))],
+    additional_times: &[Quarter],
 ) -> Result<PerformanceEvents> {
     let mut denominators = vec![start];
+    denominators.extend(additional_times);
     for event in &builder.events {
         denominators.extend([&event.at, &event.duration]);
     }

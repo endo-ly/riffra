@@ -405,6 +405,19 @@ fn read(
         .map_err(|error| format!("could not read score: {}: {error}", path.display()))?;
     let path = std::fs::canonicalize(path).map_err(|error| error.to_string())?;
     let plan = score::compile(&yaml).map_err(score_error)?;
+    if !plan.production_sources.is_empty()
+        || !plan.production_effects.is_empty()
+        || !plan.kits.is_empty()
+        || !plan.audio_instruments.is_empty()
+        || !plan.audio_clips.is_empty()
+        || plan.mix.is_some()
+    {
+        let message = "Score production extensions are not imported".to_owned();
+        return Err(ImportError {
+            details: plan.source_detail("instruments", &message),
+            message,
+        });
+    }
     let missing: Vec<_> = plan
         .instruments
         .iter()
