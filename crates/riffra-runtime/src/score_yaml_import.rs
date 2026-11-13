@@ -74,9 +74,13 @@ fn fingerprint(path: &Path) -> Result<Fingerprint, String> {
 }
 
 fn record_dependency(dependencies: &mut Dependencies, path: &Path) -> Result<(), String> {
-    let path =
+    let canonical =
         std::fs::canonicalize(path).map_err(|error| format!("{}: {error}", path.display()))?;
-    dependencies.insert(path.clone(), fingerprint(&path)?);
+    let value = fingerprint(&canonical)?;
+    dependencies.insert(canonical.clone(), value.clone());
+    if path != canonical {
+        dependencies.insert(path.to_path_buf(), value);
+    }
     Ok(())
 }
 
@@ -866,7 +870,6 @@ pub(crate) fn inspect(
         &mut staged,
         BuildMode::Validate,
     )?;
-    validate_performance(&document.plan, &document.sources)?;
     let plan = &document.plan;
     use score::production::mix::{BusKind, Owner, SendPosition};
     let position = |value| {
@@ -2398,7 +2401,7 @@ fn automation_targets(
                     .ok_or_else(|| fail("automation sidechain source is not defined".to_owned()))?
                     .clone()
             };
-            let target = sidechain_device_id(to);
+            let target = effect_device_id_for(to);
             ids.iter()
                 .filter_map(|track_id| {
                     mixer.sidechain_sends.iter().find(|send| {
@@ -2450,10 +2453,6 @@ fn effect_device_id_for(effect: &score::production::mix::EffectRef) -> String {
         score::production::mix::Owner::Bus(id) => effect_device_id(&owner_bus(id), &effect.id),
         score::production::mix::Owner::Master => effect_device_id("master", &effect.id),
     }
-}
-
-fn sidechain_device_id(effect: &score::production::mix::EffectRef) -> String {
-    effect_device_id_for(effect)
 }
 
 /// Builds explicit Score automation and the section gain lanes it replaces.
