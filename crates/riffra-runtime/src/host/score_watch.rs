@@ -66,7 +66,7 @@ impl ScoreWatcher {
 
 fn run(shared: &std::sync::Weak<HostState>, worker: &WatcherState) {
     let mut pending: Option<Pending> = None;
-    let mut failed: Option<(String, String)> = None;
+    let mut failed: Option<(String, String, String)> = None;
     while !worker.stop.load(Ordering::Acquire) {
         std::thread::sleep(POLL_INTERVAL);
         if worker.stop.load(Ordering::Acquire) {
@@ -118,9 +118,14 @@ fn run(shared: &std::sync::Weak<HostState>, worker: &WatcherState) {
             });
             continue;
         }
-        if failed.as_ref().is_some_and(|(failed_path, text)| {
-            *failed_path == path.to_string_lossy() && *text == yaml
-        }) {
+        if failed
+            .as_ref()
+            .is_some_and(|(failed_project, failed_path, text)| {
+                *failed_project == canonical.project_id
+                    && *failed_path == path.to_string_lossy()
+                    && *text == yaml
+            })
+        {
             continue;
         }
         match &pending {
@@ -164,7 +169,11 @@ fn run(shared: &std::sync::Weak<HostState>, worker: &WatcherState) {
         match super::project::synchronize_score(&state, &item.project_id, &item.path) {
             Ok(()) => failed = None,
             Err(error) => {
-                failed = Some((item.path.to_string_lossy().into_owned(), item.yaml.clone()));
+                failed = Some((
+                    item.project_id.clone(),
+                    item.path.to_string_lossy().into_owned(),
+                    item.yaml.clone(),
+                ));
                 state.set_score_sync(failed_status(
                     &item.project_id,
                     &item.path,
