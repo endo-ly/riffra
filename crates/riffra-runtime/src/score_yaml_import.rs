@@ -1657,7 +1657,7 @@ fn build(
         let claimed = claims.get(&index).copied();
         let resolved = production.get(&format!("instruments.{}.source", lane.id));
         let velocity = resolved.and_then(ResolvedProduction::velocity);
-        let mut instrument = if let Some(ResolvedProduction::Source { plugin, .. }) = resolved {
+        let instrument = if let Some(ResolvedProduction::Source { plugin, .. }) = resolved {
             let (instrument, _) = vst3_instrument(plugin, claimed)?;
             instrument
         } else {
@@ -1676,11 +1676,6 @@ fn build(
                 instrument.id = format!("score:device:{}", riffra_control::new_instance_id());
             }
             instrument
-        };
-        instrument.name = if let Some(ResolvedProduction::Source { plugin, .. }) = resolved {
-            plugin.entry.name.clone()
-        } else {
-            sources[&lane.id].name.clone()
         };
         let mut track = match claimed {
             Some(previous) => previous.clone(),
@@ -1772,7 +1767,9 @@ fn build(
                 kit_id.clone(),
             ),
         };
-        track.name = kit_id.clone();
+        if claimed.is_none() {
+            track.name = kit_id.clone();
+        }
         track.instrument = Some(instrument);
         track.kind = TrackKind::Instrument;
         let track_mix = plan.mix.as_ref().and_then(|mix| mix.tracks.get(kit_id));
@@ -1836,7 +1833,9 @@ fn build(
             },
             |track| track.clone(),
         );
-        track.name = id.clone();
+        if claimed.is_none() {
+            track.name = id.clone();
+        }
         track.kind = TrackKind::Audio;
         track.instrument = None;
         track.gain_db = spec["gain_db"].as_f64().unwrap_or(0.0);
@@ -1999,6 +1998,33 @@ fn build(
         },
     );
     tracks.extend(retained_tracks);
+    {
+        let track_ids = tracks
+            .iter()
+            .map(|track| track.id.clone())
+            .collect::<BTreeSet<_>>();
+        let group_ids = mixer
+            .buses
+            .iter()
+            .filter(|bus| bus.kind == MixBusKind::Group)
+            .map(|bus| bus.id.clone())
+            .collect::<BTreeSet<_>>();
+        for track in tracks
+            .iter_mut()
+            .filter(|track| track.score_instrument.is_none())
+        {
+            if track
+                .output_bus_id
+                .as_ref()
+                .is_some_and(|id| !group_ids.contains(id))
+            {
+                track.output_bus_id = None;
+            }
+            track
+                .external_audio_source_track_ids
+                .retain(|id| track_ids.contains(id) && *id != track.id);
+        }
+    }
     clips.extend(retained_clips);
     if let Some(previous) = previous {
         let track_ids = tracks
@@ -2116,9 +2142,14 @@ fn build_audio_clips(
             {
                 occurrence_number += 1;
                 for spec in specs {
+                    if spec.instrument != *instrument {
+                        continue;
+                    }
                     let id = format!(
-                        "score:audio:{instrument}:{section}:{occurrence_number}:{}",
-                        spec.id
+                        "score:audio:{}:{}:{occurrence_number}:{}",
+                        score_id_component(instrument),
+                        score_id_component(section),
+                        score_id_component(&spec.id)
                     );
                     let file = base.join(&spec.file);
                     let file = std::fs::canonicalize(&file).map_err(|error| {
@@ -2296,11 +2327,17 @@ fn automation_targets(
         }
     };
     let bus_id = |id: &str| {
-        mixer
-            .buses
-            .iter()
-            .find(|bus| bus.name == id)
-            .map(|bus| bus.id.clone())
+        plan.mix
+            .as_ref()
+            .and_then(|mix| mix.buses.get(id))
+            .map(|bus| canonical_bus_id(bus.kind, id))
+            .or_else(|| {
+                mixer
+                    .buses
+                    .iter()
+                    .find(|bus| bus.name == id)
+                    .map(|bus| bus.id.clone())
+            })
     };
     let parameter_id = |index: usize| {
         resolved
@@ -2602,7 +2639,6 @@ fn vst3_instrument(
             plugin.plugin.path.clone(),
         )?
     };
-    instrument.name = plugin.entry.name.clone();
     match &mut instrument.source {
         TrackInstrumentSource::Vst3(state) => *state = plugin.plugin.clone(),
         TrackInstrumentSource::Internal { .. } => {
@@ -2779,20 +2815,35 @@ fn auto_volume_lane(
     }
 }
 
+fn score_id_component(value: &str) -> String {
+    value.replace('%', "%25").replace(':', "%3A")
+}
+
+fn canonical_bus_id(kind: score::production::mix::BusKind, id: &str) -> String {
+    format!(
+        "score:bus:{}:{}",
+        match kind {
+            score::production::mix::BusKind::Group => "group",
+            score::production::mix::BusKind::Return => "return",
+        },
+        score_id_component(id)
+    )
+}
+
 fn owner_instrument(id: &str) -> String {
-    format!("instrument:{id}")
+    format!("instrument:{}", score_id_component(id))
 }
 
 fn owner_kit(id: &str) -> String {
-    format!("kit:{id}")
+    format!("kit:{}", score_id_component(id))
 }
 
 fn owner_bus(id: &str) -> String {
-    format!("bus:{id}")
+    format!("bus:{}", score_id_component(id))
 }
 
 fn effect_device_id(owner: &str, id: &str) -> String {
-    format!("score:effect:{owner}:{id}")
+    format!("score:effect:{owner}:{}", score_id_component(id))
 }
 
 /// Builds one ordered effect chain from resolved production effects.
@@ -2899,13 +2950,7 @@ fn build_mixer(
     let mut buses = BTreeMap::<String, MixBus>::new();
     let mut bus_ids = BTreeMap::<String, String>::new();
     for (id, bus) in &mix.buses {
-        let canonical = format!(
-            "score:bus:{}:{id}",
-            match bus.kind {
-                score::production::mix::BusKind::Group => "group",
-                score::production::mix::BusKind::Return => "return",
-            }
-        );
+        let canonical = canonical_bus_id(bus.kind, id);
         let (muted, solo) = previous
             .and_then(|session| {
                 session.arrangement.mixer.buses.iter().find(|candidate| {
@@ -3926,6 +3971,17 @@ mod tests {
             "score:effect:instrument:bass:duck"
         );
         assert!(staged.is_empty());
+
+        let mut again = production_document(PRODUCTION);
+        let rebuilt = build(
+            &mut again,
+            Some(&session),
+            &store,
+            &mut staged,
+            BuildMode::Stage,
+        )
+        .expect("no-op production rebuild");
+        assert!(session.score_performance_equals(&rebuilt));
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -4096,10 +4152,15 @@ mod tests {
     }
 
     fn with_audio_clip(score: &str) -> String {
-        score.replace(
-            r#""sections":{"verse":{"drums":"beat","lines":{"main":{"instrument":"bass","melody":"theme"}}}}"#,
-            r#""sections":{"verse":{"drums":"beat","lines":{"main":{"instrument":"bass","melody":"theme"}},"audio_clips":[{"id":"rain","instrument":"ambience","file":"audio/rain.wav","at":{"bar":1,"step":1}}]}}"#,
-        )
+        score
+            .replace(
+                r#""ambience":{"audio":true,"gain_db":-5}"#,
+                r#""ambience":{"audio":true,"gain_db":-5},"ambience2":{"audio":true,"gain_db":-8}"#,
+            )
+            .replace(
+                r#""sections":{"verse":{"drums":"beat","lines":{"main":{"instrument":"bass","melody":"theme"}}}}"#,
+                r#""sections":{"verse":{"drums":"beat","lines":{"main":{"instrument":"bass","melody":"theme"}},"audio_clips":[{"id":"rain","instrument":"ambience","file":"audio/rain.wav","at":{"bar":1,"step":1}},{"id":"thunder","instrument":"ambience2","file":"audio/thunder.wav","at":{"bar":1,"step":1}}]}}"#,
+            )
     }
 
     #[test]
@@ -4111,6 +4172,12 @@ mod tests {
         let score_dir = root.join("music/song");
         std::fs::create_dir_all(score_dir.join("audio")).unwrap();
         std::fs::write(score_dir.join("audio/rain.wav"), one_sample_wav()).unwrap();
+        let mut thunder = one_sample_wav();
+        thunder.extend_from_slice(&[0, 0]);
+        let thunder_len = thunder.len() as u32;
+        thunder[40..44].copy_from_slice(&(thunder_len - 44).to_le_bytes());
+        thunder[4..8].copy_from_slice(&(thunder_len - 8).to_le_bytes());
+        std::fs::write(score_dir.join("audio/thunder.wav"), thunder).unwrap();
         let score_path = score_dir.join("score.yaml");
         let store = store(&root);
         let yaml = with_audio_clip(PRODUCTION);
@@ -4120,16 +4187,44 @@ mod tests {
         let session =
             build(&mut document, None, &store, &mut staged, BuildMode::Stage).expect("audio build");
 
-        assert_eq!(session.arrangement.audio_clips.len(), 1);
-        let clip = &session.arrangement.audio_clips[0];
-        assert_eq!(clip.start_tick.0, 0);
-        assert_eq!(clip.source_sample_rate, 44_100);
-        assert_eq!(clip.source_range.start, 0);
-        assert_eq!(clip.source_range.end, 1);
-        assert_eq!(clip.timeline_duration.frames, 1);
-        assert_eq!(staged.assets.len(), 1);
-        let first_asset = clip.asset_id.clone();
-        assert!(riffra_host::load(&root, &first_asset).unwrap().is_some());
+        assert_eq!(session.arrangement.audio_clips.len(), 2);
+        let rain = session
+            .arrangement
+            .audio_clips
+            .iter()
+            .find(|clip| clip.name == "rain")
+            .expect("rain clip");
+        let thunder = session
+            .arrangement
+            .audio_clips
+            .iter()
+            .find(|clip| clip.name == "thunder")
+            .expect("thunder clip");
+        let ambience = session
+            .arrangement
+            .tracks
+            .iter()
+            .find(|track| track.name == "ambience")
+            .expect("ambience track");
+        let ambience2 = session
+            .arrangement
+            .tracks
+            .iter()
+            .find(|track| track.name == "ambience2")
+            .expect("ambience2 track");
+        assert_eq!(rain.track_id, ambience.id);
+        assert_eq!(thunder.track_id, ambience2.id);
+        assert_eq!(rain.start_tick.0, 0);
+        assert_eq!(rain.source_sample_rate, 44_100);
+        assert_eq!(rain.source_range.start, 0);
+        assert_eq!(rain.source_range.end, 1);
+        assert_eq!(rain.timeline_duration.frames, 1);
+        assert_eq!(thunder.timeline_duration.frames, 2);
+        assert_eq!(staged.assets.len(), 2);
+        let rain_asset = rain.asset_id.clone();
+        let thunder_asset = thunder.asset_id.clone();
+        assert!(riffra_host::load(&root, &rain_asset).unwrap().is_some());
+        assert!(riffra_host::load(&root, &thunder_asset).unwrap().is_some());
 
         let mut second = production_document(&yaml);
         second.path = score_path.clone();
@@ -4143,8 +4238,21 @@ mod tests {
         )
         .expect("audio rebuild");
         assert!(unchanged.assets.is_empty());
-        assert_eq!(rebuilt.arrangement.audio_clips[0].id, clip.id);
-        assert_eq!(rebuilt.arrangement.audio_clips[0].asset_id, first_asset);
+        let rebuilt_rain = rebuilt
+            .arrangement
+            .audio_clips
+            .iter()
+            .find(|clip| clip.name == "rain")
+            .expect("rain rebuild");
+        assert_eq!(rebuilt_rain.id, rain.id);
+        assert_eq!(rebuilt_rain.asset_id, rain_asset);
+        let rebuilt_thunder = rebuilt
+            .arrangement
+            .audio_clips
+            .iter()
+            .find(|clip| clip.name == "thunder")
+            .expect("thunder rebuild");
+        assert_eq!(rebuilt_thunder.asset_id, thunder_asset);
 
         let mut changed_wav = one_sample_wav();
         changed_wav.extend_from_slice(&[1, 0]);
@@ -4165,9 +4273,22 @@ mod tests {
         )
         .expect("changed audio rebuild");
         assert_eq!(replaced.assets.len(), 1);
-        assert_eq!(rebuilt.arrangement.audio_clips[0].id, clip.id);
-        assert_ne!(rebuilt.arrangement.audio_clips[0].asset_id, first_asset);
-        assert!(riffra_host::load(&root, &first_asset).unwrap().is_some());
+        let replaced_rain = rebuilt
+            .arrangement
+            .audio_clips
+            .iter()
+            .find(|clip| clip.name == "rain")
+            .expect("changed rain");
+        assert_eq!(replaced_rain.id, rain.id);
+        assert_ne!(replaced_rain.asset_id, rain_asset);
+        let replaced_thunder = rebuilt
+            .arrangement
+            .audio_clips
+            .iter()
+            .find(|clip| clip.name == "thunder")
+            .expect("unchanged thunder");
+        assert_eq!(replaced_thunder.asset_id, thunder_asset);
+        assert!(riffra_host::load(&root, &rain_asset).unwrap().is_some());
 
         let mut validated = production_document(&yaml);
         validated.path = score_path;

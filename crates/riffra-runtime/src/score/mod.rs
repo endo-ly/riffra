@@ -490,6 +490,17 @@ pub(crate) fn compile(text: &str) -> Result<ScorePlan> {
                     "kit must have at least one member",
                 ));
             }
+            let score_key = format!("kit:{id}");
+            if view
+                .get("instruments")
+                .and_then(Value::as_object)
+                .is_some_and(|instruments| instruments.contains_key(&score_key))
+            {
+                return Err(Error::new(
+                    format!("kits.{id}"),
+                    "kit id conflicts with an instrument score id",
+                ));
+            }
         }
         let source_less = sources
             .keys()
