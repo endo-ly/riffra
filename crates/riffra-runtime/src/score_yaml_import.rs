@@ -457,6 +457,53 @@ fn resolve_production(
             );
         }
     }
+    if let Some(mix) = &plan.mix {
+        let mut capabilities =
+            BTreeMap::<String, crate::api::output::DeviceSidechainCapability>::new();
+        for (index, route) in mix.sidechain.iter().enumerate() {
+            let path = format!("mix.sidechain[{index}].to");
+            let field = effect_field(plan, &route.to).ok_or_else(|| ImportError {
+                details: plan.source_detail(&path, "sidechain target was not resolved"),
+                message: "sidechain target was not resolved".to_owned(),
+            })?;
+            let Some(pending) = uses.get(&field) else {
+                return Err(ImportError {
+                    details: plan.source_detail(&path, "sidechain target was not resolved"),
+                    message: "sidechain target was not resolved".to_owned(),
+                });
+            };
+            let ResolvedProduction::Effect { plugin, .. } = &pending.production else {
+                return Err(ImportError {
+                    details: plan.source_detail(&path, "sidechain target is not an effect"),
+                    message: "sidechain target is not an effect".to_owned(),
+                });
+            };
+            let plugin_path = plugin.plugin.path.clone();
+            let capability = if let Some(capability) = capabilities.get(&plugin_path) {
+                capability.clone()
+            } else {
+                let capability = crate::plugins::validation::probe_sidechain_capability(
+                    scanner,
+                    Path::new(&plugin_path),
+                )
+                .map_err(|message| ImportError {
+                    details: plan.source_detail(&path, &message),
+                    message,
+                })?;
+                capabilities.insert(plugin_path.clone(), capability.clone());
+                capability
+            };
+            if !capability.available {
+                let message = capability
+                    .reason
+                    .unwrap_or_else(|| "plugin has no auxiliary sidechain input".to_owned());
+                return Err(ImportError {
+                    details: plan.source_detail(&path, &message),
+                    message,
+                });
+            }
+        }
+    }
     let mut groups = BTreeMap::<String, Vec<String>>::new();
     for (key, pending) in &uses {
         if !pending.needs_probe {
