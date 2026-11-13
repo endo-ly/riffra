@@ -93,6 +93,7 @@ fn run(shared: &std::sync::Weak<HostState>, worker: &WatcherState) {
                 &canonical.project_id,
                 &path,
                 vec![ScoreDiagnostic {
+                    severity: crate::api::output::ScoreDiagnosticSeverity::Error,
                     path: String::new(),
                     message: format!(
                         "the linked Score file could not be read: {}",
@@ -209,6 +210,7 @@ fn failed_status(
 fn diagnostics(error: &ProtocolError) -> Vec<ScoreDiagnostic> {
     let detail = error.details.clone().unwrap_or_default();
     vec![ScoreDiagnostic {
+        severity: crate::api::output::ScoreDiagnosticSeverity::Error,
         path: detail["path"].as_str().unwrap_or_default().to_owned(),
         message: error.message.clone(),
         line: detail["line"].as_u64().unwrap_or(0) as usize,

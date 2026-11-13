@@ -1,14 +1,18 @@
 //! Score YAML to canonical production state.
 //!
 //! A Score document is read once, compiled with Riffra analysis, resolved
-//! against the built-in catalog and Sonalloy inspection, and only then
-//! converted into canonical production state. Rebuilding a linked Project
-//! reuses tracks, devices, and instrument snapshots whose sources did not
-//! change.
+//! against the library, the VST3 plugin catalog, and Sonalloy inspection, and
+//! only then converted into canonical production state. Rebuilding a linked
+//! Project reuses tracks, devices, and instrument snapshots whose sources did
+//! not change.
+
+mod library;
 
 use crate::api::output::{
-    ScoreChordInspection, ScoreDiagnostic, ScoreInspection, ScoreInstrumentInspection,
-    ScoreLaneInspection, ScoreSectionInspection, ScoreSummary, ScoreValidation,
+    ScoreAudioClipInspection, ScoreBusInspection, ScoreChordInspection, ScoreDiagnostic,
+    ScoreDiagnosticSeverity, ScoreInspection, ScoreInstrumentInspection, ScoreInstrumentKind,
+    ScoreLaneInspection, ScoreSectionInspection, ScoreSendInspection, ScoreSidechainInspection,
+    ScoreSummary, ScoreValidation,
 };
 use crate::api::params::ProjectImportScoreParams;
 use crate::instrument::{BuiltInInstrumentCatalog, UserInstrumentStore};
@@ -57,6 +61,123 @@ struct ScoreDocument {
     plan: ScorePlan,
     bindings: BTreeMap<String, PathBuf>,
     sources: BTreeMap<String, Source>,
+    production: BTreeMap<String, library::ResolvedPlugin>,
+}
+
+fn is_production_instrument(plan: &ScorePlan, id: &str) -> bool {
+    plan.production_sources.contains_key(id)
+        || plan.kit_members.contains_key(id)
+        || plan.audio_instruments.contains(id)
+}
+
+fn validate_audio(plan: &ScorePlan, base: &Path) -> Result<(), ImportError> {
+    use num_traits::ToPrimitive;
+    for (section, clips) in &plan.audio_clips {
+        for (index, clip) in clips.iter().enumerate() {
+            let field = format!("sections.{section}.audio_clips[{index}]");
+            let fail = |message: String| ImportError {
+                details: plan.source_detail(&field, &message),
+                message,
+            };
+            let path = base.join(&clip.file);
+            let (rate, total) = riffra_host::read_wav_metadata(&path)
+                .map_err(|error| fail(format!("{}: {error}", path.display())))?;
+            let frames = |seconds: f64| (seconds * f64::from(rate)).round().to_u64();
+            let start = frames(clip.offset_seconds)
+                .ok_or_else(|| fail("audio offset exceeds supported frame range".to_owned()))?;
+            let duration = match clip.duration_seconds {
+                Some(seconds) => frames(seconds).ok_or_else(|| {
+                    fail("audio duration exceeds supported frame range".to_owned())
+                })?,
+                None => total.saturating_sub(start),
+            };
+            if duration == 0 || start.checked_add(duration).is_none_or(|end| end > total) {
+                return Err(fail(
+                    "audio clip range is outside the source file".to_owned(),
+                ));
+            }
+            if [clip.fade_in_seconds, clip.fade_out_seconds]
+                .into_iter()
+                .any(|seconds| frames(seconds).is_none_or(|fade| fade > duration))
+            {
+                return Err(fail("audio clip fade exceeds its duration".to_owned()));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn resolve_production(
+    plan: &ScorePlan,
+    base: &Path,
+    data_root: &Path,
+) -> Result<BTreeMap<String, library::ResolvedPlugin>, ImportError> {
+    let library = library::Library::new(base);
+    let mut plugins = BTreeMap::new();
+    let mut insert_source =
+        |field: String, source: &score::production::SourceSpec| -> Result<(), ImportError> {
+            let resolve = || -> Result<library::ResolvedPlugin, String> {
+                let resolved = library.instrument(source)?;
+                let vst3 = resolved
+                    .source
+                    .vst3
+                    .as_ref()
+                    .ok_or_else(|| "source requires a VST3 plugin".to_owned())?;
+                let mut plugin = library::resolve_plugin(
+                    data_root,
+                    vst3,
+                    crate::api::output::PluginRole::Instrument,
+                )?;
+                plugin.range = resolved.range;
+                plugin.notes = resolved.notes;
+                Ok(plugin)
+            };
+            let result = resolve().map_err(|message| ImportError {
+                details: plan.source_detail(&field, &message),
+                message,
+            })?;
+            plugins.insert(field, result);
+            Ok(())
+        };
+    for (id, source) in &plan.production_sources {
+        insert_source(format!("instruments.{id}.source"), source)?;
+    }
+    for (id, kit) in &plan.kits {
+        insert_source(format!("kits.{id}.source"), &kit.source)?;
+    }
+    let mut insert_effects =
+        |field: String, effects: &[score::production::EffectSpec]| -> Result<(), ImportError> {
+            for (index, effect) in effects.iter().enumerate() {
+                let path = format!("{field}[{index}]");
+                let resolve = || -> Result<library::ResolvedPlugin, String> {
+                    let effect = library.effect(effect)?;
+                    let vst3 = effect
+                        .vst3
+                        .as_ref()
+                        .ok_or_else(|| "effect requires a VST3 plugin".to_owned())?;
+                    library::resolve_plugin(data_root, vst3, crate::api::output::PluginRole::Effect)
+                };
+                let result = resolve().map_err(|message| ImportError {
+                    details: plan.source_detail(&path, &message),
+                    message,
+                })?;
+                plugins.insert(path, result);
+            }
+            Ok(())
+        };
+    for (id, effects) in &plan.production_effects {
+        insert_effects(format!("instruments.{id}.effects"), effects)?;
+    }
+    for (id, kit) in &plan.kits {
+        insert_effects(format!("kits.{id}.effects"), &kit.effects)?;
+    }
+    if let Some(mix) = &plan.mix {
+        for (id, bus) in &mix.buses {
+            insert_effects(format!("mix.buses.{id}.effects"), &bus.effects)?;
+        }
+        insert_effects("mix.master.effects".to_owned(), &mix.master_effects)?;
+    }
+    Ok(plugins)
 }
 
 /// A canonical Session candidate and the snapshots it staged.
@@ -125,6 +246,7 @@ pub(crate) fn import(
         &params.path,
         &params.bindings,
         &params.bindings.keys().cloned().collect(),
+        data_root,
         catalog,
         sonalloy,
     )?;
@@ -176,6 +298,7 @@ pub(crate) fn rebuild(
         &path,
         &effective,
         &bindings.keys().cloned().collect(),
+        data_root,
         catalog,
         sonalloy,
     )?;
@@ -222,6 +345,7 @@ pub(crate) fn source_changed(session: &CreativeSession) -> bool {
 pub(crate) fn validate(
     path: &Path,
     bindings: &BTreeMap<String, PathBuf>,
+    data_root: &Path,
     catalog: &BuiltInInstrumentCatalog,
     sonalloy: &Path,
 ) -> ScoreValidation {
@@ -229,16 +353,17 @@ pub(crate) fn validate(
         path,
         bindings,
         &bindings.keys().cloned().collect(),
+        data_root,
         catalog,
         sonalloy,
     )
     .and_then(|document| {
         validate_performance(&document.plan, &document.sources)?;
-        Ok(summary(&document.plan))
+        Ok((summary(&document.plan), warnings(&document.plan)))
     }) {
-        Ok(summary) => ScoreValidation {
+        Ok((summary, diagnostics)) => ScoreValidation {
             valid: true,
-            diagnostics: Vec::new(),
+            diagnostics,
             summary: Some(summary),
         },
         Err(error) => ScoreValidation {
@@ -257,6 +382,7 @@ pub(crate) fn inspect(
     path: &Path,
     bindings: &BTreeMap<String, PathBuf>,
     events: bool,
+    data_root: &Path,
     catalog: &BuiltInInstrumentCatalog,
     sonalloy: &Path,
 ) -> Result<ScoreInspection, ImportError> {
@@ -264,13 +390,97 @@ pub(crate) fn inspect(
         path,
         bindings,
         &bindings.keys().cloned().collect(),
+        data_root,
         catalog,
         sonalloy,
     )?;
     validate_performance(&document.plan, &document.sources)?;
     let plan = &document.plan;
+    use score::production::mix::{BusKind, Owner, SendPosition};
+    let position = |value| {
+        match value {
+            SendPosition::Pre => "pre",
+            SendPosition::Post => "post",
+        }
+        .to_owned()
+    };
+    let mut buses = Vec::new();
+    let mut sends = Vec::new();
+    let mut sidechains = Vec::new();
+    if let Some(mix) = &plan.mix {
+        for (id, bus) in &mix.buses {
+            buses.push(ScoreBusInspection {
+                id: id.clone(),
+                kind: match bus.kind {
+                    BusKind::Group => "group",
+                    BusKind::Return => "return",
+                }
+                .into(),
+                gain_db: bus.gain_db,
+                pan: bus.pan,
+            });
+        }
+        for (from, track) in &mix.tracks {
+            for (bus, send) in &track.sends {
+                sends.push(ScoreSendInspection {
+                    from: from.clone(),
+                    bus: bus.clone(),
+                    level_db: send.level_db,
+                    position: position(send.position),
+                    enabled: send.enabled,
+                });
+            }
+        }
+        for route in &mix.sidechain {
+            let (kind, id) = match &route.to.owner {
+                Owner::Instrument(id) => ("instrument", Some(id.clone())),
+                Owner::Kit(id) => ("kit", Some(id.clone())),
+                Owner::Bus(id) => ("bus", Some(id.clone())),
+                Owner::Master => ("master", None),
+            };
+            sidechains.push(ScoreSidechainInspection {
+                from: route.from.clone(),
+                owner_kind: kind.into(),
+                owner_id: id,
+                effect: route.to.id.clone(),
+                level_db: route.send.level_db,
+                position: position(route.send.position),
+                enabled: route.send.enabled,
+            });
+        }
+    }
+    let audio_clips = plan
+        .audio_clips
+        .iter()
+        .flat_map(|(section, clips)| {
+            clips.iter().map(move |clip| ScoreAudioClipInspection {
+                id: clip.id.clone(),
+                section: section.clone(),
+                instrument: clip.instrument.clone(),
+                file: clip.file.clone(),
+                start_ticks: plan
+                    .sections
+                    .iter()
+                    .filter(|item| item.section == *section)
+                    .map(|item| plan.position_tick(item, &clip.at))
+                    .collect(),
+                offset_seconds: clip.offset_seconds,
+                duration_seconds: clip.duration_seconds,
+                gain_db: clip.gain_db,
+                pan: clip.pan,
+                fade_in_seconds: clip.fade_in_seconds,
+                fade_out_seconds: clip.fade_out_seconds,
+            })
+        })
+        .collect();
     Ok(ScoreInspection {
         summary: summary(plan),
+        diagnostics: warnings(plan),
+        buses,
+        sends,
+        sidechains,
+        audio_clips,
+        master_gain_db: plan.mix.as_ref().map(|mix| mix.master_gain_db),
         sections: plan
             .sections
             .iter()
@@ -297,12 +507,46 @@ pub(crate) fn inspect(
             .instruments
             .keys()
             .map(|id| {
-                let source = &document.sources[id];
-                ScoreInstrumentInspection {
-                    id: id.clone(),
-                    name: source.name.clone(),
-                    definition: source.definition.to_string_lossy().into_owned(),
-                    built_in: source.built_in.is_some(),
+                if let Some(source) = document.sources.get(id) {
+                    ScoreInstrumentInspection {
+                        id: id.clone(),
+                        name: source.name.clone(),
+                        kind: ScoreInstrumentKind::Builtin,
+                        definition: Some(source.definition.to_string_lossy().into_owned()),
+                        built_in: source.built_in.is_some(),
+                        plugin_name: None,
+                        plugin_identifier: None,
+                        plugin_path: None,
+                        kit: None,
+                        library_range: None,
+                        library_notes: None,
+                    }
+                } else {
+                    let path = plan.kit_members.get(id).map_or_else(
+                        || format!("instruments.{id}.source"),
+                        |kit| format!("kits.{kit}.source"),
+                    );
+                    let plugin = document.production.get(&path);
+                    ScoreInstrumentInspection {
+                        id: id.clone(),
+                        name: plugin.map_or_else(|| id.clone(), |plugin| plugin.entry.name.clone()),
+                        kind: if plan.kit_members.contains_key(id) {
+                            ScoreInstrumentKind::KitMember
+                        } else if plan.audio_instruments.contains(id) {
+                            ScoreInstrumentKind::Audio
+                        } else {
+                            ScoreInstrumentKind::Vst3
+                        },
+                        definition: None,
+                        built_in: false,
+                        plugin_name: plugin.map(|plugin| plugin.entry.name.clone()),
+                        plugin_identifier: plugin
+                            .and_then(|plugin| plugin.entry.identifier.clone()),
+                        plugin_path: plugin.map(|plugin| plugin.plugin.path.clone()),
+                        kit: plan.kit_members.get(id).cloned(),
+                        library_range: plugin.and_then(|plugin| plugin.range),
+                        library_notes: plugin.and_then(|plugin| plugin.notes.clone()),
+                    }
                 }
             })
             .collect(),
@@ -360,6 +604,7 @@ fn score_error(error: score::Error) -> ImportError {
 
 fn diagnostic(error: &ImportError) -> ScoreDiagnostic {
     ScoreDiagnostic {
+        severity: ScoreDiagnosticSeverity::Error,
         path: error.details["path"]
             .as_str()
             .unwrap_or_default()
@@ -369,6 +614,26 @@ fn diagnostic(error: &ImportError) -> ScoreDiagnostic {
         column: error.details["column"].as_u64().unwrap_or(0) as usize,
         detail: Some(error.details.clone()),
     }
+}
+
+fn warnings(plan: &ScorePlan) -> Vec<ScoreDiagnostic> {
+    plan.production_sources
+        .keys()
+        .filter(|id| plan.lanes.iter().filter(|lane| &lane.id == *id).count() > 1)
+        .map(|id| {
+            let path = format!("instruments.{id}.source");
+            let message = "performance gain lanes require separate VST3 instances".to_owned();
+            let detail = plan.source_detail(&path, &message);
+            ScoreDiagnostic {
+                severity: ScoreDiagnosticSeverity::Warning,
+                path,
+                line: detail["line"].as_u64().unwrap_or(0) as usize,
+                column: detail["column"].as_u64().unwrap_or(0) as usize,
+                message,
+                detail: Some(detail),
+            }
+        })
+        .collect()
 }
 
 fn summary(plan: &ScorePlan) -> ScoreSummary {
@@ -398,6 +663,7 @@ fn read(
     path: &Path,
     bindings: &BTreeMap<String, PathBuf>,
     explicit: &BTreeSet<String>,
+    data_root: &Path,
     catalog: &BuiltInInstrumentCatalog,
     sonalloy: &Path,
 ) -> Result<ScoreDocument, ImportError> {
@@ -405,23 +671,43 @@ fn read(
         .map_err(|error| format!("could not read score: {}: {error}", path.display()))?;
     let path = std::fs::canonicalize(path).map_err(|error| error.to_string())?;
     let plan = score::compile(&yaml).map_err(score_error)?;
-    if !plan.production_sources.is_empty()
-        || !plan.production_effects.is_empty()
-        || !plan.kits.is_empty()
-        || !plan.audio_instruments.is_empty()
-        || !plan.audio_clips.is_empty()
-        || plan.mix.is_some()
-    {
-        let message = "Score production extensions are not imported".to_owned();
+    let base = path.parent().expect("canonical file has a parent");
+    validate_audio(&plan, base)?;
+    let production = resolve_production(&plan, base, data_root)?;
+    if plan.mix.as_ref().is_some_and(|mix| {
+        mix.automation.iter().any(|lane| {
+            matches!(
+                lane.target,
+                score::production::mix::AutomationTarget::Effect { .. }
+                    | score::production::mix::AutomationTarget::Source { .. }
+            )
+        })
+    }) {
+        let message = "plugin parameter automation is not implemented for Score import".to_owned();
         return Err(ImportError {
-            details: plan.source_detail("instruments", &message),
+            details: plan.source_detail("mix.automation", &message),
+            message,
+        });
+    }
+    if plan
+        .mix
+        .as_ref()
+        .is_some_and(|mix| !mix.sidechain.is_empty())
+    {
+        let message = "sidechain routing is not implemented for Score import".to_owned();
+        return Err(ImportError {
+            details: plan.source_detail("mix.sidechain", &message),
             message,
         });
     }
     let missing: Vec<_> = plan
         .instruments
         .iter()
-        .filter(|(id, spec)| spec["external"] == true && !bindings.contains_key(*id))
+        .filter(|(id, spec)| {
+            spec["external"] == true
+                && !bindings.contains_key(*id)
+                && !is_production_instrument(&plan, id)
+        })
         .map(|(id, _)| id.clone())
         .collect();
     if !missing.is_empty() {
@@ -443,7 +729,6 @@ fn read(
             return Err(format!("binding '{id}' does not identify an external instrument").into());
         }
     }
-    let base = path.parent().expect("canonical file has a parent");
     let presets = base
         .ancestors()
         .map(|ancestor| ancestor.join("presets"))
@@ -452,6 +737,9 @@ fn read(
     let mut sources = BTreeMap::new();
     let mut effective = BTreeMap::new();
     for (id, spec) in &plan.instruments {
+        if is_production_instrument(&plan, id) {
+            continue;
+        }
         let field = format!("instruments.{id}");
         let definition =
             resolve_definition(spec, bindings.get(id), base, presets.as_deref(), catalog).map_err(
@@ -497,6 +785,7 @@ fn read(
         plan,
         bindings: effective,
         sources,
+        production,
     })
 }
 
@@ -507,6 +796,15 @@ fn build(
     store: &UserInstrumentStore,
     staged: &mut BTreeSet<PathBuf>,
 ) -> Result<CreativeSession, ImportError> {
+    if !document.production.is_empty()
+        || document.plan.mix.is_some()
+        || !document.plan.audio_instruments.is_empty()
+        || !document.plan.kits.is_empty()
+    {
+        return Err("production Score project generation is not implemented"
+            .to_owned()
+            .into());
+    }
     validate_performance(&document.plan, &document.sources)?;
     let ScoreDocument {
         path,
@@ -514,6 +812,7 @@ fn build(
         plan,
         bindings,
         sources,
+        ..
     } = document;
     let sources = sources.clone();
     for (id, spec) in &plan.instruments {
@@ -981,6 +1280,25 @@ fn validate_performance(
     sources: &BTreeMap<String, Source>,
 ) -> Result<(), ImportError> {
     for lane in &plan.lanes {
+        if is_production_instrument(plan, &lane.id) {
+            for (index, event) in lane.pattern.events.iter().enumerate() {
+                if matches!(
+                    event,
+                    MusicalEvent::ParameterChange { .. } | MusicalEvent::ParameterRamp { .. }
+                ) {
+                    let message = "Sonalloy instrument parameter events cannot target a production VST3; use mix automation".to_owned();
+                    let path = lane
+                        .sources
+                        .get(index)
+                        .map_or("", |source| source.path.as_str());
+                    return Err(ImportError {
+                        details: plan.source_detail(path, &message),
+                        message,
+                    });
+                }
+            }
+            continue;
+        }
         let source = &sources[&lane.id];
         let spec = &plan.instruments[&lane.id];
         let required_channels = source.report["external_audio"]["required_input_channels"]
@@ -1358,11 +1676,87 @@ mod tests {
             plan,
             bindings: BTreeMap::new(),
             sources,
+            production: BTreeMap::new(),
         }
     }
 
     fn store(root: &Path) -> UserInstrumentStore {
         UserInstrumentStore::new(root, Path::new("sonalloy"))
+    }
+
+    #[test]
+    fn validation_and_inspection_resolve_vst_without_sonalloy_or_persistent_assets() {
+        use crate::api::output::{
+            PluginEntry, PluginFormat, PluginRole, PluginScanState, ScanReport,
+        };
+        let root =
+            std::env::temp_dir().join(format!("riffra-score-production-{}", uuid::Uuid::now_v7()));
+        let score_dir = root.join("music/song");
+        let library_dir = root.join("library/instruments");
+        let vst_path = root.join("Synth.vst3");
+        std::fs::create_dir_all(&score_dir).unwrap();
+        std::fs::create_dir_all(&library_dir).unwrap();
+        std::fs::create_dir_all(&vst_path).unwrap();
+        std::fs::write(
+            library_dir.join("lead.yaml"),
+            "source:\n  vst3: {plugin: Synth}\nrange: [40, 90]\nnotes: lead sound\n",
+        )
+        .unwrap();
+        let report = ScanReport {
+            root: root.to_string_lossy().into_owned(),
+            started_at_ms: 0,
+            finished_at_ms: 0,
+            issues: Vec::new(),
+            plugins: vec![PluginEntry {
+                id: "synth".into(),
+                name: "Synth".into(),
+                vendor: None,
+                version: None,
+                identifier: Some("class-id".into()),
+                format: PluginFormat::Vst3,
+                role: Some(PluginRole::Instrument),
+                path: vst_path.to_string_lossy().into_owned(),
+                bundle: true,
+                modified_at_ms: None,
+                scan_state: PluginScanState::Validated,
+            }],
+        };
+        crate::plugins::catalog::save(&root, &report).unwrap();
+        let mut score: Value = serde_json::from_str(SCORE).unwrap();
+        score["instruments"]["lead"] = json!({"external":true, "source":{"use":"lead"}});
+        let score_path = score_dir.join("score.yaml");
+        std::fs::write(&score_path, score.to_string()).unwrap();
+        let catalog = crate::test_support::empty_built_in_catalog();
+        let validation = validate(
+            &score_path,
+            &BTreeMap::new(),
+            &root,
+            catalog,
+            Path::new("unavailable-sonalloy"),
+        );
+        assert!(validation.valid, "{:?}", validation.diagnostics);
+        let inspection = inspect(
+            &score_path,
+            &BTreeMap::new(),
+            false,
+            &root,
+            catalog,
+            Path::new("unavailable-sonalloy"),
+        )
+        .unwrap();
+        assert!(matches!(
+            inspection.instruments[0].kind,
+            ScoreInstrumentKind::Vst3
+        ));
+        assert_eq!(inspection.instruments[0].definition, None);
+        assert_eq!(
+            inspection.instruments[0].plugin_identifier.as_deref(),
+            Some("class-id")
+        );
+        assert_eq!(inspection.instruments[0].library_range, Some((40, 90)));
+        assert!(!root.join("assets").exists());
+        assert!(!root.join("instruments").exists());
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     fn notes(session: &CreativeSession) -> Vec<(u64, u8)> {

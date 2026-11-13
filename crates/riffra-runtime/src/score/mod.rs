@@ -350,6 +350,19 @@ impl ScorePlan {
     pub(crate) fn source_detail(&self, path: &str, message: &str) -> Value {
         *Error::new(path, message).locate(&self.source).detail
     }
+
+    pub(crate) fn position_tick(
+        &self,
+        section: &Occurrence,
+        position: &production::Position,
+    ) -> u64 {
+        let bar = match position.bar {
+            production::Bar::Number(n) => n,
+            production::Bar::Last => section.bars,
+        };
+        section.bar_start_ticks[bar - 1]
+            + time::tick(&position.offset, self.ticks_per_beat).expect("validated position")
+    }
 }
 
 /// Parse, validate, and expand Score YAML into a musical plan.

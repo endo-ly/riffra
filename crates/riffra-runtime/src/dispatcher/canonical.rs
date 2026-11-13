@@ -150,6 +150,7 @@ impl HostDispatcher<'_> {
                 crate::score_yaml_import::validate(
                     &params.path,
                     &params.bindings,
+                    &self.data_root,
                     &self.built_in_instruments,
                     &self.sonalloy,
                 ),
@@ -159,6 +160,7 @@ impl HostDispatcher<'_> {
                     &params.path,
                     &params.bindings,
                     params.events,
+                    &self.data_root,
                     &self.built_in_instruments,
                     &self.sonalloy,
                 )
