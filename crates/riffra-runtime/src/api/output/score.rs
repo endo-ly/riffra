@@ -195,10 +195,87 @@ pub struct ScoreAudioClipInspection {
     pub fade_out_seconds: f64,
 }
 
+/// One Track generated from a Score instrument, kit, or audio declaration.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ScoreTrackInspection {
+    /// Logical Score instrument or kit id.
+    pub id: String,
+    /// `instrument`, `kit`, or `audio`.
+    pub kind: String,
+    pub track_id: String,
+    pub name: String,
+    pub gain_db: f64,
+    pub pan: f64,
+    /// Score bus id, or `None` for the master output.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub output: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub device_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub plugin_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub plugin_identifier: Option<String>,
+    pub effect_ids: Vec<String>,
+    pub note_count: usize,
+}
+
+/// One Kit Track aggregated from member trigger notes.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ScoreKitInspection {
+    pub id: String,
+    pub track_id: String,
+    pub device_id: String,
+    pub plugin_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub plugin_identifier: Option<String>,
+    pub members: Vec<String>,
+    pub effect_ids: Vec<String>,
+    pub note_count: usize,
+}
+
+/// One effect device generated from a Score effect chain.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ScoreEffectInspection {
+    /// `instrument`, `kit`, `audio`, `bus`, or `master`.
+    pub owner_kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub owner_id: Option<String>,
+    /// Score effect id inside its owner chain.
+    pub id: String,
+    pub plugin_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub plugin_identifier: Option<String>,
+    pub plugin_path: String,
+    pub bypassed: bool,
+}
+
+/// One automation lane generated from the Score mix.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ScoreAutomationInspection {
+    pub target: String,
+    pub interpolation: String,
+    pub points: usize,
+}
+
 /// Detailed structure expanded from one Score document.
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ScoreInspection {
+    pub tracks: Vec<ScoreTrackInspection>,
+    pub kits: Vec<ScoreKitInspection>,
+    pub effects: Vec<ScoreEffectInspection>,
+    pub automation: Vec<ScoreAutomationInspection>,
     pub summary: ScoreSummary,
     pub sections: Vec<ScoreSectionInspection>,
     pub instruments: Vec<ScoreInstrumentInspection>,

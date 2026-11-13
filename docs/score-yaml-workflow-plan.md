@@ -24,17 +24,17 @@ Score YAML を、曲を打ち込む唯一の方法にする。設計担当と実
 
 ## 現状（2026-11-12 に確認）
 
-| 項目           | 状態                                                                                                                                                                                                                       |
-| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 読み込み       | CLI `riffra project import-score`、MCP `project` の `import_score`。8小節の試し書きで、構成・和声・食い・端数小節・リタルダンド・マスターの目標値まで正しく展開された                                                      |
-| 読み直し       | CLI `riffra project rebuild-score`、MCP `project` の `rebuild_score`。同じ Project をリンク先の YAML で更新し、Project ID・Session ID・変更のないトラックの Device ID を維持する。Live Host は保存を検知して自動で更新する |
-| 事前検証       | CLI `riffra score validate` / `riffra score inspect`、MCP `score` の `validate` / `inspect`。Project を作らず、音源スナップショットも増やさない                                                                            |
-| 案内           | MCP の説明文、`riffra-headless` スキル、Riffra `docs/score-yaml.md` に書いた                                                                                                                                               |
-| 楽器           | `preset` / `definition` / `external` と、Riffra の拡張の `source` / `effects` / `kit` / `audio`。Riffra は拡張を未実装として拒否し、Sonalloy は無視して内蔵音源だけを鳴らす                                                |
-| トラック       | 演奏レーンごとにトラックと音源インスタンスができる。`gain_db` が違う演奏も別トラックになる。ドラムは部品（kick、snare…）ごとに別の音源になる                                                                               |
-| 出どころの情報 | 展開時、各イベントに YAML のパス・トークン位置・行列・セクション・何回目の出現かが計算される（`EventSource`）。`score inspect` はこれを返すが、音符には残さない                                                            |
-| 元の YAML      | `ScoreSource` に最後に確定した全文・絶対パス・外部楽器の Definition パスが保存される。編集の正本はファイルであり、Project 内の本文は確定済みの控えである                                                                   |
-| 解析コード     | Riffra `crates/riffra-runtime/src/score/` と Sonalloy `crates/sonalloy-cli/src/score/` に同じコードがある                                                                                                                  |
+| 項目           | 状態                                                                                                                                                                                                                                   |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 読み込み       | CLI `riffra project import-score`、MCP `project` の `import_score`。8小節の試し書きで、構成・和声・食い・端数小節・リタルダンド・マスターの目標値まで正しく展開された                                                                  |
+| 読み直し       | CLI `riffra project rebuild-score`、MCP `project` の `rebuild_score`。同じ Project をリンク先の YAML で更新し、Project ID・Session ID・変更のないトラックの Device ID を維持する。Live Host は保存を検知して自動で更新する             |
+| 事前検証       | CLI `riffra score validate` / `riffra score inspect`、MCP `score` の `validate` / `inspect`。Project を作らず、音源スナップショットも増やさない                                                                                        |
+| 案内           | MCP の説明文、`riffra-headless` スキル、Riffra `docs/score-yaml.md` に書いた                                                                                                                                                           |
+| 楽器           | 内蔵音源の `preset` / `definition` / `external` と、Riffra の VST3 `source`・`effects`・`kit`・`audio`・`audio_clips`・`mix`。Riffra はライブラリとカタログから解決して正準状態を生成し、Sonalloy は拡張を無視して内蔵音源だけを鳴らす |
+| トラック       | 演奏レーンごとにトラックと音源インスタンスができる。`gain_db` が違う演奏も別トラックになる。キットは部品を 1 トラック・1 インスタンスへ集約し、音声は Audio Track と AudioClip になる                                                  |
+| 出どころの情報 | 展開時、各イベントに YAML のパス・トークン位置・行列・セクション・何回目の出現かが計算される（`EventSource`）。`score inspect` はこれを返すが、音符には残さない                                                                        |
+| 元の YAML      | `ScoreSource` に最後に確定した全文・絶対パス・外部楽器の Definition パスが保存される。編集の正本はファイルであり、Project 内の本文は確定済みの控えである                                                                               |
+| 解析コード     | Riffra `crates/riffra-runtime/src/score/` と Sonalloy `crates/sonalloy-cli/src/score/` に同じコードがある                                                                                                                              |
 
 ## 関係するファイル
 
