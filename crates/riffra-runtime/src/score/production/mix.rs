@@ -754,6 +754,24 @@ pub(in crate::score) fn validate(plan: &crate::score::ScorePlan) -> Result<()> {
                 continue;
             }
             for (point_index, point) in automation.points.iter().enumerate() {
+                if let ParameterValue::Normalized(value) = point.value {
+                    let valid = match &automation.target {
+                        AutomationTarget::Master => (-90.0..=0.0).contains(&value),
+                        AutomationTarget::Send { .. } | AutomationTarget::Sidechain { .. } => {
+                            (-90.0..=24.0).contains(&value)
+                        }
+                        AutomationTarget::Bus { parameter, .. } if parameter == "gain" => {
+                            (-90.0..=24.0).contains(&value)
+                        }
+                        _ => true,
+                    };
+                    if !valid {
+                        return Err(Error::new(
+                            format!("{path}.points[{point_index}].value"),
+                            "value is outside the parameter range",
+                        ));
+                    }
+                }
                 let point_path = format!("{path}.points[{point_index}]");
                 let bar = match point.at.bar {
                     super::Bar::Number(n) => n,

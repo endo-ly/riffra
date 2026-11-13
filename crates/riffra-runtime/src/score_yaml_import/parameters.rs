@@ -1,15 +1,8 @@
+use crate::plugins::validation::{DisplayConversion, DisplayRequest, ParameterInfo};
+use crate::score::production::ParameterValue;
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::plugins::validation::{self, DisplayConversion, DisplayRequest, ParameterInfo};
-use crate::score::production::ParameterValue;
-use riffra_core::Vst3Plugin;
-
-#[derive(Default)]
-pub(super) struct ProbeCache {
-    results: BTreeMap<String, validation::ParameterDescription>,
-}
-
-fn selector(value: &str) -> Result<(&str, Option<u32>), String> {
+pub(super) fn selector(value: &str) -> Result<(&str, Option<u32>), String> {
     if let Some((name, suffix)) = value.rsplit_once('#')
         && !suffix.is_empty()
         && suffix.bytes().all(|byte| byte.is_ascii_digit())
@@ -25,7 +18,7 @@ fn selector(value: &str) -> Result<(&str, Option<u32>), String> {
     Ok((value, None))
 }
 
-fn find_parameter<'a>(
+pub(super) fn find_parameter<'a>(
     parameters: &'a [ParameterInfo],
     selector_text: &str,
 ) -> Result<&'a ParameterInfo, String> {
@@ -62,7 +55,68 @@ fn display_error(parameter: &ParameterInfo, display: &str, reason: &str) -> Stri
     }
 }
 
-fn assign_values(
+/// Builds one display request per display-valued parameter, in map order.
+pub(super) fn display_requests(
+    params: &BTreeMap<String, ParameterValue>,
+) -> Result<Vec<DisplayRequest>, String> {
+    let mut displays = Vec::new();
+    for (name, value) in params {
+        if let ParameterValue::Display(display) = value {
+            let (name, index) = selector(name)?;
+            displays.push(DisplayRequest {
+                name: name.into(),
+                index,
+                display: display.clone(),
+            });
+        }
+    }
+    Ok(displays)
+}
+
+fn display_conversion(
+    parameter: &ParameterInfo,
+    conversions: &[Vec<DisplayConversion>],
+    request_index: usize,
+    display: &str,
+) -> Result<f32, String> {
+    let conversion = conversions
+        .get(request_index)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .find(|value| value.index == parameter.index);
+    match conversion {
+        Some(conversion) if conversion.value.is_some() => {
+            Ok(conversion.value.expect("conversion value"))
+        }
+        Some(conversion) => Err(display_error(
+            parameter,
+            display,
+            conversion
+                .error
+                .as_deref()
+                .unwrap_or("the plugin refused the conversion"),
+        )),
+        None => Err(display_error(
+            parameter,
+            display,
+            "the plugin did not return a conversion",
+        )),
+    }
+}
+
+/// Resolves one automation display value which was requested for a use.
+pub(super) fn automation_value(
+    parameter: &ParameterInfo,
+    conversions: &[Vec<DisplayConversion>],
+    request_index: usize,
+    display: &str,
+) -> Result<f32, String> {
+    display_conversion(parameter, conversions, request_index, display)
+}
+
+/// Assigns requested values over the full parameter state returned by the plugin.
+pub(super) fn assign_values(
     parameters: &[ParameterInfo],
     base: &[f32],
     conversions: &[Vec<DisplayConversion>],
@@ -79,65 +133,14 @@ fn assign_values(
         let value = match requested {
             ParameterValue::Normalized(value) => *value as f32,
             ParameterValue::Display(display) => {
-                let conversion = conversions
-                    .get(display_index)
-                    .map(Vec::as_slice)
-                    .unwrap_or_default()
-                    .iter()
-                    .find(|value| value.index == parameter.index);
+                let value = display_conversion(parameter, conversions, display_index, display)?;
                 display_index += 1;
-                let Some(value) = conversion.and_then(|value| value.value) else {
-                    let reason = conversion
-                        .and_then(|value| value.error.as_deref())
-                        .unwrap_or("the plugin did not return a conversion");
-                    return Err(display_error(parameter, display, reason));
-                };
                 value
             }
         };
         values[parameter.index as usize] = value;
     }
     Ok(values)
-}
-
-impl ProbeCache {
-    pub(super) fn apply(
-        &mut self,
-        scanner: &std::path::Path,
-        plugin: &mut Vst3Plugin,
-        params: &BTreeMap<String, ParameterValue>,
-    ) -> Result<(), String> {
-        if params.is_empty() {
-            return Ok(());
-        }
-        let mut displays = Vec::new();
-        for (name, value) in params {
-            if let ParameterValue::Display(display) = value {
-                let (name, index) = selector(name)?;
-                displays.push(DisplayRequest {
-                    name: name.into(),
-                    index,
-                    display: display.clone(),
-                });
-            }
-        }
-        let key =
-            serde_json::to_string(&(&*plugin, &displays)).map_err(|error| error.to_string())?;
-        if !self.results.contains_key(&key) {
-            self.results.insert(
-                key.clone(),
-                validation::describe_parameters(scanner, plugin, &displays)?,
-            );
-        }
-        let description = &self.results[&key];
-        plugin.parameter_values = assign_values(
-            &description.parameters,
-            &description.parameter_values,
-            &description.conversions,
-            params,
-        )?;
-        Ok(())
-    }
 }
 
 #[cfg(test)]
@@ -148,7 +151,10 @@ mod tests {
     fn parameter(index: u32, name: &str, choices: &[(f32, &str)]) -> ParameterInfo {
         ParameterInfo {
             index,
+            parameter_id: Some(format!("id-{index}")),
             name: name.into(),
+            automatable: true,
+            discrete: false,
             choices: choices
                 .iter()
                 .map(|(value, display)| ParameterChoice {

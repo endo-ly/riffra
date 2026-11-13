@@ -126,7 +126,13 @@ pub(crate) struct ParameterChoice {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct ParameterInfo {
     pub(crate) index: u32,
+    #[serde(default)]
+    pub(crate) parameter_id: Option<String>,
     pub(crate) name: String,
+    #[serde(default)]
+    pub(crate) automatable: bool,
+    #[serde(default)]
+    pub(crate) discrete: bool,
     pub(crate) choices: Vec<ParameterChoice>,
 }
 

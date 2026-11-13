@@ -810,6 +810,60 @@ pub(crate) fn unique_import_destination_with_ext(
     Ok(destination)
 }
 
+/// Copies an external WAV into the canonical import folder and registers it as
+/// a new Audio Asset. The caller owns the returned registration until it is
+/// retained by a committed Session; use [`discard_staged_audio_import`] to roll
+/// it back without touching existing Assets.
+///
+/// # Errors
+/// Returns an error when the source cannot be copied or registration fails. A
+/// failed registration removes the copied file again.
+pub fn stage_audio_import(
+    data_root: &Path,
+    source: &Path,
+    name: &str,
+) -> Result<(AssetId, String), String> {
+    let destination = unique_import_destination(data_root, name, source)?;
+    fs::copy(source, &destination)
+        .map_err(|error| format!("audio file could not be imported: {error}"))?;
+    let location = destination.to_string_lossy().into_owned();
+    match register(
+        data_root,
+        AssetKind::Audio,
+        name,
+        &location,
+        Some(Provenance::imported()),
+    ) {
+        Ok(id) => Ok((id, location)),
+        Err(error) => {
+            let _ = fs::remove_file(&destination);
+            Err(error)
+        }
+    }
+}
+
+/// Discards an Audio Asset registration staged by [`stage_audio_import`] and
+/// removes its copied content file. Existing Assets with other references are
+/// never removed.
+///
+/// # Errors
+/// Returns an error when the registration cannot be discarded. A missing file
+/// is treated as already removed.
+pub fn discard_staged_audio_import(
+    data_root: &Path,
+    id: &AssetId,
+    content_location: &str,
+) -> Result<(), String> {
+    discard_output_registration(data_root, id, content_location)?;
+    match fs::remove_file(content_location) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!(
+            "staged audio file could not be removed: {content_location}: {error}"
+        )),
+    }
+}
+
 /// Imports a Standard MIDI File as an immutable canonical Asset.
 pub fn import_midi_asset(
     data_root: &Path,
