@@ -137,33 +137,30 @@ impl CreativeSession {
     }
 
     fn score_owned_equals(&self, other: &Self, include_source: bool) -> bool {
-        if (include_source && self.score_source != other.score_source)
-            || self.project_name != other.project_name
-            || self.arrangement.timebase != other.arrangement.timebase
-            || self.arrangement.mixer != other.arrangement.mixer
-            || self.settings.mixdown != other.settings.mixdown
-            || self.arrangement.audio_clips != other.arrangement.audio_clips
-            || self.arrangement.regions != other.arrangement.regions
-            || self.arrangement.harmony_events != other.arrangement.harmony_events
-            || self.arrangement.automation_lanes != other.arrangement.automation_lanes
-            || self.arrangement.tracks.len() != other.arrangement.tracks.len()
-            || !self
+        let same_metadata = (!include_source || self.score_source == other.score_source)
+            && self.project_name == other.project_name
+            && self.arrangement.timebase == other.arrangement.timebase
+            && self.arrangement.mixer == other.arrangement.mixer
+            && self.settings.mixdown == other.settings.mixdown
+            && self.arrangement.audio_clips == other.arrangement.audio_clips
+            && self.arrangement.regions == other.arrangement.regions
+            && self.arrangement.harmony_events == other.arrangement.harmony_events
+            && self.arrangement.automation_lanes == other.arrangement.automation_lanes;
+        same_metadata
+            && self.arrangement.tracks.len() == other.arrangement.tracks.len()
+            && self
                 .arrangement
                 .tracks
                 .iter()
                 .zip(&other.arrangement.tracks)
                 .all(|(track, candidate)| score_track_equals(track, candidate))
-            || self.arrangement.midi_clips.len() != other.arrangement.midi_clips.len()
-            || !self
+            && self.arrangement.midi_clips.len() == other.arrangement.midi_clips.len()
+            && self
                 .arrangement
                 .midi_clips
                 .iter()
                 .zip(&other.arrangement.midi_clips)
                 .all(|(clip, candidate)| score_clip_equals(clip, candidate))
-        {
-            return false;
-        }
-        true
     }
 
     /// Validates production rules and normalizes clamped values, mirroring the
