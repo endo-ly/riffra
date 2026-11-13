@@ -23,6 +23,8 @@ pub struct HostBootstrap {
     pub recovery: ProjectRecoveryState,
     pub safe_mode: bool,
     pub data_root: PathBuf,
+    /// Current synchronization state of the linked Score file.
+    pub score_sync: super::ScoreSyncStatus,
 }
 
 /// Identity and health of the Host answering `host.status`.

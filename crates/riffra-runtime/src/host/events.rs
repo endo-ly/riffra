@@ -1,5 +1,5 @@
 use crate::api::output::{
-    AudioStatus, ProjectActivationResult, ProjectState, RuntimeProjectionStatus,
+    AudioStatus, ProjectActivationResult, ProjectState, RuntimeProjectionStatus, ScoreSyncStatus,
 };
 use crate::model::{
     AudioMeterFrame, PluginParameterChanged, PluginStateChanged, RecordingFinalized,
@@ -21,6 +21,8 @@ pub enum HostEvent {
     ProjectStateChanged(ProjectState),
     /// A Project activation completed with its canonical and recovery state.
     ProjectActivated(ProjectActivationResult),
+    /// The active Project's linked Score synchronization state changed.
+    ScoreSyncStatusChanged(ScoreSyncStatus),
     /// Startup completed, with the result of the runtime handshake.
     RuntimeStartupFinished(RuntimeStartupFinished),
     /// The latest canonical arrangement projection state.
@@ -59,6 +61,9 @@ impl HostEvent {
                 ("project-state-changed", serde_json::to_value(value))
             }
             Self::ProjectActivated(value) => ("project-activated", serde_json::to_value(value)),
+            Self::ScoreSyncStatusChanged(value) => {
+                ("score-sync-status-changed", serde_json::to_value(value))
+            }
             Self::RuntimeStartupFinished(value) => {
                 ("runtime-startup-finished", serde_json::to_value(value))
             }

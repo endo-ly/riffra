@@ -6,7 +6,6 @@ pub(super) mod syntax;
 mod time;
 
 use std::collections::BTreeMap;
-use std::path::Path;
 
 use num_traits::ToPrimitive;
 use serde::Serialize;
@@ -16,6 +15,57 @@ use events::{MeterChange, MusicalEvent, PerformanceEvents, TempoChange};
 use time::q;
 
 type Result<T> = std::result::Result<T, Error>;
+
+/// A known Score extension that Riffra does not execute yet.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Extension {
+    Kits,
+    Lyrics,
+    Mix,
+    InstrumentSource,
+    InstrumentEffects,
+    InstrumentKit,
+    InstrumentAudio,
+    AudioClips,
+    LineLyrics,
+    Articulation,
+    Cc,
+    Breath,
+    VoiceDynamics,
+    VoiceStyle,
+}
+
+impl Extension {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Kits => "kits",
+            Self::Lyrics => "lyrics",
+            Self::Mix => "mix",
+            Self::InstrumentSource => "instrument source",
+            Self::InstrumentEffects => "instrument effects",
+            Self::InstrumentKit => "instrument kit",
+            Self::InstrumentAudio => "instrument audio",
+            Self::AudioClips => "section audio clips",
+            Self::LineLyrics => "line lyrics",
+            Self::Articulation => "articulation event",
+            Self::Cc => "cc event",
+            Self::Breath => "breath event",
+            Self::VoiceDynamics => "voice dynamics event",
+            Self::VoiceStyle => "voice style event",
+        }
+    }
+
+    fn event(kind: &str) -> Option<Self> {
+        match kind {
+            "articulation" => Some(Self::Articulation),
+            "cc" => Some(Self::Cc),
+            "breath" => Some(Self::Breath),
+            "voice_dynamics" => Some(Self::VoiceDynamics),
+            "voice_style" => Some(Self::VoiceStyle),
+            _ => None,
+        }
+    }
+}
 
 #[derive(Debug, Default)]
 struct ErrorContext {
@@ -39,6 +89,7 @@ pub(crate) struct Error {
     column: usize,
     actual: Option<Box<Value>>,
     context: Option<Box<ErrorContext>>,
+    kind: Option<&'static str>,
 }
 
 impl Error {
@@ -51,7 +102,16 @@ impl Error {
             column: 0,
             actual: None,
             context: None,
+            kind: None,
         }
+    }
+    fn not_implemented(path: &str, extension: Extension) -> Self {
+        let mut error = Self::new(
+            path,
+            format!("{} is not implemented by Riffra", extension.label()),
+        );
+        error.kind = Some("notImplemented");
+        error
     }
     fn at(mut self, path: &str) -> Self {
         if self.path.is_empty() {
@@ -170,9 +230,11 @@ impl Error {
             .context
             .as_deref()
             .and_then(|context| context.occurrence);
-        self.detail = Box::new(
-            serde_json::json!({"source_type":"score","source_bar":source_bar,"bar":bar,"step":step,"line":self.line,"column":self.column,"actual":self.actual,"expected":self.message,"section":section,"occurrence":occurrence}),
-        );
+        let mut detail = serde_json::json!({"source_type":"score","path":self.path,"source_bar":source_bar,"bar":bar,"step":step,"line":self.line,"column":self.column,"actual":self.actual,"expected":self.message,"section":section,"occurrence":occurrence});
+        if let Some(kind) = self.kind {
+            detail["kind"] = Value::String(kind.into());
+        }
+        self.detail = Box::new(detail);
         self
     }
 }
@@ -288,38 +350,10 @@ pub(crate) struct PartWindow {
 }
 
 impl ScorePlan {
-    pub(crate) fn source_yaml(&self) -> &str {
-        &self.source.text
-    }
-
     /// Resolve source metadata for a diagnostic at a score field path.
     pub(crate) fn source_detail(&self, path: &str, message: &str) -> Value {
         *Error::new(path, message).locate(&self.source).detail
     }
-}
-
-/// Distinguishes file access failures from errors in the score itself.
-#[derive(Debug, thiserror::Error)]
-pub(crate) enum ReadError {
-    #[error("could not read score: {path}: {source}")]
-    Io {
-        path: std::path::PathBuf,
-        source: std::io::Error,
-    },
-    #[error(transparent)]
-    Parse(#[from] Error),
-}
-
-/// Read and expand a Score YAML file.
-///
-/// # Errors
-/// Returns a file access error or a source-located score error.
-pub(crate) fn read(path: &Path) -> std::result::Result<ScorePlan, ReadError> {
-    let text = std::fs::read_to_string(path).map_err(|source| ReadError::Io {
-        path: path.to_owned(),
-        source,
-    })?;
-    Ok(compile(&text)?)
 }
 
 /// Parse, validate, and expand Score YAML into a musical plan.
@@ -329,7 +363,8 @@ pub(crate) fn read(path: &Path) -> std::result::Result<ScorePlan, ReadError> {
 pub(crate) fn compile(text: &str) -> Result<ScorePlan> {
     let mut source = Source::default();
     let result = parse::parse(text, &mut source).and_then(|document| {
-        resolve::validate_structure(&document)?;
+        reject_extensions(&document)?;
+        resolve::validate_structure(&document, false)?;
         lower::lower(&document)
     });
     result
@@ -402,6 +437,85 @@ pub(crate) fn compile(text: &str) -> Result<ScorePlan> {
             plan.source = source;
             plan
         })
+}
+
+/// Returns every known extension site as a source field path, in document order.
+fn extension_sites(document: &Value) -> Vec<(Extension, String)> {
+    let mut sites = Vec::new();
+    for (key, extension) in [
+        ("kits", Extension::Kits),
+        ("lyrics", Extension::Lyrics),
+        ("mix", Extension::Mix),
+    ] {
+        if document.get(key).is_some() {
+            sites.push((extension, key.to_owned()));
+        }
+    }
+    if let Some(instruments) = document.get("instruments").and_then(Value::as_object) {
+        for (id, spec) in instruments {
+            for (key, extension) in [
+                ("source", Extension::InstrumentSource),
+                ("effects", Extension::InstrumentEffects),
+                ("kit", Extension::InstrumentKit),
+                ("audio", Extension::InstrumentAudio),
+            ] {
+                if spec.get(key).is_some() {
+                    sites.push((extension, format!("instruments.{id}.{key}")));
+                }
+            }
+        }
+    }
+    if let Some(sections) = document.get("sections").and_then(Value::as_object) {
+        for (name, section) in sections {
+            if section.get("audio_clips").is_some() {
+                sites.push((
+                    Extension::AudioClips,
+                    format!("sections.{name}.audio_clips"),
+                ));
+            }
+            if let Some(lines) = section.get("lines").and_then(Value::as_object) {
+                for (line, value) in lines {
+                    if value.get("lyrics").is_some() {
+                        sites.push((
+                            Extension::LineLyrics,
+                            format!("sections.{name}.lines.{line}.lyrics"),
+                        ));
+                    }
+                }
+            }
+            if let Some(events) = section.get("events").and_then(Value::as_array) {
+                for (index, event) in events.iter().enumerate() {
+                    if let Some(extension) = event
+                        .get("kind")
+                        .and_then(Value::as_str)
+                        .and_then(Extension::event)
+                    {
+                        sites.push((extension, format!("sections.{name}.events[{index}]")));
+                    }
+                }
+            }
+        }
+    }
+    if let Some(macros) = document.get("macros").and_then(Value::as_object) {
+        for (name, event) in macros {
+            if let Some(extension) = event
+                .get("kind")
+                .and_then(Value::as_str)
+                .and_then(Extension::event)
+            {
+                sites.push((extension, format!("macros.{name}")));
+            }
+        }
+    }
+    sites
+}
+
+/// Rejects the first known Score extension that Riffra cannot execute yet.
+fn reject_extensions(document: &Value) -> Result<()> {
+    match extension_sites(document).into_iter().next() {
+        Some((extension, path)) => Err(Error::not_implemented(&path, extension)),
+        None => Ok(()),
+    }
 }
 
 /// Convert finite decibels to a finite linear gain, returning `None` on overflow.
@@ -1713,5 +1827,189 @@ mod tests {
         let error = compile(&doc.to_string()).unwrap_err();
         assert_eq!(error.path, "time_changes[0]");
         assert_eq!(error.message, "tempo change overlaps tempo ramp");
+    }
+
+    const EXTENSION_SCORE: &str = include_str!("../../testdata/score-extensions.yaml");
+
+    #[test]
+    fn unimplemented_extensions_are_rejected_with_their_source_position() {
+        let error = compile(EXTENSION_SCORE).expect_err("extensions are not implemented");
+        assert_eq!(error.path, "kits");
+        assert!(error.message.contains("kit") || error.message.contains("kits"));
+        let detail = &error.detail;
+        assert_eq!(detail["kind"], "notImplemented");
+        assert_eq!(detail["path"], "kits");
+        assert!(detail["line"].as_u64().expect("line") > 0);
+        assert!(detail["column"].as_u64().expect("column") > 0);
+
+        for (yaml, path) in [
+            (
+                EXTENSION_SCORE.replace(
+                    "kits:
+  drums: {source: {vst3: {plugin: Addictive Drums 2}}}
+",
+                    "",
+                ),
+                "lyrics",
+            ),
+            (
+                EXTENSION_SCORE
+                    .replace(
+                        "kits:
+  drums: {source: {vst3: {plugin: Addictive Drums 2}}}
+",
+                        "",
+                    )
+                    .replace(
+                        "lyrics:
+  verse1: \"la la la la\"
+  verse2: \"ha ha ha ha\"
+",
+                        "",
+                    ),
+                "mix",
+            ),
+            (
+                EXTENSION_SCORE
+                    .replace(
+                        "kits:
+  drums: {source: {vst3: {plugin: Addictive Drums 2}}}
+",
+                        "",
+                    )
+                    .replace(
+                        "lyrics:
+  verse1: \"la la la la\"
+  verse2: \"ha ha ha ha\"
+",
+                        "",
+                    )
+                    .replace(
+                        "mix:
+  tracks:
+    lead: {output: rhythm}
+",
+                        "",
+                    ),
+                "instruments.lead.source",
+            ),
+        ] {
+            assert_eq!(compile(&yaml).expect_err("extension rejected").path, path);
+        }
+    }
+
+    #[test]
+    fn sound_and_section_notes_are_display_metadata() {
+        let mut doc = document();
+        doc["instruments"]["part"] = json!({"external": true, "sound": "Round finger bass"});
+        doc["sections"]["phrase"]["notes"] = json!("The phrase introduces the bass.");
+        let with_metadata = compile(&doc.to_string()).expect("display metadata compiles");
+        doc["instruments"]["part"] = json!({"external": true});
+        doc["sections"]["phrase"]
+            .as_object_mut()
+            .expect("section")
+            .remove("notes");
+        let without_metadata = compile(&doc.to_string()).expect("Score compiles");
+
+        assert_eq!(
+            serde_json::to_value(&with_metadata.lanes[0].pattern.events).unwrap(),
+            serde_json::to_value(&without_metadata.lanes[0].pattern.events).unwrap()
+        );
+        assert_eq!(with_metadata.length_ticks, without_metadata.length_ticks);
+
+        doc["instruments"]["part"]["sound"] = json!(7);
+        assert_eq!(
+            compile(&doc.to_string()).unwrap_err().path,
+            "instruments.part.sound"
+        );
+        doc["instruments"]["part"]["sound"] = json!("bass");
+        doc["sections"]["phrase"]["notes"] = json!(["not", "text"]);
+        assert_eq!(
+            compile(&doc.to_string()).unwrap_err().path,
+            "sections.phrase.notes"
+        );
+    }
+
+    #[test]
+    fn unknown_instrument_keys_and_event_kinds_remain_errors() {
+        let mut doc = document();
+        doc["instruments"]["part"]["voices"] = json!(8);
+        assert_eq!(
+            compile(&doc.to_string()).unwrap_err().path,
+            "instruments.part.voices"
+        );
+
+        let mut doc = document();
+        doc["sections"]["phrase"]["events"] = json!([{"kind": "glissando", "instrument": "part", "value": 1, "at": {"bar": 1, "step": 1}}]);
+        assert_eq!(
+            compile(&doc.to_string()).unwrap_err().path,
+            "sections.phrase.events[0].kind"
+        );
+    }
+
+    #[test]
+    fn shared_extension_fixture_expands_to_the_same_music_without_extensions() {
+        let yaml = EXTENSION_SCORE
+            .replace("kits:
+  drums: {source: {vst3: {plugin: Addictive Drums 2}}}
+", "")
+            .replace("lyrics:
+  verse1: \"la la la la\"
+  verse2: \"ha ha ha ha\"
+", "")
+            .replace("mix:
+  tracks:
+    lead: {output: rhythm}
+", "")
+            .replace("    notes: The verse builds from the bass.
+", "")
+            .replace(", lyrics: [verse1, verse2]", "")
+            .replace("    chords: [\"1:maj\"]
+", "")
+            .replace("    events:
+      - {kind: articulation, instrument: lead, name: mute, at: {bar: 1, step: 1}, duration_steps: 4}
+      - {kind: cc, instrument: lead, number: 11, value: 64, at: {bar: 1, step: 5}}
+      - {kind: breath, instrument: lead, at: {bar: 1, step: 9}, duration_steps: 2}
+      - {kind: voice_dynamics, instrument: lead, at: {bar: 1, step: 1}, duration_quarters: 4, value: 7}
+      - {kind: voice_style, instrument: lead, at: {bar: 1, step: 13}, style: falsetto}
+", "")
+            .replace("    audio_clips:
+      - {instrument: take, file: audio/take.wav, at: {bar: 1, step: 1}}
+", "")
+            .replace("    source: {vst3: {plugin: Surge XT}}
+", "")
+            .replace("    effects: [{use: delay}]
+", "")
+            .replace(", kit: drums", "")
+            .replace("  take: {audio: true}
+", "")
+            .replace("    sound: A bright lead that stays above the pad.
+", "");
+        let plan = compile(&yaml).expect("extension-free fixture compiles");
+        let notes = plan
+            .lanes
+            .iter()
+            .filter(|lane| lane.id == "lead")
+            .flat_map(|lane| &lane.pattern.events)
+            .filter_map(|event| match event {
+                MusicalEvent::Note {
+                    tick,
+                    duration_ticks,
+                    note,
+                    velocity,
+                } => Some((*tick, *duration_ticks, *note, *velocity)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            notes,
+            [
+                (0, 480, 60, 100),
+                (480, 480, 64, 100),
+                (960, 480, 67, 100),
+                (1440, 480, 72, 100)
+            ]
+        );
+        assert_eq!(plan.length_ticks, 1920);
     }
 }

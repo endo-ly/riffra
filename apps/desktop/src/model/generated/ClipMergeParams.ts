@@ -3,4 +3,4 @@
 /**
  * Adjacent clips in timeline order.
  */
-export type ClipMergeParams = { firstClipId: string; secondClipId: string };
+export type ClipMergeParams = { firstClipId: string, secondClipId: string, };

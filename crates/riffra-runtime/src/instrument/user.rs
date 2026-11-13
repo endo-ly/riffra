@@ -255,6 +255,54 @@ impl UserInstrumentStore {
         result
     }
 
+    /// Reports whether a Project snapshot still matches a definition package.
+    ///
+    /// # Errors
+    /// Returns an error when either definition cannot be read or decoded.
+    pub(crate) fn snapshot_matches(
+        &self,
+        snapshot_id: &str,
+        definition: &Path,
+    ) -> Result<bool, String> {
+        let root = self.project_instruments_root().join(snapshot_id);
+        let snapshot_path = root.join(DEFINITION_FILE_NAME);
+        if !snapshot_path.is_file() {
+            return Ok(false);
+        }
+        let mut snapshot: serde_json::Value = serde_json::from_slice(
+            &fs::read(&snapshot_path)
+                .map_err(|error| format!("instrument snapshot could not be read: {error}"))?,
+        )
+        .map_err(|error| format!("instrument snapshot definition is invalid: {error}"))?;
+        let source: serde_json::Value = serde_json::from_slice(
+            &fs::read(definition)
+                .map_err(|error| format!("instrument definition could not be read: {error}"))?,
+        )
+        .map_err(|error| format!("instrument definition is invalid: {error}"))?;
+        if snapshot != source {
+            return Ok(false);
+        }
+        let source_root = definition
+            .parent()
+            .and_then(|parent| fs::canonicalize(parent).ok());
+        let snapshot_root = fs::canonicalize(&root).ok();
+        let (Some(source_root), Some(snapshot_root)) = (source_root, snapshot_root) else {
+            return Ok(false);
+        };
+        let mut unchanged = true;
+        visit_resource_paths(&mut snapshot, &mut |path| {
+            if unchanged {
+                let relative = Path::new(path);
+                unchanged = relative
+                    .components()
+                    .all(|component| matches!(component, std::path::Component::Normal(_)))
+                    && files_match(&snapshot_root.join(relative), &source_root.join(relative));
+            }
+            Ok(())
+        })?;
+        Ok(unchanged)
+    }
+
     fn snapshot_package(
         &self,
         source: &Path,
@@ -556,6 +604,20 @@ fn visit_resource_paths(
     }
     processors(value.get_mut("voice_processors"), visit)?;
     processors(value.get_mut("global_processors"), visit)
+}
+
+fn files_match(first: &Path, second: &Path) -> bool {
+    match (fs::canonicalize(first), fs::canonicalize(second)) {
+        (Ok(first), Ok(second)) => {
+            first.is_file()
+                && second.is_file()
+                && fs::read(&first)
+                    .ok()
+                    .zip(fs::read(&second).ok())
+                    .is_some_and(|(first, second)| first == second)
+        }
+        _ => false,
+    }
 }
 
 fn check_resource_path(path: &Path) -> Result<(), String> {

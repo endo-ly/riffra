@@ -3,8 +3,4 @@
 /**
  * A `ValueTree` value without a plain JSON form.
  */
-export type PluginStateEncodedValue =
-  | { kind: 'void' }
-  | { kind: 'int64'; value: number }
-  | { kind: 'binary'; base64: string }
-  | { kind: 'opaque'; marker: number; base64: string };
+export type PluginStateEncodedValue = { "kind": "void" } | { "kind": "int64", value: number, } | { "kind": "binary", base64: string, } | { "kind": "opaque", marker: number, base64: string, };

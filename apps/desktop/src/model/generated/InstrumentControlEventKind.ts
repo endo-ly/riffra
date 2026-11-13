@@ -3,16 +3,4 @@
 /**
  * Native precision values used by the Instrument, independent of MIDI encoding.
  */
-export type InstrumentControlEventKind =
-  | { type: 'sustainPedal'; down: boolean }
-  | { type: 'pitchBend'; value: number }
-  | { type: 'modWheel'; value: number }
-  | { type: 'aftertouch'; value: number }
-  | { type: 'parameterChange'; parameter: string; nativeValue: number }
-  | {
-      type: 'parameterRamp';
-      parameter: string;
-      fromValue: number;
-      toValue: number;
-      durationTicks: number;
-    };
+export type InstrumentControlEventKind = { "type": "sustainPedal", down: boolean, } | { "type": "pitchBend", value: number, } | { "type": "modWheel", value: number, } | { "type": "aftertouch", value: number, } | { "type": "parameterChange", parameter: string, nativeValue: number, } | { "type": "parameterRamp", parameter: string, fromValue: number, toValue: number, durationTicks: number, };

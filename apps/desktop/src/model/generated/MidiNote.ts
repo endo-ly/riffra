@@ -3,12 +3,4 @@
 /**
  * A single MIDI note inside a [`MidiClip`].
  */
-export type MidiNote = {
-  lyric?: string;
-  id: string;
-  note: number;
-  startTick: number;
-  durationTicks: number;
-  velocity: number;
-  channel: number;
-};
+export type MidiNote = { lyric?: string, id: string, note: number, startTick: number, durationTicks: number, velocity: number, channel: number, };

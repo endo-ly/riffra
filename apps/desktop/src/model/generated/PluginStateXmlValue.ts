@@ -3,10 +3,8 @@
 /**
  * One XML element or attribute assignment.
  */
-export type PluginStateXmlValue = {
-  /**
-   * Path below the root element; a missing last element is appended to its parent.
-   */
-  xmlPath: string;
-  value: string;
-};
+export type PluginStateXmlValue = { 
+/**
+ * Path below the root element; a missing last element is appended to its parent.
+ */
+xmlPath: string, value: string, };

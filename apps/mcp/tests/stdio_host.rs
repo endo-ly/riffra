@@ -265,9 +265,9 @@ fn stdio_tools_share_the_live_host_and_preserve_control_results() {
     let tools = listed["result"]["tools"]
         .as_array()
         .expect("tools should be an array");
-    assert_eq!(tools.len(), 48);
+    assert_eq!(tools.len(), 49);
     assert_eq!(tools[0]["name"], "host_info");
-    assert_eq!(tools[47]["name"], "audio_safety");
+    assert_eq!(tools[48]["name"], "audio_safety");
     assert_eq!(tools[0]["inputSchema"]["type"], "object");
     let session_edit = tools
         .iter()

@@ -146,6 +146,26 @@ impl HostDispatcher<'_> {
                     params.name.as_deref(),
                 )?,
             )),
+            CanonicalCommand::ScoreValidate(params) => Ok(ControlOutput::ScoreValidation(
+                crate::score_yaml_import::validate(
+                    &params.path,
+                    &params.bindings,
+                    &self.built_in_instruments,
+                    &self.sonalloy,
+                ),
+            )),
+            CanonicalCommand::ScoreInspect(params) => Ok(ControlOutput::ScoreInspection(
+                crate::score_yaml_import::inspect(
+                    &params.path,
+                    &params.bindings,
+                    params.events,
+                    &self.built_in_instruments,
+                    &self.sonalloy,
+                )
+                .map_err(|error| {
+                    DispatchError::invalid_request_with_details(error.message, error.details)
+                })?,
+            )),
             CanonicalCommand::InstrumentList(_) => self.list_instruments(),
             CanonicalCommand::InstrumentSave(params) => self.save_instrument(params),
             CanonicalCommand::InstrumentExport(params) => self.export_instrument(params),

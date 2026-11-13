@@ -1,5 +1,15 @@
-//! Lossless projection of expanded Score performance into editable production state.
+//! Score YAML to canonical production state.
+//!
+//! A Score document is read once, compiled with Riffra analysis, resolved
+//! against the built-in catalog and Sonalloy inspection, and only then
+//! converted into canonical production state. Rebuilding a linked Project
+//! reuses tracks, devices, and instrument snapshots whose sources did not
+//! change.
 
+use crate::api::output::{
+    ScoreChordInspection, ScoreDiagnostic, ScoreInspection, ScoreInstrumentInspection,
+    ScoreLaneInspection, ScoreSectionInspection, ScoreSummary, ScoreValidation,
+};
 use crate::api::params::ProjectImportScoreParams;
 use crate::instrument::{BuiltInInstrumentCatalog, UserInstrumentStore};
 use crate::score::{self, ScoreLane, ScorePlan, events::MusicalEvent, syntax};
@@ -24,21 +34,51 @@ impl From<String> for ImportError {
     }
 }
 
-/// Owns staged snapshots until project activation succeeds.
-pub(crate) struct ImportedScore {
-    pub(crate) session: CreativeSession,
-    snapshots: Vec<PathBuf>,
+/// A built-in source a Score instrument resolves to.
+#[derive(Clone)]
+struct BuiltIn {
+    preset_id: String,
+    definition_json: String,
 }
 
-impl ImportedScore {
-    pub(crate) fn retain(mut self) {
-        self.snapshots.clear();
+/// A resolved Score instrument source.
+#[derive(Clone)]
+struct Source {
+    definition: PathBuf,
+    name: String,
+    report: Value,
+    built_in: Option<BuiltIn>,
+}
+
+/// One validated Score file with every instrument source resolved.
+struct ScoreDocument {
+    path: PathBuf,
+    yaml: String,
+    plan: ScorePlan,
+    bindings: BTreeMap<String, PathBuf>,
+    sources: BTreeMap<String, Source>,
+}
+
+/// A canonical Session candidate and the snapshots it staged.
+pub(crate) struct ScoreOutcome {
+    pub(crate) session: CreativeSession,
+    /// Whether the Score body differs from the Project's stored body.
+    pub(crate) yaml_changed: bool,
+    /// Whether the Score-owned performance differs from the Project.
+    pub(crate) changed: bool,
+    staged: BTreeSet<PathBuf>,
+}
+
+impl ScoreOutcome {
+    /// Keeps the staged snapshots because canonical state now references them.
+    pub(crate) fn retain(&mut self) {
+        self.staged.clear();
     }
 }
 
-impl Drop for ImportedScore {
+impl Drop for ScoreOutcome {
     fn drop(&mut self) {
-        for snapshot in &self.snapshots {
+        for snapshot in &self.staged {
             if let Err(error) = std::fs::remove_dir_all(snapshot) {
                 tracing::warn!(%error, "score instrument snapshot cleanup failed");
             }
@@ -46,28 +86,293 @@ impl Drop for ImportedScore {
     }
 }
 
-struct Instrument {
-    assignment: TrackInstrument,
-    report: Value,
-}
-
+/// Imports a Score YAML file as a new Session.
+///
+/// # Errors
+/// Returns structured diagnostics for Score, source, and instrument failures.
 pub(crate) fn import(
     params: &ProjectImportScoreParams,
     data_root: &Path,
     catalog: &BuiltInInstrumentCatalog,
     sonalloy: &Path,
-) -> Result<ImportedScore, ImportError> {
-    let mut plan = score::read(&params.path).map_err(|error| match error {
-        score::ReadError::Parse(error) => ImportError {
-            message: error.to_string(),
-            details: *error.detail,
-        },
-        error => error.to_string().into(),
+) -> Result<ScoreOutcome, ImportError> {
+    let mut document = read(
+        &params.path,
+        &params.bindings,
+        &params.bindings.keys().cloned().collect(),
+        catalog,
+        sonalloy,
+    )?;
+    let store = UserInstrumentStore::new(data_root, sonalloy);
+    let mut staged = BTreeSet::new();
+    let session = build(&mut document, None, &store, &mut staged)?;
+    Ok(ScoreOutcome {
+        session,
+        yaml_changed: true,
+        changed: true,
+        staged,
+    })
+}
+
+/// Rebuilds a linked Project from its Score file.
+///
+/// `bindings` replaces or adds to the Project's stored bindings. Bindings the
+/// Score no longer uses are dropped.
+///
+/// # Errors
+/// Returns structured diagnostics for Score, source, and instrument failures.
+pub(crate) fn rebuild(
+    previous: &CreativeSession,
+    path: Option<&Path>,
+    bindings: &BTreeMap<String, PathBuf>,
+    data_root: &Path,
+    catalog: &BuiltInInstrumentCatalog,
+    sonalloy: &Path,
+) -> Result<ScoreOutcome, ImportError> {
+    let source = previous.score_source.as_ref().ok_or_else(|| {
+        ImportError::from("the active Project is not linked to a Score".to_string())
     })?;
+    let path = match path {
+        Some(path) => path.to_path_buf(),
+        None => source.path.as_ref().map(PathBuf::from).ok_or_else(|| {
+            ImportError::from(
+                "the active Project has no linked Score file; rebuild it with --path".to_string(),
+            )
+        })?,
+    };
+    let mut effective: BTreeMap<String, PathBuf> = source
+        .bindings
+        .iter()
+        .map(|(id, path)| (id.clone(), PathBuf::from(path)))
+        .collect();
+    effective.extend(bindings.iter().map(|(id, path)| (id.clone(), path.clone())));
+    let mut document = read(
+        &path,
+        &effective,
+        &bindings.keys().cloned().collect(),
+        catalog,
+        sonalloy,
+    )?;
+    let store = UserInstrumentStore::new(data_root, sonalloy);
+    let mut staged = BTreeSet::new();
+    let session = build(&mut document, Some(previous), &store, &mut staged)?;
+    let yaml_changed = previous
+        .score_source
+        .as_ref()
+        .is_none_or(|source| source.yaml != document.yaml);
+    Ok(ScoreOutcome {
+        changed: !previous.score_performance_equals(&session),
+        session,
+        yaml_changed,
+        staged,
+    })
+}
+
+/// Reports whether the linked Score file no longer matches the accepted body.
+pub(crate) fn source_changed(session: &CreativeSession) -> bool {
+    let Some(source) = session.score_source.as_ref() else {
+        return false;
+    };
+    let Some(path) = source.path.as_deref() else {
+        return false;
+    };
+    std::fs::read_to_string(path).map_or(true, |text| text != source.yaml)
+}
+
+/// Validates a Score document without creating a Project or snapshot.
+///
+/// # Errors
+/// Never returns an error; Score problems become diagnostics.
+pub(crate) fn validate(
+    path: &Path,
+    bindings: &BTreeMap<String, PathBuf>,
+    catalog: &BuiltInInstrumentCatalog,
+    sonalloy: &Path,
+) -> ScoreValidation {
+    match read(
+        path,
+        bindings,
+        &bindings.keys().cloned().collect(),
+        catalog,
+        sonalloy,
+    )
+    .and_then(|document| {
+        validate_performance(&document.plan, &document.sources)?;
+        Ok(summary(&document.plan))
+    }) {
+        Ok(summary) => ScoreValidation {
+            valid: true,
+            diagnostics: Vec::new(),
+            summary: Some(summary),
+        },
+        Err(error) => ScoreValidation {
+            valid: false,
+            diagnostics: vec![diagnostic(&error)],
+            summary: None,
+        },
+    }
+}
+
+/// Expands a Score document into its resolved structure without creating a Project.
+///
+/// # Errors
+/// Returns structured diagnostics for Score, source, and instrument failures.
+pub(crate) fn inspect(
+    path: &Path,
+    bindings: &BTreeMap<String, PathBuf>,
+    events: bool,
+    catalog: &BuiltInInstrumentCatalog,
+    sonalloy: &Path,
+) -> Result<ScoreInspection, ImportError> {
+    let document = read(
+        path,
+        bindings,
+        &bindings.keys().cloned().collect(),
+        catalog,
+        sonalloy,
+    )?;
+    validate_performance(&document.plan, &document.sources)?;
+    let plan = &document.plan;
+    Ok(ScoreInspection {
+        summary: summary(plan),
+        sections: plan
+            .sections
+            .iter()
+            .map(|section| ScoreSectionInspection {
+                name: section.section.clone(),
+                bars: section.bars,
+                tonic: section.tonic.clone(),
+                scale: section.scale.clone(),
+                bpm: section.bpm,
+                meter: section.meter.clone(),
+                start_tick: section.start_tick,
+                end_tick: section.end_tick,
+                chords: section
+                    .chords
+                    .iter()
+                    .map(|chord| ScoreChordInspection {
+                        tick: chord.tick,
+                        chord: chord.chord.clone(),
+                    })
+                    .collect(),
+            })
+            .collect(),
+        instruments: plan
+            .instruments
+            .keys()
+            .map(|id| {
+                let source = &document.sources[id];
+                ScoreInstrumentInspection {
+                    id: id.clone(),
+                    name: source.name.clone(),
+                    definition: source.definition.to_string_lossy().into_owned(),
+                    built_in: source.built_in.is_some(),
+                }
+            })
+            .collect(),
+        lanes: plan
+            .lanes
+            .iter()
+            .map(|lane| ScoreLaneInspection {
+                id: lane.id.clone(),
+                gain_db: lane.gain_db,
+                notes: lane
+                    .pattern
+                    .events
+                    .iter()
+                    .filter(|event| matches!(event, MusicalEvent::Note { .. }))
+                    .count(),
+                controls: lane
+                    .pattern
+                    .events
+                    .iter()
+                    .filter(|event| !matches!(event, MusicalEvent::Note { .. }))
+                    .count(),
+                events: if events {
+                    lane.pattern
+                        .events
+                        .iter()
+                        .enumerate()
+                        .map(|(index, event)| {
+                            let origin = &lane.sources[index];
+                            json!({
+                                "event": event,
+                                "path": origin.path,
+                                "line": origin.line,
+                                "column": origin.column,
+                                "section": origin.section,
+                                "occurrence": origin.occurrence,
+                                "bar": origin.bar,
+                                "step": origin.step,
+                            })
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                },
+            })
+            .collect(),
+    })
+}
+
+fn score_error(error: score::Error) -> ImportError {
+    ImportError {
+        message: error.to_string(),
+        details: *error.detail,
+    }
+}
+
+fn diagnostic(error: &ImportError) -> ScoreDiagnostic {
+    ScoreDiagnostic {
+        path: error.details["path"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned(),
+        message: error.message.clone(),
+        line: error.details["line"].as_u64().unwrap_or(0) as usize,
+        column: error.details["column"].as_u64().unwrap_or(0) as usize,
+        detail: Some(error.details.clone()),
+    }
+}
+
+fn summary(plan: &ScorePlan) -> ScoreSummary {
+    ScoreSummary {
+        title: plan.title.clone(),
+        ticks_per_beat: plan.ticks_per_beat,
+        length_ticks: plan.length_ticks,
+        section_count: plan.sections.len(),
+        instrument_count: plan.instruments.len(),
+        lane_count: plan.lanes.len(),
+        note_count: plan
+            .lanes
+            .iter()
+            .flat_map(|lane| &lane.pattern.events)
+            .filter(|event| matches!(event, MusicalEvent::Note { .. }))
+            .count(),
+        control_count: plan
+            .lanes
+            .iter()
+            .flat_map(|lane| &lane.pattern.events)
+            .filter(|event| !matches!(event, MusicalEvent::Note { .. }))
+            .count(),
+    }
+}
+
+fn read(
+    path: &Path,
+    bindings: &BTreeMap<String, PathBuf>,
+    explicit: &BTreeSet<String>,
+    catalog: &BuiltInInstrumentCatalog,
+    sonalloy: &Path,
+) -> Result<ScoreDocument, ImportError> {
+    let yaml = std::fs::read_to_string(path)
+        .map_err(|error| format!("could not read score: {}: {error}", path.display()))?;
+    let path = std::fs::canonicalize(path).map_err(|error| error.to_string())?;
+    let plan = score::compile(&yaml).map_err(score_error)?;
     let missing: Vec<_> = plan
         .instruments
         .iter()
-        .filter(|(id, spec)| spec["external"] == true && !params.bindings.contains_key(*id))
+        .filter(|(id, spec)| spec["external"] == true && !bindings.contains_key(*id))
         .map(|(id, _)| id.clone())
         .collect();
     if !missing.is_empty() {
@@ -79,109 +384,362 @@ pub(crate) fn import(
             details: json!({"kind":"scoreBindingsRequired", "instrumentIds":missing}),
         });
     }
-    for id in params.bindings.keys() {
-        if plan
-            .instruments
-            .get(id)
-            .is_none_or(|spec| spec["external"] != true)
+    for id in bindings.keys() {
+        if explicit.contains(id)
+            && plan
+                .instruments
+                .get(id)
+                .is_none_or(|spec| spec["external"] != true)
         {
             return Err(format!("binding '{id}' does not identify an external instrument").into());
         }
     }
-    let path = std::fs::canonicalize(&params.path).map_err(|error| error.to_string())?;
     let base = path.parent().expect("canonical file has a parent");
     let presets = base
         .ancestors()
         .map(|ancestor| ancestor.join("presets"))
         .find(|root| root.is_dir());
-    let store = UserInstrumentStore::new(data_root, sonalloy);
-    let mut imported = ImportedScore {
-        session: CreativeSession::new(riffra_host::now_ms()),
-        snapshots: Vec::new(),
-    };
-    let mut instruments = BTreeMap::new();
-    let mut resolved = BTreeMap::<PathBuf, Instrument>::new();
+    let mut resolved = BTreeMap::<PathBuf, Source>::new();
+    let mut sources = BTreeMap::new();
+    let mut effective = BTreeMap::new();
     for (id, spec) in &plan.instruments {
         let field = format!("instruments.{id}");
-        let result = resolve_definition(
-            spec,
-            params.bindings.get(id),
-            base,
-            presets.as_deref(),
-            catalog,
-        );
-        let definition = result.map_err(|message| ImportError {
-            details: plan.source_detail(&field, &message),
-            message,
-        })?;
+        let definition =
+            resolve_definition(spec, bindings.get(id), base, presets.as_deref(), catalog).map_err(
+                |message| ImportError {
+                    details: plan.source_detail(&field, &message),
+                    message,
+                },
+            )?;
         let canonical =
             std::fs::canonicalize(&definition).map_err(|error| format!("{field}: {error}"))?;
+        if spec["external"] == true {
+            effective.insert(id.clone(), canonical.clone());
+        }
         if !resolved.contains_key(&canonical) {
-            let report = inspect(sonalloy, &canonical)?;
+            let report = inspect_definition(sonalloy, &canonical)?;
             let built_in = spec["preset"].as_str().and_then(|preset| {
-                let id = preset_id(preset);
-                let builtin = catalog.resolve(&id).ok()?;
+                let preset_id = preset_id(preset);
+                let builtin = catalog.resolve(&preset_id).ok()?;
                 let source = std::fs::read_to_string(&canonical).ok()?;
                 (source == builtin.definition_json
                     && package_matches(canonical.parent()?, &builtin.base_dir))
-                .then_some((id, builtin))
-            });
-            let assignment = if let Some((preset_id, builtin)) = built_in {
-                TrackInstrument::built_in(
-                    "score:instrument".into(),
-                    builtin.summary.name.clone(),
+                .then_some(BuiltIn {
                     preset_id,
-                    builtin.definition_json.clone(),
-                )?
-            } else {
-                let snapshot = store.snapshot_definition(&definition)?;
-                imported.snapshots.push(snapshot.package_root.clone());
-                TrackInstrument::user_snapshot(
-                    "score:instrument".into(),
-                    report["name"].as_str().unwrap_or(id).into(),
-                    format!("user:{}", riffra_control::new_instance_id()),
-                    snapshot.snapshot_id,
-                    snapshot.definition_json,
-                )?
-            };
-            resolved.insert(canonical.clone(), Instrument { assignment, report });
+                    definition_json: builtin.definition_json.clone(),
+                })
+            });
+            let name = report["name"].as_str().unwrap_or(id).to_owned();
+            resolved.insert(
+                canonical.clone(),
+                Source {
+                    definition: canonical.clone(),
+                    name,
+                    report,
+                    built_in,
+                },
+            );
         }
-        instruments.insert(id.clone(), canonical);
+        sources.insert(id.clone(), resolved[&canonical].clone());
     }
-    let source = ScoreSource {
-        file_name: path
-            .file_name()
-            .expect("score filename")
-            .to_string_lossy()
-            .into_owned(),
-        yaml: plan.source_yaml().to_owned(),
-    };
-    imported.session = build_session(&mut plan, source, &instruments, &resolved)?;
-    Ok(imported)
+    Ok(ScoreDocument {
+        path,
+        yaml,
+        plan,
+        bindings: effective,
+        sources,
+    })
 }
 
-fn build_session(
-    plan: &mut ScorePlan,
-    source: ScoreSource,
-    instruments: &BTreeMap<String, PathBuf>,
-    resolved: &BTreeMap<PathBuf, Instrument>,
-) -> Result<CreativeSession, String> {
-    // Input-only and continuous instruments still need their own execution instance.
+/// Builds the canonical Session for one resolved Score document.
+fn build(
+    document: &mut ScoreDocument,
+    previous: Option<&CreativeSession>,
+    store: &UserInstrumentStore,
+    staged: &mut BTreeSet<PathBuf>,
+) -> Result<CreativeSession, ImportError> {
+    validate_performance(&document.plan, &document.sources)?;
+    let ScoreDocument {
+        path,
+        yaml,
+        plan,
+        bindings,
+        sources,
+    } = document;
+    let sources = sources.clone();
     for (id, spec) in &plan.instruments {
-        if !plan.lanes.iter().any(|lane| lane.id == *id) {
-            let mut pattern = plan.timeline.clone();
-            pattern.events.clear();
-            plan.lanes.push(ScoreLane {
-                id: id.clone(),
-                gain_db: spec["gain_db"].as_f64().unwrap_or(0.0),
-                pattern,
-                sources: Vec::new(),
+        if plan.lanes.iter().any(|lane| lane.id == *id) {
+            continue;
+        }
+        let mut pattern = plan.timeline.clone();
+        pattern.events.clear();
+        plan.lanes.push(ScoreLane {
+            id: id.clone(),
+            gain_db: spec["gain_db"].as_f64().unwrap_or(0.0),
+            pattern,
+            sources: Vec::new(),
+        });
+    }
+    plan.lanes.sort_by(|first, second| {
+        (first.id.as_str(), first.gain_db.to_bits())
+            .cmp(&(second.id.as_str(), second.gain_db.to_bits()))
+    });
+    let previous_tracks: Vec<&Track> = previous
+        .map(|session| {
+            session
+                .arrangement
+                .tracks
+                .iter()
+                .filter(|track| track.score_instrument.is_some())
+                .collect()
+        })
+        .unwrap_or_default();
+    let claims = match_tracks(plan, &previous_tracks);
+    let mut assignment = BTreeMap::<PathBuf, TrackInstrument>::new();
+    let mut tracks = Vec::with_capacity(plan.lanes.len());
+    let mut clips = Vec::with_capacity(plan.lanes.len());
+    let mut automation = Vec::new();
+    let mut tracks_by_part = BTreeMap::<String, Vec<String>>::new();
+    for (index, lane) in plan.lanes.iter().enumerate() {
+        let spec = &plan.instruments[&lane.id];
+        let source = &sources[&lane.id];
+        let claimed = claims.get(&index).copied();
+        let (mut instrument, reused) = match claimed.and_then(|track| track.instrument.as_ref()) {
+            Some(existing) if compatible(existing, source, store)? => (existing.clone(), true),
+            _ => (assigned(source, store, staged, &mut assignment)?, false),
+        };
+        let mut track = match claimed {
+            Some(previous) => previous.clone(),
+            None => Track::instrument(
+                format!("score:track:{}", riffra_control::new_instance_id()),
+                lane.id.clone(),
+            ),
+        };
+        if !reused {
+            instrument.id = format!("score:device:{}", riffra_control::new_instance_id());
+        }
+        track.instrument = Some(instrument);
+        track.kind = TrackKind::Instrument;
+        track.gain_db = lane.gain_db;
+        track.pan = spec["pan"].as_f64().unwrap_or(0.0);
+        track.pan_law = PanLaw::LinearBalance;
+        track.score_instrument = Some(lane.id.clone());
+        tracks_by_part
+            .entry(lane.id.clone())
+            .or_default()
+            .push(track.id.clone());
+        tracks.push(track);
+    }
+    for (index, lane) in plan.lanes.iter().enumerate() {
+        let spec = &plan.instruments[&lane.id];
+        let source = &sources[&lane.id];
+        let track_id = tracks[index].id.clone();
+        if let Some(input) = spec["audio_input"].as_str() {
+            let source_tracks = tracks_by_part
+                .get(input)
+                .ok_or_else(|| format!("unknown audio input part '{input}'"))?
+                .clone();
+            tracks[index].external_audio_source_track_ids = source_tracks;
+        } else {
+            tracks[index].external_audio_source_track_ids.clear();
+        }
+        let required_channels = source.report["external_audio"]["required_input_channels"]
+            .as_u64()
+            .unwrap_or(0);
+        if (required_channels > 0) != !tracks[index].external_audio_source_track_ids.is_empty() {
+            return Err(format!(
+                "instrument '{}' audio input does not match its source routes",
+                lane.id
+            )
+            .into());
+        }
+        let previous_clip = claims.get(&index).and_then(|claimed| {
+            previous.and_then(|session| {
+                session
+                    .arrangement
+                    .midi_clips
+                    .iter()
+                    .find(|clip| clip.track_id == claimed.id)
+            })
+        });
+        let mut clip = previous_clip.cloned().unwrap_or_else(|| MidiClip {
+            id: format!("score:clip:{}", riffra_control::new_instance_id()),
+            name: lane.id.clone(),
+            track_id: track_id.clone(),
+            asset_id: None,
+            start_tick: TimelineTick(0),
+            duration_ticks: plan.length_ticks,
+            notes: Vec::new(),
+            events: Vec::new(),
+            instrument_control_events: Vec::new(),
+            muted: false,
+            loop_enabled: false,
+            recording_take_id: None,
+        });
+        clip.name = lane.id.clone();
+        clip.track_id = track_id.clone();
+        clip.start_tick = TimelineTick(0);
+        clip.duration_ticks = plan.length_ticks;
+        clip.notes.clear();
+        clip.events.clear();
+        clip.instrument_control_events.clear();
+        let events = reset_events(lane, plan, &source.report)?;
+        for (order, event) in events.iter().enumerate() {
+            let control = match event {
+                MusicalEvent::Note {
+                    tick,
+                    duration_ticks,
+                    note,
+                    velocity,
+                } => {
+                    clip.notes.push(MidiNote {
+                        lyric: None,
+                        id: format!("{}:{order}", clip.id),
+                        note: *note,
+                        start_tick: TimelineTick(*tick),
+                        duration_ticks: *duration_ticks,
+                        velocity: *velocity,
+                        channel: 1,
+                    });
+                    continue;
+                }
+                MusicalEvent::SustainPedal { tick, down } => (
+                    *tick,
+                    InstrumentControlEventKind::SustainPedal { down: *down },
+                ),
+                MusicalEvent::PitchBend { tick, value } => (
+                    *tick,
+                    InstrumentControlEventKind::PitchBend { value: *value },
+                ),
+                MusicalEvent::ModWheel { tick, value } => (
+                    *tick,
+                    InstrumentControlEventKind::ModWheel { value: *value },
+                ),
+                MusicalEvent::Aftertouch { tick, value } => (
+                    *tick,
+                    InstrumentControlEventKind::Aftertouch { value: *value },
+                ),
+                MusicalEvent::ParameterChange {
+                    tick,
+                    parameter,
+                    native_value,
+                } => (
+                    *tick,
+                    InstrumentControlEventKind::ParameterChange {
+                        parameter: parameter.clone(),
+                        native_value: *native_value,
+                    },
+                ),
+                MusicalEvent::ParameterRamp {
+                    tick,
+                    duration_ticks,
+                    parameter,
+                    from_value,
+                    to_value,
+                } => (
+                    *tick,
+                    InstrumentControlEventKind::ParameterRamp {
+                        parameter: parameter.clone(),
+                        from_value: *from_value,
+                        to_value: *to_value,
+                        duration_ticks: *duration_ticks,
+                    },
+                ),
+            };
+            clip.instrument_control_events.push(InstrumentControlEvent {
+                id: format!("{}:{order}", clip.id),
+                tick: TimelineTick(control.0),
+                source_order: u32::try_from(order)
+                    .map_err(|_| "too many score events".to_string())?,
+                kind: control.1,
             });
         }
+        clips.push(clip);
+        let previous_lane = claims.get(&index).and_then(|claimed| {
+            previous.and_then(|session| {
+                session.arrangement.automation_lanes.iter().find(|lane| {
+                    lane.target
+                        == AutomationTarget::TrackMix {
+                            track_id: claimed.id.clone(),
+                            parameter: TrackMixParameter::Volume,
+                        }
+                })
+            })
+        });
+        automation.push(AutomationLane {
+            id: previous_lane.map_or_else(
+                || format!("score:volume:{}", riffra_control::new_instance_id()),
+                |lane| lane.id.clone(),
+            ),
+            target: AutomationTarget::TrackMix {
+                track_id,
+                parameter: TrackMixParameter::Volume,
+            },
+            interpolation: AutomationInterpolation::LinearAmplitude {
+                duration_seconds: 0.005,
+            },
+            points: plan
+                .sections
+                .iter()
+                .enumerate()
+                .map(|(section_index, section)| AutomationPoint {
+                    id: format!("score:gain:{}:{section_index}", lane.id),
+                    tick: TimelineTick(section.start_tick),
+                    value: lane.gain_db + section.part_gains.get(&lane.id).copied().unwrap_or(0.0),
+                })
+                .collect(),
+        });
     }
-    let mut session = CreativeSession::new(riffra_host::now_ms());
+    let regions = plan
+        .sections
+        .iter()
+        .enumerate()
+        .map(|(index, section)| TimelineRegion {
+            id: previous
+                .and_then(|session| session.arrangement.regions.get(index))
+                .filter(|region| {
+                    region.name == section.section && region.start_tick.0 == section.start_tick
+                })
+                .map_or_else(
+                    || format!("score:region:{}", riffra_control::new_instance_id()),
+                    |region| region.id.clone(),
+                ),
+            name: section.section.clone(),
+            start_tick: TimelineTick(section.start_tick),
+            end_tick: TimelineTick(section.end_tick),
+        })
+        .collect::<Vec<_>>();
+    let harmony = harmony_events(plan)?;
+
+    let mut session = previous
+        .cloned()
+        .unwrap_or_else(|| CreativeSession::new(riffra_host::now_ms()));
+    if session.arrangement.timebase.ppq != u32::from(plan.ticks_per_beat) {
+        let timebase = ProjectTimebase {
+            ppq: u32::from(plan.ticks_per_beat),
+            tempo_changes: session.arrangement.timebase.tempo_changes.clone(),
+            time_signature_changes: session.arrangement.timebase.time_signature_changes.clone(),
+        };
+        session
+            .arrangement
+            .update_timebase(timebase)
+            .map_err(|error| error.to_string())?;
+    }
+    if previous.is_some() {
+        session.arrangement.revision = session.arrangement.revision.saturating_add(1);
+    }
     session.project_name = Some(plan.title.clone());
-    session.score_source = Some(source);
+    session.score_source = Some(ScoreSource {
+        file_name: path
+            .file_name()
+            .map_or_else(String::new, |name| name.to_string_lossy().into_owned()),
+        yaml: yaml.clone(),
+        path: Some(path.to_string_lossy().into_owned()),
+        bindings: bindings
+            .iter()
+            .map(|(id, path)| (id.clone(), path.to_string_lossy().into_owned()))
+            .collect(),
+    });
     session.arrangement.timebase = ProjectTimebase {
         ppq: u32::from(plan.ticks_per_beat),
         tempo_changes: plan
@@ -213,164 +771,216 @@ fn build_session(
             .expect("validated true peak"),
         loudness_range_lu: master["target_lra_lu"].as_f64(),
     });
-    let mut tracks_by_part = BTreeMap::<String, Vec<String>>::new();
+    let previous_track_ids = previous_tracks
+        .iter()
+        .map(|track| track.id.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut retained_tracks = Vec::new();
+    if let Some(previous) = previous {
+        for track in &previous.arrangement.tracks {
+            if track.score_instrument.is_none() {
+                retained_tracks.push(track.clone());
+            }
+        }
+    }
+    let retained_track_ids = retained_tracks
+        .iter()
+        .map(|track| track.id.as_str())
+        .collect::<BTreeSet<_>>();
+    let (retained_clips, retained_automation) = previous.map_or_else(
+        || (Vec::new(), Vec::new()),
+        |previous| {
+            (
+                previous
+                    .arrangement
+                    .midi_clips
+                    .iter()
+                    .filter(|clip| retained_track_ids.contains(clip.track_id.as_str()))
+                    .cloned()
+                    .collect::<Vec<_>>(),
+                previous
+                    .arrangement
+                    .automation_lanes
+                    .iter()
+                    .filter(|lane| !targets_track(&lane.target, &previous_track_ids))
+                    .cloned()
+                    .collect::<Vec<_>>(),
+            )
+        },
+    );
+    tracks.extend(retained_tracks);
+    clips.extend(retained_clips);
+    automation.extend(retained_automation);
+    session.arrangement.tracks = tracks;
+    session.arrangement.midi_clips = clips;
+    session.arrangement.automation_lanes = automation;
+    session.arrangement.regions = regions;
+    session.arrangement.harmony_events = harmony;
+    session.validate_and_normalize().map_err(ImportError::from)
+}
+
+fn targets_track(target: &AutomationTarget, track_ids: &BTreeSet<&str>) -> bool {
+    match target {
+        AutomationTarget::TrackMix { track_id, .. } => track_ids.contains(track_id.as_str()),
+        AutomationTarget::DeviceParameter { device_id, .. } => {
+            track_ids.contains(device_id.as_str())
+        }
+        _ => false,
+    }
+}
+
+/// Pairs previous Score tracks with new lanes, preferring exact lane keys.
+fn match_tracks<'a>(plan: &ScorePlan, previous: &[&'a Track]) -> BTreeMap<usize, &'a Track> {
+    let mut claims = BTreeMap::new();
+    let mut claimed = BTreeSet::new();
     for (index, lane) in plan.lanes.iter().enumerate() {
-        tracks_by_part
-            .entry(lane.id.clone())
-            .or_default()
-            .push(format!("score:track:{index}"));
+        if let Some(track) = previous.iter().find(|track| {
+            !claimed.contains(&track.id)
+                && track.score_instrument.as_deref() == Some(lane.id.as_str())
+                && track.gain_db.to_bits() == lane.gain_db.to_bits()
+        }) {
+            claimed.insert(track.id.clone());
+            claims.insert(index, *track);
+        }
     }
     for (index, lane) in plan.lanes.iter().enumerate() {
-        let spec = &plan.instruments[&lane.id];
-        let instrument = &resolved[&instruments[&lane.id]];
-        let mut track = Track::instrument(format!("score:track:{index}"), lane.id.clone());
-        let mut assignment = instrument.assignment.clone();
-        assignment.id = format!("score:device:{index}");
-        track.instrument = Some(assignment);
-        track.gain_db = lane.gain_db;
-        track.pan = spec["pan"].as_f64().unwrap_or(0.0);
-        track.pan_law = PanLaw::LinearBalance;
-        if let Some(input) = spec["audio_input"].as_str() {
-            track.external_audio_source_track_ids = tracks_by_part
-                .get(input)
-                .ok_or_else(|| format!("unknown audio input part '{input}'"))?
-                .clone();
+        if claims.contains_key(&index) {
+            continue;
         }
-        let required_channels = instrument.report["external_audio"]["required_input_channels"]
+        let remaining_lanes = plan
+            .lanes
+            .iter()
+            .enumerate()
+            .filter(|(other, lane)| !claims.contains_key(other) && lane.id == plan.lanes[index].id)
+            .count();
+        let remaining_tracks = previous
+            .iter()
+            .filter(|track| {
+                !claimed.contains(&track.id)
+                    && track.score_instrument.as_deref() == Some(lane.id.as_str())
+            })
+            .collect::<Vec<_>>();
+        if remaining_lanes == 1
+            && let [track] = remaining_tracks.as_slice()
+        {
+            claimed.insert(track.id.clone());
+            claims.insert(index, *track);
+        }
+    }
+    claims
+}
+
+/// Reports whether an existing instrument assignment still matches its source.
+fn compatible(
+    instrument: &TrackInstrument,
+    source: &Source,
+    store: &UserInstrumentStore,
+) -> Result<bool, ImportError> {
+    match &instrument.source {
+        TrackInstrumentSource::Internal {
+            definition_json,
+            resource: InternalInstrumentResource::BuiltInPreset { preset_id },
+        } => Ok(source.built_in.as_ref().is_some_and(|built_in| {
+            built_in.preset_id == *preset_id && built_in.definition_json == *definition_json
+        })),
+        TrackInstrumentSource::Internal {
+            resource: InternalInstrumentResource::UserSnapshot { snapshot_id, .. },
+            ..
+        } => Ok(source.built_in.is_none()
+            && store
+                .snapshot_matches(snapshot_id, &source.definition)
+                .map_err(ImportError::from)?),
+        TrackInstrumentSource::Vst3(_) => Ok(false),
+    }
+}
+
+/// Builds the instrument assignment for one resolved source.
+fn assigned(
+    source: &Source,
+    store: &UserInstrumentStore,
+    staged: &mut BTreeSet<PathBuf>,
+    assignments: &mut BTreeMap<PathBuf, TrackInstrument>,
+) -> Result<TrackInstrument, ImportError> {
+    if let Some(instrument) = assignments.get(&source.definition) {
+        return Ok(instrument.clone());
+    }
+    let instrument = if let Some(built_in) = &source.built_in {
+        TrackInstrument::built_in(
+            "score:instrument".into(),
+            source.name.clone(),
+            built_in.preset_id.clone(),
+            built_in.definition_json.clone(),
+        )?
+    } else {
+        let snapshot = store.snapshot_definition(&source.definition)?;
+        staged.insert(snapshot.package_root.clone());
+        TrackInstrument::user_snapshot(
+            "score:instrument".into(),
+            source.name.clone(),
+            format!("user:{}", riffra_control::new_instance_id()),
+            snapshot.snapshot_id,
+            snapshot.definition_json,
+        )?
+    };
+    assignments.insert(source.definition.clone(), instrument.clone());
+    Ok(instrument)
+}
+
+/// Validates the playable content of a resolved Score against its sources.
+fn validate_performance(
+    plan: &ScorePlan,
+    sources: &BTreeMap<String, Source>,
+) -> Result<(), ImportError> {
+    for lane in &plan.lanes {
+        let source = &sources[&lane.id];
+        let spec = &plan.instruments[&lane.id];
+        let required_channels = source.report["external_audio"]["required_input_channels"]
             .as_u64()
             .unwrap_or(0);
-        if (required_channels > 0) != !track.external_audio_source_track_ids.is_empty() {
-            return Err(format!(
-                "instrument '{}' audio input does not match its source routes",
-                lane.id
-            ));
+        let routed = spec["audio_input"]
+            .as_str()
+            .is_some_and(|input| plan.instruments.contains_key(input));
+        if (required_channels > 0) != routed {
+            let field = format!("instruments.{}.audio_input", lane.id);
+            return Err(ImportError {
+                message: format!(
+                    "instrument '{}' audio input does not match its source routes",
+                    lane.id
+                ),
+                details: plan.source_detail(&field, "audio input mismatch"),
+            });
         }
-        let events = reset_events(lane, plan, &instrument.report)?;
-        let mut clip = MidiClip {
-            id: format!("score:clip:{index}"),
-            name: lane.id.clone(),
-            track_id: track.id.clone(),
-            asset_id: None,
-            start_tick: TimelineTick(0),
-            duration_ticks: plan.length_ticks,
-            notes: Vec::new(),
-            events: Vec::new(),
-            instrument_control_events: Vec::new(),
-            muted: false,
-            loop_enabled: false,
-            recording_take_id: None,
-        };
-        for (order, event) in events.iter().enumerate() {
-            let control = match event {
-                MusicalEvent::Note {
-                    tick,
-                    duration_ticks,
-                    note,
-                    velocity,
-                } => {
-                    validate_note(&instrument.report, *note, *velocity)?;
-                    clip.notes.push(MidiNote {
-                        lyric: None,
-                        id: format!("score:note:{index}:{order}"),
-                        note: *note,
-                        start_tick: TimelineTick(*tick),
-                        duration_ticks: *duration_ticks,
-                        velocity: *velocity,
-                        channel: 1,
-                    });
-                    continue;
+        for (order, event) in lane.pattern.events.iter().enumerate() {
+            let path = lane
+                .sources
+                .get(order)
+                .map_or_else(String::new, |source| source.path.clone());
+            let result = match event {
+                MusicalEvent::Note { note, velocity, .. } => {
+                    validate_note(&source.report, *note, *velocity)
                 }
-                MusicalEvent::SustainPedal { tick, down } => (
-                    *tick,
-                    InstrumentControlEventKind::SustainPedal { down: *down },
-                ),
-                MusicalEvent::PitchBend { tick, value } => (
-                    *tick,
-                    InstrumentControlEventKind::PitchBend { value: *value },
-                ),
-                MusicalEvent::ModWheel { tick, value } => (
-                    *tick,
-                    InstrumentControlEventKind::ModWheel { value: *value },
-                ),
-                MusicalEvent::Aftertouch { tick, value } => (
-                    *tick,
-                    InstrumentControlEventKind::Aftertouch { value: *value },
-                ),
                 MusicalEvent::ParameterChange {
-                    tick,
                     parameter,
                     native_value,
-                } => {
-                    validate_parameter(&instrument.report, parameter, &[*native_value])?;
-                    (
-                        *tick,
-                        InstrumentControlEventKind::ParameterChange {
-                            parameter: parameter.clone(),
-                            native_value: *native_value,
-                        },
-                    )
-                }
+                    ..
+                } => validate_parameter(&source.report, parameter, &[*native_value]),
                 MusicalEvent::ParameterRamp {
-                    tick,
-                    duration_ticks,
                     parameter,
                     from_value,
                     to_value,
-                } => {
-                    validate_parameter(&instrument.report, parameter, &[*from_value, *to_value])?;
-                    (
-                        *tick,
-                        InstrumentControlEventKind::ParameterRamp {
-                            parameter: parameter.clone(),
-                            from_value: *from_value,
-                            to_value: *to_value,
-                            duration_ticks: *duration_ticks,
-                        },
-                    )
-                }
+                    ..
+                } => validate_parameter(&source.report, parameter, &[*from_value, *to_value]),
+                _ => Ok(()),
             };
-            clip.instrument_control_events.push(InstrumentControlEvent {
-                id: format!("score:control:{index}:{order}"),
-                tick: TimelineTick(control.0),
-                source_order: u32::try_from(order)
-                    .map_err(|_| "too many score events".to_string())?,
-                kind: control.1,
-            });
+            if let Err(message) = result {
+                return Err(ImportError {
+                    details: plan.source_detail(&path, &message),
+                    message,
+                });
+            }
         }
-        let points: Vec<_> = plan
-            .sections
-            .iter()
-            .enumerate()
-            .map(|(section_index, section)| AutomationPoint {
-                id: format!("score:gain:{index}:{section_index}"),
-                tick: TimelineTick(section.start_tick),
-                value: lane.gain_db + section.part_gains.get(&lane.id).copied().unwrap_or(0.0),
-            })
-            .collect();
-        session.arrangement.automation_lanes.push(AutomationLane {
-            id: format!("score:volume:{index}"),
-            target: AutomationTarget::TrackMix {
-                track_id: track.id.clone(),
-                parameter: TrackMixParameter::Volume,
-            },
-            interpolation: AutomationInterpolation::LinearAmplitude {
-                duration_seconds: 0.005,
-            },
-            points,
-        });
-        session.arrangement.tracks.push(track);
-        session.arrangement.midi_clips.push(clip);
     }
-    for (index, section) in plan.sections.iter().enumerate() {
-        session.arrangement.regions.push(TimelineRegion {
-            id: format!("score:region:{index}"),
-            name: section.section.clone(),
-            start_tick: TimelineTick(section.start_tick),
-            end_tick: TimelineTick(section.end_tick),
-        });
-    }
-    session.arrangement.harmony_events = harmony_events(plan)?;
-    session.validate_and_normalize()
+    Ok(())
 }
 
 fn harmony_events(plan: &ScorePlan) -> Result<Vec<HarmonyEvent>, String> {
@@ -491,7 +1101,7 @@ fn package_matches(source: &Path, builtin: &Path) -> bool {
     })
 }
 
-fn inspect(sonalloy: &Path, definition: &Path) -> Result<Value, String> {
+fn inspect_definition(sonalloy: &Path, definition: &Path) -> Result<Value, String> {
     let output = crate::process::sidecar_command(sonalloy)
         .args(["instrument", "inspect"])
         .arg(definition)
@@ -659,210 +1269,277 @@ fn reset_events(
 mod tests {
     use super::*;
 
+    const SCORE: &str = r#"{
+        "meta":{"title":"Rebuild","bpm":120,"meter":"4/4","tuning":"12edo","gate":1},
+        "form":[{"section":"verse","bars":1,"tonic":"C","scale":"ionian"}],
+        "sections":{"verse":{"lines":{"main":{"instrument":"lead","melody":"theme"}}}},
+        "melodies":{"theme":["1 - - - | 3 - - - | 5 - - - | 1' - - -"]},
+        "instruments":{"lead":{"preset":"TEST/001-lead"}}
+    }"#;
+
+    fn report() -> Value {
+        serde_json::json!({
+            "layers":[{"trigger":{"key_min":0,"key_max":127,"velocity_min":1,"velocity_max":127}}]
+        })
+    }
+
+    fn document(yaml: &str) -> ScoreDocument {
+        let plan = score::compile(yaml).expect("score compiles");
+        let sources = plan
+            .instruments
+            .keys()
+            .map(|id| {
+                (
+                    id.clone(),
+                    Source {
+                        definition: PathBuf::from(format!("/definitions/{id}.json")),
+                        name: id.clone(),
+                        report: report(),
+                        built_in: Some(BuiltIn {
+                            preset_id: format!("TEST-{id}"),
+                            definition_json: "{}".into(),
+                        }),
+                    },
+                )
+            })
+            .collect();
+        ScoreDocument {
+            path: PathBuf::from("/scores/score.yaml"),
+            yaml: yaml.into(),
+            plan,
+            bindings: BTreeMap::new(),
+            sources,
+        }
+    }
+
+    fn store(root: &Path) -> UserInstrumentStore {
+        UserInstrumentStore::new(root, Path::new("sonalloy"))
+    }
+
+    fn notes(session: &CreativeSession) -> Vec<(u64, u8)> {
+        session.arrangement.midi_clips[0]
+            .notes
+            .iter()
+            .map(|note| (note.start_tick.0, note.note))
+            .collect()
+    }
+
     #[test]
-    fn import_validates_score_content_independently_of_filename_extension() {
+    fn rebuilding_keeps_project_identity_work_state_and_device_ids() {
         let root = std::env::temp_dir().join(format!(
-            "riffra-score-import-extension-{}",
+            "riffra-score-rebuild-{}",
             riffra_control::new_instance_id()
         ));
-        std::fs::create_dir_all(&root).unwrap();
-        let resource_root = root.join("resources");
-        crate::test_support::prepare_built_in_resource_root(&resource_root);
-        let catalog = BuiltInInstrumentCatalog::load(resource_root).unwrap();
-        let yaml = json!({
-            "meta":{"title":"Extension independent","bpm":120,"meter":"4/4","tuning":"12edo","reference_octave":4,"gate":1},
-            "form":[{"section":"phrase","bars":1,"tonic":"C","scale":"ionian"}],
-            "sections":{"phrase":{"lines":{"main":{"instrument":"part","melody":"phrase"}}}},
-            "melodies":{"phrase":["1 - - - | 3 - - - | 5 - - - | 1' - - -"]},
-            "instruments":{"part":{"external":true}}
-        })
-        .to_string();
-        for name in ["song.score.yaml", "song.yaml", "song.yml"] {
-            let path = root.join(name);
-            std::fs::write(&path, &yaml).unwrap();
-            let error = import(
-                &ProjectImportScoreParams {
-                    path,
-                    bindings: Default::default(),
-                },
-                &root,
-                &catalog,
-                &root.join("sonalloy"),
-            )
-            .err()
-            .expect("the valid external instrument requires a binding");
-            assert_eq!(
-                error.details["kind"], "scoreBindingsRequired",
-                "{name} must reach Score validation before import continues"
-            );
-        }
+        let store = store(&root);
+        let mut first = document(SCORE);
+        let mut staged = BTreeSet::new();
+        let mut session = build(&mut first, None, &store, &mut staged).expect("initial build");
+        let session_id = session.session_id.clone();
+        let track = session.arrangement.tracks[0].clone();
+        let device = track.instrument.as_ref().expect("device").id.clone();
+        let clip = session.arrangement.midi_clips[0].id.clone();
+        session.arrangement.loop_range.enabled = true;
+        session.arrangement.loop_range.start_tick = TimelineTick(480);
+        session.arrangement.loop_range.end_tick = TimelineTick(960);
+        session.arrangement.markers.push(Marker {
+            id: "marker:1".into(),
+            name: "Intro".into(),
+            tick: 0,
+        });
+        session.arrangement.tracks[0].muted = true;
+        session.arrangement.tracks[0].solo = true;
+        session.arrangement.tracks[0].color = Some("#123456".into());
+        session.settings.count_in_beats = 2;
 
+        let changed = SCORE.replace("3 - - -", "4 - - -");
+        let mut second = document(&changed);
+        let rebuilt = build(&mut second, Some(&session), &store, &mut staged).expect("rebuild");
+
+        assert_eq!(rebuilt.session_id, session_id);
+        assert_eq!(rebuilt.arrangement.tracks[0].id, track.id);
+        assert_eq!(
+            rebuilt.arrangement.tracks[0]
+                .instrument
+                .as_ref()
+                .expect("device")
+                .id,
+            device
+        );
+        assert_eq!(rebuilt.arrangement.midi_clips[0].id, clip);
+        assert_eq!(notes(&rebuilt)[1].1, 65);
+        assert_ne!(notes(&session)[1].1, 65);
+        assert!(rebuilt.arrangement.loop_range.enabled);
+        assert_eq!(rebuilt.arrangement.loop_range.start_tick.0, 480);
+        assert_eq!(rebuilt.arrangement.markers, session.arrangement.markers);
+        assert!(rebuilt.arrangement.tracks[0].muted);
+        assert!(rebuilt.arrangement.tracks[0].solo);
+        assert_eq!(
+            rebuilt.arrangement.tracks[0].color.as_deref(),
+            Some("#123456")
+        );
+        assert_eq!(rebuilt.settings.count_in_beats, 2);
+        assert_eq!(rebuilt.score_source.as_ref().unwrap().yaml, changed);
+        assert!(staged.is_empty(), "built-in sources stage no snapshot");
+        assert!(!session.score_performance_equals(&rebuilt));
         let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
-    fn projects_exact_time_controls_independent_lanes_and_reference_metadata() {
-        let yaml = json!({
-            "meta":{"title":"Exact performance","bpm":120,"meter":"4/4","tuning":"12edo","master":{"target_lufs":-14,"max_true_peak_db":-1}},
-            "form":[{"section":"a","bars":1,"tonic":"C"},{"section":"a","bars":1,"tonic":"D"}],
-            "sections":{"a":{"chords":["1:m7"],"part_gains":{"lead":-6},"placements":[{"instrument":"lead","degree":"1","at":{"bar":1,"offset_quarters":"1/7"},"duration_quarters":"1/3"}]}},
-            "instruments":{"lead":{"external":true,"gain_db":30,"pan":0.5},"effect":{"external":true,"audio_input":"lead"}}
-        }).to_string();
-        let mut plan = score::compile(&yaml).unwrap();
-        plan.lanes[0].pattern.events.extend([
-            MusicalEvent::ParameterRamp {
-                tick: 0,
-                duration_ticks: 3360,
-                parameter: "cutoff".into(),
-                from_value: 20.0,
-                to_value: 1000.0,
-            },
-            MusicalEvent::ParameterChange {
-                tick: 3360,
-                parameter: "cutoff".into(),
-                native_value: 200.0,
-            },
-            MusicalEvent::SustainPedal {
-                tick: 0,
-                down: true,
-            },
-            MusicalEvent::PitchBend {
-                tick: 1,
-                value: 0.12345,
-            },
-            MusicalEvent::ModWheel {
-                tick: 2,
-                value: 0.23456,
-            },
-            MusicalEvent::Aftertouch {
-                tick: 3,
-                value: 0.34567,
-            },
-        ]);
-        plan.part_windows.push(score::PartWindow {
-            instrument: "lead".into(),
-            section_start_tick: 0,
-            section_end_tick: 13440,
-            start_tick: 0,
-            end_tick: 13440,
-        });
-        let mut second = plan.lanes[0].clone();
-        second.gain_db = -3.0;
-        plan.lanes.push(second);
-        let assignment = TrackInstrument::built_in(
-            "device".into(),
-            "Test".into(),
-            "TEST-001".into(),
-            "{}".into(),
-        )
-        .unwrap();
-        let report = json!({"parameters":[{"id":"cutoff","min":20,"max":20000,"default":12000,"scale":"log2"}],
-            "layers":[{"trigger":{"key_min":0,"key_max":127,"velocity_min":1,"velocity_max":127}}]});
-        let instruments = BTreeMap::from([
-            ("lead".into(), PathBuf::from("lead")),
-            ("effect".into(), PathBuf::from("effect")),
-        ]);
-        let mut resolved = BTreeMap::from([
-            (
-                PathBuf::from("lead"),
-                Instrument {
-                    assignment: assignment.clone(),
-                    report: report.clone(),
-                },
-            ),
-            (
-                PathBuf::from("effect"),
-                Instrument {
-                    assignment,
-                    report: json!({"external_audio":{"required_input_channels":2}}),
-                },
-            ),
-        ]);
+    fn rebuilding_only_the_score_text_keeps_the_performance_identical() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-score-text-{}",
+            riffra_control::new_instance_id()
+        ));
+        let store = store(&root);
+        let mut first = document(SCORE);
+        let mut staged = BTreeSet::new();
+        let session = build(&mut first, None, &store, &mut staged).expect("initial build");
 
-        let session = build_session(
-            &mut plan,
-            ScoreSource {
-                file_name: "exact.score.yaml".into(),
-                yaml: yaml.clone(),
-            },
-            &instruments,
-            &resolved,
-        )
-        .unwrap();
+        let mut second = document(&format!(
+            "{SCORE}
+# Only the text changed."
+        ));
+        let rebuilt =
+            build(&mut second, Some(&session), &store, &mut staged).expect("text-only rebuild");
 
-        assert_eq!(session.project_name.as_deref(), Some("Exact performance"));
-        let arrangement = &session.arrangement;
-        assert_eq!(arrangement.timebase.ppq, 3360);
-        assert_eq!(arrangement.tracks.len(), 3);
-        assert_eq!(arrangement.tracks[0].gain_db, 30.0);
-        assert_eq!(arrangement.tracks[0].pan_law, PanLaw::LinearBalance);
+        assert!(session.score_performance_equals(&rebuilt));
+        assert_eq!(rebuilt.arrangement.regions, session.arrangement.regions);
         assert_eq!(
-            arrangement.tracks[2].external_audio_source_track_ids,
-            ["score:track:0", "score:track:1"]
+            rebuilt.arrangement.midi_clips[0].id,
+            session.arrangement.midi_clips[0].id
         );
-        assert_ne!(
-            arrangement.tracks[0].instrument.as_ref().unwrap().id,
-            arrangement.tracks[1].instrument.as_ref().unwrap().id
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rebuild_pairs_lanes_by_instrument_and_gain_change() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-score-pair-{}",
+            riffra_control::new_instance_id()
+        ));
+        let store = store(&root);
+        let yaml = SCORE.replace(
+            r#""instruments":{"lead":{"preset":"TEST/001-lead"}}"#,
+            r#""instruments":{"lead":{"preset":"TEST/001-lead"},"pad":{"preset":"TEST/002-pad"}}"#,
         );
+        let mut first = document(&yaml);
+        let mut staged = BTreeSet::new();
+        let session = build(&mut first, None, &store, &mut staged).expect("initial build");
+        let lead = session
+            .arrangement
+            .tracks
+            .iter()
+            .find(|track| track.score_instrument.as_deref() == Some("lead"))
+            .expect("lead track")
+            .clone();
+        let lead_device = lead.instrument.as_ref().expect("device").id.clone();
+
+        // Moving the lead lane behind a new instrument keeps its identity.
+        let mut inserted = document(&yaml.replace(
+            r#""instruments":{"lead""#,
+            r#""instruments":{"bass":{"preset":"TEST/003-bass"},"lead""#,
+        ));
+        let rebuilt = build(&mut inserted, Some(&session), &store, &mut staged)
+            .expect("lane insertion rebuild");
+        let rebuilt_lead = rebuilt
+            .arrangement
+            .tracks
+            .iter()
+            .find(|track| track.score_instrument.as_deref() == Some("lead"))
+            .expect("lead track");
+        assert_eq!(rebuilt_lead.id, lead.id);
         assert_eq!(
-            arrangement.midi_clips[0].notes[0].start_tick,
-            TimelineTick(480)
+            rebuilt_lead.instrument.as_ref().expect("device").id,
+            lead_device
         );
-        assert_eq!(arrangement.midi_clips[0].notes[0].duration_ticks, 1120);
-        let controls = &arrangement.midi_clips[0].instrument_control_events;
-        assert!(controls.iter().any(|event| matches!(
-            event.kind,
-            InstrumentControlEventKind::ParameterRamp {
-                duration_ticks: 3360,
-                from_value: 20.0,
-                to_value: 1000.0,
-                ..
-            }
-        )));
-        assert!(controls.iter().any(|event| event.tick.0 == 13440
-            && matches!(
-                event.kind,
-                InstrumentControlEventKind::ParameterChange {
-                    native_value: 12000.0,
-                    ..
-                }
-            )));
-        assert_eq!(arrangement.automation_lanes[0].points[0].value, 24.0);
-        assert_eq!(arrangement.regions.len(), 2);
-        assert_ne!(arrangement.regions[0].id, arrangement.regions[1].id);
+        assert_eq!(rebuilt.arrangement.tracks.len(), 3);
+
+        // Changing the lane gain reuses the single remaining lane of its instrument.
+        let mut changed_gain = document(&yaml.replace(
+            r#"{"instrument":"lead","melody":"theme"}"#,
+            r#"{"instrument":"lead","melody":"theme","gain_db":-6}"#,
+        ));
+        let rebuilt =
+            build(&mut changed_gain, Some(&rebuilt), &store, &mut staged).expect("gain rebuild");
+        let rebuilt_lead = rebuilt
+            .arrangement
+            .tracks
+            .iter()
+            .find(|track| track.score_instrument.as_deref() == Some("lead"))
+            .expect("lead track");
+        assert_eq!(rebuilt_lead.id, lead.id);
+        assert_eq!(rebuilt_lead.gain_db, -6.0);
         assert_eq!(
-            arrangement.harmony_events[1].chord.root,
-            Some(MusicalNoteName::new("D").unwrap())
+            rebuilt_lead.instrument.as_ref().expect("device").id,
+            lead_device
         );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rebuild_keeps_a_user_snapshot_whose_definition_is_unchanged() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-score-snapshot-{}",
+            riffra_control::new_instance_id()
+        ));
+        let definitions = root.join("definitions");
+        let snapshot_id = riffra_control::new_instance_id();
+        let snapshot = root.join("project-instruments").join(&snapshot_id);
+        std::fs::create_dir_all(&definitions).unwrap();
+        std::fs::create_dir_all(&snapshot).unwrap();
+        std::fs::write(definitions.join("lead.json"), r#"{"name":"Lead"}"#).unwrap();
+        std::fs::write(snapshot.join("definition.json"), r#"{"name":"Lead"}"#).unwrap();
+        let store = store(&root);
+        let mut first = document(SCORE);
+        let mut staged = BTreeSet::new();
+        let mut session = build(&mut first, None, &store, &mut staged).expect("initial build");
+        let snapshot_name = snapshot_id.clone();
+        session.arrangement.tracks[0].instrument = Some(
+            TrackInstrument::user_snapshot(
+                "score:instrument".into(),
+                "Lead".into(),
+                format!("user:{}", riffra_control::new_instance_id()),
+                snapshot_id.clone(),
+                r#"{"name":"Lead"}"#.into(),
+            )
+            .unwrap(),
+        );
+        let device = session.arrangement.tracks[0]
+            .instrument
+            .as_ref()
+            .unwrap()
+            .id
+            .clone();
+
+        let mut second = document(SCORE);
+        second.sources.insert(
+            "lead".into(),
+            Source {
+                definition: definitions.join("lead.json"),
+                name: "Lead".into(),
+                report: report(),
+                built_in: None,
+            },
+        );
+        let rebuilt = build(&mut second, Some(&session), &store, &mut staged)
+            .expect("a matching snapshot is reused");
+
+        assert!(staged.is_empty(), "no new snapshot is staged");
         assert_eq!(
-            session
-                .settings
-                .mixdown
-                .mastering
+            rebuilt.arrangement.tracks[0]
+                .instrument
                 .as_ref()
                 .unwrap()
-                .loudness_range_lu,
-            None
+                .id,
+            device
         );
-        assert_eq!(session.score_source.as_ref().unwrap().yaml, yaml);
-        assert_eq!(
-            serde_json::from_str::<CreativeSession>(&serde_json::to_string(&session).unwrap())
-                .unwrap(),
-            session
-        );
-        resolved.get_mut(&PathBuf::from("effect")).unwrap().report =
-            json!({"external_audio":{"required_input_channels":1}});
-        let mono_session = build_session(
-            &mut plan,
-            session.score_source.clone().unwrap(),
-            &instruments,
-            &resolved,
-        )
-        .unwrap();
-        assert_eq!(
-            mono_session.arrangement.tracks[2].external_audio_source_track_ids,
-            ["score:track:0", "score:track:1"]
-        );
-        assert!(validate_parameter(&report, "cutoff", &[20001.0]).is_err());
+        assert!(matches!(
+            rebuilt.arrangement.tracks[0].instrument.as_ref().unwrap().source,
+            TrackInstrumentSource::Internal {
+                resource: InternalInstrumentResource::UserSnapshot { ref snapshot_id, .. },
+                ..
+            } if *snapshot_id == snapshot_name
+        ));
+        let _ = std::fs::remove_dir_all(root);
     }
 }

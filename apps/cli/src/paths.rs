@@ -45,12 +45,32 @@ pub(super) fn prepare_command(command: &mut ControlCommand) -> Result<(), String
             }
             CanonicalCommand::MissingRelink(params) => resolve_string(&mut params.new_path)?,
             CanonicalCommand::MissingReplacePlugin(params) => resolve_string(&mut params.new_path)?,
+            CanonicalCommand::ScoreValidate(params) => {
+                resolve_path(&mut params.path)?;
+                for path in params.bindings.values_mut() {
+                    resolve_path(path)?;
+                }
+            }
+            CanonicalCommand::ScoreInspect(params) => {
+                resolve_path(&mut params.path)?;
+                for path in params.bindings.values_mut() {
+                    resolve_path(path)?;
+                }
+            }
             _ => {}
         },
         ControlCommand::Project(command) => match command {
             ProjectCommand::ProjectImport(params) => resolve_path(&mut params.path)?,
             ProjectCommand::ProjectImportScore(params) => {
                 resolve_path(&mut params.path)?;
+                for path in params.bindings.values_mut() {
+                    resolve_path(path)?;
+                }
+            }
+            ProjectCommand::ProjectRebuildScore(params) => {
+                if let Some(path) = &mut params.path {
+                    resolve_path(path)?;
+                }
                 for path in params.bindings.values_mut() {
                     resolve_path(path)?;
                 }

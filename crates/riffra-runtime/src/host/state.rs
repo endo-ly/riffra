@@ -17,6 +17,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
 pub(crate) struct HostState {
+    pub(super) score_sync: Mutex<crate::api::output::ScoreSyncStatus>,
     pub(super) _lease: DataRootLease,
     pub(super) identity: HostIdentity,
     pub(crate) data_root: PathBuf,
@@ -37,6 +38,55 @@ pub(crate) struct HostState {
     pub(super) shutdown_requested: AtomicBool,
     pub(super) plugin_persistence_commands:
         Mutex<Option<std::sync::mpsc::Sender<super::persistence::PluginPersistenceCommand>>>,
+}
+
+/// Initial Score synchronization state derived from the active Project.
+pub(crate) fn initial_score_sync(
+    canonical: &CanonicalState,
+) -> crate::api::output::ScoreSyncStatus {
+    let Some(source) = canonical.session.score_source.as_ref() else {
+        return crate::api::output::ScoreSyncStatus {
+            state: crate::api::output::ScoreSyncState::Unlinked,
+            project_id: Some(canonical.project_id.clone()),
+            ..crate::api::output::ScoreSyncStatus::default()
+        };
+    };
+    crate::api::output::ScoreSyncStatus {
+        state: if source.path.is_some() {
+            crate::api::output::ScoreSyncState::Synced
+        } else {
+            crate::api::output::ScoreSyncState::Unlinked
+        },
+        project_id: Some(canonical.project_id.clone()),
+        path: source.path.clone(),
+        sequence: Some(canonical.sequence),
+        updated_at_ms: Some(canonical.session.updated_at_ms),
+        diagnostics: Vec::new(),
+    }
+}
+
+impl HostState {
+    /// Returns the current Score synchronization state of the active Project.
+    pub(crate) fn score_sync_status(&self) -> crate::api::output::ScoreSyncStatus {
+        self.score_sync
+            .lock()
+            .expect("Score sync lock was poisoned")
+            .clone()
+    }
+
+    pub(super) fn set_score_sync(&self, status: crate::api::output::ScoreSyncStatus) {
+        let mut current = self
+            .score_sync
+            .lock()
+            .expect("Score sync lock was poisoned");
+        if *current == status {
+            return;
+        }
+        current.clone_from(&status);
+        drop(current);
+        self.events
+            .emit(crate::HostEvent::ScoreSyncStatusChanged(status));
+    }
 }
 
 impl HostState {
@@ -87,6 +137,7 @@ impl HostState {
                 .map_err(HostError::State)?,
             safe_mode: self.safe_mode,
             data_root: self.data_root.clone(),
+            score_sync: self.score_sync_status(),
         })
     }
 }
@@ -113,6 +164,9 @@ impl HostState {
         let runtime = Arc::new(RuntimeReconciler::new(Arc::new(audio.clone())).unwrap());
         Arc::new(Self {
             _lease: lease,
+            score_sync: Mutex::new(initial_score_sync(
+                &riffra_core::AppCore::new(String::new(), session.clone(), 0).canonical_state(),
+            )),
             identity: HostIdentity::new(),
             data_root: data_root.to_path_buf(),
             project: super::open_project::ProjectCell::new(super::open_project::OpenProject {

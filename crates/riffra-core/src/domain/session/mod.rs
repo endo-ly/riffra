@@ -62,6 +62,13 @@ pub struct CreativeSession {
 pub struct ScoreSource {
     pub file_name: String,
     pub yaml: String,
+    /// Absolute path of the linked Score file at the last successful synchronization.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub path: Option<String>,
+    /// Definition path of each `external: true` instrument in the linked Score.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub bindings: std::collections::BTreeMap<String, String>,
 }
 
 impl Default for SessionSettings {
@@ -114,6 +121,65 @@ impl CreativeSession {
             },
             settings: SessionSettings::default(),
         }
+    }
+
+    /// Compares the state a linked Score owns, including its stored body.
+    pub fn score_owned_state_equals(&self, other: &Self) -> bool {
+        self.score_owned_equals(other, true)
+    }
+
+    /// Compares the state a linked Score owns, ignoring its stored body.
+    ///
+    /// Work state such as loop, punch, markers, mute, solo, arm, monitoring,
+    /// input routes, colors, and recording metadata is not compared.
+    pub fn score_performance_equals(&self, other: &Self) -> bool {
+        self.score_owned_equals(other, false)
+    }
+
+    fn score_owned_equals(&self, other: &Self, include_source: bool) -> bool {
+        if (include_source && self.score_source != other.score_source)
+            || self.project_name != other.project_name
+            || self.arrangement.timebase != other.arrangement.timebase
+            || self.arrangement.mixer != other.arrangement.mixer
+            || self.settings.mixdown != other.settings.mixdown
+            || self.arrangement.audio_clips != other.arrangement.audio_clips
+            || self.arrangement.regions != other.arrangement.regions
+            || self.arrangement.harmony_events != other.arrangement.harmony_events
+        {
+            return false;
+        }
+        let tracks = score_tracks(self);
+        let candidate_tracks = score_tracks(other);
+        if tracks.len() != candidate_tracks.len()
+            || !tracks
+                .iter()
+                .zip(&candidate_tracks)
+                .all(|(track, candidate)| score_track_equals(track, candidate))
+        {
+            return false;
+        }
+        let track_ids = tracks
+            .iter()
+            .map(|track| track.id.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        let clips = score_clips(self, &track_ids);
+        let candidate_clips = score_clips(other, &track_ids);
+        if clips.len() != candidate_clips.len()
+            || !clips.iter().zip(&candidate_clips).all(|(clip, candidate)| {
+                clip.id == candidate.id
+                    && clip.name == candidate.name
+                    && clip.track_id == candidate.track_id
+                    && clip.asset_id == candidate.asset_id
+                    && clip.start_tick == candidate.start_tick
+                    && clip.duration_ticks == candidate.duration_ticks
+                    && clip.notes == candidate.notes
+                    && clip.events == candidate.events
+                    && clip.instrument_control_events == candidate.instrument_control_events
+            })
+        {
+            return false;
+        }
+        score_automation(self, &track_ids) == score_automation(other, &track_ids)
     }
 
     /// Validates production rules and normalizes clamped values, mirroring the
@@ -207,6 +273,55 @@ impl MixdownSettings {
         }
         Ok(())
     }
+}
+
+fn score_track_equals(track: &Track, candidate: &Track) -> bool {
+    track.id == candidate.id
+        && track.name == candidate.name
+        && track.kind == candidate.kind
+        && track.gain_db == candidate.gain_db
+        && track.pan == candidate.pan
+        && track.pan_law == candidate.pan_law
+        && track.instrument == candidate.instrument
+        && track.external_audio_source_track_ids == candidate.external_audio_source_track_ids
+        && track.output_bus_id == candidate.output_bus_id
+        && track.effects == candidate.effects
+        && track.score_instrument == candidate.score_instrument
+}
+
+fn score_tracks(session: &CreativeSession) -> Vec<&Track> {
+    session
+        .arrangement
+        .tracks
+        .iter()
+        .filter(|track| track.score_instrument.is_some())
+        .collect()
+}
+
+fn score_clips<'a>(
+    session: &'a CreativeSession,
+    track_ids: &std::collections::BTreeSet<&str>,
+) -> Vec<&'a MidiClip> {
+    session
+        .arrangement
+        .midi_clips
+        .iter()
+        .filter(|clip| track_ids.contains(clip.track_id.as_str()))
+        .collect()
+}
+
+fn score_automation<'a>(
+    session: &'a CreativeSession,
+    track_ids: &std::collections::BTreeSet<&str>,
+) -> Vec<&'a AutomationLane> {
+    session
+        .arrangement
+        .automation_lanes
+        .iter()
+        .filter(|lane| {
+            matches!(&lane.target, AutomationTarget::TrackMix { track_id, .. } if track_ids.contains(track_id.as_str()))
+        })
+        .collect()
 }
 
 #[cfg(test)]

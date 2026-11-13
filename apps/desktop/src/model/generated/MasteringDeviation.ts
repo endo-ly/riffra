@@ -3,8 +3,4 @@
 /**
  * Differences from configured targets; LRA is absent when no target was requested.
  */
-export type MasteringDeviation = {
-  integratedLufs: number;
-  truePeakDb: number;
-  loudnessRangeLu: number | null;
-};
+export type MasteringDeviation = { integratedLufs: number, truePeakDb: number, loudnessRangeLu: number | null, };

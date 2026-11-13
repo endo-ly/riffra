@@ -6,6 +6,7 @@ import {
   acceptActivation,
   acceptBootstrap,
   acceptCanonical,
+  acceptScoreSync,
   replaceProjectList,
   type ProjectStore,
 } from '@/shared/session/slices/project';
@@ -140,16 +141,58 @@ describe('project store', () => {
     expect(store.getState().readModel!.midiClipsById.get('a')!.notes[0].lyric).toBe('la');
   });
 
+  it('keeps linked Score diagnostics for the active project only', () => {
+    const api = createFakeNativeApi();
+    const store = acceptBootstrap(
+      { boot: null, lastActivation: null, scoreSync: null },
+      api.bootstrapState,
+    );
+    const projectId = store.boot!.projectState.activeProjectId;
+
+    expect(
+      acceptScoreSync(store, {
+        state: 'failed',
+        projectId: 'other-project',
+        diagnostics: [{ path: 'meta.title', message: 'wrong project', line: 1, column: 1 }],
+      }),
+    ).toBeNull();
+
+    const failed = acceptScoreSync(store, {
+      state: 'failed',
+      projectId,
+      path: 'C:/music/song/score.yaml',
+      diagnostics: [
+        { path: 'instruments.lead.voices', message: 'unknown field', line: 12, column: 5 },
+      ],
+    });
+    expect(failed?.scoreSync?.state).toBe('failed');
+    expect(failed?.scoreSync?.diagnostics?.[0].line).toBe(12);
+
+    const synced = acceptScoreSync(failed!, {
+      state: 'synced',
+      projectId,
+      path: 'C:/music/song/score.yaml',
+      sequence: 4,
+    });
+    expect(synced?.scoreSync).toEqual({
+      state: 'synced',
+      projectId,
+      path: 'C:/music/song/score.yaml',
+      sequence: 4,
+    });
+    expect(acceptScoreSync(synced!, { state: 'unlinked' })?.scoreSync?.state).toBe('unlinked');
+  });
+
   it('accepts only newer canonical state for the active project', () => {
     const boot = createFakeNativeApi().bootstrapState;
-    const store = acceptBootstrap({ boot: null, lastActivation: null }, boot);
+    const store = acceptBootstrap({ boot: null, lastActivation: null, scoreSync: null }, boot);
     expect(acceptCanonical(store, boot.canonical).result).toBe('already-current');
     expect(
       acceptCanonical(store, { ...boot.canonical, projectId: 'other', sequence: 99 }).result,
     ).toBe('rejected');
-    expect(acceptCanonical({ boot: null, lastActivation: null }, boot.canonical).result).toBe(
-      'rejected',
-    );
+    expect(
+      acceptCanonical({ boot: null, lastActivation: null, scoreSync: null }, boot.canonical).result,
+    ).toBe('rejected');
     expect(
       acceptCanonical(store, { ...boot.canonical, sequence: boot.canonical.sequence - 1 }).result,
     ).toBe('rejected');
@@ -162,7 +205,7 @@ describe('project store', () => {
 
   it('preserves the activation when its response and an older list arrive later', () => {
     const boot = createFakeNativeApi().bootstrapState;
-    const store = acceptBootstrap({ boot: null, lastActivation: null }, boot);
+    const store = acceptBootstrap({ boot: null, lastActivation: null, scoreSync: null }, boot);
     const projectId = 'project:new';
     const activation = {
       canonical: { ...boot.canonical, projectId, sequence: boot.canonical.sequence + 1 },

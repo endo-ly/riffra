@@ -3,8 +3,4 @@
 /**
  * Params of `music.timebase.update`; at least one field is required.
  */
-export type TimebaseUpdateParams = {
-  bpm?: number | null;
-  timeSignatureNumerator?: number | null;
-  timeSignatureDenominator?: number | null;
-};
+export type TimebaseUpdateParams = { bpm?: number | null, timeSignatureNumerator?: number | null, timeSignatureDenominator?: number | null, };

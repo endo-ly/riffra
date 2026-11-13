@@ -110,6 +110,11 @@ pub enum CliCommand {
         #[command(subcommand)]
         command: AssetCommand,
     },
+    /// Validate or inspect a Score YAML file without changing any Project.
+    Score {
+        #[command(subcommand)]
+        command: ScoreCommand,
+    },
     /// List, create, open, rename, export, and import projects.
     Project {
         #[command(subcommand)]
@@ -1775,6 +1780,47 @@ pub enum ProjectCommand {
     Import(ProjectImportArgs),
     /// Create and activate an editable project from Score YAML.
     ImportScore(ProjectImportScoreArgs),
+    /// Synchronize the active Project with its linked Score YAML file.
+    RebuildScore(ProjectRebuildScoreArgs),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ScoreCommand {
+    /// Diagnose Score syntax, source references, and playable content without creating a project.
+    Validate(ScoreDocumentArgs),
+    /// Expand a Score into its sections, instruments, lanes, notes, and events.
+    Inspect(ScoreInspectArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct ScoreInspectArgs {
+    /// Score YAML file to read.
+    pub path: PathBuf,
+    /// External instrument binding, repeated as ID=DEFINITION.
+    #[arg(long = "bind", value_parser = parse_score_binding)]
+    pub bindings: Vec<(String, PathBuf)>,
+    /// Include every expanded event with its source location.
+    #[arg(long)]
+    pub events: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct ScoreDocumentArgs {
+    /// Score YAML file to read.
+    pub path: PathBuf,
+    /// External instrument binding, repeated as ID=DEFINITION.
+    #[arg(long = "bind", value_parser = parse_score_binding)]
+    pub bindings: Vec<(String, PathBuf)>,
+}
+
+#[derive(Debug, Args)]
+pub struct ProjectRebuildScoreArgs {
+    /// Score YAML file; omit to read the Project's linked file.
+    #[arg(long)]
+    pub path: Option<PathBuf>,
+    /// External instrument binding, repeated as ID=DEFINITION.
+    #[arg(long = "bind", value_parser = parse_score_binding)]
+    pub bindings: Vec<(String, PathBuf)>,
 }
 
 #[derive(Debug, Args)]
@@ -3509,6 +3555,26 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
             .into(),
             AssetCommand::StopPreview => Runtime::AssetPreviewStop(empty).into(),
         },
+        CliCommand::Score { command } => match command {
+            ScoreCommand::Validate(args) => ControlCommand::decode(
+                "score.validate",
+                serde_json::to_value(ScoreDocumentParams {
+                    path: args.path,
+                    bindings: args.bindings.into_iter().collect(),
+                })
+                .map_err(|error| RequestError::Usage(error.to_string()))?,
+            ),
+            ScoreCommand::Inspect(args) => ControlCommand::decode(
+                "score.inspect",
+                serde_json::to_value(ScoreInspectParams {
+                    path: args.path,
+                    bindings: args.bindings.into_iter().collect(),
+                    events: args.events,
+                })
+                .map_err(|error| RequestError::Usage(error.to_string()))?,
+            ),
+        }
+        .map_err(RequestError::from)?,
         CliCommand::Project { command } => match command {
             ProjectCommand::List => Project::ProjectList(empty).into(),
             ProjectCommand::Create(args) => {
@@ -3540,6 +3606,13 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
             }
             ProjectCommand::Import(args) => {
                 Project::ProjectImport(ProjectImportParams { path: args.path }).into()
+            }
+            ProjectCommand::RebuildScore(args) => {
+                Project::ProjectRebuildScore(ProjectRebuildScoreParams {
+                    path: args.path,
+                    bindings: args.bindings.into_iter().collect(),
+                })
+                .into()
             }
         },
         CliCommand::Instrument { command } => match command {
@@ -4671,8 +4744,8 @@ mod tests {
         let command = Cli::command();
         command.clone().debug_assert();
         assert_help(&command, "riffra");
-        assert_eq!(command.get_subcommands().count(), 23);
-        assert_eq!(leaves(&command), 188);
+        assert_eq!(command.get_subcommands().count(), 24);
+        assert_eq!(leaves(&command), 191);
     }
 
     #[test]

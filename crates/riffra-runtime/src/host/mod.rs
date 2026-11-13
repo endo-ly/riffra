@@ -6,6 +6,7 @@ pub(crate) mod open_project;
 mod persistence;
 mod plugin_scan;
 mod project;
+mod score_watch;
 mod state;
 
 pub use events::{
@@ -90,6 +91,7 @@ pub struct DawHost {
     control: Mutex<Option<ControlServer>>,
     startup: Mutex<Option<std::thread::JoinHandle<()>>>,
     plugin_persistence: Mutex<Option<persistence::PluginStatePersistenceCoordinator>>,
+    score_watch: Mutex<Option<score_watch::ScoreWatcher>>,
 }
 
 impl DawHost {

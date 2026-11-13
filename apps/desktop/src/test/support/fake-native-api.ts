@@ -19,6 +19,7 @@ import type {
   ProjectActivationResult,
   RecordingFinalized,
   RuntimeStartupFinished,
+  ScoreSyncStatus,
   TransportStatus,
 } from '@/model/generated';
 import { defaultSession } from '@/native/browser-defaults';
@@ -142,6 +143,7 @@ interface EventPayloads {
   onRuntimeProjectionStatus: RuntimeProjectionStatus;
   onRuntimeRestarted: number;
   onRecordingFinalized: RecordingFinalized;
+  onScoreSyncStatusChanged: ScoreSyncStatus;
 }
 
 class FakeNativeControls {
@@ -267,6 +269,10 @@ class FakeNativeControls {
   onRecordingFinalized(callback: Parameters<NativeApi['onRecordingFinalized']>[0]) {
     this.recordCall('onRecordingFinalized');
     return this.subscribe('onRecordingFinalized', callback);
+  }
+  onScoreSyncStatusChanged(callback: Parameters<NativeApi['onScoreSyncStatusChanged']>[0]) {
+    this.recordCall('onScoreSyncStatusChanged');
+    return this.subscribe('onScoreSyncStatusChanged', callback);
   }
   private recordCall(name: keyof NativeApi): void {
     this.calls.push(String(name));
@@ -835,6 +841,7 @@ function mergeBootstrap(overrides: Partial<BootstrapState> = {}): BootstrapState
     nativeAvailable: true,
     dataRoot: 'C:\\Riffra',
     vst3Root: 'C:\\Program Files\\Common Files\\VST3',
+    scoreSync: { state: 'unlinked' },
     hostConnection: {
       mode: 'embedded',
       generation: 1,

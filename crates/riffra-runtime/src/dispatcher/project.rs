@@ -1,6 +1,6 @@
 //! Standalone Project container commands.
 use super::{DispatchError, DispatchResult, HostDispatcher};
-use crate::api::output::ProjectActivationResult;
+use crate::api::output::{ProjectActivationResult, ScoreRebuild};
 use crate::api::{ControlOutput, ProjectCommand};
 use crate::host::open_project::{Committed, OpenProject, ProjectWriter};
 use riffra_core::application::SessionSettingsPatch;
@@ -48,7 +48,7 @@ impl HostDispatcher<'_> {
             }
             ProjectCommand::ProjectImportScore(params) => {
                 let writer = writer.expect("project mutation holds the writer");
-                let imported = crate::score_yaml_import::import(
+                let mut imported = crate::score_yaml_import::import(
                     &params,
                     &self.data_root,
                     &self.built_in_instruments,
@@ -73,6 +73,46 @@ impl HostDispatcher<'_> {
                     tracing::warn!(%error, "score project cleanup failed");
                 }
                 return result;
+            }
+            ProjectCommand::ProjectRebuildScore(params) => {
+                let writer = writer.expect("project mutation holds the writer");
+                let current = writer.project().core.canonical_state();
+                let mut rebuilt = crate::score_yaml_import::rebuild(
+                    &current.session,
+                    params.path.as_deref(),
+                    &params.bindings,
+                    &self.data_root,
+                    &self.built_in_instruments,
+                    &self.sonalloy,
+                )
+                .map_err(|error| {
+                    DispatchError::invalid_request_with_details(error.message, error.details)
+                })?;
+                if crate::score_yaml_import::source_changed(&rebuilt.session) {
+                    return Err(DispatchError::InvalidRequest {
+                        message: "the linked Score file changed before it could be applied".into(),
+                        details: Some(serde_json::json!({"kind": "scoreSourceChanged"})),
+                    });
+                }
+                let committed = writer
+                    .commit_accepted(rebuilt.session.clone())
+                    .map_err(|error| DispatchError::CommandFailed(error.to_string()))?;
+                rebuilt.retain();
+                let sequence = committed.snapshot.canonical.sequence;
+                let output = ControlOutput::ScoreRebuild(ScoreRebuild {
+                    project_id: current.project_id.clone(),
+                    changed: rebuilt.changed,
+                    yaml_changed: rebuilt.yaml_changed,
+                    sequence,
+                    path: rebuilt
+                        .session
+                        .score_source
+                        .as_ref()
+                        .and_then(|source| source.path.clone()),
+                    diagnostics: Vec::new(),
+                });
+                self.publish_standalone(committed);
+                return Ok(DispatchResult { output, sequence });
             }
             ProjectCommand::ProjectImport(params) => {
                 let writer = writer.expect("project mutation holds the writer");
