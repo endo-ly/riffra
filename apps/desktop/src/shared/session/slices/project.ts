@@ -387,6 +387,7 @@ export function createProjectSlice(
         if (rebuilt.changed)
           toast(`Score synchronized: ${rebuilt.path ?? 'linked Score'} (${rebuilt.sequence})`);
         else if (rebuilt.yamlChanged) toast('Score text saved; playback is unchanged.');
+        else if (rebuilt.linkChanged) toast('Score link updated; playback is unchanged.');
         else toast('Score is already synchronized.');
         return rebuilt;
       } catch (error) {

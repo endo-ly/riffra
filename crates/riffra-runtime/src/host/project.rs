@@ -345,6 +345,39 @@ fn rebuild_failure(
     }
 }
 
+fn score_source_changed(path: Option<String>) -> ProtocolError {
+    ProtocolError::new(
+        ErrorCode::Conflict,
+        "the linked Score file changed before it could be applied",
+    )
+    .with_details(serde_json::json!({
+        "domain": "score",
+        "kind": "scoreSourceChanged",
+        "path": path,
+    }))
+}
+
+fn restore_source_changed(
+    state: &HostState,
+    previous: &CanonicalState,
+    path: Option<String>,
+) -> ProtocolError {
+    match apply_project_runtime_transition(state, previous, &previous.project_id) {
+        Ok(()) => score_source_changed(path),
+        Err(restore_error) => super::audio::graph_failed(format!(
+            "the linked Score file changed before it could be applied; previous audio could not be restored: {}",
+            restore_error.message
+        ))
+        .with_details(serde_json::json!({
+            "domain": "score",
+            "kind": "scoreSourceChanged",
+            "projectId": previous.project_id,
+            "path": path,
+            "restoreError": serde_json::to_value(restore_error).unwrap_or(Value::Null),
+        })),
+    }
+}
+
 fn rebuild_score(
     state: &HostState,
     writer: &mut super::open_project::ProjectWriter<'_>,
@@ -368,42 +401,32 @@ fn rebuild_score(
         .and_then(|source| source.path.clone());
     let changed = rebuilt.changed;
     let yaml_changed = rebuilt.yaml_changed;
+    let link_changed = rebuilt.link_changed;
     let result = |sequence: u64| ScoreRebuild {
         project_id: current.project_id.clone(),
         changed,
         yaml_changed,
+        link_changed,
         sequence,
         path: path.clone(),
         diagnostics: Vec::new(),
     };
-    if !changed && !yaml_changed {
+    let Some(candidate) = rebuilt.candidate(&current.session) else {
         state.set_score_sync(super::state::initial_score_sync(&current));
         return Ok(result(current.sequence));
-    }
-    if crate::score_yaml_import::source_changed(&rebuilt.session) {
-        return Err(ProtocolError::new(
-            ErrorCode::Conflict,
-            "the linked Score file changed before it could be applied",
-        )
-        .with_details(serde_json::json!({
-            "domain": "score",
-            "kind": "scoreSourceChanged",
-            "path": path,
-        })));
-    }
-    let candidate = if changed {
-        rebuilt.session.clone()
-    } else {
-        let mut candidate = current.session.clone();
-        candidate.score_source = rebuilt.session.score_source.clone();
-        candidate
     };
+    if crate::score_yaml_import::source_changed(&rebuilt.session) {
+        return Err(score_source_changed(path.clone()));
+    }
     let key = project_projection_key(current.sequence, &candidate);
-    if changed && !state.safe_mode {
+    if !state.safe_mode {
         if let Err(error) =
             apply_project_runtime_candidate(state, &current.project_id, &candidate, key)
         {
             return Err(rebuild_failure(state, &current, error));
+        }
+        if crate::score_yaml_import::source_changed(&rebuilt.session) {
+            return Err(restore_source_changed(state, &current, path));
         }
         if let Err(error) = state.runtime.commit_candidate_as_canonical(key) {
             let error = super::audio::graph_failed(format!(
@@ -416,13 +439,15 @@ fn rebuild_score(
         Ok(committed) => committed,
         Err(error) => {
             let cause = command_error(error.to_string());
-            if changed && !state.safe_mode {
+            if !state.safe_mode {
                 return Err(rebuild_failure(state, &current, cause));
             }
             return Err(cause);
         }
     };
-    rebuilt.retain();
+    if changed {
+        rebuilt.retain();
+    }
     let canonical = committed.snapshot.canonical.clone();
     let sequence = canonical.sequence;
     crate::library::index::refresh(&state.data_root, &canonical.project_id, &canonical.session);
@@ -537,6 +562,11 @@ pub(super) fn apply_project_runtime_transition(
         return Ok(());
     }
 
+    let key = riffra_core::ProjectionKey {
+        sequence: canonical.sequence,
+        session_revision: canonical.session.arrangement.revision,
+    };
+    state.runtime.restore_canonical(key);
     state
         .runtime
         .apply_and_wait(
@@ -549,10 +579,7 @@ pub(super) fn apply_project_runtime_transition(
                 )
                 .map_err(command_error)?,
             ),
-            riffra_core::ProjectionKey {
-                sequence: canonical.sequence,
-                session_revision: canonical.session.arrangement.revision,
-            },
+            key,
         )
         .map_err(project_runtime_projection_error)?;
     Ok(())

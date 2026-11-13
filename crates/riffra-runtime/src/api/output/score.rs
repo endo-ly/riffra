@@ -119,6 +119,8 @@ pub struct ScoreRebuild {
     pub changed: bool,
     /// Whether the stored Score body changed.
     pub yaml_changed: bool,
+    /// Whether the linked file path or external instrument bindings changed.
+    pub link_changed: bool,
     /// Canonical sequence after the synchronization.
     pub sequence: u64,
     /// Linked Score file when the Project has one.

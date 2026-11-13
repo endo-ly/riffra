@@ -364,7 +364,7 @@ pub(crate) fn compile(text: &str) -> Result<ScorePlan> {
     let mut source = Source::default();
     let result = parse::parse(text, &mut source).and_then(|document| {
         reject_extensions(&document)?;
-        resolve::validate_structure(&document, false)?;
+        resolve::validate_structure(&document, &std::collections::BTreeSet::new())?;
         lower::lower(&document)
     });
     result
@@ -1831,9 +1831,15 @@ mod tests {
 
     const EXTENSION_SCORE: &str = include_str!("../../testdata/score-extensions.yaml");
 
+    fn extension_document() -> serde_json::Value {
+        let mut source = Source::default();
+        parse::parse(EXTENSION_SCORE, &mut source).expect("the extension fixture parses")
+    }
+
     #[test]
     fn unimplemented_extensions_are_rejected_with_their_source_position() {
-        let error = compile(EXTENSION_SCORE).expect_err("extensions are not implemented");
+        let mut document = extension_document();
+        let error = compile(&document.to_string()).expect_err("extensions are not implemented");
         assert_eq!(error.path, "kits");
         assert!(error.message.contains("kit") || error.message.contains("kits"));
         let detail = &error.detail;
@@ -1842,59 +1848,63 @@ mod tests {
         assert!(detail["line"].as_u64().expect("line") > 0);
         assert!(detail["column"].as_u64().expect("column") > 0);
 
-        for (yaml, path) in [
-            (
-                EXTENSION_SCORE.replace(
-                    "kits:
-  drums: {source: {vst3: {plugin: Addictive Drums 2}}}
-",
-                    "",
-                ),
-                "lyrics",
-            ),
-            (
-                EXTENSION_SCORE
-                    .replace(
-                        "kits:
-  drums: {source: {vst3: {plugin: Addictive Drums 2}}}
-",
-                        "",
-                    )
-                    .replace(
-                        "lyrics:
-  verse1: \"la la la la\"
-  verse2: \"ha ha ha ha\"
-",
-                        "",
-                    ),
-                "mix",
-            ),
-            (
-                EXTENSION_SCORE
-                    .replace(
-                        "kits:
-  drums: {source: {vst3: {plugin: Addictive Drums 2}}}
-",
-                        "",
-                    )
-                    .replace(
-                        "lyrics:
-  verse1: \"la la la la\"
-  verse2: \"ha ha ha ha\"
-",
-                        "",
-                    )
-                    .replace(
-                        "mix:
-  tracks:
-    lead: {output: rhythm}
-",
-                        "",
-                    ),
-                "instruments.lead.source",
-            ),
-        ] {
-            assert_eq!(compile(&yaml).expect_err("extension rejected").path, path);
+        document.as_object_mut().unwrap().remove("kits");
+        assert_eq!(compile(&document.to_string()).unwrap_err().path, "lyrics");
+        document.as_object_mut().unwrap().remove("lyrics");
+        assert_eq!(compile(&document.to_string()).unwrap_err().path, "mix");
+        document.as_object_mut().unwrap().remove("mix");
+
+        let lead = document["instruments"]["lead"].as_object_mut().unwrap();
+        lead.remove("source");
+        assert_eq!(
+            compile(&document.to_string()).unwrap_err().path,
+            "instruments.lead.effects"
+        );
+        document["instruments"]["lead"]
+            .as_object_mut()
+            .unwrap()
+            .remove("effects");
+        assert_eq!(
+            compile(&document.to_string()).unwrap_err().path,
+            "instruments.bass.kit"
+        );
+        document["instruments"]["bass"]
+            .as_object_mut()
+            .unwrap()
+            .remove("kit");
+        assert_eq!(
+            compile(&document.to_string()).unwrap_err().path,
+            "instruments.take.audio"
+        );
+        document["instruments"]["take"]
+            .as_object_mut()
+            .unwrap()
+            .remove("audio");
+        assert_eq!(
+            compile(&document.to_string()).unwrap_err().path,
+            "sections.verse.audio_clips"
+        );
+        document["sections"]["verse"]
+            .as_object_mut()
+            .unwrap()
+            .remove("audio_clips");
+        assert_eq!(
+            compile(&document.to_string()).unwrap_err().path,
+            "sections.verse.lines.main.lyrics"
+        );
+        document["sections"]["verse"]["lines"]["main"]
+            .as_object_mut()
+            .unwrap()
+            .remove("lyrics");
+        for _ in 0..5 {
+            assert_eq!(
+                compile(&document.to_string()).unwrap_err().path,
+                "sections.verse.events[0]"
+            );
+            document["sections"]["verse"]["events"]
+                .as_array_mut()
+                .unwrap()
+                .remove(0);
         }
     }
 
@@ -1949,43 +1959,27 @@ mod tests {
 
     #[test]
     fn shared_extension_fixture_expands_to_the_same_music_without_extensions() {
-        let yaml = EXTENSION_SCORE
-            .replace("kits:
-  drums: {source: {vst3: {plugin: Addictive Drums 2}}}
-", "")
-            .replace("lyrics:
-  verse1: \"la la la la\"
-  verse2: \"ha ha ha ha\"
-", "")
-            .replace("mix:
-  tracks:
-    lead: {output: rhythm}
-", "")
-            .replace("    notes: The verse builds from the bass.
-", "")
-            .replace(", lyrics: [verse1, verse2]", "")
-            .replace("    chords: [\"1:maj\"]
-", "")
-            .replace("    events:
-      - {kind: articulation, instrument: lead, name: mute, at: {bar: 1, step: 1}, duration_steps: 4}
-      - {kind: cc, instrument: lead, number: 11, value: 64, at: {bar: 1, step: 5}}
-      - {kind: breath, instrument: lead, at: {bar: 1, step: 9}, duration_steps: 2}
-      - {kind: voice_dynamics, instrument: lead, at: {bar: 1, step: 1}, duration_quarters: 4, value: 7}
-      - {kind: voice_style, instrument: lead, at: {bar: 1, step: 13}, style: falsetto}
-", "")
-            .replace("    audio_clips:
-      - {instrument: take, file: audio/take.wav, at: {bar: 1, step: 1}}
-", "")
-            .replace("    source: {vst3: {plugin: Surge XT}}
-", "")
-            .replace("    effects: [{use: delay}]
-", "")
-            .replace(", kit: drums", "")
-            .replace("  take: {audio: true}
-", "")
-            .replace("    sound: A bright lead that stays above the pad.
-", "");
-        let plan = compile(&yaml).expect("extension-free fixture compiles");
+        let mut document = extension_document();
+        let object = document.as_object_mut().expect("fixture mapping");
+        for key in ["kits", "lyrics", "mix"] {
+            object.remove(key);
+        }
+        let instruments = object["instruments"].as_object_mut().unwrap();
+        instruments.remove("take");
+        for spec in instruments.values_mut() {
+            for key in ["source", "effects", "kit"] {
+                spec.as_object_mut().unwrap().remove(key);
+            }
+        }
+        let verse = object["sections"]["verse"].as_object_mut().unwrap();
+        for key in ["audio_clips", "events", "chords", "notes"] {
+            verse.remove(key);
+        }
+        verse["lines"]["main"]
+            .as_object_mut()
+            .unwrap()
+            .remove("lyrics");
+        let plan = compile(&document.to_string()).expect("extension-free fixture compiles");
         let notes = plan
             .lanes
             .iter()

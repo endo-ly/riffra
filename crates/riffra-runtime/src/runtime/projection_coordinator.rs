@@ -265,6 +265,12 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
         self.step(Input::AudioEnvironmentAdvanced);
         self.status().audio_environment_revision
     }
+    /// Rewinds a promoted canonical key so an older Session can be resubmitted.
+    pub(crate) fn restore_canonical(&self, key: ProjectionKey) {
+        self.step(Input::GenerationObserved(self.driver.runtime_generation()));
+        self.step(Input::RestoreCanonical { key });
+    }
+
     pub(crate) fn commit_candidate_as_canonical(
         &self,
         key: ProjectionKey,

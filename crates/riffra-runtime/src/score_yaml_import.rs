@@ -66,10 +66,35 @@ pub(crate) struct ScoreOutcome {
     pub(crate) yaml_changed: bool,
     /// Whether the Score-owned performance differs from the Project.
     pub(crate) changed: bool,
+    /// Whether the linked file path or external instrument bindings differ.
+    pub(crate) link_changed: bool,
     staged: BTreeSet<PathBuf>,
 }
 
 impl ScoreOutcome {
+    /// Returns whether accepting this Score changes anything the Project stores.
+    pub(crate) fn has_changes(&self) -> bool {
+        self.changed || self.yaml_changed || self.link_changed
+    }
+
+    /// Returns the Session to commit, or `None` when the Project already matches.
+    ///
+    /// A Score that only changes its body or link keeps the current performance
+    /// and arrangement revision; only a performance change adopts the rebuilt
+    /// Session.
+    pub(crate) fn candidate(&self, current: &CreativeSession) -> Option<CreativeSession> {
+        if !self.has_changes() {
+            return None;
+        }
+        Some(if self.changed {
+            self.session.clone()
+        } else {
+            let mut candidate = current.clone();
+            candidate.score_source = self.session.score_source.clone();
+            candidate
+        })
+    }
+
     /// Keeps the staged snapshots because canonical state now references them.
     pub(crate) fn retain(&mut self) {
         self.staged.clear();
@@ -110,6 +135,7 @@ pub(crate) fn import(
         session,
         yaml_changed: true,
         changed: true,
+        link_changed: true,
         staged,
     })
 }
@@ -162,10 +188,20 @@ pub(crate) fn rebuild(
         .is_none_or(|source| source.yaml != document.yaml);
     Ok(ScoreOutcome {
         changed: !previous.score_performance_equals(&session),
+        link_changed: link_changed(previous, &session),
         session,
         yaml_changed,
         staged,
     })
+}
+
+fn link_changed(previous: &CreativeSession, next: &CreativeSession) -> bool {
+    match (previous.score_source.as_ref(), next.score_source.as_ref()) {
+        (Some(previous), Some(next)) => {
+            previous.path != next.path || previous.bindings != next.bindings
+        }
+        _ => true,
+    }
 }
 
 /// Reports whether the linked Score file no longer matches the accepted body.
@@ -1541,5 +1577,45 @@ mod tests {
             } if *snapshot_id == snapshot_name
         ));
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rebuild_decisions_distinguish_performance_body_and_link_changes() {
+        let mut session = CreativeSession::new(1);
+        session.score_source = Some(ScoreSource {
+            file_name: "song.yaml".into(),
+            yaml: "meta: {}".into(),
+            path: Some("/scores/song.yaml".into()),
+            bindings: BTreeMap::from([("lead".into(), "/definitions/lead.json".into())]),
+        });
+
+        // A rebuild that finds no change stores nothing.
+        let unchanged = ScoreOutcome {
+            session: session.clone(),
+            yaml_changed: false,
+            changed: false,
+            link_changed: false,
+            staged: BTreeSet::new(),
+        };
+        assert!(unchanged.candidate(&session).is_none());
+
+        // Relinking to an identical body keeps the performance and revision.
+        let mut relinked = session.clone();
+        relinked.score_source.as_mut().unwrap().path = Some("/scores/moved.yaml".into());
+        assert!(link_changed(&session, &relinked));
+        let outcome = ScoreOutcome {
+            session: relinked,
+            yaml_changed: false,
+            changed: false,
+            link_changed: true,
+            staged: BTreeSet::new(),
+        };
+        let candidate = outcome.candidate(&session).expect("a link change commits");
+        assert_eq!(candidate.arrangement.revision, session.arrangement.revision);
+        assert_eq!(
+            candidate.score_source.as_ref().unwrap().path.as_deref(),
+            Some("/scores/moved.yaml")
+        );
+        assert!(candidate.score_performance_equals(&session));
     }
 }

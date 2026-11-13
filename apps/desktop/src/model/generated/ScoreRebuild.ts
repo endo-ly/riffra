@@ -14,6 +14,10 @@ changed: boolean,
  */
 yamlChanged: boolean, 
 /**
+ * Whether the linked file path or external instrument bindings changed.
+ */
+linkChanged: boolean, 
+/**
  * Canonical sequence after the synchronization.
  */
 sequence: number, 

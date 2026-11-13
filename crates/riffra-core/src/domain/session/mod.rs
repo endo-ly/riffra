@@ -145,41 +145,25 @@ impl CreativeSession {
             || self.arrangement.audio_clips != other.arrangement.audio_clips
             || self.arrangement.regions != other.arrangement.regions
             || self.arrangement.harmony_events != other.arrangement.harmony_events
-        {
-            return false;
-        }
-        let tracks = score_tracks(self);
-        let candidate_tracks = score_tracks(other);
-        if tracks.len() != candidate_tracks.len()
-            || !tracks
+            || self.arrangement.automation_lanes != other.arrangement.automation_lanes
+            || self.arrangement.tracks.len() != other.arrangement.tracks.len()
+            || !self
+                .arrangement
+                .tracks
                 .iter()
-                .zip(&candidate_tracks)
+                .zip(&other.arrangement.tracks)
                 .all(|(track, candidate)| score_track_equals(track, candidate))
+            || self.arrangement.midi_clips.len() != other.arrangement.midi_clips.len()
+            || !self
+                .arrangement
+                .midi_clips
+                .iter()
+                .zip(&other.arrangement.midi_clips)
+                .all(|(clip, candidate)| score_clip_equals(clip, candidate))
         {
             return false;
         }
-        let track_ids = tracks
-            .iter()
-            .map(|track| track.id.as_str())
-            .collect::<std::collections::BTreeSet<_>>();
-        let clips = score_clips(self, &track_ids);
-        let candidate_clips = score_clips(other, &track_ids);
-        if clips.len() != candidate_clips.len()
-            || !clips.iter().zip(&candidate_clips).all(|(clip, candidate)| {
-                clip.id == candidate.id
-                    && clip.name == candidate.name
-                    && clip.track_id == candidate.track_id
-                    && clip.asset_id == candidate.asset_id
-                    && clip.start_tick == candidate.start_tick
-                    && clip.duration_ticks == candidate.duration_ticks
-                    && clip.notes == candidate.notes
-                    && clip.events == candidate.events
-                    && clip.instrument_control_events == candidate.instrument_control_events
-            })
-        {
-            return false;
-        }
-        score_automation(self, &track_ids) == score_automation(other, &track_ids)
+        true
     }
 
     /// Validates production rules and normalizes clamped values, mirroring the
@@ -289,39 +273,16 @@ fn score_track_equals(track: &Track, candidate: &Track) -> bool {
         && track.score_instrument == candidate.score_instrument
 }
 
-fn score_tracks(session: &CreativeSession) -> Vec<&Track> {
-    session
-        .arrangement
-        .tracks
-        .iter()
-        .filter(|track| track.score_instrument.is_some())
-        .collect()
-}
-
-fn score_clips<'a>(
-    session: &'a CreativeSession,
-    track_ids: &std::collections::BTreeSet<&str>,
-) -> Vec<&'a MidiClip> {
-    session
-        .arrangement
-        .midi_clips
-        .iter()
-        .filter(|clip| track_ids.contains(clip.track_id.as_str()))
-        .collect()
-}
-
-fn score_automation<'a>(
-    session: &'a CreativeSession,
-    track_ids: &std::collections::BTreeSet<&str>,
-) -> Vec<&'a AutomationLane> {
-    session
-        .arrangement
-        .automation_lanes
-        .iter()
-        .filter(|lane| {
-            matches!(&lane.target, AutomationTarget::TrackMix { track_id, .. } if track_ids.contains(track_id.as_str()))
-        })
-        .collect()
+fn score_clip_equals(clip: &MidiClip, candidate: &MidiClip) -> bool {
+    clip.id == candidate.id
+        && clip.name == candidate.name
+        && clip.track_id == candidate.track_id
+        && clip.asset_id == candidate.asset_id
+        && clip.start_tick == candidate.start_tick
+        && clip.duration_ticks == candidate.duration_ticks
+        && clip.notes == candidate.notes
+        && clip.events == candidate.events
+        && clip.instrument_control_events == candidate.instrument_control_events
 }
 
 #[cfg(test)]
@@ -365,6 +326,81 @@ mod tests {
             assert_eq!(normalized.settings.note, expected);
             assert_eq!(normalized.settings.master_db, 0.0);
         }
+    }
+
+    #[test]
+    fn score_owned_state_covers_every_track_and_automation_lane_but_not_work_state() {
+        use crate::domain::timeline::TimelineTick;
+
+        let mut session = CreativeSession::new(1);
+        session.score_source = Some(ScoreSource {
+            file_name: "song.yaml".into(),
+            yaml: "meta: {}".into(),
+            path: Some("/scores/song.yaml".into()),
+            bindings: Default::default(),
+        });
+        let mut lead = Track::instrument("track:lead".into(), "Lead".into());
+        lead.score_instrument = Some("lead".into());
+        session.arrangement.tracks.push(lead);
+        session
+            .arrangement
+            .tracks
+            .push(Track::audio("track:extra".into(), "Extra".into()));
+        session.arrangement.midi_clips.push(MidiClip {
+            id: "clip:lead".into(),
+            name: "lead".into(),
+            track_id: "track:lead".into(),
+            asset_id: None,
+            start_tick: TimelineTick(0),
+            duration_ticks: 480,
+            notes: Vec::new(),
+            events: Vec::new(),
+            instrument_control_events: Vec::new(),
+            muted: false,
+            loop_enabled: false,
+            recording_take_id: None,
+        });
+        session.arrangement.automation_lanes.push(AutomationLane {
+            id: "automation:cutoff".into(),
+            target: AutomationTarget::DeviceParameter {
+                device_id: "device:lead".into(),
+                parameter_id: "cutoff".into(),
+            },
+            interpolation: AutomationInterpolation::Step,
+            points: vec![AutomationPoint {
+                id: "point:1".into(),
+                tick: TimelineTick(0),
+                value: 0.5,
+            }],
+        });
+
+        // Work state remains editable.
+        let mut work = session.clone();
+        work.arrangement.tracks[0].muted = true;
+        work.arrangement.tracks[0].solo = true;
+        work.arrangement.tracks[0].armed = true;
+        work.arrangement.tracks[0].monitoring = MonitoringState::On;
+        work.arrangement.tracks[0].color = Some("#123456".into());
+        work.arrangement.loop_range.enabled = true;
+        work.arrangement.midi_clips[0].muted = true;
+        assert!(session.score_owned_state_equals(&work));
+
+        // Ordinary tracks are part of the state the Score owns.
+        let mut added = work.clone();
+        added
+            .arrangement
+            .tracks
+            .push(Track::audio("track:other".into(), "Other".into()));
+        assert!(!session.score_owned_state_equals(&added));
+
+        let mut edited = work.clone();
+        edited.arrangement.tracks[1].gain_db = -6.0;
+        assert!(!session.score_owned_state_equals(&edited));
+
+        // Device parameter automation is protected like track automation.
+        let mut automated = work.clone();
+        automated.arrangement.automation_lanes[0].points[0].value = 0.75;
+        assert!(!session.score_owned_state_equals(&automated));
     }
 
     #[test]

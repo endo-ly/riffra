@@ -88,29 +88,47 @@ impl HostDispatcher<'_> {
                 .map_err(|error| {
                     DispatchError::invalid_request_with_details(error.message, error.details)
                 })?;
+                let changed = rebuilt.changed;
+                let yaml_changed = rebuilt.yaml_changed;
+                let link_changed = rebuilt.link_changed;
+                let path = rebuilt
+                    .session
+                    .score_source
+                    .as_ref()
+                    .and_then(|source| source.path.clone());
+                let result = |sequence: u64| ScoreRebuild {
+                    project_id: current.project_id.clone(),
+                    changed,
+                    yaml_changed,
+                    link_changed,
+                    sequence,
+                    path: path.clone(),
+                    diagnostics: Vec::new(),
+                };
+                let Some(candidate) = rebuilt.candidate(&current.session) else {
+                    return Ok(DispatchResult {
+                        output: ControlOutput::ScoreRebuild(result(current.sequence)),
+                        sequence: current.sequence,
+                    });
+                };
                 if crate::score_yaml_import::source_changed(&rebuilt.session) {
                     return Err(DispatchError::InvalidRequest {
                         message: "the linked Score file changed before it could be applied".into(),
-                        details: Some(serde_json::json!({"kind": "scoreSourceChanged"})),
+                        details: Some(serde_json::json!({
+                            "domain": "score",
+                            "kind": "scoreSourceChanged",
+                            "path": path,
+                        })),
                     });
                 }
                 let committed = writer
-                    .commit_accepted(rebuilt.session.clone())
+                    .commit_accepted(candidate)
                     .map_err(|error| DispatchError::CommandFailed(error.to_string()))?;
-                rebuilt.retain();
+                if changed {
+                    rebuilt.retain();
+                }
                 let sequence = committed.snapshot.canonical.sequence;
-                let output = ControlOutput::ScoreRebuild(ScoreRebuild {
-                    project_id: current.project_id.clone(),
-                    changed: rebuilt.changed,
-                    yaml_changed: rebuilt.yaml_changed,
-                    sequence,
-                    path: rebuilt
-                        .session
-                        .score_source
-                        .as_ref()
-                        .and_then(|source| source.path.clone()),
-                    diagnostics: Vec::new(),
-                });
+                let output = ControlOutput::ScoreRebuild(result(sequence));
                 self.publish_standalone(committed);
                 return Ok(DispatchResult { output, sequence });
             }

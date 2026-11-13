@@ -257,6 +257,9 @@ impl UserInstrumentStore {
 
     /// Reports whether a Project snapshot still matches a definition package.
     ///
+    /// Resource paths are resolved on both sides before comparison, because a
+    /// snapshot rewrites resources it copies out of their original package.
+    ///
     /// # Errors
     /// Returns an error when either definition cannot be read or decoded.
     pub(crate) fn snapshot_matches(
@@ -274,12 +277,22 @@ impl UserInstrumentStore {
                 .map_err(|error| format!("instrument snapshot could not be read: {error}"))?,
         )
         .map_err(|error| format!("instrument snapshot definition is invalid: {error}"))?;
-        let source: serde_json::Value = serde_json::from_slice(
+        let mut source: serde_json::Value = serde_json::from_slice(
             &fs::read(definition)
                 .map_err(|error| format!("instrument definition could not be read: {error}"))?,
         )
         .map_err(|error| format!("instrument definition is invalid: {error}"))?;
-        if snapshot != source {
+        let mut snapshot_resources = Vec::new();
+        visit_resource_paths(&mut snapshot, &mut |path| {
+            snapshot_resources.push(std::mem::take(path));
+            Ok(())
+        })?;
+        let mut source_resources = Vec::new();
+        visit_resource_paths(&mut source, &mut |path| {
+            source_resources.push(std::mem::take(path));
+            Ok(())
+        })?;
+        if snapshot != source || snapshot_resources.len() != source_resources.len() {
             return Ok(false);
         }
         let source_root = definition
@@ -289,18 +302,21 @@ impl UserInstrumentStore {
         let (Some(source_root), Some(snapshot_root)) = (source_root, snapshot_root) else {
             return Ok(false);
         };
-        let mut unchanged = true;
-        visit_resource_paths(&mut snapshot, &mut |path| {
-            if unchanged {
-                let relative = Path::new(path);
-                unchanged = relative
-                    .components()
-                    .all(|component| matches!(component, std::path::Component::Normal(_)))
-                    && files_match(&snapshot_root.join(relative), &source_root.join(relative));
+        for (snapshot_resource, source_resource) in snapshot_resources.iter().zip(&source_resources)
+        {
+            let relative = Path::new(snapshot_resource);
+            if !relative
+                .components()
+                .all(|component| matches!(component, std::path::Component::Normal(_)))
+                || !files_match(
+                    &snapshot_root.join(relative),
+                    &source_root.join(source_resource),
+                )
+            {
+                return Ok(false);
             }
-            Ok(())
-        })?;
-        Ok(unchanged)
+        }
+        Ok(true)
     }
 
     fn snapshot_package(
@@ -1080,5 +1096,39 @@ mod tests {
                 "global-ir"
             ]
         );
+    }
+
+    #[test]
+    fn snapshot_matches_resolved_resource_contents_not_rewritten_paths() {
+        // Arrange: the definition references a sample outside its package, so
+        // the snapshot stores a rewritten path for the same bytes.
+        let root = std::env::temp_dir().join(format!("riffra-user-match-{}", new_instance_id()));
+        let definitions = root.join("definitions");
+        let samples = root.join("samples");
+        fs::create_dir_all(&definitions).unwrap();
+        fs::create_dir_all(&samples).unwrap();
+        fs::write(samples.join("tone.wav"), b"tone").unwrap();
+        let definition = definitions.join(DEFINITION_FILE_NAME);
+        fs::write(
+            &definition,
+            serde_json::json!({
+                "layers": [{"generator": {"sample": {"zones": [{
+                    "asset": {"path": "../samples/tone.wav"}
+                }]}}}]
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let snapshot_id = new_instance_id();
+        let snapshot = root.join(PROJECT_INSTRUMENTS_DIRECTORY).join(&snapshot_id);
+        fs::create_dir_all(&snapshot).unwrap();
+        copy_definition_resources(&definition, &snapshot).unwrap();
+        let store = UserInstrumentStore::new(&root, Path::new(""));
+
+        // Act and Assert
+        assert!(store.snapshot_matches(&snapshot_id, &definition).unwrap());
+        fs::write(samples.join("tone.wav"), b"changed").unwrap();
+        assert!(!store.snapshot_matches(&snapshot_id, &definition).unwrap());
+        fs::remove_dir_all(root).unwrap();
     }
 }
