@@ -3,4 +3,4 @@
 /**
  * Completion of an optional measurement, independent of silent values.
  */
-export type MeasurementState = { state: 'measured' } | { state: 'unavailable'; reason: string };
+export type MeasurementState = { "state": "measured" } | { "state": "unavailable", reason: string, };

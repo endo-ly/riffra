@@ -287,6 +287,10 @@ target_link_libraries(riffra-render-core PUBLIC
   sonalloy::capi
 )
 
+if(MSVC)
+  target_link_libraries(riffra-render-core PUBLIC Synchronization)
+endif()
+
 target_link_libraries(riffra-audio-core PUBLIC
   riffra-render-core
   ${RIFFRA_AUDIO_JUCE_LIBRARIES}

@@ -237,6 +237,7 @@ export function bindSessionRuntime(store: SessionStore, api: NativeApi): () => v
     api.onProjectActivated((value) => {
       store.getState().project.acceptActivation(value);
     }),
+    api.onScoreSyncStatusChanged((value) => store.getState().project.acceptScoreSync(value)),
     api.onRuntimeProjectionStatus((value) => {
       projectionEvent += 1;
       store.getState().runtime.acceptProjection(value);

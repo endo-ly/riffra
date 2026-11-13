@@ -3,6 +3,7 @@ import type {
   ProjectActivationResult,
   ProjectExport,
   ProjectState,
+  ScoreRebuild,
 } from '@/model/generated';
 import type { SessionSettingsPatch } from '@/model/generated';
 import { dispatchControl } from '../invoke';
@@ -19,6 +20,7 @@ export interface ProjectApi {
   importProject(path: string): Promise<ProjectActivationResult>;
   updateSessionSettings(patch: SessionSettingsPatch): Promise<ArrangementMutationResult>;
   importScore(path: string, bindings: Record<string, string>): Promise<ProjectActivationResult>;
+  rebuildScore(path: string | undefined, bindings: Record<string, string>): Promise<ScoreRebuild>;
 }
 
 async function undoSession(): Promise<ArrangementMutationResult> {
@@ -70,6 +72,13 @@ async function importScore(
   return dispatchControl({ command: 'project.import-score', params: { path, bindings } });
 }
 
+async function rebuildScore(
+  path: string | undefined,
+  bindings: Record<string, string>,
+): Promise<ScoreRebuild> {
+  return dispatchControl({ command: 'project.rebuild-score', params: { path, bindings } });
+}
+
 export const projectApi: ProjectApi = {
   undoSession,
   redoSession,
@@ -82,4 +91,5 @@ export const projectApi: ProjectApi = {
   importProject,
   updateSessionSettings,
   importScore,
+  rebuildScore,
 };

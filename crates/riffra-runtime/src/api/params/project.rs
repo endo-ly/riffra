@@ -41,6 +41,43 @@ pub struct ProjectImportScoreParams {
     pub bindings: std::collections::BTreeMap<String, PathBuf>,
 }
 
+/// Reads a Score YAML file without changing any Project.
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ScoreDocumentParams {
+    /// Score YAML file.
+    pub path: PathBuf,
+    /// Sonalloy definition JSON for each `external: true` instrument ID.
+    #[serde(default)]
+    pub bindings: std::collections::BTreeMap<String, PathBuf>,
+}
+
+/// Expands a Score YAML file into its resolved structure.
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ScoreInspectParams {
+    /// Score YAML file.
+    pub path: PathBuf,
+    /// Sonalloy definition JSON for each `external: true` instrument ID.
+    #[serde(default)]
+    pub bindings: std::collections::BTreeMap<String, PathBuf>,
+    /// Include every expanded event; the default reports only counts per lane.
+    #[serde(default)]
+    pub events: bool,
+}
+
+/// Synchronizes the active Project with its linked Score YAML file.
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[ts(optional_fields = nullable)]
+pub struct ProjectRebuildScoreParams {
+    /// Score YAML file; omit to read the Project's linked file.
+    pub path: Option<PathBuf>,
+    /// External instrument binding added or replaced as ID=DEFINITION.
+    #[serde(default)]
+    pub bindings: std::collections::BTreeMap<String, PathBuf>,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ProjectExportParams {

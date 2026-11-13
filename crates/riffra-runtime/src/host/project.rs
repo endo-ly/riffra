@@ -1,12 +1,13 @@
 use super::HostState;
 use super::control::audio_error;
-use crate::api::output::{ProjectActivationResult, ProjectState};
+use crate::api::output::{ProjectActivationResult, ProjectState, ScoreRebuild};
 use crate::api::{ControlOutput, ProjectCommand};
 use crate::execution::project_session;
 use crate::projects;
 use riffra_control::{ErrorCode, ProtocolError};
 use riffra_core::CanonicalState;
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -81,7 +82,7 @@ pub(super) fn dispatch(
             let writer = writer.as_mut().expect("project mutation holds the writer");
             ensure_switch_allowed(state)?;
             state.take_pending_plugin_changes(writer)?;
-            let imported = crate::score_yaml_import::import(
+            let mut imported = crate::score_yaml_import::import(
                 &params,
                 &state.data_root,
                 &state.built_in_instruments,
@@ -107,6 +108,11 @@ pub(super) fn dispatch(
                 tracing::warn!(%error, "score project cleanup failed");
             }
             result
+        }
+        ProjectCommand::ProjectRebuildScore(params) => {
+            let writer = writer.as_mut().expect("project mutation holds the writer");
+            let result = rebuild_score(state, writer, &params)?;
+            Ok((ControlOutput::ScoreRebuild(result.clone()), result.sequence))
         }
         ProjectCommand::ProjectImport(params) => {
             let writer = writer.as_mut().expect("project mutation holds the writer");
@@ -269,6 +275,7 @@ fn activate_project_inner(
     state
         .events
         .emit(crate::HostEvent::ProjectActivated(activation.clone()));
+    state.set_score_sync(super::state::initial_score_sync(&activation.canonical));
     let sequence = activation.canonical.sequence;
     Ok((ControlOutput::ProjectActivation(activation), sequence))
 }
@@ -305,6 +312,197 @@ fn apply_project_runtime_candidate(
         )
         .map(|_| ())
         .map_err(project_runtime_projection_error)
+}
+
+fn rebuild_failure(
+    state: &HostState,
+    previous: &CanonicalState,
+    failure: ProtocolError,
+) -> ProtocolError {
+    let cause = serde_json::to_value(&failure).unwrap_or(Value::Null);
+    match apply_project_runtime_transition(state, previous, &previous.project_id) {
+        Ok(()) => ProtocolError::new(
+            ErrorCode::CommandFailed,
+            format!("Score rebuild failed: {}", failure.message),
+        )
+        .with_details(serde_json::json!({
+            "domain": "score",
+            "kind": "scoreRebuildFailed",
+            "projectId": previous.project_id,
+            "cause": cause,
+        })),
+        Err(restore_error) => super::audio::graph_failed(format!(
+            "Score rebuild failed: {}; previous audio could not be restored: {}",
+            failure.message, restore_error.message
+        ))
+        .with_details(serde_json::json!({
+            "domain": "score",
+            "kind": "scoreRebuildFailed",
+            "projectId": previous.project_id,
+            "cause": cause,
+            "restoreError": serde_json::to_value(restore_error).unwrap_or(Value::Null),
+        })),
+    }
+}
+
+fn score_source_changed(path: Option<String>) -> ProtocolError {
+    ProtocolError::new(
+        ErrorCode::Conflict,
+        "the linked Score file changed before it could be applied",
+    )
+    .with_details(serde_json::json!({
+        "domain": "score",
+        "kind": "scoreSourceChanged",
+        "path": path,
+    }))
+}
+
+fn restore_source_changed(
+    state: &HostState,
+    previous: &CanonicalState,
+    path: Option<String>,
+) -> ProtocolError {
+    match apply_project_runtime_transition(state, previous, &previous.project_id) {
+        Ok(()) => score_source_changed(path),
+        Err(restore_error) => super::audio::graph_failed(format!(
+            "the linked Score file changed before it could be applied; previous audio could not be restored: {}",
+            restore_error.message
+        ))
+        .with_details(serde_json::json!({
+            "domain": "score",
+            "kind": "scoreSourceChanged",
+            "projectId": previous.project_id,
+            "path": path,
+            "restoreError": serde_json::to_value(restore_error).unwrap_or(Value::Null),
+        })),
+    }
+}
+
+fn rebuild_score(
+    state: &HostState,
+    writer: &mut super::open_project::ProjectWriter<'_>,
+    params: &crate::api::params::ProjectRebuildScoreParams,
+) -> Result<ScoreRebuild, ProtocolError> {
+    ensure_recording_idle(state)?;
+    let current = writer.project().core.canonical_state();
+    let mut rebuilt = crate::score_yaml_import::rebuild(
+        &current.session,
+        params.path.as_deref(),
+        &params.bindings,
+        &state.data_root,
+        &state.built_in_instruments,
+        &state.binaries.sonalloy,
+    )
+    .map_err(|error| command_error(error.message).with_details(error.details))?;
+    let path = rebuilt
+        .session
+        .score_source
+        .as_ref()
+        .and_then(|source| source.path.clone());
+    let changed = rebuilt.changed;
+    let yaml_changed = rebuilt.yaml_changed;
+    let link_changed = rebuilt.link_changed;
+    let result = |sequence: u64| ScoreRebuild {
+        project_id: current.project_id.clone(),
+        changed,
+        yaml_changed,
+        link_changed,
+        sequence,
+        path: path.clone(),
+        diagnostics: Vec::new(),
+    };
+    let Some(candidate) = rebuilt.candidate(&current.session) else {
+        state.set_score_sync(super::state::initial_score_sync(&current));
+        return Ok(result(current.sequence));
+    };
+    if crate::score_yaml_import::source_changed(&rebuilt.session) {
+        return Err(score_source_changed(path.clone()));
+    }
+    let key = project_projection_key(current.sequence, &candidate);
+    if !state.safe_mode {
+        if let Err(error) =
+            apply_project_runtime_candidate(state, &current.project_id, &candidate, key)
+        {
+            return Err(rebuild_failure(state, &current, error));
+        }
+        if crate::score_yaml_import::source_changed(&rebuilt.session) {
+            return Err(restore_source_changed(state, &current, path));
+        }
+        if let Err(error) = state.runtime.commit_candidate_as_canonical(key) {
+            let error = super::audio::graph_failed(format!(
+                "Score rebuild candidate could not be promoted: {error}"
+            ));
+            return Err(rebuild_failure(state, &current, error));
+        }
+    }
+    let committed = match writer.commit_accepted(candidate) {
+        Ok(committed) => committed,
+        Err(error) => {
+            let cause = command_error(error.to_string());
+            if !state.safe_mode {
+                return Err(rebuild_failure(state, &current, cause));
+            }
+            return Err(cause);
+        }
+    };
+    if changed {
+        rebuilt.retain();
+    }
+    let canonical = committed.snapshot.canonical.clone();
+    let sequence = canonical.sequence;
+    crate::library::index::refresh(&state.data_root, &canonical.project_id, &canonical.session);
+    state
+        .events
+        .emit(crate::HostEvent::CanonicalStateChanged(canonical));
+    if changed && let Ok(project_state) = project_state(state) {
+        state
+            .events
+            .emit(crate::HostEvent::ProjectStateChanged(project_state));
+    }
+    state.set_score_sync(super::state::initial_score_sync(
+        &committed.snapshot.canonical,
+    ));
+    Ok(result(sequence))
+}
+
+/// Applies the linked Score file the watcher saw for the given Project.
+pub(super) fn synchronize_score(
+    state: &std::sync::Arc<HostState>,
+    project_id: &str,
+    path: &std::path::Path,
+) -> Result<(), ProtocolError> {
+    let Some(mut writer) = state.project.try_write() else {
+        return Ok(());
+    };
+    let canonical = writer.project().core.canonical_state();
+    let linked = canonical
+        .session
+        .score_source
+        .as_ref()
+        .and_then(|source| source.path.as_deref())
+        .map(std::path::Path::new);
+    if canonical.project_id != project_id || linked != Some(path) {
+        return Ok(());
+    }
+    rebuild_score(
+        state,
+        &mut writer,
+        &crate::api::params::ProjectRebuildScoreParams {
+            path: None,
+            bindings: BTreeMap::new(),
+        },
+    )?;
+    Ok(())
+}
+
+fn ensure_recording_idle(state: &HostState) -> Result<(), ProtocolError> {
+    let status = state.audio.status().map_err(audio_error)?;
+    if status.recording.active || status.recording.processing {
+        return Err(command_error(
+            "Stop recording before synchronizing the linked Score.",
+        ));
+    }
+    Ok(())
 }
 
 fn project_switch_failure(
@@ -364,6 +562,11 @@ pub(super) fn apply_project_runtime_transition(
         return Ok(());
     }
 
+    let key = riffra_core::ProjectionKey {
+        sequence: canonical.sequence,
+        session_revision: canonical.session.arrangement.revision,
+    };
+    state.runtime.restore_canonical(key);
     state
         .runtime
         .apply_and_wait(
@@ -376,10 +579,7 @@ pub(super) fn apply_project_runtime_transition(
                 )
                 .map_err(command_error)?,
             ),
-            riffra_core::ProjectionKey {
-                sequence: canonical.sequence,
-                session_revision: canonical.session.arrangement.revision,
-            },
+            key,
         )
         .map_err(project_runtime_projection_error)?;
     Ok(())
@@ -498,6 +698,68 @@ mod tests {
         )
         .unwrap();
         (host, data_root)
+    }
+
+    #[test]
+    fn score_commands_diagnose_without_creating_projects_and_reject_unlinked_rebuilds() {
+        let (host, data_root) = open_safe_host("score-commands");
+        let project_id = host.bootstrap().unwrap().project_state.active_project_id;
+        let score = data_root.join("broken.score.yaml");
+        std::fs::write(
+            &score,
+            "meta: {title: Broken, bpm: 120, meter: 4/4, tuning: 12edo}
+form: [{section: verse, bars: 1, tonic: C}]
+sections: {verse: {lines: {main: {instrument: lead, melody: theme}}}}
+melodies: {theme: [\"1 - - - | 3 - - - | 5 - - - | 1' - - -\"]}
+instruments: {lead: {preset: LEAD/001-analog-saw-lead, voices: 8}}
+",
+        )
+        .unwrap();
+        let request = |command: &str, params| {
+            host.dispatch_control(
+                ControlRequest::new("score-test", command, params, None)
+                    .with_expected_project_id(project_id.clone()),
+            )
+        };
+
+        let validation = request("score.validate", json!({"path": score, "bindings": {}}));
+        assert!(validation.ok, "{:?}", validation.error);
+        let result: crate::api::output::ScoreValidation =
+            serde_json::from_value(validation.result.unwrap().value).unwrap();
+        assert!(!result.valid);
+        assert_eq!(result.diagnostics[0].path, "instruments.lead.voices");
+        assert!(result.diagnostics[0].line > 0);
+        assert!(result.diagnostics[0].column > 0);
+        assert!(result.summary.is_none());
+
+        let inspection = request("score.inspect", json!({"path": score, "bindings": {}}));
+        assert!(!inspection.ok);
+        assert_eq!(
+            inspection.error.as_ref().map(|error| error.code),
+            Some(ErrorCode::InvalidRequest)
+        );
+
+        let rebuild = request("project.rebuild-score", json!({}));
+        assert!(!rebuild.ok);
+        assert_eq!(
+            rebuild.error.as_ref().map(|error| error.code),
+            Some(ErrorCode::CommandFailed)
+        );
+        assert!(
+            rebuild
+                .error
+                .unwrap()
+                .message
+                .contains("not linked to a Score")
+        );
+
+        let canonical = host.canonical_state().unwrap();
+        assert_eq!(canonical.project_id, project_id);
+        assert_eq!(canonical.sequence, 0);
+        assert!(canonical.session.arrangement.tracks.is_empty());
+        host.shutdown();
+        drop(host);
+        let _ = std::fs::remove_dir_all(data_root);
     }
 
     #[test]

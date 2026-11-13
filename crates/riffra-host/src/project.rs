@@ -178,7 +178,12 @@ pub fn export(
     };
     let payload = serde_json::to_vec_pretty(&manifest)
         .map_err(|error| format!("Project manifest could not be encoded: {error}"))?;
-    let session_payload = serialize_session_document(session)
+    let mut packaged_session = session.clone();
+    if let Some(source) = packaged_session.score_source.as_mut() {
+        source.path = None;
+        source.bindings.clear();
+    }
+    let session_payload = serialize_session_document(&packaged_session)
         .map_err(|error| format!("Project session could not be encoded: {error}"))?;
     if output.extension().and_then(|extension| extension.to_str()) != Some("riffra") {
         return Err("Project export path must use the .riffra extension.".into());
@@ -984,6 +989,37 @@ mod tests {
         assert_eq!(exported.asset_count, 0);
         let imported = import(&root, Path::new(&exported.path)).unwrap();
         assert_eq!(imported.session_id, session.session_id);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn export_drops_the_linked_score_file_and_keeps_its_body() {
+        let root = std::env::temp_dir().join(format!("riffra-project-score-{}", now_ms()));
+        fs::create_dir_all(&root).unwrap();
+        let mut session = CreativeSession::new(now_ms());
+        session.score_source = Some(riffra_core::ScoreSource {
+            file_name: "score.yaml".into(),
+            yaml: "meta: {title: Exported}".into(),
+            path: Some("C:/music/song/score.yaml".into()),
+            bindings: std::collections::BTreeMap::from([(
+                "lead".into(),
+                "C:/music/song/lead.json".into(),
+            )]),
+        });
+        let output = package_path(&root, "score.riffra");
+
+        let exported = export(&root, &session, 7, &output).unwrap();
+        let restored = import(&root, Path::new(&exported.path)).unwrap();
+
+        let source = restored.score_source.unwrap();
+        assert_eq!(source.file_name, "score.yaml");
+        assert_eq!(source.yaml, "meta: {title: Exported}");
+        assert_eq!(source.path, None);
+        assert!(source.bindings.is_empty());
+        assert_eq!(
+            session.score_source.unwrap().path.as_deref(),
+            Some("C:/music/song/score.yaml")
+        );
         let _ = fs::remove_dir_all(root);
     }
 

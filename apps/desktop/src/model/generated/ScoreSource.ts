@@ -3,4 +3,12 @@
 /**
  * Original Score document retained as reference alongside editable production state.
  */
-export type ScoreSource = { fileName: string; yaml: string };
+export type ScoreSource = { fileName: string, yaml: string, 
+/**
+ * Absolute path of the linked Score file at the last successful synchronization.
+ */
+path?: string, 
+/**
+ * Definition path of each `external: true` instrument in the linked Score.
+ */
+bindings?: { [key in string]: string }, };

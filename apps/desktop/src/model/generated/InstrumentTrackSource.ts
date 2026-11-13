@@ -3,5 +3,4 @@
 /**
  * Instrument selection for a new Track.
  */
-export type InstrumentTrackSource =
-  { kind: 'library'; instrumentId: string } | { kind: 'vst3'; pluginPath: string };
+export type InstrumentTrackSource = { "kind": "library", instrumentId: string, } | { "kind": "vst3", pluginPath: string, };

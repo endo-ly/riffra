@@ -3,4 +3,4 @@
 /**
  * Selects a Clip or Track for Standard MIDI File export.
  */
-export type MidiExportParams = { clipId?: string | null; trackId?: string | null; output: string };
+export type MidiExportParams = { clipId?: string | null, trackId?: string | null, output: string, };

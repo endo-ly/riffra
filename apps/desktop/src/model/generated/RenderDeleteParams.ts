@@ -3,4 +3,4 @@
 /**
  * Removes one managed Render after every reference has been checked.
  */
-export type RenderDeleteParams = { renderId: string };
+export type RenderDeleteParams = { renderId: string, };

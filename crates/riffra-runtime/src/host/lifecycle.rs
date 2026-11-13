@@ -90,6 +90,14 @@ impl DawHost {
             }
         };
         let state = Arc::new(HostState {
+            score_sync: Mutex::new(super::state::initial_score_sync(
+                &AppCore::new(
+                    initialized.project_id.clone(),
+                    initialized.loaded.session.clone(),
+                    0,
+                )
+                .canonical_state(),
+            )),
             _lease: lease,
             identity: identity.clone(),
             data_root: config.data_root.clone(),
@@ -157,18 +165,25 @@ impl DawHost {
             }
         };
         let startup = queue_runtime_startup(Arc::clone(&state), config.safe_mode);
+        let score_watch = super::score_watch::ScoreWatcher::start(&state);
         Ok(Self {
             state,
             identity,
             control: Mutex::new(Some(control)),
             startup: Mutex::new(startup),
             plugin_persistence: Mutex::new(Some(plugin_persistence)),
+            score_watch: Mutex::new(score_watch),
         })
     }
 
     /// Performs the explicit shutdown sequence for the Host.
     pub fn shutdown(&self) {
         self.state.lifecycle.request_shutdown();
+        if let Ok(mut watch) = self.score_watch.lock()
+            && let Some(watch) = watch.take()
+        {
+            watch.shutdown();
+        }
         self.state.audio.cancel_waits_for_shutdown();
         self.state.lifecycle.close();
         if !self.state.safe_mode

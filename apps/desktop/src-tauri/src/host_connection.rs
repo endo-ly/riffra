@@ -1144,6 +1144,7 @@ impl HostConnectionManager {
             native_available: true,
             data_root: bootstrap.data_root.to_string_lossy().into_owned(),
             vst3_root: default_vst3_root(),
+            score_sync: bootstrap.score_sync.clone(),
             host_connection: state.clone(),
         }
     }

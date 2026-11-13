@@ -106,6 +106,8 @@ export type ControlCommandResults = {
   'music.region.add': OutputValue<'arrangementMutation'>;
   'music.region.update': OutputValue<'arrangementMutation'>;
   'music.region.remove': OutputValue<'arrangementMutation'>;
+  'score.validate': OutputValue<'scoreValidation'>;
+  'score.inspect': OutputValue<'scoreInspection'>;
   'asset.import-midi': OutputValue<'assetId'>;
   'instrument.list': OutputValue<'instrumentLibrary'>;
   'instrument.save': OutputValue<'instrumentLibraryItem'>;
@@ -131,6 +133,7 @@ export type ControlCommandResults = {
   'project.rename': OutputValue<'projectState'>;
   'project.import': OutputValue<'projectActivation'>;
   'project.import-score': OutputValue<'projectActivation'>;
+  'project.rebuild-score': OutputValue<'scoreRebuild'>;
   'music.export-midi': OutputValue<'midiExport'>;
   'project.export': OutputValue<'projectExport'>;
   'host.status': OutputValue<'hostStatus'>;

@@ -10,6 +10,7 @@ mod job;
 mod library;
 mod project;
 mod recording;
+mod score;
 mod session;
 
 pub use audio::*;
@@ -19,6 +20,7 @@ pub use job::*;
 pub use library::*;
 pub use project::*;
 pub use recording::*;
+pub use score::*;
 pub use session::*;
 
 use super::params::AudioDriverConfig;
@@ -67,6 +69,9 @@ pub enum ControlOutput {
     ProjectState(ProjectState),
     ProjectActivation(ProjectActivationResult),
     ProjectExport(ProjectExport),
+    ScoreRebuild(ScoreRebuild),
+    ScoreValidation(ScoreValidation),
+    ScoreInspection(ScoreInspection),
     MidiExport(MidiExport),
     InstrumentLibrary(Vec<InstrumentLibraryItem>),
     InstrumentLibraryItem(InstrumentLibraryItem),

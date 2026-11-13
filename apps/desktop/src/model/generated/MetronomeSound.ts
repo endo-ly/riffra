@@ -3,4 +3,4 @@
 /**
  * Click sound played by the metronome and the count-in.
  */
-export type MetronomeSound = 'beep' | 'wood';
+export type MetronomeSound = "beep" | "wood";

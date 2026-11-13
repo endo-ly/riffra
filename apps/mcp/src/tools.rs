@@ -89,7 +89,7 @@ pub(crate) const TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "project",
-        description: "List, create, open, rename, or export Riffra Projects, or import a `.riffra` package or a Score YAML file as a new Project. Open switches the Host's active Project.",
+        description: "List, create, open, rename, or export Riffra Projects, or import a `.riffra` package or a Score YAML file as a new Project. Open switches the Host's active Project; rebuild_score reapplies the active Project's linked Score file to the same Project.",
         actions: &[
             action("list", "project.list"),
             action("create", "project.create"),
@@ -97,6 +97,7 @@ pub(crate) const TOOLS: &[ToolDef] = &[
             action("rename", "project.rename"),
             action("import", "project.import"),
             action("import_score", "project.import-score"),
+            action("rebuild_score", "project.rebuild-score"),
             action("export", "project.export"),
         ],
         read_only: false,
@@ -108,6 +109,16 @@ pub(crate) const TOOLS: &[ToolDef] = &[
         actions: &[direct("project.restore-generation")],
         read_only: false,
         destructive: true,
+    },
+    ToolDef {
+        name: "score",
+        description: "Read a Score YAML file before importing it. validate diagnoses syntax, source references, and playable content; inspect returns the expanded sections, instruments, lanes, notes, and events. Neither command changes a Project.",
+        actions: &[
+            action("validate", "score.validate"),
+            action("inspect", "score.inspect"),
+        ],
+        read_only: true,
+        destructive: false,
     },
     ToolDef {
         name: "session_read",
@@ -948,6 +959,7 @@ mod tests {
             "host_shutdown",
             "project",
             "project_restore",
+            "score",
             "session_read",
             "session_edit",
             "history",
@@ -1000,11 +1012,11 @@ mod tests {
         // Assert
         assert_eq!(names, expected);
         let actions: Vec<_> = TOOLS.iter().flat_map(|tool| tool.actions.iter()).collect();
-        assert_eq!(actions.len(), 218);
+        assert_eq!(actions.len(), 221);
         let commands: std::collections::HashSet<_> =
             actions.iter().map(|action| action.command).collect();
-        assert_eq!(commands.len(), 217);
-        assert_eq!(command_names().len(), 221);
+        assert_eq!(commands.len(), 220);
+        assert_eq!(command_names().len(), 224);
         let public_commands: std::collections::HashSet<_> =
             command_names().iter().copied().collect();
         let mut unused = public_commands

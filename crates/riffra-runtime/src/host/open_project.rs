@@ -84,6 +84,22 @@ impl ProjectWriter<'_> {
         })
     }
 
+    /// Commits a Session accepted from an authoritative external source.
+    ///
+    /// # Errors
+    /// Returns an error when validation or persistence fails.
+    pub(crate) fn commit_accepted(
+        &mut self,
+        session: riffra_core::CreativeSession,
+    ) -> Result<Committed<()>, ApplicationError> {
+        let OpenProject { core, storage, .. } = &mut *self.project;
+        core.commit_accepted(storage, session)?;
+        Ok(Committed {
+            snapshot: self.publish(),
+            value: (),
+        })
+    }
+
     pub(crate) fn replace(&mut self, next: OpenProject) {
         *self.project = next;
         self.publish();

@@ -115,6 +115,7 @@ DesktopのActive Projectは初期bootstrapと `ProjectActivationResult` で確�
 | `recording-finalized`       | `RecordingFinalized`      | Native処理後の録音Asset登録とArrangement確定の完了結果                                                                      |
 | `project-state-changed`     | `ProjectState`            | Projectの作成・改名・Importによる一覧の変更                                                                                 |
 | `project-activated`         | `ProjectActivationResult` | Project切替の完了。Active Projectの一覧、CanonicalState、RecoveryStateを一括で通知する                                      |
+| `score-sync-status-changed` | `ScoreSyncStatus`         | リンクされたScore YAMLの同期状態(未リンク / 正常 / 読み込み中 / 失敗)、対象Projectとパス、受理したsequence、最新の診断      |
 
 `audio-meters` はRuntime投影が属する `projectId`、`outputPeakLeft` / `outputPeakRight`、`trackMeters` と `busMeters`(チャンネルID、左右Peak/RMS)を含む。Desktopは現在のActive Projectと `projectId` が一致するframeだけを採用し、Project切替後は旧Projectの値が描画状態へ戻ることがない。高頻度メーターのTrackデータは、低頻度 `audio-status` の到着でも保持される。
 

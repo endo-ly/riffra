@@ -163,6 +163,7 @@ impl AppCore {
         if candidate == self.snapshot.session {
             return Ok(candidate);
         }
+        self.ensure_score_owned(&candidate)?;
         candidate.updated_at_ms =
             next_update_timestamp(self.snapshot.session.updated_at_ms, candidate.updated_at_ms);
         storage
@@ -171,6 +172,51 @@ impl AppCore {
         self.history.record(self.snapshot.session.clone());
         self.exchange(candidate.clone());
         Ok(candidate)
+    }
+
+    /// Commits a candidate accepted from the authoritative external source.
+    ///
+    /// A linked Score is edited outside Riffra, so accepting it clears the
+    /// Undo and Redo history instead of recording the previous Session.
+    ///
+    /// # Errors
+    /// Returns an error when the candidate is invalid or cannot be persisted.
+    pub fn commit_accepted<S: SessionStorage + ?Sized>(
+        &mut self,
+        storage: &S,
+        candidate: CreativeSession,
+    ) -> Result<CreativeSession, ApplicationError> {
+        let mut candidate = candidate
+            .validate_and_normalize()
+            .map_err(ApplicationError::InvalidSession)?;
+        if candidate == self.snapshot.session {
+            return Ok(candidate);
+        }
+        candidate.updated_at_ms =
+            next_update_timestamp(self.snapshot.session.updated_at_ms, candidate.updated_at_ms);
+        storage
+            .save(&candidate)
+            .map_err(application_error_from_port)?;
+        self.history.clear();
+        self.exchange(candidate.clone());
+        Ok(candidate)
+    }
+
+    fn ensure_score_owned(&self, candidate: &CreativeSession) -> Result<(), ApplicationError> {
+        if self
+            .snapshot
+            .session
+            .score_source
+            .as_ref()
+            .is_some_and(|source| source.path.is_some())
+            && !self.snapshot.session.score_owned_state_equals(candidate)
+        {
+            return Err(ApplicationError::InvalidCommand(
+                "this Project is linked to a Score; edit the Score file and rebuild the Project"
+                    .into(),
+            ));
+        }
+        Ok(())
     }
 
     pub(crate) fn commit_merged<S: SessionStorage + ?Sized>(
@@ -224,6 +270,7 @@ impl AppCore {
             .validate_and_normalize()
             .map_err(ApplicationError::InvalidSession)
             .and_then(|mut target| {
+                self.ensure_score_owned(&target)?;
                 target.updated_at_ms = next_update_timestamp(
                     self.snapshot.session.updated_at_ms,
                     target.updated_at_ms,
@@ -279,8 +326,8 @@ mod tests {
     use super::*;
     use crate::domain::asset::mint_asset_id;
     use crate::domain::{
-        AudioClip, AudioClipMove, FrameRange, MidiClip, MidiNote, TimelineTick, TrackInstrument,
-        TrackKind,
+        AudioClip, AudioClipMove, FrameRange, MidiClip, MidiNote, TimelineTick, Track,
+        TrackInstrument, TrackKind,
     };
     use crate::ports::{PortError, SessionStorage};
     use std::sync::Mutex;
@@ -337,6 +384,107 @@ mod tests {
         assert!(!undone.history.can_undo);
         assert!(undone.history.can_redo);
         assert!(undone.session.arrangement.tracks.is_empty());
+    }
+
+    fn linked_session() -> CreativeSession {
+        let mut session = CreativeSession::new(1);
+        session.project_name = Some("Linked".into());
+        session.score_source = Some(crate::ScoreSource {
+            file_name: "score.yaml".into(),
+            yaml: "meta: {title: Linked}".into(),
+            path: Some("/music/score.yaml".into()),
+            bindings: Default::default(),
+        });
+        let mut track = Track::instrument("score:track:1".into(), "lead".into());
+        track.instrument = Some(
+            TrackInstrument::built_in(
+                "score:device:1".into(),
+                "Lead".into(),
+                "TEST-001".into(),
+                "{}".into(),
+            )
+            .unwrap(),
+        );
+        track.score_instrument = Some("lead".into());
+        session.arrangement.tracks.push(track);
+        session.arrangement.midi_clips.push(MidiClip {
+            id: "score:clip:1".into(),
+            name: "lead".into(),
+            track_id: "score:track:1".into(),
+            asset_id: None,
+            start_tick: TimelineTick(0),
+            duration_ticks: 1_920,
+            notes: vec![MidiNote {
+                lyric: None,
+                id: "score:clip:1:0".into(),
+                note: 60,
+                start_tick: TimelineTick(0),
+                duration_ticks: 480,
+                velocity: 100,
+                channel: 1,
+            }],
+            events: Vec::new(),
+            instrument_control_events: Vec::new(),
+            muted: false,
+            loop_enabled: false,
+            recording_take_id: None,
+        });
+        session
+    }
+
+    #[test]
+    fn linked_score_projects_reject_score_owned_edits_and_keep_work_state() {
+        let storage = MemoryStorage::default();
+        let mut core = AppCore::new("project:test".into(), linked_session(), 0);
+
+        let mut work_state = core.canonical_state().session;
+        work_state.arrangement.tracks[0].muted = true;
+        work_state.arrangement.loop_range.enabled = true;
+        work_state.arrangement.loop_range.end_tick = TimelineTick(960);
+        core.commit_candidate(&storage, work_state)
+            .expect("work state is editable");
+
+        let mut note = core.canonical_state().session;
+        note.arrangement.midi_clips[0].notes[0].note = 62;
+        let error = core.commit_candidate(&storage, note).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "invalid command: this Project is linked to a Score; edit the Score file and rebuild the Project"
+        );
+
+        let mut title = core.canonical_state().session;
+        title.project_name = Some("Renamed".into());
+        assert!(core.commit_candidate(&storage, title).is_err());
+
+        let mut score_text = core.canonical_state().session;
+        score_text.score_source.as_mut().unwrap().yaml = "meta: {title: Edited}".into();
+        assert!(core.commit_candidate(&storage, score_text).is_err());
+        assert_eq!(storage.sessions.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn accepting_an_external_score_clears_history_and_keeps_the_candidate() {
+        let storage = MemoryStorage::default();
+        let mut core = AppCore::new("project:test".into(), linked_session(), 4);
+        let mut candidate = core.canonical_state().session;
+        candidate.arrangement.midi_clips[0].notes[0].note = 67;
+        candidate.score_source.as_mut().unwrap().yaml = "meta: {title: Linked}".into();
+        candidate.updated_at_ms = 2;
+
+        let accepted = core.commit_accepted(&storage, candidate).unwrap();
+
+        assert_eq!(accepted.arrangement.midi_clips[0].notes[0].note, 67);
+        let canonical = core.canonical_state();
+        assert_eq!(canonical.sequence, 5);
+        assert_eq!(canonical.history, HistoryState::default());
+        assert_eq!(canonical.session.score_source, accepted.score_source);
+        assert_eq!(storage.sessions.lock().unwrap().len(), 1);
+        assert!(
+            core.undo(&storage)
+                .expect_err("accepting an external Score clears Undo")
+                .to_string()
+                .contains("history is empty")
+        );
     }
 
     #[test]

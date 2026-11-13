@@ -44,7 +44,10 @@ pub use api::output::{
     PluginStateSnapshot, ProjectActivationResult, ProjectRecoveryState, ProjectState,
     ProjectSummary, ProjectionDiagnostics, RecordingFinalizationOutcome, RecordingStatus,
     RecordingStopResult, RecoveryCandidate, RuntimeProjectionState, RuntimeProjectionStatus,
-    TrackEffectSummary, TrackInstrumentSummary, TrackInstrumentSummarySource, TrackSummary,
+    ScoreChordInspection, ScoreDiagnostic, ScoreInspection, ScoreInstrumentInspection,
+    ScoreLaneInspection, ScoreRebuild, ScoreSectionInspection, ScoreSummary, ScoreSyncState,
+    ScoreSyncStatus, ScoreValidation, TrackEffectSummary, TrackInstrumentSummary,
+    TrackInstrumentSummarySource, TrackSummary,
 };
 pub use api::params::AudioDriverConfig;
 pub use audio::{

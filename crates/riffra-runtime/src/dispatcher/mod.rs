@@ -574,6 +574,29 @@ mod tests {
     }
 
     #[test]
+    fn standalone_rejects_an_unlinked_score_rebuild_and_reports_canonical_sequence() {
+        // Arrange
+        let (dispatcher, root) = open("score-rebuild");
+        let before = dispatcher
+            .dispatch(command("session.get", json!({})), None)
+            .unwrap();
+
+        // Act
+        let error = dispatcher
+            .dispatch(command("project.rebuild-score", json!({})), None)
+            .expect_err("an unlinked Project cannot rebuild a Score");
+
+        // Assert
+        assert!(error.to_string().contains("not linked to a Score"));
+        let after = dispatcher
+            .dispatch(command("session.get", json!({})), None)
+            .unwrap();
+        assert_eq!(after.sequence, before.sequence);
+        assert!(!root.join("projects").read_dir().unwrap().next().is_none());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn midi_import_is_a_read_command_that_still_requires_project_serialization() {
         let ControlCommand::Canonical(import) =
             ControlCommand::decode("asset.import-midi", json!({"path":"song.mid"})).unwrap()

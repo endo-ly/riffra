@@ -113,6 +113,9 @@ pub(super) enum Input {
     PromoteCandidate {
         key: ProjectionKey,
     },
+    RestoreCanonical {
+        key: ProjectionKey,
+    },
     PreparationProgress {
         operation: OperationId,
         progress: crate::api::output::RuntimeLoadStep,
@@ -239,6 +242,20 @@ impl Machine {
                             "prepared runtime candidate is no longer available".into(),
                         )),
                     });
+                }
+            }
+            Input::RestoreCanonical { key } => {
+                if let Some(intent) = self.canonical.as_mut()
+                    && intent.key.sequence > key.sequence
+                {
+                    intent.key = key;
+                    if let Some(active) = self.active.as_mut()
+                        && active.environment == self.environment
+                        && same_projected_graph(&active.projection, &intent.projection)
+                    {
+                        active.key = key;
+                    }
+                    self.counters.target = Some(key);
                 }
             }
             Input::PreparationProgress {
@@ -1167,6 +1184,32 @@ mod tests {
             Some(Ok(status)) if status.active_projection_sequence == Some(22)
         ));
         assert!(machine.job.is_none());
+    }
+
+    #[test]
+    fn restoring_a_promoted_key_allows_the_previous_session_to_be_resubmitted() {
+        // Arrange
+        let now = Instant::now();
+        let mut machine = machine(now);
+        let previous = snapshot(10);
+        active(&mut machine, Arc::clone(&previous), key(1, 10), now);
+        let (candidate, _) = submit(&mut machine, snapshot(20), key(2, 20), false, now);
+        finish(&mut machine, candidate, now);
+        machine.step(Input::PromoteCandidate { key: key(2, 20) }, now);
+
+        // Act: the older key is rejected until the promoted key is rewound.
+        let (rejected, _) = submit(&mut machine, Arc::clone(&previous), key(1, 10), true, now);
+        assert!(matches!(
+            machine.result(rejected),
+            Some(Err(RuntimeError::Superseded { .. }))
+        ));
+        machine.step(Input::RestoreCanonical { key: key(1, 10) }, now);
+        let (restored, _) = submit(&mut machine, previous, key(1, 10), true, now);
+
+        // Assert
+        finish(&mut machine, restored, now);
+        assert_eq!(machine.status().active_projection_sequence, Some(1));
+        assert_eq!(machine.status().active_session_revision, Some(10));
     }
 
     #[test]

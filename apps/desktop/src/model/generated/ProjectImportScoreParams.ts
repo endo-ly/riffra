@@ -3,13 +3,12 @@
 /**
  * Imports a Score YAML file as a new active Project.
  */
-export type ProjectImportScoreParams = {
-  /**
-   * Score YAML file.
-   */
-  path: string;
-  /**
-   * Sonalloy definition JSON for each `external: true` instrument ID.
-   */
-  bindings: { [key in string]: string };
-};
+export type ProjectImportScoreParams = { 
+/**
+ * Score YAML file.
+ */
+path: string, 
+/**
+ * Sonalloy definition JSON for each `external: true` instrument ID.
+ */
+bindings: { [key in string]: string }, };

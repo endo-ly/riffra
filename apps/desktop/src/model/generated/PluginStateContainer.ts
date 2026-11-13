@@ -3,4 +3,4 @@
 /**
  * How a plugin's component state is packaged.
  */
-export type PluginStateContainer = 'component' | 'fxb';
+export type PluginStateContainer = "component" | "fxb";

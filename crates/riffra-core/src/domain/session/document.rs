@@ -166,6 +166,8 @@ mod tests {
         session.score_source = Some(super::super::ScoreSource {
             file_name: "score.yaml".into(),
             yaml: "score".into(),
+            path: None,
+            bindings: Default::default(),
         });
 
         // Act

@@ -399,6 +399,9 @@ control_commands! {
         MusicRegionUpdate = "music.region.update" (RegionUpdateParams) -> ArrangementMutation, mutation(batch), project;
         MusicRegionRemove = "music.region.remove" (RegionIdParams) -> ArrangementMutation, mutation(batch), project;
 
+        ScoreValidate = "score.validate" (ScoreDocumentParams) -> ScoreValidation, read, host;
+        ScoreInspect = "score.inspect" (ScoreInspectParams) -> ScoreInspection, read, host;
+
         AssetImportMidi = "asset.import-midi" (AssetImportParams) -> AssetId, read, project;
         InstrumentList = "instrument.list" (EmptyParams) -> InstrumentLibrary, read, host;
         InstrumentSave = "instrument.save" (InstrumentSaveParams) -> InstrumentLibraryItem, read, host;
@@ -426,6 +429,7 @@ control_commands! {
         ProjectRename = "project.rename" (ProjectRenameParams) -> ProjectState, project;
         ProjectImport = "project.import" (ProjectImportParams) -> ProjectActivation, project;
         ProjectImportScore = "project.import-score" (ProjectImportScoreParams) -> ProjectActivation, project;
+        ProjectRebuildScore = "project.rebuild-score" (ProjectRebuildScoreParams) -> ScoreRebuild, project;
         MusicExportMidi = "music.export-midi" (MidiExportParams) -> MidiExport, project;
         ProjectExport = "project.export" (ProjectExportParams) -> ProjectExport, project;
     }
@@ -558,7 +562,7 @@ mod tests {
         let names = command_names();
 
         // Act / Assert
-        assert_eq!(names.len(), 221);
+        assert_eq!(names.len(), 224);
         let unique: std::collections::HashSet<_> = names.iter().copied().collect();
         assert_eq!(unique.len(), names.len());
         for name in names {
@@ -796,7 +800,7 @@ mod tests {
             .filter_map(|line| line.split_once('\'').map(|(name, _)| name))
             .collect();
         let unique: std::collections::HashSet<_> = names.iter().copied().collect();
-        assert_eq!(names.len(), 221);
+        assert_eq!(names.len(), 224);
         assert_eq!(unique.len(), names.len());
 
         for (name, params) in [
@@ -827,6 +831,8 @@ mod tests {
         let cases = [
             ("project.list", CommandScope::Host),
             ("instrument.list", CommandScope::Host),
+            ("score.validate", CommandScope::Host),
+            ("score.inspect", CommandScope::Host),
             ("audio.emergency-mute", CommandScope::Host),
             ("instrument.preview", CommandScope::Host),
             (
@@ -849,6 +855,7 @@ mod tests {
             "effect.add" => {
                 json!({"owner":{"kind":"track","id":"track:1"}, "pluginPath": "Reverb.vst3"})
             }
+            "score.validate" | "score.inspect" => json!({"path": "score.yaml"}),
             _ => json!({}),
         };
 

@@ -38,8 +38,10 @@ use riffra_runtime::{
     AudioMeterFrame, DeviceCapabilities, DeviceInspection, DeviceParameterChoice,
     DeviceParameterInfo, DeviceSidechainCapability, PluginPresetInfo, PluginStateSnapshot,
     ProjectionDiagnostics, RecordingFinalized, RecordingPhase, RuntimeProjectionState,
-    RuntimeRestarted, RuntimeStartupFinished, TrackAudioMeter, TrackEffectSummary, TrackSummary,
-    TransportState, TransportStatus,
+    RuntimeRestarted, RuntimeStartupFinished, ScoreChordInspection, ScoreDiagnostic,
+    ScoreInspection, ScoreInstrumentInspection, ScoreLaneInspection, ScoreRebuild,
+    ScoreSectionInspection, ScoreSummary, ScoreSyncState, ScoreSyncStatus, ScoreValidation,
+    TrackAudioMeter, TrackEffectSummary, TrackSummary, TransportState, TransportStatus,
 };
 use riffra_runtime::{InstrumentCollection, InstrumentLibraryItem, InstrumentOrigin};
 use ts_rs::{Config, TS};
@@ -136,6 +138,17 @@ fn export_types() {
     BootstrapState::export_all(&cfg).expect("BootstrapState bindings");
     ProjectState::export_all(&cfg).expect("ProjectState bindings");
     ProjectActivationResult::export_all(&cfg).expect("ProjectActivationResult bindings");
+    ScoreSyncStatus::export_all(&cfg).expect("ScoreSyncStatus bindings");
+    ScoreSyncState::export_all(&cfg).expect("ScoreSyncState bindings");
+    ScoreDiagnostic::export_all(&cfg).expect("ScoreDiagnostic bindings");
+    ScoreRebuild::export_all(&cfg).expect("ScoreRebuild bindings");
+    ScoreValidation::export_all(&cfg).expect("ScoreValidation bindings");
+    ScoreSummary::export_all(&cfg).expect("ScoreSummary bindings");
+    ScoreInspection::export_all(&cfg).expect("ScoreInspection bindings");
+    ScoreSectionInspection::export_all(&cfg).expect("ScoreSectionInspection bindings");
+    ScoreChordInspection::export_all(&cfg).expect("ScoreChordInspection bindings");
+    ScoreInstrumentInspection::export_all(&cfg).expect("ScoreInstrumentInspection bindings");
+    ScoreLaneInspection::export_all(&cfg).expect("ScoreLaneInspection bindings");
     AudioAnalysis::export_all(&cfg).expect("AudioAnalysis bindings");
     AudioDriverConfig::export_all(&cfg).expect("AudioDriverConfig bindings");
     LibraryAsset::export_all(&cfg).expect("LibraryAsset bindings");

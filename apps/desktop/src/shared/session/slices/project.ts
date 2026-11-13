@@ -3,12 +3,15 @@ import type {
   CanonicalState,
   ProjectActivationResult,
   ProjectState,
+  ScoreRebuild,
+  ScoreSyncStatus,
 } from '@/model/generated';
 import { reconcileCanonical } from '@/model/reconcile-canonical';
 
 export interface ProjectStore {
   boot: BootstrapState | null;
   lastActivation: { projectId: string; sequence: number } | null;
+  scoreSync: ScoreSyncStatus | null;
 }
 
 export function acceptBootstrap(store: ProjectStore, next: BootstrapState): ProjectStore {
@@ -25,7 +28,16 @@ export function acceptBootstrap(store: ProjectStore, next: BootstrapState): Proj
       projectId: next.projectState.activeProjectId,
       sequence: next.canonical.sequence,
     },
+    scoreSync: next.scoreSync ?? null,
   };
+}
+
+/** Applies a linked Score synchronization status belonging to the active Project. */
+export function acceptScoreSync(store: ProjectStore, status: ScoreSyncStatus): ProjectStore | null {
+  const activeProjectId = store.boot?.projectState.activeProjectId;
+  if (!activeProjectId) return null;
+  if (status.projectId !== undefined && status.projectId !== activeProjectId) return null;
+  return { ...store, scoreSync: status };
 }
 
 export type CanonicalAcceptance = 'applied' | 'already-current' | 'rejected';
@@ -74,6 +86,7 @@ export function acceptActivation(
       recovery: activation.recovery,
     },
     lastActivation: { projectId, sequence },
+    scoreSync: boot.projectState.activeProjectId === projectId ? store.scoreSync : null,
   };
 }
 
@@ -125,6 +138,8 @@ export interface ProjectSlice extends ProjectStore {
   acceptBootstrap(state: BootstrapState): void;
   acceptCanonical(state: CanonicalState): CanonicalAcceptance;
   acceptActivation(state: ProjectActivationResult): boolean;
+  acceptScoreSync(state: ScoreSyncStatus): void;
+  rebuildScore(options?: { path?: string }): Promise<ScoreRebuild | null>;
   replaceList(state: ProjectState): void;
   refreshList(): Promise<ProjectState | null>;
   create(name?: string): Promise<ProjectActivationResult | null>;
@@ -191,6 +206,7 @@ export function createProjectSlice(
   return {
     boot: null,
     lastActivation: null,
+    scoreSync: null,
     bootstrapError: null,
     bootstrapLoading: false,
     switching: false,
@@ -202,6 +218,7 @@ export function createProjectSlice(
       update({
         boot: null,
         lastActivation: null,
+        scoreSync: null,
         bootstrapError: null,
         bootstrapLoading: false,
         switching: false,
@@ -242,6 +259,9 @@ export function createProjectSlice(
       return next.result;
     },
     acceptActivation: (state) => accept(acceptActivation(get(), state)),
+    acceptScoreSync: (state) => {
+      accept(acceptScoreSync(get(), state));
+    },
     replaceList: (state) => {
       accept(replaceProjectList(get(), state));
     },
@@ -335,6 +355,45 @@ export function createProjectSlice(
           return await api.importScore(path, bindings);
         }
       }, 'Score import');
+    },
+    async rebuildScore(options) {
+      const bindings: Record<string, string> = {};
+      const current = generation;
+      const run = async () => api.rebuildScore(options?.path, bindings);
+      try {
+        let rebuilt: ScoreRebuild;
+        try {
+          rebuilt = await run();
+        } catch (error) {
+          const details = error instanceof NativeCommandError ? error.details : undefined;
+          if (
+            typeof details !== 'object' ||
+            details === null ||
+            !('kind' in details) ||
+            details.kind !== 'scoreBindingsRequired' ||
+            !('instrumentIds' in details) ||
+            !Array.isArray(details.instrumentIds)
+          )
+            throw error;
+          for (const id of details.instrumentIds) {
+            if (typeof id !== 'string') throw error;
+            const definition = await openScoreInstrumentDefinition(id);
+            if (!definition) return null;
+            bindings[id] = definition;
+          }
+          rebuilt = await run();
+        }
+        if (current !== generation) return null;
+        if (rebuilt.changed)
+          toast(`Score synchronized: ${rebuilt.path ?? 'linked Score'} (${rebuilt.sequence})`);
+        else if (rebuilt.yamlChanged) toast('Score text saved; playback is unchanged.');
+        else if (rebuilt.linkChanged) toast('Score link updated; playback is unchanged.');
+        else toast('Score is already synchronized.');
+        return rebuilt;
+      } catch (error) {
+        if (current === generation) toast(`Score synchronization failed: ${errorText(error)}`);
+        return null;
+      }
     },
     async restoreRecovery(fileName) {
       const restored = await commit(api.restoreRecoveryGeneration(fileName));

@@ -39,6 +39,11 @@ impl History {
         }
     }
 
+    pub(crate) fn clear(&mut self) {
+        self.undo.clear();
+        self.redo.clear();
+    }
+
     pub(crate) fn can_undo(&self) -> bool {
         !self.undo.is_empty()
     }

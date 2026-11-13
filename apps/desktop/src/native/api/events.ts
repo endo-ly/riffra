@@ -12,6 +12,8 @@ export interface NativeEventApi {
   onCanonicalStateChanged(callback: (state: CanonicalState) => void): () => void;
   onProjectStateChanged(callback: (state: ProjectState) => void): () => void;
   onProjectActivated(callback: (result: ProjectActivationResult) => void): () => void;
+  /** Subscribes to the active Project's linked Score synchronization state. */
+  onScoreSyncStatusChanged(callback: (status: ScoreSyncStatus) => void): () => void;
   onTransportStatus(callback: (status: TransportStatus) => void): () => void;
   /** Subscribes to the latest asynchronous Audio Runtime projection status. */
   onRuntimeProjectionStatus(callback: (status: RuntimeProjectionStatus) => void): () => void;
@@ -28,6 +30,7 @@ import type {
   RecordingFinalized,
   RuntimeProjectionStatus,
   RuntimeRestarted,
+  ScoreSyncStatus,
   TransportStatus,
 } from '@/model/generated';
 import { listen } from '@tauri-apps/api/event';
@@ -55,6 +58,8 @@ export const eventApi: NativeEventApi = {
   onProjectStateChanged: (callback) => subscribe<ProjectState>('project-state-changed', callback),
   onProjectActivated: (callback) =>
     subscribe<ProjectActivationResult>('project-activated', callback),
+  onScoreSyncStatusChanged: (callback) =>
+    subscribe<ScoreSyncStatus>('score-sync-status-changed', callback),
   onTransportStatus: (callback) => subscribe<TransportStatus>('transport-status', callback),
   onRuntimeProjectionStatus: (callback) =>
     subscribe<RuntimeProjectionStatus>('runtime-projection-status', callback),

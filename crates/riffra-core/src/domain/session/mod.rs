@@ -62,6 +62,13 @@ pub struct CreativeSession {
 pub struct ScoreSource {
     pub file_name: String,
     pub yaml: String,
+    /// Absolute path of the linked Score file at the last successful synchronization.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub path: Option<String>,
+    /// Definition path of each `external: true` instrument in the linked Score.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub bindings: std::collections::BTreeMap<String, String>,
 }
 
 impl Default for SessionSettings {
@@ -114,6 +121,46 @@ impl CreativeSession {
             },
             settings: SessionSettings::default(),
         }
+    }
+
+    /// Compares the state a linked Score owns, including its stored body.
+    pub fn score_owned_state_equals(&self, other: &Self) -> bool {
+        self.score_owned_equals(other, true)
+    }
+
+    /// Compares the state a linked Score owns, ignoring its stored body.
+    ///
+    /// Work state such as loop, punch, markers, mute, solo, arm, monitoring,
+    /// input routes, colors, and recording metadata is not compared.
+    pub fn score_performance_equals(&self, other: &Self) -> bool {
+        self.score_owned_equals(other, false)
+    }
+
+    fn score_owned_equals(&self, other: &Self, include_source: bool) -> bool {
+        let same_metadata = (!include_source || self.score_source == other.score_source)
+            && self.project_name == other.project_name
+            && self.arrangement.timebase == other.arrangement.timebase
+            && self.arrangement.mixer == other.arrangement.mixer
+            && self.settings.mixdown == other.settings.mixdown
+            && self.arrangement.audio_clips == other.arrangement.audio_clips
+            && self.arrangement.regions == other.arrangement.regions
+            && self.arrangement.harmony_events == other.arrangement.harmony_events
+            && self.arrangement.automation_lanes == other.arrangement.automation_lanes;
+        same_metadata
+            && self.arrangement.tracks.len() == other.arrangement.tracks.len()
+            && self
+                .arrangement
+                .tracks
+                .iter()
+                .zip(&other.arrangement.tracks)
+                .all(|(track, candidate)| score_track_equals(track, candidate))
+            && self.arrangement.midi_clips.len() == other.arrangement.midi_clips.len()
+            && self
+                .arrangement
+                .midi_clips
+                .iter()
+                .zip(&other.arrangement.midi_clips)
+                .all(|(clip, candidate)| score_clip_equals(clip, candidate))
     }
 
     /// Validates production rules and normalizes clamped values, mirroring the
@@ -209,6 +256,32 @@ impl MixdownSettings {
     }
 }
 
+fn score_track_equals(track: &Track, candidate: &Track) -> bool {
+    track.id == candidate.id
+        && track.name == candidate.name
+        && track.kind == candidate.kind
+        && track.gain_db == candidate.gain_db
+        && track.pan == candidate.pan
+        && track.pan_law == candidate.pan_law
+        && track.instrument == candidate.instrument
+        && track.external_audio_source_track_ids == candidate.external_audio_source_track_ids
+        && track.output_bus_id == candidate.output_bus_id
+        && track.effects == candidate.effects
+        && track.score_instrument == candidate.score_instrument
+}
+
+fn score_clip_equals(clip: &MidiClip, candidate: &MidiClip) -> bool {
+    clip.id == candidate.id
+        && clip.name == candidate.name
+        && clip.track_id == candidate.track_id
+        && clip.asset_id == candidate.asset_id
+        && clip.start_tick == candidate.start_tick
+        && clip.duration_ticks == candidate.duration_ticks
+        && clip.notes == candidate.notes
+        && clip.events == candidate.events
+        && clip.instrument_control_events == candidate.instrument_control_events
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -250,6 +323,81 @@ mod tests {
             assert_eq!(normalized.settings.note, expected);
             assert_eq!(normalized.settings.master_db, 0.0);
         }
+    }
+
+    #[test]
+    fn score_owned_state_covers_every_track_and_automation_lane_but_not_work_state() {
+        use crate::domain::timeline::TimelineTick;
+
+        let mut session = CreativeSession::new(1);
+        session.score_source = Some(ScoreSource {
+            file_name: "song.yaml".into(),
+            yaml: "meta: {}".into(),
+            path: Some("/scores/song.yaml".into()),
+            bindings: Default::default(),
+        });
+        let mut lead = Track::instrument("track:lead".into(), "Lead".into());
+        lead.score_instrument = Some("lead".into());
+        session.arrangement.tracks.push(lead);
+        session
+            .arrangement
+            .tracks
+            .push(Track::audio("track:extra".into(), "Extra".into()));
+        session.arrangement.midi_clips.push(MidiClip {
+            id: "clip:lead".into(),
+            name: "lead".into(),
+            track_id: "track:lead".into(),
+            asset_id: None,
+            start_tick: TimelineTick(0),
+            duration_ticks: 480,
+            notes: Vec::new(),
+            events: Vec::new(),
+            instrument_control_events: Vec::new(),
+            muted: false,
+            loop_enabled: false,
+            recording_take_id: None,
+        });
+        session.arrangement.automation_lanes.push(AutomationLane {
+            id: "automation:cutoff".into(),
+            target: AutomationTarget::DeviceParameter {
+                device_id: "device:lead".into(),
+                parameter_id: "cutoff".into(),
+            },
+            interpolation: AutomationInterpolation::Step,
+            points: vec![AutomationPoint {
+                id: "point:1".into(),
+                tick: TimelineTick(0),
+                value: 0.5,
+            }],
+        });
+
+        // Work state remains editable.
+        let mut work = session.clone();
+        work.arrangement.tracks[0].muted = true;
+        work.arrangement.tracks[0].solo = true;
+        work.arrangement.tracks[0].armed = true;
+        work.arrangement.tracks[0].monitoring = MonitoringState::On;
+        work.arrangement.tracks[0].color = Some("#123456".into());
+        work.arrangement.loop_range.enabled = true;
+        work.arrangement.midi_clips[0].muted = true;
+        assert!(session.score_owned_state_equals(&work));
+
+        // Ordinary tracks are part of the state the Score owns.
+        let mut added = work.clone();
+        added
+            .arrangement
+            .tracks
+            .push(Track::audio("track:other".into(), "Other".into()));
+        assert!(!session.score_owned_state_equals(&added));
+
+        let mut edited = work.clone();
+        edited.arrangement.tracks[1].gain_db = -6.0;
+        assert!(!session.score_owned_state_equals(&edited));
+
+        // Device parameter automation is protected like track automation.
+        let mut automated = work.clone();
+        automated.arrangement.automation_lanes[0].points[0].value = 0.75;
+        assert!(!session.score_owned_state_equals(&automated));
     }
 
     #[test]
