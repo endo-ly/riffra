@@ -1838,8 +1838,7 @@ mod tests {
 
     #[test]
     fn unimplemented_extensions_are_rejected_with_their_source_position() {
-        let mut document = extension_document();
-        let error = compile(&document.to_string()).expect_err("extensions are not implemented");
+        let error = compile(EXTENSION_SCORE).expect_err("extensions are not implemented");
         assert_eq!(error.path, "kits");
         assert!(error.message.contains("kit") || error.message.contains("kits"));
         let detail = &error.detail;
@@ -1848,6 +1847,7 @@ mod tests {
         assert!(detail["line"].as_u64().expect("line") > 0);
         assert!(detail["column"].as_u64().expect("column") > 0);
 
+        let mut document = extension_document();
         document.as_object_mut().unwrap().remove("kits");
         assert_eq!(compile(&document.to_string()).unwrap_err().path, "lyrics");
         document.as_object_mut().unwrap().remove("lyrics");
