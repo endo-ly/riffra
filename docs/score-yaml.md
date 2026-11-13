@@ -373,7 +373,7 @@ VST3 の State は Score の `state` と `library/states` のファイルから�
 
 再構築で音源・エフェクト・Asset を再利用するかは「同一性と再利用」の規則で決める。判断は既存の Track・Device・Asset の内容を比較して行い、別のキャッシュや索引は作らない。
 
-`.riffra` のエクスポート・インポートには、音源スナップショットと ScoreSource も含まれる。
+`.riffra` のエクスポート・インポートには、音源スナップショット・Audio Asset・ScoreSource も含まれる。
 パッケージに書き出す Session のコピーでは、リンクの `path` を消して楽器の対応を空にする。元 PC の絶対パスを有効なリンクとして持ち込まないためであり、エクスポート元の Project は変更しない。インポート後に必要なら `project rebuild-score --path ... --bind ...` でリンクし直す。
 
 ## 失敗時の扱い
