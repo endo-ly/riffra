@@ -423,7 +423,10 @@ fn rebuild_score(
         diagnostics: diagnostics.clone(),
     };
     let Some(candidate) = rebuilt.candidate(&current.session) else {
-        state.set_score_sync(super::state::initial_score_sync(&current));
+        state.set_score_sync(super::state::synced_score_sync(
+            &current,
+            diagnostics.clone(),
+        ));
         return Ok(result(current.sequence));
     };
     if rebuilt.source_changed() {
@@ -470,8 +473,9 @@ fn rebuild_score(
             .events
             .emit(crate::HostEvent::ProjectStateChanged(project_state));
     }
-    state.set_score_sync(super::state::initial_score_sync(
+    state.set_score_sync(super::state::synced_score_sync(
         &committed.snapshot.canonical,
+        diagnostics.clone(),
     ));
     Ok(result(sequence))
 }
