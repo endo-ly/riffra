@@ -73,7 +73,7 @@ pub(crate) struct ScoreOutcome {
 
 impl ScoreOutcome {
     /// Returns whether accepting this Score changes anything the Project stores.
-    pub(crate) fn has_changes(&self) -> bool {
+    fn has_changes(&self) -> bool {
         self.changed || self.yaml_changed || self.link_changed
     }
 
