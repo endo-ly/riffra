@@ -55,6 +55,7 @@ export type ControlCommandResults = {
   'record.punch.set': OutputValue<'arrangementMutation'>;
   'automation.list': OutputValue<'automationLanes'>;
   'automation.get': OutputValue<'automationLanes'>;
+  'automation.evaluate': OutputValue<'automationEvaluation'>;
   'automation.set': OutputValue<'arrangementMutation'>;
   'automation.clear': OutputValue<'arrangementMutation'>;
   'clip.audio.list': OutputValue<'audioClips'>;

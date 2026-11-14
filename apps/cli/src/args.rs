@@ -1591,12 +1591,32 @@ pub struct RangeArgs {
 pub enum AutomationCommand {
     /// Read the lane for one canonical target.
     Get(AutomationTargetArgs),
+    /// Evaluate scheduled values at bar-aligned musical grid positions.
+    Evaluate(AutomationEvaluateArgs),
     /// Discover lanes across the project or a channel owner.
     List(AutomationListArgs),
     /// Replace a lane with absolute-tick points; values before/after points hold the endpoint.
     Set(AutomationSetArgs),
     /// Delete a target's lane and use its static value.
     Clear(AutomationTargetArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct AutomationEvaluateArgs {
+    #[command(flatten)]
+    pub target: AutomationTargetArgs,
+    /// Start position as bar:beat, with an optional beat-relative fraction.
+    #[arg(long)]
+    pub start: String,
+    /// Exclusive end position as bar:beat, with an optional beat-relative fraction.
+    #[arg(long)]
+    pub end: String,
+    /// Grid as a fraction of a whole note, for example 1/16.
+    #[arg(long)]
+    pub grid: String,
+    /// Sample rate used by the execution graph.
+    #[arg(long)]
+    pub sample_rate: u32,
 }
 
 #[derive(Debug, Args)]
@@ -3501,6 +3521,25 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
                 target: args.into_target()?,
             })
             .into(),
+            AutomationCommand::Evaluate(args) => {
+                Canonical::AutomationEvaluate(AutomationEvaluateParams {
+                    target: args.target.into_target()?,
+                    start: args
+                        .start
+                        .parse()
+                        .map_err(|error: riffra_core::DomainError| error.to_string())?,
+                    end: args
+                        .end
+                        .parse()
+                        .map_err(|error: riffra_core::DomainError| error.to_string())?,
+                    grid: args
+                        .grid
+                        .parse()
+                        .map_err(|error: riffra_core::DomainError| error.to_string())?,
+                    sample_rate: args.sample_rate,
+                })
+                .into()
+            }
             AutomationCommand::List(args) => {
                 let owner = match (args.track_id, args.bus_id, args.master) {
                     (Some(id), None, false) => Some(riffra_core::EffectOwner::Track { id }),
@@ -4420,6 +4459,26 @@ mod tests {
             .unwrap(),
         );
         let list = wire(Cli::try_parse_from(["riffra", "automation", "list"]).unwrap());
+        let evaluation = wire(
+            Cli::try_parse_from([
+                "riffra",
+                "automation",
+                "evaluate",
+                "--bus-id",
+                "bus:1",
+                "--parameter",
+                "gain",
+                "--start",
+                "20:1",
+                "--end",
+                "22:1",
+                "--grid",
+                "1/32",
+                "--sample-rate",
+                "48000",
+            ])
+            .unwrap(),
+        );
         let sidechain = wire(
             Cli::try_parse_from([
                 "riffra",
@@ -4453,6 +4512,11 @@ mod tests {
             json!({"kind":"sidechainSendLevel","sidechainSendId":"sidechain:1"})
         );
         assert_eq!(list.name, "automation.list");
+        assert_eq!(evaluation.name, "automation.evaluate");
+        assert_eq!(
+            evaluation.params,
+            json!({"target":{"kind":"busMix","busId":"bus:1","parameter":"gain"},"start":"20:1","end":"22:1","grid":"1/32","sampleRate":48000})
+        );
         assert!(
             Cli::try_parse_from([
                 "riffra",

@@ -137,6 +137,18 @@ pub struct AutomationGetParams {
     pub target: AutomationTarget,
 }
 
+/// Evaluates a target at bar-aligned grid positions in the specified range.
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct AutomationEvaluateParams {
+    pub target: AutomationTarget,
+    pub start: MusicalPosition,
+    pub end: MusicalPosition,
+    pub grid: riffra_core::MusicalDuration,
+    #[schemars(range(min = 1))]
+    pub sample_rate: u32,
+}
+
 /// Discovers lanes across the project or a canonical channel owner.
 #[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]

@@ -345,6 +345,7 @@ control_commands! {
         PunchRangeSet = "record.punch.set" (RangeParams) -> ArrangementMutation, mutation(batch), project;
         AutomationList = "automation.list" (AutomationListParams) -> AutomationLanes, read, project;
         AutomationGet = "automation.get" (AutomationGetParams) -> AutomationLanes, read, project;
+        AutomationEvaluate = "automation.evaluate" (AutomationEvaluateParams) -> AutomationEvaluation, read, project;
         AutomationSet = "automation.set" (AutomationSetParams) -> ArrangementMutation, mutation(batch), project;
         AutomationClear = "automation.clear" (AutomationClearParams) -> ArrangementMutation, mutation(batch), project;
 
@@ -562,7 +563,7 @@ mod tests {
         let names = command_names();
 
         // Act / Assert
-        assert_eq!(names.len(), 224);
+        assert_eq!(names.len(), 225);
         let unique: std::collections::HashSet<_> = names.iter().copied().collect();
         assert_eq!(unique.len(), names.len());
         for name in names {
@@ -800,7 +801,7 @@ mod tests {
             .filter_map(|line| line.split_once('\'').map(|(name, _)| name))
             .collect();
         let unique: std::collections::HashSet<_> = names.iter().copied().collect();
-        assert_eq!(names.len(), 224);
+        assert_eq!(names.len(), 225);
         assert_eq!(unique.len(), names.len());
 
         for (name, params) in [

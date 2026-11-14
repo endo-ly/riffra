@@ -397,6 +397,7 @@ pub(crate) const TOOLS: &[ToolDef] = &[
         actions: &[
             action("list", "automation.list"),
             action("get", "automation.get"),
+            action("evaluate", "automation.evaluate"),
             action("set", "automation.set"),
             action("clear", "automation.clear"),
             action("preview", "automation.preview"),
@@ -1163,11 +1164,11 @@ mod tests {
         // Assert
         assert_eq!(names, expected);
         let actions: Vec<_> = TOOLS.iter().flat_map(|tool| tool.actions.iter()).collect();
-        assert_eq!(actions.len(), 221);
+        assert_eq!(actions.len(), 222);
         let commands: std::collections::HashSet<_> =
             actions.iter().map(|action| action.command).collect();
-        assert_eq!(commands.len(), 220);
-        assert_eq!(command_names().len(), 224);
+        assert_eq!(commands.len(), 221);
+        assert_eq!(command_names().len(), 225);
         let public_commands: std::collections::HashSet<_> =
             command_names().iter().copied().collect();
         let mut unused = public_commands
