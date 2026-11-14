@@ -564,6 +564,14 @@ pub(crate) fn compile(text: &str) -> Result<ScorePlan> {
                         .map(|(id, kit)| (id.clone(), kit.source.articulations.clone())),
                 )
                 .collect(),
+            articulation_paths: sources
+                .keys()
+                .map(|id| (id.clone(), format!("instruments.{id}.source.articulations")))
+                .chain(
+                    kits.keys()
+                        .map(|id| (id.clone(), format!("kits.{id}.source.articulations"))),
+                )
+                .collect(),
             kits: kits.keys().cloned().collect(),
             members: kit_members.clone(),
             audio: audio_instruments.clone(),
@@ -621,42 +629,13 @@ pub(crate) fn compile(text: &str) -> Result<ScorePlan> {
         .map(|mut plan| {
             for lane in &mut plan.lanes {
                 for origin in &mut lane.sources {
-                    if let Some((section_index, section)) = plan
-                        .sections
-                        .iter()
-                        .enumerate()
-                        .find(|(_, section)| {
-                            origin.tick >= section.start_tick && origin.tick < section.end_tick
-                        })
-                        .or_else(|| {
-                            plan.sections
-                                .iter()
-                                .enumerate()
-                                .next_back()
-                                .filter(|(_, section)| origin.tick == section.end_tick)
-                        })
+                    if let Some((section, occurrence, bar, step)) =
+                        tick_position(origin.tick, &plan.sections, plan.ticks_per_beat)
                     {
-                        let (numerator, denominator) =
-                            syntax::meter(&section.meter).expect("resolved meter");
-                        let elapsed = q(
-                            i64::try_from(origin.tick - section.start_tick)
-                                .expect("resolved musical time"),
-                            i64::from(plan.ticks_per_beat),
-                        );
-                        let bar_length = q(i64::from(numerator) * 4, i64::from(denominator));
-                        let index = (&elapsed / &bar_length)
-                            .to_integer()
-                            .to_usize()
-                            .expect("resolved bar")
-                            .min(section.bars - 1);
-                        origin.section = section.section.clone();
-                        origin.occurrence = section_index + 1;
-                        origin.bar = index + 1;
-                        origin.step = ((elapsed
-                            - bar_length * q(i64::try_from(index).expect("resolved bar"), 1))
-                            * q(4, 1)
-                            + q(1, 1))
-                        .to_string();
+                        origin.section = section;
+                        origin.occurrence = occurrence;
+                        origin.bar = bar;
+                        origin.step = step;
                     }
                     let token_location = origin
                         .token_offset
@@ -669,18 +648,7 @@ pub(crate) fn compile(text: &str) -> Result<ScorePlan> {
                         origin.column = column;
                         continue;
                     }
-                    let mut path = origin.path.as_str();
-                    loop {
-                        if let Some(&(line, column)) = source.positions.get(path) {
-                            origin.line = line;
-                            origin.column = column;
-                            break;
-                        }
-                        let Some(i) = path.rfind(['.', '[']) else {
-                            break;
-                        };
-                        path = &path[..i];
-                    }
+                    (origin.line, origin.column) = source_line(&origin.path, &source);
                 }
             }
             for control in &mut plan.performance_controls {
@@ -2269,9 +2237,105 @@ mod tests {
         assert_eq!(controls[3].step, "9");
         assert!(controls[3].line > 0);
 
+        doc["instruments"]["kick"] = json!({"kit": "drums", "trigger_note_midi": 36});
+        doc["kits"] = json!({"drums": {"source": {
+            "vst3": {"plugin": "Drums"},
+            "articulations": {
+                "default": {"keyswitch": 24, "mode": "latch"},
+                "mute": {"keyswitch": 26, "mode": "latch"}
+            }
+        }}});
+        doc["sections"]["phrase"]["events"] = json!([
+            {"kind": "articulation", "instrument": "drums", "name": "mute", "at": {"bar": 1, "step": 1}, "duration_quarters": 1},
+            {"kind": "automation", "instrument": "drums", "control": "cc:74", "from_value": 0, "to_value": 127, "at": {"bar": 1, "step": 9}, "duration_quarters": 1}
+        ]);
+        let kit_plan = compile(&to_yaml(&doc).unwrap()).unwrap();
+        assert!(
+            kit_plan
+                .performance_controls
+                .iter()
+                .all(|control| control.source == "drums")
+        );
+        assert!(kit_plan.performance_controls.iter().any(|control| matches!(
+            control.kind,
+            PerformanceControlKind::ControlChange {
+                number: 74,
+                value: 0
+            }
+        )));
+
         doc["sections"]["phrase"]["events"] = json!([
             {"kind": "cc", "instrument": "part", "number": 11, "value": 96, "at": {"bar": 1, "step": 1}},
             {"kind": "automation", "instrument": "part", "control": "cc:11", "from_value": 96, "to_value": 64, "at": {"bar": 1, "step": 1}, "duration_quarters": 1}
+        ]);
+        assert_eq!(
+            compile(&to_yaml(&doc).unwrap()).unwrap_err().path,
+            "sections.phrase.events[0]"
+        );
+
+        doc["sections"]["phrase"]["events"] = json!([
+            {"kind": "articulation", "instrument": "part", "name": "open", "at": {"bar": 1, "step": 1}, "duration_quarters": 1},
+            {"kind": "articulation", "instrument": "part", "name": "open", "at": {"bar": 1, "step": 5}, "duration_quarters": 1}
+        ]);
+        let adjacent = compile(&to_yaml(&doc).unwrap()).unwrap();
+        assert_eq!(
+            adjacent
+                .performance_controls
+                .iter()
+                .map(|control| control.kind)
+                .collect::<Vec<_>>(),
+            [
+                PerformanceControlKind::KeySwitch {
+                    note: 27,
+                    mode: production::KeySwitchMode::Hold,
+                    down: true
+                },
+                PerformanceControlKind::KeySwitch {
+                    note: 27,
+                    mode: production::KeySwitchMode::Hold,
+                    down: false
+                }
+            ]
+        );
+        assert_eq!(adjacent.performance_controls[0].tick, 0);
+        assert_eq!(
+            adjacent.performance_controls[1].tick,
+            2 * u64::from(adjacent.ticks_per_beat)
+        );
+
+        doc["sections"]["phrase"]["events"] = json!([
+            {"kind": "articulation", "instrument": "part", "name": "open", "at": {"bar": 1, "step": 13}, "duration_quarters": 1}
+        ]);
+        let ending = compile(&to_yaml(&doc).unwrap()).unwrap();
+        let last = ending.performance_controls.last().expect("hold release");
+        assert_eq!(last.tick, ending.length_ticks);
+        assert!(matches!(
+            last.kind,
+            PerformanceControlKind::KeySwitch {
+                note: 27,
+                down: false,
+                ..
+            }
+        ));
+
+        doc["sections"]["phrase"]["events"] = json!([
+            {"kind": "articulation", "instrument": "part", "name": "mute", "at": {"bar": 1, "step": 13}, "duration_quarters": 1}
+        ]);
+        let final_latch = compile(&to_yaml(&doc).unwrap()).unwrap();
+        assert_eq!(final_latch.performance_controls.len(), 2);
+        assert_eq!(final_latch.performance_controls[0].tick, 0);
+        assert!(matches!(
+            final_latch.performance_controls[0].kind,
+            PerformanceControlKind::KeySwitch { note: 24, .. }
+        ));
+        assert_ne!(
+            final_latch.performance_controls[1].tick,
+            final_latch.length_ticks
+        );
+
+        doc["sections"]["phrase"]["events"] = json!([
+            {"kind": "mod_wheel", "instrument": "part", "value": 0.5, "at": {"bar": 1, "step": 1}},
+            {"kind": "automation", "instrument": "part", "control": "cc:1", "from_value": 0, "to_value": 127, "at": {"bar": 1, "step": 1}, "duration_quarters": 1}
         ]);
         assert_eq!(
             compile(&to_yaml(&doc).unwrap()).unwrap_err().path,
@@ -2289,6 +2353,14 @@ mod tests {
 
         doc["sections"]["phrase"]["events"] = json!([
             {"kind": "articulation", "instrument": "part", "name": "missing", "at": {"bar": 1, "step": 1}, "duration_quarters": 1}
+        ]);
+        assert_eq!(
+            compile(&to_yaml(&doc).unwrap()).unwrap_err().path,
+            "sections.phrase.events[0].name"
+        );
+
+        doc["sections"]["phrase"]["events"] = json!([
+            {"kind": "articulation", "instrument": "part", "name": "default", "at": {"bar": 1, "step": 1}, "duration_quarters": 1}
         ]);
         assert_eq!(
             compile(&to_yaml(&doc).unwrap()).unwrap_err().path,

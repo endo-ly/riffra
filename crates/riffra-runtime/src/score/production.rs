@@ -568,6 +568,10 @@ mod tests {
                 "instruments.bass.source.articulations.mute.cc.value",
             ),
             (
+                json!({"vst3":{"plugin":"synth"}, "articulations":{"mute":{"keyswitch":24,"mode":"toggle"}}}),
+                "instruments.bass.source.articulations.mute.mode",
+            ),
+            (
                 json!({"vst3":{"plugin":"synth"}, "articulations":{"mute":{"keyswitch":24,"mode":"hold","cc":{"number":1,"value":1,"reset":0}}}}),
                 "instruments.bass.source.articulations.mute",
             ),

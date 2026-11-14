@@ -16,6 +16,7 @@ use super::{resolve, syntax};
 pub(crate) struct ControlSources {
     pub(crate) articulations:
         BTreeMap<String, BTreeMap<String, super::production::ArticulationSpec>>,
+    pub(crate) articulation_paths: BTreeMap<String, String>,
     pub(crate) kits: BTreeSet<String>,
     pub(crate) members: BTreeMap<String, String>,
     pub(crate) audio: BTreeSet<String>,
@@ -1717,6 +1718,70 @@ impl Builder<'_> {
             }
             return Ok(());
         }
+        if kind == "automation"
+            && let Some(control) = v.get("control").and_then(Value::as_str)
+            && let Some(number) = super::cc_number(control)
+        {
+            let id = text_field(v, "instrument", path)?;
+            let source = self.control_source(id, path)?;
+            let from = integer(
+                required(v, "from_value", path)?,
+                &format!("{path}.from_value"),
+            )?;
+            let to = integer(required(v, "to_value", path)?, &format!("{path}.to_value"))?;
+            if !(0..=127).contains(&from) || !(0..=127).contains(&to) {
+                return Err(Error::new(path, "cc automation values must be 0..127"));
+            }
+            let end = &at + &duration;
+            if end > &s.start + &s.length {
+                return Err(Error::new(path, "automation exceeds section"));
+            }
+            self.midi_ramps.push(MidiControllerRamp {
+                source: source.clone(),
+                number,
+                start: at.clone(),
+                end: end.clone(),
+                path: path.to_owned(),
+            });
+            let mut cursor = at.clone();
+            let mut previous = None;
+            loop {
+                let value = quarter_ramp_value(
+                    &at,
+                    &end,
+                    &cursor,
+                    f32::from(i16::try_from(from).expect("range checked")),
+                    f32::from(i16::try_from(to).expect("range checked")),
+                )
+                .round()
+                .clamp(0.0, 127.0);
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                let value = value as u8;
+                if previous != Some(value) {
+                    if self.midi_controllers.len() >= 1_000_000 {
+                        return Err(Error::new(
+                            path,
+                            "expanded score exceeds one million events",
+                        ));
+                    }
+                    self.midi_controllers.push(MidiControllerEvent {
+                        source: source.clone(),
+                        number,
+                        value,
+                        at: cursor.clone(),
+                        path: path.to_owned(),
+                        kind: MidiControllerKind::Automation,
+                    });
+                    previous = Some(value);
+                }
+                if cursor == end {
+                    break;
+                }
+                cursor = (cursor + q(1, 64)).min(end.clone());
+            }
+            return Ok(());
+        }
+
         let id = text_field(v, "instrument", path)?;
         let gain = optional_number(self.instrument(id)?, "gain_db", 0.0, path)?;
         let control = |key: &str| -> Result<f32> {
@@ -1742,65 +1807,6 @@ impl Builder<'_> {
         };
         if kind == "automation" && v.get("control").is_some() {
             let control = text_field(v, "control", path)?;
-            if let Some(number) = super::cc_number(control) {
-                let source = self.control_source(id, path)?;
-                let from = integer(
-                    required(v, "from_value", path)?,
-                    &format!("{path}.from_value"),
-                )?;
-                let to = integer(required(v, "to_value", path)?, &format!("{path}.to_value"))?;
-                if !(0..=127).contains(&from) || !(0..=127).contains(&to) {
-                    return Err(Error::new(path, "cc automation values must be 0..127"));
-                }
-                let end = &at + &duration;
-                if end > &s.start + &s.length {
-                    return Err(Error::new(path, "automation exceeds section"));
-                }
-                self.midi_ramps.push(MidiControllerRamp {
-                    source: source.clone(),
-                    number,
-                    start: at.clone(),
-                    end: end.clone(),
-                    path: path.to_owned(),
-                });
-                let mut cursor = at.clone();
-                let mut previous = None;
-                loop {
-                    let value = quarter_ramp_value(
-                        &at,
-                        &end,
-                        &cursor,
-                        f32::from(i16::try_from(from).expect("range checked")),
-                        f32::from(i16::try_from(to).expect("range checked")),
-                    )
-                    .round()
-                    .clamp(0.0, 127.0);
-                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                    let value = value as u8;
-                    if previous != Some(value) {
-                        if self.midi_controllers.len() >= 1_000_000 {
-                            return Err(Error::new(
-                                path,
-                                "expanded score exceeds one million events",
-                            ));
-                        }
-                        self.midi_controllers.push(MidiControllerEvent {
-                            source: source.clone(),
-                            number,
-                            value,
-                            at: cursor.clone(),
-                            path: path.to_owned(),
-                            kind: MidiControllerKind::Automation,
-                        });
-                        previous = Some(value);
-                    }
-                    if cursor == end {
-                        break;
-                    }
-                    cursor = (cursor + q(1, 64)).min(end.clone());
-                }
-                return Ok(());
-            }
             let min = if control == "pitch_bend" { -1.0 } else { 0.0 };
             let from = native("from_value")?;
             let to = native("to_value")?;
@@ -2155,6 +2161,12 @@ impl Builder<'_> {
                 event.source.as_str(),
             ));
         }
+        let existing_ramps = self
+            .control_ramps
+            .iter()
+            .filter(|(_, control, _, _, _)| control == "mod_wheel")
+            .map(|(id, _, start, end, path)| (physical(id), 1, start, end, path.as_str()))
+            .collect::<Vec<_>>();
 
         for interval in &intervals {
             let control =
@@ -2198,6 +2210,18 @@ impl Builder<'_> {
                     ));
                 }
             }
+            for (source, existing_number, start, end, path) in &existing_ramps {
+                if source == &interval.source
+                    && *existing_number == number
+                    && *start <= &interval.end
+                    && &interval.start <= *end
+                {
+                    return Err(Error::new(
+                        *path,
+                        "performance control automation conflicts with an articulation interval",
+                    ));
+                }
+            }
         }
 
         let mut positions: BTreeMap<(&str, u8, &Quarter), &str> = BTreeMap::new();
@@ -2230,6 +2254,18 @@ impl Builder<'_> {
                     ));
                 }
             }
+            for (source, number, start, end, path) in &existing_ramps {
+                if source == &event.source
+                    && *number == event.number
+                    && &event.at >= *start
+                    && &event.at <= *end
+                {
+                    return Err(Error::new(
+                        *path,
+                        "existing performance control automation conflicts with cc",
+                    ));
+                }
+            }
         }
         for (index, ramp) in self.midi_ramps.iter().enumerate() {
             for other in &self.midi_ramps[index + 1..] {
@@ -2253,6 +2289,18 @@ impl Builder<'_> {
                     return Err(Error::new(
                         *path,
                         "existing performance control conflicts with cc automation",
+                    ));
+                }
+            }
+            for (source, number, start, end, path) in &existing_ramps {
+                if source == &ramp.source
+                    && *number == ramp.number
+                    && *start <= &ramp.end
+                    && &ramp.start <= *end
+                {
+                    return Err(Error::new(
+                        *path,
+                        "existing performance control automation conflicts with cc automation",
                     ));
                 }
             }
@@ -2280,42 +2328,118 @@ impl Builder<'_> {
                 });
                 Ok(())
             };
+        let mut baselines = BTreeSet::<String>::new();
+        for interval in &intervals {
+            let control =
+                self.articulation_control(&interval.source, &interval.name, &interval.path)?;
+            if matches!(
+                control,
+                ArticulationControl::KeySwitch {
+                    mode: KeySwitchMode::Latch,
+                    ..
+                }
+            ) {
+                baselines.insert(interval.source.clone());
+            }
+        }
+        for interval in &intervals {
+            let control =
+                self.articulation_control(&interval.source, &interval.name, &interval.path)?;
+            if matches!(control, ArticulationControl::KeySwitch { .. })
+                && interval.start <= q(1, 32)
+            {
+                baselines.remove(&interval.source);
+            }
+        }
+        for source in baselines {
+            let definition_path = format!("{}.default", self.controls.articulation_paths[&source]);
+            let Some(ArticulationControl::KeySwitch {
+                note,
+                mode: KeySwitchMode::Latch,
+            }) = self.controls.articulations[&source]
+                .get("default")
+                .map(|articulation| articulation.control)
+            else {
+                return Err(Error::new(
+                    &definition_path,
+                    "latch articulation requires a default key switch",
+                ));
+            };
+            push(
+                &source,
+                q(0, 1),
+                PerformanceControlKind::KeySwitch {
+                    note,
+                    mode: KeySwitchMode::Latch,
+                    down: true,
+                },
+                &definition_path,
+            )?;
+        }
         for (index, interval) in intervals.iter().enumerate() {
             let control =
                 self.articulation_control(&interval.source, &interval.name, &interval.path)?;
+            let previous = index
+                .checked_sub(1)
+                .and_then(|index| intervals.get(index))
+                .filter(|previous| {
+                    previous.source == interval.source && previous.end == interval.start
+                });
             let next = intervals
                 .get(index + 1)
                 .filter(|next| next.source == interval.source && next.start == interval.end);
+            let control_of = |interval: &ArticulationInterval| {
+                self.controls
+                    .articulations
+                    .get(&interval.source)
+                    .and_then(|articulations| articulations.get(&interval.name))
+                    .map(|articulation| articulation.control)
+            };
+            let previous_control = previous.copied().and_then(control_of);
+            let next_control = next.copied().and_then(control_of);
             match control {
                 ArticulationControl::KeySwitch {
                     note,
                     mode: KeySwitchMode::Hold,
                 } => {
-                    let lead = if interval.start > q(1, 32) {
-                        &interval.start - q(1, 32)
-                    } else {
-                        q(0, 1)
+                    let same_hold = |control: Option<ArticulationControl>| {
+                        matches!(
+                            control,
+                            Some(ArticulationControl::KeySwitch {
+                                note: previous_note,
+                                mode: KeySwitchMode::Hold,
+                            }) if previous_note == note
+                        )
                     };
-                    push(
-                        &interval.source,
-                        lead,
-                        PerformanceControlKind::KeySwitch {
-                            note,
-                            mode: KeySwitchMode::Hold,
-                            down: true,
-                        },
-                        &interval.path,
-                    )?;
-                    push(
-                        &interval.source,
-                        interval.end.clone(),
-                        PerformanceControlKind::KeySwitch {
-                            note,
-                            mode: KeySwitchMode::Hold,
-                            down: false,
-                        },
-                        &interval.path,
-                    )?;
+                    if !same_hold(previous_control) {
+                        let lead = if interval.start > q(1, 32) {
+                            &interval.start - q(1, 32)
+                        } else {
+                            q(0, 1)
+                        };
+                        push(
+                            &interval.source,
+                            lead,
+                            PerformanceControlKind::KeySwitch {
+                                note,
+                                mode: KeySwitchMode::Hold,
+                                down: true,
+                            },
+                            &interval.path,
+                        )?;
+                    }
+                    if !same_hold(next_control) {
+                        push(
+                            &interval.source,
+                            interval.end.clone(),
+                            PerformanceControlKind::KeySwitch {
+                                note,
+                                mode: KeySwitchMode::Hold,
+                                down: false,
+                            },
+                            &interval.path,
+                        )?;
+                    }
                 }
                 ArticulationControl::KeySwitch {
                     note,
@@ -2373,17 +2497,13 @@ impl Builder<'_> {
                         PerformanceControlKind::ControlChange { number, value },
                         &interval.path,
                     )?;
-                    let adjacent_same = next.is_some_and(|next| {
-                        matches!(
-                            self.controls.articulations[&next.source]
-                                .get(&next.name)
-                                .map(|articulation| articulation.control),
-                            Some(ArticulationControl::Controller {
-                                number: next_number,
-                                ..
-                            }) if next_number == number
-                        )
-                    });
+                    let adjacent_same = matches!(
+                        next_control,
+                        Some(ArticulationControl::Controller {
+                            number: next_number,
+                            ..
+                        }) if next_number == number
+                    );
                     if !adjacent_same {
                         push(
                             &interval.source,

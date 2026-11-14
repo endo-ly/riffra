@@ -4731,21 +4731,31 @@ mod tests {
             .iter()
             .find(|clip| clip.track_id == kit.id)
             .expect("kit clip");
-        assert!(kit_clip.instrument_control_events.iter().any(|event| matches!(
-            event.kind,
-            InstrumentControlEventKind::KeySwitch {
-                note: 26,
-                mode: KeySwitchMode::Latch,
-                down: true
-            }
-        )));
+        assert!(
+            kit_clip
+                .instrument_control_events
+                .iter()
+                .any(|event| matches!(
+                    event.kind,
+                    InstrumentControlEventKind::KeySwitch {
+                        note: 26,
+                        mode: KeySwitchMode::Latch,
+                        down: true
+                    }
+                ))
+        );
         assert_eq!(session.arrangement.tracks.len(), 3);
 
         let device_ids = session
             .arrangement
             .tracks
             .iter()
-            .map(|track| track.instrument.as_ref().map(|instrument| instrument.id.clone()))
+            .map(|track| {
+                track
+                    .instrument
+                    .as_ref()
+                    .map(|instrument| instrument.id.clone())
+            })
             .collect::<Vec<_>>();
         let mut again = production_document(score);
         let rebuilt = build(
@@ -4761,7 +4771,10 @@ mod tests {
                 .arrangement
                 .tracks
                 .iter()
-                .map(|track| track.instrument.as_ref().map(|instrument| instrument.id.clone()))
+                .map(|track| track
+                    .instrument
+                    .as_ref()
+                    .map(|instrument| instrument.id.clone()))
                 .collect::<Vec<_>>(),
             device_ids
         );
