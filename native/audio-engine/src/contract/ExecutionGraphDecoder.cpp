@@ -865,6 +865,7 @@ bool decodeOfflineRenderRequest(const juce::var& value, OfflineRenderRequestSpec
     if (!decodeGraph(graph, "request.graph", output.graph, error)) return false;
     output.destination.clear();
     output.stems.clear();
+    output.captures.clear();
     const auto kind = target.getProperty("kind", {}).toString();
     if (kind == "mixdown") {
         ContractReader targetReader(target, "request.output", {"kind", "destination"}, error);
@@ -894,6 +895,49 @@ bool decodeOfflineRenderRequest(const juce::var& value, OfflineRenderRequestSpec
                 !ids.insert(entry.trackId).second || !paths.insert(entry.destination).second)
                 return fail(error, path, "track and destination must be nonempty and unique");
             output.stems.push_back(std::move(entry));
+        }
+    } else if (kind == "capture") {
+        ContractReader targetReader(target, "request.output", {"kind", "outputs"}, error);
+        juce::String ignored;
+        juce::Array<juce::var> captures;
+        if (!targetReader.string("kind", ignored) || !targetReader.array("outputs", captures) ||
+            !targetReader.finish())
+            return false;
+        if (captures.isEmpty() || captures.size() > 16)
+            return fail(error, "request.output.outputs", "requires 1 to 16 targets");
+        if (output.normalize)
+            return fail(error, "request.normalize", "capture cannot be normalized");
+        std::set<std::pair<OfflineCaptureKind, juce::String>> targets;
+        std::set<juce::String> paths;
+        for (int i = 0; i < captures.size(); ++i) {
+            const auto path = element("request.output.outputs", i);
+            ContractReader entryReader(captures[i], path, {"target", "destination"}, error);
+            OfflineCaptureOutputSpec entry;
+            juce::var captureTarget;
+            if (!entryReader.object("target", captureTarget) ||
+                !entryReader.string("destination", entry.destination) || !entryReader.finish())
+                return false;
+            const auto targetKind = captureTarget.getProperty("kind", {}).toString();
+            if (targetKind == "master") {
+                ContractReader captureReader(captureTarget, path + ".target", {"kind"}, error);
+                if (!captureReader.string("kind", ignored) || !captureReader.finish()) return false;
+                entry.target.kind = OfflineCaptureKind::master;
+            } else if (targetKind == "track" || targetKind == "bus") {
+                ContractReader captureReader(captureTarget, path + ".target", {"kind", "id"},
+                                             error);
+                if (!captureReader.string("kind", ignored) ||
+                    !captureReader.string("id", entry.target.id) || !captureReader.finish())
+                    return false;
+                if (entry.target.id.trim().isEmpty())
+                    return fail(error, path + ".target.id", "must not be empty");
+                entry.target.kind =
+                    targetKind == "track" ? OfflineCaptureKind::track : OfflineCaptureKind::bus;
+            } else
+                return fail(error, path + ".target.kind", unknownValue(targetKind));
+            if (entry.destination.trim().isEmpty() || !paths.insert(entry.destination).second ||
+                !targets.emplace(entry.target.kind, entry.target.id).second)
+                return fail(error, path, "targets and destinations must be nonempty and unique");
+            output.captures.push_back(std::move(entry));
         }
     } else {
         return fail(error, "request.output.kind", unknownValue(kind));
