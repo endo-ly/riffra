@@ -50,7 +50,8 @@ fn score_ranges(
             continue;
         }
         let start_seconds = timebase.ticks_to_seconds(start) - origin;
-        let end_seconds = (timebase.ticks_to_seconds(end) - origin).min(duration);
+        let region_end_seconds = timebase.ticks_to_seconds(end) - origin;
+        let end_seconds = region_end_seconds.min(duration);
         if end_seconds <= start_seconds {
             continue;
         }
@@ -61,7 +62,9 @@ fn score_ranges(
             end_tick: region.end_tick.0,
             start_seconds,
             end_seconds,
-            complete: region.start_tick.0 >= start_tick && region.end_tick.0 <= end_tick,
+            complete: region.start_tick.0 >= start_tick
+                && region.end_tick.0 <= end_tick
+                && region_end_seconds <= duration,
             loudness: None,
             bands: BandLevels {
                 low_db: None,
