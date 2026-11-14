@@ -4,7 +4,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 struct TestDataRoot {
     path: PathBuf,
@@ -12,13 +12,9 @@ struct TestDataRoot {
 
 impl TestDataRoot {
     fn new() -> Self {
-        let suffix = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock is before the Unix epoch")
-            .as_nanos();
         let path = std::env::temp_dir().join(format!(
-            "riffra-headless-host-{}-{suffix}",
-            std::process::id()
+            "riffra-headless-host-{}",
+            riffra_control::new_instance_id()
         ));
         fs::create_dir(&path).expect("temporary data root should be created");
         Self { path }
