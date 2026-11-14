@@ -117,6 +117,13 @@ TEST(ExecutionGraphContractTest, ValidatesDistinctStemOutputs) {
 }
 
 TEST(ExecutionGraphContractTest, ValidatesCaptureTargetsAndDestinations) {
+    OfflineRenderRequestSpec shared;
+    juce::String sharedError;
+    ASSERT_TRUE(
+        decodeOfflineRenderRequest(fixture("offline-capture-request.json"), shared, sharedError))
+        << sharedError;
+    ASSERT_EQ(shared.captures.size(), 3u);
+    EXPECT_EQ(shared.captures[0].target.id, "track-audio");
     auto request = fixture("offline-render-request.json");
     request.getDynamicObject()->setProperty("normalize", false);
     request.getDynamicObject()->setProperty(

@@ -161,6 +161,9 @@ pub fn prepare_command(command: &mut ControlCommand) -> Result<(), String> {
                 }
             }
             RuntimeCommand::RenderStems(params) => resolve_optional(&mut params.output_directory)?,
+            RuntimeCommand::RenderCapture(params) => {
+                resolve_optional(&mut params.output_directory)?
+            }
             RuntimeCommand::RenderExport(params) => resolve_string(&mut params.output_path)?,
             _ => {}
         },
@@ -297,6 +300,12 @@ mod tests {
                 json!({"options":{"outputPath":"renders/song.wav"}}),
                 "/options/outputPath",
                 "renders/song.wav",
+            ),
+            (
+                "render.capture",
+                json!({"targets":[{"kind":"master"}],"outputDirectory":"renders/captures"}),
+                "/outputDirectory",
+                "renders/captures",
             ),
         ];
 

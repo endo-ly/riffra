@@ -21,11 +21,11 @@ export async function openProjectPackage(): Promise<string | null> {
   return typeof result === 'string' ? result : null;
 }
 
-export async function chooseRenderStemDirectory(): Promise<string | null> {
+export async function chooseRenderDirectory(): Promise<string | null> {
   const result = await open({
     directory: true,
     multiple: false,
-    title: 'Export Render Stems',
+    title: 'Export Render Files',
   });
   return typeof result === 'string' ? result : null;
 }

@@ -2725,6 +2725,8 @@ pub enum RenderCommand {
     /// skips Tracks without unmuted Clips; explicit IDs must be unique and
     /// refer to Tracks with renderable Clips. Range options match render start.
     Stems(RenderStemsArgs),
+    /// Capture selected Track, Bus and Master outputs together without changing routing.
+    Capture(RenderCaptureArgs),
     /// Copy a completed Render to a WAV path, or copy all stems to an existing directory.
     Export(RenderExportArgs),
     /// List Renders stored in the managed Render history.
@@ -2779,6 +2781,34 @@ pub struct RenderStemsArgs {
     #[arg(long)]
     pub end: Option<String>,
     /// Copy completed stem WAVs to this existing directory without replacing files.
+    #[arg(long)]
+    pub output_directory: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub struct RenderCaptureArgs {
+    /// Wait for the background Job to finish.
+    #[arg(long)]
+    pub wait: bool,
+    /// Track output to capture; may be repeated.
+    #[arg(long)]
+    pub track_id: Vec<String>,
+    /// Group or Return output to capture; may be repeated.
+    #[arg(long)]
+    pub bus_id: Vec<String>,
+    /// Include the final Master output.
+    #[arg(long)]
+    pub master: bool,
+    /// Render the entire arrangement or the enabled loop range.
+    #[arg(long, default_value = "entire-arrangement", value_parser = ["entire-arrangement", "loop-range"])]
+    pub range: String,
+    /// Inclusive time-selection start in bar:beat notation; requires --end.
+    #[arg(long)]
+    pub start: Option<String>,
+    /// Exclusive time-selection end in bar:beat notation; requires --start.
+    #[arg(long)]
+    pub end: Option<String>,
+    /// Copy completed WAVs to this existing directory without replacing files.
     #[arg(long)]
     pub output_directory: Option<PathBuf>,
 }
@@ -3957,6 +3987,28 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
         CliCommand::Render { command } => match command {
             RenderCommand::Start(args) => render_start(args)?,
             RenderCommand::Stems(args) => render_stems(args)?,
+            RenderCommand::Capture(args) => {
+                let mut targets = args
+                    .track_id
+                    .into_iter()
+                    .map(|id| CaptureTarget::Track { id })
+                    .chain(args.bus_id.into_iter().map(|id| CaptureTarget::Bus { id }))
+                    .collect::<Vec<_>>();
+                if args.master {
+                    targets.push(CaptureTarget::Master);
+                }
+                if !(1..=16).contains(&targets.len()) {
+                    return Err("capture requires 1 to 16 targets".into());
+                }
+                Runtime::RenderCapture(RenderCaptureParams {
+                    targets,
+                    range: render_range(args.range, args.start, args.end, "/range")?,
+                    output_directory: args
+                        .output_directory
+                        .map(|path| path.to_string_lossy().into_owned()),
+                })
+                .into()
+            }
             RenderCommand::Export(args) => Runtime::RenderExport(RenderExportParams {
                 render_id: args.render_id,
                 output_path: args.output_path.to_string_lossy().into_owned(),
@@ -4689,6 +4741,44 @@ mod tests {
         .request();
         assert!(missing_selection.is_err());
         assert!(conflicting_selection.is_err());
+
+        let capture = wire(
+            Cli::try_parse_from([
+                "riffra",
+                "render",
+                "capture",
+                "--track-id",
+                "track:1",
+                "--track-id",
+                "track:2",
+                "--bus-id",
+                "bus:1",
+                "--master",
+                "--start",
+                "9:1",
+                "--end",
+                "13:1",
+            ])
+            .unwrap(),
+        );
+        assert_eq!(capture.name, "render.capture");
+        assert_eq!(
+            capture.params["targets"],
+            json!([
+                {"kind":"track","id":"track:1"}, {"kind":"track","id":"track:2"},
+                {"kind":"bus","id":"bus:1"}, {"kind":"master"}
+            ])
+        );
+        assert_eq!(
+            capture.params["range"],
+            json!({"kind":"timeSelection","start":"9:1","end":"13:1"})
+        );
+        assert!(
+            Cli::try_parse_from(["riffra", "render", "capture"])
+                .unwrap()
+                .request()
+                .is_err()
+        );
     }
 
     #[test]

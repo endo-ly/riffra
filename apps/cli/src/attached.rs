@@ -89,6 +89,7 @@ impl AttachedBackend {
                     BackgroundJobStatus::Scan { state, .. }
                     | BackgroundJobStatus::Render { state, .. }
                     | BackgroundJobStatus::RenderStems { state, .. }
+                    | BackgroundJobStatus::RenderCapture { state, .. }
                     | BackgroundJobStatus::AnalysisMeasure { state, .. },
                 ))) => state,
                 Ok(ControlOutput::Job(None)) => {

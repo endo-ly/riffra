@@ -135,6 +135,9 @@ fn run(cli: Cli) -> Result<(), RunFailure> {
         Some(CliCommand::Render {
             command: args::RenderCommand::Stems(args),
         }) => args.wait,
+        Some(CliCommand::Render {
+            command: args::RenderCommand::Capture(args),
+        }) => args.wait,
         _ => false,
     };
     if render_wait && !attach {
@@ -235,7 +238,8 @@ fn run(cli: Cli) -> Result<(), RunFailure> {
             {
                 Some(ControlOutput::Job(Some(
                     BackgroundJobStatus::Render { id, .. }
-                    | BackgroundJobStatus::RenderStems { id, .. },
+                    | BackgroundJobStatus::RenderStems { id, .. }
+                    | BackgroundJobStatus::RenderCapture { id, .. },
                 ))) => id,
                 _ => return Err("render response did not contain a job".into()),
             };

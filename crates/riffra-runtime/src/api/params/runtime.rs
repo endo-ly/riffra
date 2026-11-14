@@ -174,6 +174,35 @@ pub struct RenderStemsParams {
     pub output_directory: Option<String>,
 }
 
+/// A post-processing output observed during an offline render.
+#[derive(
+    Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Deserialize, Serialize, TS, schemars::JsonSchema,
+)]
+#[serde(deny_unknown_fields, tag = "kind", rename_all = "camelCase")]
+pub enum CaptureTarget {
+    Track {
+        #[schemars(length(min = 1))]
+        id: String,
+    },
+    Bus {
+        #[schemars(length(min = 1))]
+        id: String,
+    },
+    Master,
+}
+
+/// Captures selected outputs from one canonical arrangement render.
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[ts(optional_fields = nullable)]
+pub struct RenderCaptureParams {
+    #[schemars(length(min = 1, max = 16))]
+    pub targets: Vec<CaptureTarget>,
+    #[serde(default)]
+    pub range: RenderRange,
+    pub output_directory: Option<String>,
+}
+
 /// Copies a completed render to another path without creating a new render.
 #[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]

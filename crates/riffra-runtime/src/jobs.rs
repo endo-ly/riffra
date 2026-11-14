@@ -1,6 +1,6 @@
 use crate::api::output::{
-    AnalysisMeasureResult, BackgroundJobStatus, JobKind, JobState, RenderResult, RenderStemsResult,
-    ScanReport,
+    AnalysisMeasureResult, BackgroundJobStatus, JobKind, JobState, RenderCaptureResult,
+    RenderResult, RenderStemsResult, ScanReport,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -20,6 +20,7 @@ impl JobKind {
             Self::Scan => "scan",
             Self::Render => "render",
             Self::RenderStems => "render-stems",
+            Self::RenderCapture => "render-capture",
             Self::AnalysisMeasure => "analysis-measure",
         }
     }
@@ -85,6 +86,16 @@ pub fn to_background_status(status: JobStatus) -> Result<BackgroundJobStatus, St
                 .map(serde_json::from_value::<RenderStemsResult>)
                 .transpose()
                 .map_err(|error| format!("render stems result could not be decoded: {error}"))?,
+        },
+        JobKind::RenderCapture => BackgroundJobStatus::RenderCapture {
+            id,
+            state,
+            progress,
+            message,
+            result: result
+                .map(serde_json::from_value::<RenderCaptureResult>)
+                .transpose()
+                .map_err(|error| format!("render capture result could not be decoded: {error}"))?,
         },
         JobKind::AnalysisMeasure => BackgroundJobStatus::AnalysisMeasure {
             id,
@@ -275,8 +286,10 @@ impl JobRegistry {
                 .status
                 .lock()
                 .map_err(|error| format!("render job {id} could not be inspected: {error}"))?;
-            if (matches!(status.kind, JobKind::Render | JobKind::RenderStems)
-                || record.source_render_id.as_deref() == Some(render_id))
+            if (matches!(
+                status.kind,
+                JobKind::Render | JobKind::RenderStems | JobKind::RenderCapture
+            ) || record.source_render_id.as_deref() == Some(render_id))
                 && matches!(
                     status.state,
                     JobState::Queued | JobState::Running | JobState::Cancelling

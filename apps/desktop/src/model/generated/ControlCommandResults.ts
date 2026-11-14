@@ -209,6 +209,7 @@ export type ControlCommandResults = {
   'project.restore-generation': OutputValue<'arrangementMutation'>;
   'render.start': OutputValue<'job'>;
   'render.stems': OutputValue<'job'>;
+  'render.capture': OutputValue<'job'>;
   'render.export': OutputValue<'renderExport'>;
   'render.list': OutputValue<'renderList'>;
   'render.delete': OutputValue<'renderDelete'>;

@@ -1,0 +1,411 @@
+{
+  "includeEndEvents": false,
+  "tailSeconds": 0.0,
+  "graph": {
+    "mixdown": {
+      "musicalEndTick": 0,
+      "tailSeconds": 0.0,
+      "fadeOutSeconds": 0.0,
+      "pluginWarmUpSeconds": 2.0
+    },
+    "timebase": {
+      "ppq": 960,
+      "tempoChanges": [
+        {
+          "tick": 0,
+          "bpm": 123.5
+        }
+      ],
+      "timeSignatureChanges": [
+        {
+          "tick": 0,
+          "numerator": 7,
+          "denominator": 8
+        }
+      ]
+    },
+    "loopRange": {
+      "enabled": true,
+      "startTick": 120,
+      "endTick": 3840
+    },
+    "punchRange": {
+      "startTick": 240,
+      "endTick": 1920
+    },
+    "metronomeEnabled": true,
+    "metronomeSound": "wood",
+    "masterGainDb": -6.0,
+    "tracks": [
+      {
+        "id": "track-audio",
+        "kind": "audio",
+        "gainDb": 1.5,
+        "pan": -0.25,
+        "panLaw": "equalPower",
+        "externalAudioSourceTrackIds": [],
+        "outputBusId": "bus:group",
+        "muted": false,
+        "solo": true,
+        "armed": true,
+        "monitorInput": true,
+        "audioInput": {
+          "channelIndex": 2
+        },
+        "midiInput": {
+          "deviceId": null,
+          "channel": null
+        },
+        "effects": [],
+        "instrument": null,
+        "audioClips": [
+          {
+            "id": "audio-linear-raw",
+            "path": "audio/one.wav",
+            "sourceSampleRate": 48000,
+            "sourceStartFrame": 0,
+            "sourceEndFrame": 48000,
+            "durationFrames": 48000,
+            "durationSampleRate": 48000,
+            "startTick": 0,
+            "fadeInFrames": 0,
+            "fadeOutFrames": 0,
+            "fadeShape": "linear",
+            "gainDb": 0.0,
+            "pan": 0.0,
+            "takeVariant": "raw",
+            "loopEnabled": false,
+            "muted": false
+          },
+          {
+            "id": "audio-equal-processed",
+            "path": "audio/two.wav",
+            "sourceSampleRate": 44100,
+            "sourceStartFrame": 1,
+            "sourceEndFrame": 44101,
+            "durationFrames": 44100,
+            "durationSampleRate": 44100,
+            "startTick": 960,
+            "fadeInFrames": 128,
+            "fadeOutFrames": 256,
+            "fadeShape": "equalPower",
+            "gainDb": -3.0,
+            "pan": 0.5,
+            "takeVariant": "processed",
+            "loopEnabled": true,
+            "muted": true
+          },
+          {
+            "id": "audio-smooth",
+            "path": "audio/three.wav",
+            "sourceSampleRate": 48000,
+            "sourceStartFrame": 0,
+            "sourceEndFrame": 24000,
+            "durationFrames": 24000,
+            "durationSampleRate": 48000,
+            "startTick": 1920,
+            "fadeInFrames": 32,
+            "fadeOutFrames": 64,
+            "fadeShape": "smooth",
+            "gainDb": 2.0,
+            "pan": -0.5,
+            "takeVariant": "raw",
+            "loopEnabled": false,
+            "muted": false
+          }
+        ],
+        "midiClips": []
+      },
+      {
+        "id": "track-internal",
+        "kind": "instrument",
+        "gainDb": 1.5,
+        "pan": -0.25,
+        "panLaw": "equalPower",
+        "externalAudioSourceTrackIds": [],
+        "outputBusId": null,
+        "muted": false,
+        "solo": true,
+        "armed": true,
+        "monitorInput": false,
+        "audioInput": null,
+        "midiInput": {
+          "deviceId": "midi-device",
+          "channel": 16
+        },
+        "effects": [],
+        "instrument": {
+          "type": "internal",
+          "id": "instrument-internal",
+          "bypassed": true,
+          "definitionJson": "{\"schemaVersion\":1}",
+          "definitionBaseDir": "instruments/builtin/preset",
+          "midi": {
+            "transposeSemitones": 0,
+            "playableNotes": null,
+            "keyswitches": []
+          }
+        },
+        "audioClips": [],
+        "midiClips": [
+          {
+            "id": "midi-1",
+            "startTick": 120,
+            "durationTicks": 960,
+            "loopEnabled": true,
+            "muted": false,
+            "notes": [
+              {
+                "startTick": 0,
+                "durationTicks": 480,
+                "note": 60,
+                "velocity": 100,
+                "channel": 1
+              }
+            ],
+            "events": [
+              {
+                "kind": "pitchBend",
+                "tick": 100,
+                "channel": 1,
+                "data1": 1,
+                "data2": 2
+              }
+            ],
+            "instrumentControlEvents": []
+          }
+        ]
+      },
+      {
+        "id": "track-vst",
+        "kind": "instrument",
+        "gainDb": 1.5,
+        "pan": -0.25,
+        "panLaw": "equalPower",
+        "externalAudioSourceTrackIds": [],
+        "outputBusId": null,
+        "muted": false,
+        "solo": true,
+        "armed": true,
+        "monitorInput": false,
+        "audioInput": null,
+        "midiInput": {
+          "deviceId": null,
+          "channel": null
+        },
+        "effects": [
+          {
+            "id": "fx-1",
+            "path": "plugins/fx.vst3",
+            "state": {
+              "stateData": "opaque-state",
+              "parameterValues": [
+                0.25,
+                0.75
+              ],
+              "bypassed": false
+            }
+          }
+        ],
+        "instrument": {
+          "type": "vst3",
+          "id": "instrument-vst",
+          "path": "plugins/instrument.vst3",
+          "state": {
+            "stateData": null,
+            "parameterValues": [
+              0.25,
+              0.75
+            ],
+            "bypassed": false
+          },
+          "midi": {
+            "transposeSemitones": 0,
+            "playableNotes": null,
+            "keyswitches": []
+          }
+        },
+        "audioClips": [],
+        "midiClips": [
+          {
+            "id": "midi-1",
+            "startTick": 120,
+            "durationTicks": 960,
+            "loopEnabled": true,
+            "muted": false,
+            "notes": [
+              {
+                "startTick": 0,
+                "durationTicks": 480,
+                "note": 60,
+                "velocity": 100,
+                "channel": 1
+              }
+            ],
+            "events": [
+              {
+                "kind": "channelPressure",
+                "tick": 100,
+                "channel": 1,
+                "data1": 1,
+                "data2": 2
+              },
+              {
+                "kind": "controlChange",
+                "tick": 200,
+                "channel": 1,
+                "data1": 7,
+                "data2": 64
+              }
+            ],
+            "instrumentControlEvents": []
+          }
+        ]
+      }
+    ],
+    "mixer": {
+      "masterEffects": [
+        {
+          "id": "device:master",
+          "path": "fx.vst3",
+          "state": {
+            "stateData": "master-state",
+            "parameterValues": [
+              0.25,
+              0.75
+            ],
+            "bypassed": false
+          }
+        }
+      ],
+      "buses": [
+        {
+          "id": "bus:group",
+          "kind": "group",
+          "gainDb": -2.0,
+          "pan": 0.0,
+          "panLaw": "unityCenterStereo",
+          "muted": false,
+          "solo": false,
+          "effects": []
+        },
+        {
+          "id": "bus:return",
+          "kind": "return",
+          "gainDb": 0.0,
+          "pan": 0.0,
+          "panLaw": "unityCenterStereo",
+          "muted": false,
+          "solo": false,
+          "effects": [
+            {
+              "id": "device:return",
+              "path": "fx.vst3",
+              "state": {
+                "stateData": null,
+                "parameterValues": [
+                  0.25,
+                  0.75
+                ],
+                "bypassed": true
+              }
+            }
+          ]
+        }
+      ],
+      "sends": [
+        {
+          "id": "send:audio",
+          "trackId": "track-audio",
+          "returnBusId": "bus:return",
+          "levelDb": -9.0,
+          "position": "preFader",
+          "enabled": true
+        }
+      ],
+      "sidechainSends": [
+        {
+          "id": "sidechain:return",
+          "sourceTrackId": "track-audio",
+          "targetDeviceId": "device:return",
+          "levelDb": -12.0,
+          "position": "postFader",
+          "enabled": true
+        }
+      ]
+    },
+    "automation": [
+      {
+        "target": {
+          "kind": "trackMix",
+          "trackId": "track-audio",
+          "parameter": "volume"
+        },
+        "interpolation": "linear",
+        "points": [
+          {
+            "tick": 0,
+            "value": -6.0
+          }
+        ]
+      },
+      {
+        "target": {
+          "kind": "trackMix",
+          "trackId": "track-audio",
+          "parameter": "pan"
+        },
+        "interpolation": "step",
+        "points": [
+          {
+            "tick": 0,
+            "value": 0.25
+          }
+        ]
+      },
+      {
+        "target": {
+          "kind": "sidechainSendLevel",
+          "sidechainSendId": "sidechain:return"
+        },
+        "interpolation": "linear",
+        "points": [
+          {
+            "tick": 480,
+            "value": -6.5
+          }
+        ]
+      }
+    ]
+  },
+  "output": {
+    "kind": "capture",
+    "outputs": [
+      {
+        "target": {
+          "kind": "track",
+          "id": "track-audio"
+        },
+        "destination": "renders/track.wav"
+      },
+      {
+        "target": {
+          "kind": "bus",
+          "id": "bus:group"
+        },
+        "destination": "renders/bus.wav"
+      },
+      {
+        "target": {
+          "kind": "master"
+        },
+        "destination": "renders/master.wav"
+      }
+    ]
+  },
+  "startTick": 0,
+  "endTick": 7680,
+  "sampleRate": 48000,
+  "blockSize": 512,
+  "normalize": false
+}

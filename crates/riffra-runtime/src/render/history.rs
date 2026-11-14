@@ -19,6 +19,28 @@ use std::{
 enum StoredRender {
     Timeline(StoredTimeline),
     Stems(StoredStems),
+    Capture(StoredCaptures),
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StoredCaptures {
+    project_id: String,
+    created_at_ms: Option<u64>,
+    sample_rate: u32,
+    frames: u64,
+    captures: Vec<StoredCapture>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StoredCapture {
+    target: serde_json::Value,
+    name: String,
+    asset_id: AssetId,
+    path: String,
+    #[serde(default)]
+    measurements: Option<serde_json::Value>,
 }
 
 #[derive(serde::Deserialize)]
@@ -69,7 +91,11 @@ fn read_render_manifest(path: &Path) -> Result<StoredRender, String> {
         fs::read(path).map_err(|error| format!("render manifest could not be read: {error}"))?;
     let invalid = |error: serde_json::Error| format!("render manifest is invalid: {error}");
     let manifest: serde_json::Value = serde_json::from_slice(&bytes).map_err(invalid)?;
-    if manifest.get("stems").is_some() {
+    if manifest.get("captures").is_some() {
+        serde_json::from_value(manifest)
+            .map(StoredRender::Capture)
+            .map_err(invalid)
+    } else if manifest.get("stems").is_some() {
         serde_json::from_value(manifest)
             .map(StoredRender::Stems)
             .map_err(invalid)
@@ -142,6 +168,22 @@ pub(crate) fn export_render(
             }
             (sources, source_directory, destination_directory)
         }
+        StoredRender::Capture(render) => {
+            let destination_directory = validate_output_directory(output_path)?;
+            let mut sources = Vec::with_capacity(render.captures.len());
+            for capture in render.captures {
+                let source = managed_render_file(&source_directory, &capture.path)?;
+                if !source.is_file() {
+                    return Err(format!("capture WAV is missing: {}", source.display()));
+                }
+                let name = source
+                    .file_name()
+                    .ok_or_else(|| format!("capture path has no file name: {}", source.display()))?
+                    .to_os_string();
+                sources.push((source, destination_directory.join(name)));
+            }
+            (sources, source_directory, destination_directory)
+        }
     };
     copy_files_no_clobber(&sources)?;
     Ok(RenderExportResult {
@@ -172,6 +214,22 @@ pub(crate) fn resolve_measurement_sources(
                     path: managed_render_file(&directory, &stem.path)?,
                     track_id: Some(stem.track_id),
                     track_name: Some(stem.track_name),
+                })
+            })
+            .collect(),
+        StoredRender::Capture(render) => render
+            .captures
+            .into_iter()
+            .map(|capture| {
+                Ok(crate::analysis::MeasurementSource {
+                    path: managed_render_file(&directory, &capture.path)?,
+                    track_id: match serde_json::from_value(capture.target)
+                        .map_err(|error| format!("capture target is invalid: {error}"))?
+                    {
+                        crate::api::params::CaptureTarget::Track { id } => Some(id),
+                        _ => None,
+                    },
+                    track_name: Some(capture.name),
                 })
             })
             .collect(),
@@ -286,6 +344,26 @@ fn read_render_history_entry(
                     .unzip();
                 (
                     RenderKind::Stems,
+                    Some(render.project_id),
+                    render.created_at_ms,
+                    Some(render.sample_rate),
+                    duration_ms,
+                    measurements,
+                    file_assets,
+                )
+            }
+            StoredRender::Capture(render) => {
+                let duration_ms = (render.sample_rate != 0).then(|| {
+                    (u128::from(render.frames) * 1_000 / u128::from(render.sample_rate))
+                        .min(u128::from(u64::MAX)) as u64
+                });
+                let (measurements, file_assets): (Vec<_>, Vec<_>) = render
+                    .captures
+                    .into_iter()
+                    .map(|capture| (capture.measurements, (capture.path, capture.asset_id)))
+                    .unzip();
+                (
+                    RenderKind::Capture,
                     Some(render.project_id),
                     render.created_at_ms,
                     Some(render.sample_rate),
@@ -565,6 +643,11 @@ fn manifest_file_assets(manifest: StoredRender) -> Vec<(AssetId, String)> {
             .stems
             .into_iter()
             .map(|stem| (stem.asset_id, stem.path))
+            .collect(),
+        StoredRender::Capture(render) => render
+            .captures
+            .into_iter()
+            .map(|capture| (capture.asset_id, capture.path))
             .collect(),
     }
 }

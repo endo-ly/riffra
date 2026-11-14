@@ -1,5 +1,8 @@
-use crate::api::output::{ProjectionDiagnostics, RenderResult, RenderStem, RenderStemsResult};
-use crate::api::params::{RenderOptions, RenderRange};
+use crate::api::output::{
+    ProjectionDiagnostics, RenderCapture, RenderCaptureResult, RenderResult, RenderStem,
+    RenderStemsResult,
+};
+use crate::api::params::{CaptureTarget, RenderOptions, RenderRange};
 use crate::asset;
 use crate::execution::{ExecutionGraph, project_graph, resolve};
 use crate::instrument::BuiltInInstrumentCatalog;
@@ -35,6 +38,7 @@ pub(crate) struct OfflineRenderRequest {
 pub(crate) enum OfflineRenderTarget {
     Mixdown(PathBuf),
     Stems(Vec<(String, PathBuf)>),
+    Captures(Vec<(crate::api::params::CaptureTarget, PathBuf)>),
 }
 
 #[cfg(test)]
@@ -43,6 +47,7 @@ impl OfflineRenderRequest {
         match &self.output {
             OfflineRenderTarget::Mixdown(path) => path,
             OfflineRenderTarget::Stems(_) => panic!("expected mixdown"),
+            OfflineRenderTarget::Captures(_) => panic!("expected mixdown"),
         }
     }
 
@@ -50,6 +55,7 @@ impl OfflineRenderRequest {
         match &self.output {
             OfflineRenderTarget::Stems(outputs) => outputs,
             OfflineRenderTarget::Mixdown(_) => panic!("expected stems"),
+            OfflineRenderTarget::Captures(_) => panic!("expected stems"),
         }
     }
 }
@@ -96,6 +102,11 @@ struct SharedRenderConditions {
     sample_rate: u32,
 }
 
+struct RenderRequirements<'a> {
+    tracks: &'a [&'a str],
+    allow_silent: bool,
+}
+
 /// Immutable inputs captured for one timeline render job.
 pub(crate) struct TimelineRenderContext<'a> {
     pub(crate) data_root: &'a Path,
@@ -140,6 +151,23 @@ pub(crate) struct StemRenderContext<'a> {
 pub(crate) struct PendingRenderStems {
     pub(crate) result: RenderStemsResult,
     pub(crate) output: PendingRenderOutput,
+}
+
+/// Capture metadata and cleanup guard awaiting atomic job completion.
+pub(crate) struct PendingRenderCapture {
+    pub(crate) result: RenderCaptureResult,
+    pub(crate) output: PendingRenderOutput,
+}
+
+/// Immutable inputs for a single multi-output capture job.
+pub(crate) struct CaptureRenderContext<'a> {
+    pub(crate) data_root: &'a Path,
+    pub(crate) built_in_instruments: &'a BuiltInInstrumentCatalog,
+    pub(crate) session: &'a CreativeSession,
+    pub(crate) project_id: &'a str,
+    pub(crate) source_sequence: u64,
+    pub(crate) created_at_ms: u64,
+    pub(crate) params: crate::api::params::RenderCaptureParams,
 }
 
 /// Timeline metadata and cleanup guard awaiting atomic job completion.
@@ -538,6 +566,10 @@ pub(crate) fn render_stems_with_cancellation(
 }
 
 fn stem_filename(index: usize, name: &str) -> String {
+    output_filename("stem", index, name)
+}
+
+fn output_filename(prefix: &str, index: usize, name: &str) -> String {
     // Bound UTF-16 length as well as UTF-8 length so the component stays portable.
     let mut safe = String::new();
     for ch in name.chars() {
@@ -555,7 +587,306 @@ fn stem_filename(index: usize, name: &str) -> String {
     }
     let safe = safe.trim_matches(|ch: char| ch == '.' || ch.is_whitespace());
     let safe = if safe.is_empty() { "Track" } else { safe };
-    format!("stem-{index:03}-{safe}.wav")
+    format!("{prefix}-{index:03}-{safe}.wav")
+}
+
+/// Validates the canonical identity of every requested observation point.
+fn validate_capture_targets(
+    session: &CreativeSession,
+    targets: &[CaptureTarget],
+) -> Result<(), String> {
+    if !(1..=16).contains(&targets.len()) {
+        return Err("capture requires 1 to 16 targets".into());
+    }
+    let mut seen = BTreeSet::new();
+    for target in targets {
+        if !seen.insert(target) {
+            return Err("capture targets must be unique".into());
+        }
+        match target {
+            CaptureTarget::Track { id }
+                if !id.trim().is_empty()
+                    && session
+                        .arrangement
+                        .tracks
+                        .iter()
+                        .any(|track| track.id == *id) => {}
+            CaptureTarget::Bus { id }
+                if !id.trim().is_empty()
+                    && session
+                        .arrangement
+                        .mixer
+                        .buses
+                        .iter()
+                        .any(|bus| bus.id == *id) => {}
+            CaptureTarget::Master => {}
+            _ => return Err("capture target is empty or does not exist".into()),
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_capture_params(
+    session: &CreativeSession,
+    params: &crate::api::params::RenderCaptureParams,
+) -> Result<(), String> {
+    validate_capture_targets(session, &params.targets)?;
+    shared_render_conditions(session, &params.range)?;
+    if let Some(directory) = &params.output_directory {
+        history::validate_output_directory(directory)?;
+    }
+    Ok(())
+}
+
+/// Renders selected outputs with one immutable graph and a shared cleanup guard.
+pub(crate) fn render_capture_with_cancellation(
+    renderer: &RenderWorker,
+    context: CaptureRenderContext<'_>,
+    cancelled: &AtomicBool,
+    progress: impl FnMut(f32, String),
+) -> Result<PendingRenderCapture, String> {
+    render_capture_pending(
+        context,
+        |request| renderer.render_timeline_offline_cancellable(request, cancelled),
+        Some(cancelled),
+        progress,
+    )
+}
+
+fn render_capture_pending(
+    context: CaptureRenderContext<'_>,
+    render: impl FnOnce(OfflineRenderRequest) -> Result<Vec<String>, String>,
+    cancelled: Option<&AtomicBool>,
+    mut progress: impl FnMut(f32, String),
+) -> Result<PendingRenderCapture, String> {
+    let CaptureRenderContext {
+        data_root,
+        built_in_instruments,
+        session,
+        project_id,
+        source_sequence,
+        created_at_ms,
+        params,
+    } = context;
+    validate_capture_targets(session, &params.targets)?;
+    let external = params
+        .output_directory
+        .as_deref()
+        .map(history::validate_output_directory)
+        .transpose()?;
+    let conditions = shared_render_conditions(session, &params.range)?;
+    let required_tracks = params
+        .targets
+        .iter()
+        .filter_map(|target| match target {
+            CaptureTarget::Track { id } => Some(id.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let options = RenderOptions {
+        range: params.range.clone(),
+        normalize: false,
+        track_id: None,
+        output_path: None,
+    };
+    let plan = build_render_plan_with_required(
+        data_root,
+        built_in_instruments,
+        session,
+        created_at_ms,
+        &options,
+        Some(&conditions),
+        RenderRequirements {
+            tracks: &required_tracks,
+            allow_silent: true,
+        },
+    )?;
+    let directory = plan
+        .output_path
+        .parent()
+        .expect("render output has a parent")
+        .to_path_buf();
+    fs::create_dir_all(directory.parent().expect("render directory has a parent"))
+        .and_then(|()| fs::create_dir(&directory))
+        .map_err(|error| format!("render output folder could not be created: {error}"))?;
+    let mut pending = PendingRenderOutput {
+        data_root: data_root.to_owned(),
+        directory: directory.clone(),
+        registrations: Vec::new(),
+        external_files: Vec::new(),
+        committed: false,
+    };
+    let outputs = params
+        .targets
+        .iter()
+        .enumerate()
+        .map(|(index, target)| {
+            let (name, bus_kind) = match target {
+                CaptureTarget::Track { id } => (
+                    session
+                        .arrangement
+                        .tracks
+                        .iter()
+                        .find(|track| track.id == *id)
+                        .expect("target validated")
+                        .name
+                        .clone(),
+                    None,
+                ),
+                CaptureTarget::Bus { id } => {
+                    let bus = session
+                        .arrangement
+                        .mixer
+                        .buses
+                        .iter()
+                        .find(|bus| bus.id == *id)
+                        .expect("target validated");
+                    (bus.name.clone(), Some(bus.kind))
+                }
+                CaptureTarget::Master => ("Master".to_owned(), None),
+            };
+            let path = directory.join(output_filename("capture", index + 1, &name));
+            (target.clone(), name, bus_kind, path)
+        })
+        .collect::<Vec<_>>();
+    let request_outputs = outputs
+        .iter()
+        .map(|(target, _, _, path)| (target.clone(), path.clone()))
+        .collect();
+    progress(0.0, format!("rendering {} captures", outputs.len()));
+    let automation_warnings = render(OfflineRenderRequest {
+        include_end_events: matches!(params.range, RenderRange::EntireArrangement),
+        tail_seconds: plan.tail_seconds,
+        graph: plan.graph,
+        output: OfflineRenderTarget::Captures(request_outputs),
+        start_tick: plan.start_tick,
+        end_tick: plan.end_tick,
+        sample_rate: plan.sample_rate,
+        block_size: plan.block_size,
+        normalize: false,
+    })?;
+    let mut captures = Vec::with_capacity(outputs.len());
+    let mut frames = None;
+    for (index, (target, name, bus_kind, path)) in outputs.into_iter().enumerate() {
+        if cancelled.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire)) {
+            return Err("capture render was cancelled".into());
+        }
+        let (rate, count) = riffra_host::read_wav_metadata(&path)?;
+        if rate != conditions.sample_rate || frames.is_some_and(|expected| expected != count) {
+            return Err(
+                "capture WAVs do not share the requested sample rate and frame count".into(),
+            );
+        }
+        frames = Some(count);
+        let section_plan = sections::SectionPlan::new(
+            &session.arrangement.markers,
+            &session.arrangement.timebase,
+            conditions.start_tick,
+            conditions.end_tick,
+            count as f64 / f64::from(rate),
+        );
+        progress(
+            index as f32 / params.targets.len() as f32,
+            format!("measuring capture {}: {name}", index + 1),
+        );
+        let (measurements, mut warnings) =
+            mastering::measure_output(&path, rate, None, None, &section_plan, cancelled)?;
+        warnings.extend(plan.dependency_warnings.iter().cloned());
+        warnings.extend(automation_warnings.iter().cloned());
+        let parameters = serde_json::Map::from_iter([
+            (
+                "target".into(),
+                serde_json::to_value(&target).map_err(|error| error.to_string())?,
+            ),
+            ("startTick".into(), conditions.start_tick.into()),
+            ("endTick".into(), conditions.end_tick.into()),
+        ]);
+        let asset_id = if plan.source_ids.is_empty() {
+            asset::register(
+                data_root,
+                riffra_core::AssetKind::Audio,
+                &format!("{name} capture"),
+                &path.to_string_lossy(),
+                None,
+            )?
+        } else {
+            asset::register_derived(
+                data_root,
+                &plan.source_ids,
+                riffra_core::AssetKind::Audio,
+                &format!("{name} capture"),
+                &path.to_string_lossy(),
+                riffra_core::ProvenanceOperation::Rendered,
+                parameters,
+            )?
+        };
+        pending.register(asset_id.clone(), path.clone());
+        captures.push(RenderCapture {
+            target,
+            name,
+            bus_kind,
+            asset_id,
+            path: path.to_string_lossy().into_owned(),
+            measurements,
+            warnings,
+        });
+    }
+    if cancelled.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire)) {
+        return Err("capture render was cancelled".into());
+    }
+    let mut result = RenderCaptureResult {
+        render_id: directory
+            .file_name()
+            .expect("managed render has an id")
+            .to_string_lossy()
+            .into_owned(),
+        project_id: project_id.to_owned(),
+        created_at_ms,
+        source_sequence,
+        sample_rate: conditions.sample_rate,
+        start_tick: conditions.start_tick,
+        end_tick: conditions.end_tick,
+        frames: frames.ok_or("capture produced no output")?,
+        captures,
+        exported_directory: None,
+    };
+    if let Some(external) = external {
+        let copies = result
+            .captures
+            .iter()
+            .map(|capture| {
+                let source = PathBuf::from(&capture.path);
+                let name = source
+                    .file_name()
+                    .ok_or("capture path has no filename")?
+                    .to_os_string();
+                Ok((source, external.join(name)))
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        history::copy_files_no_clobber(&copies)?;
+        pending.external_files = copies
+            .into_iter()
+            .map(|(_, destination)| destination)
+            .collect();
+        result.exported_directory = Some(external.to_string_lossy().into_owned());
+    }
+    fs::write(
+        directory.join("render.json"),
+        serde_json::to_vec_pretty(&RenderManifest {
+            result: &result,
+            musical_range: RenderTimebase {
+                timebase: &session.arrangement.timebase,
+                start_tick: conditions.start_tick,
+                end_tick: conditions.end_tick,
+            },
+        })
+        .map_err(|error| format!("render manifest could not be encoded: {error}"))?,
+    )
+    .map_err(|error| format!("render manifest could not be saved: {error}"))?;
+    Ok(PendingRenderCapture {
+        result,
+        output: pending,
+    })
 }
 
 fn render_stems_pending(
@@ -644,7 +975,10 @@ fn render_stems_pending(
         created_at_ms,
         &options,
         Some(&conditions),
-        &required_tracks,
+        RenderRequirements {
+            tracks: &required_tracks,
+            allow_silent: false,
+        },
     )?;
     let outputs = selected_tracks
         .iter()
@@ -902,7 +1236,10 @@ fn build_render_plan(
         created_at_ms,
         options,
         shared_conditions,
-        &[],
+        RenderRequirements {
+            tracks: &[],
+            allow_silent: false,
+        },
     )
 }
 
@@ -913,8 +1250,12 @@ fn build_render_plan_with_required(
     created_at_ms: u64,
     options: &RenderOptions,
     shared_conditions: Option<&SharedRenderConditions>,
-    required_tracks: &[&str],
+    requirements: RenderRequirements<'_>,
 ) -> Result<RenderPlan, String> {
+    let RenderRequirements {
+        tracks: required_tracks,
+        allow_silent,
+    } = requirements;
     let mut render_session = session.clone();
     if let Some(track_id) = options.track_id.as_deref() {
         if !render_session
@@ -972,7 +1313,11 @@ fn build_render_plan_with_required(
         .filter(|clip| clip_audible(&clip.track_id, clip.muted))
         .collect::<Vec<_>>();
     let clip_count = audio_clips.len() + midi_clips.len();
-    if clip_count == 0 {
+    if clip_count == 0
+        && (!allow_silent
+            || (render_session.arrangement.audio_clips.is_empty()
+                && render_session.arrangement.midi_clips.is_empty()))
+    {
         return Err("Timeline has no audible clips to render.".into());
     }
 
@@ -1301,6 +1646,205 @@ pub(super) mod tests {
             bytes[offset + 2..offset + 4].copy_from_slice(&sample.to_le_bytes());
         }
         bytes
+    }
+
+    #[test]
+    fn capture_preserves_mute_and_solo_and_registers_one_aligned_render() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-capture-{}",
+            riffra_control::new_instance_id()
+        ));
+        let mut session = session_with_clips();
+        session.arrangement.tracks[0].muted = true;
+        session.arrangement.tracks[0].solo = true;
+        assert!(validate_capture_targets(&session, &[]).is_err());
+        assert!(
+            validate_capture_targets(&session, &[CaptureTarget::Master, CaptureTarget::Master])
+                .is_err()
+        );
+        assert!(
+            validate_capture_targets(
+                &session,
+                &[CaptureTarget::Bus {
+                    id: "missing".into()
+                }]
+            )
+            .is_err()
+        );
+        let params = crate::api::params::RenderCaptureParams {
+            targets: vec![
+                CaptureTarget::Track {
+                    id: "instrument".into(),
+                },
+                CaptureTarget::Master,
+            ],
+            range: RenderRange::EntireArrangement,
+            output_directory: None,
+        };
+        let mut calls = 0;
+        let pending = render_capture_pending(
+            CaptureRenderContext {
+                data_root: &root,
+                built_in_instruments: empty_catalog(),
+                session: &session,
+                project_id: "project",
+                source_sequence: 42,
+                created_at_ms: 1,
+                params,
+            },
+            |request| {
+                calls += 1;
+                assert!(request.graph.tracks[0].muted);
+                assert!(request.graph.tracks[0].solo);
+                let OfflineRenderTarget::Captures(outputs) = request.output else {
+                    panic!("expected captures")
+                };
+                assert_eq!(outputs.len(), 2);
+                for (_, path) in outputs {
+                    fs::write(path, wav(request.sample_rate, 128)).unwrap();
+                }
+                Ok(Vec::new())
+            },
+            None,
+            |_, _| {},
+        )
+        .unwrap();
+        assert_eq!(calls, 1);
+        assert_eq!(pending.result.source_sequence, 42);
+        assert_eq!(pending.result.captures.len(), 2);
+        assert_eq!(pending.result.frames, 128);
+        let entries = history::list_renders(&root).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].kind, crate::api::output::RenderKind::Capture);
+        assert_eq!(entries[0].file_count, 2);
+        let exported = root.join("exports");
+        fs::create_dir_all(&exported).unwrap();
+        assert_eq!(
+            history::export_render(
+                &root,
+                &pending.result.render_id,
+                &exported.to_string_lossy()
+            )
+            .unwrap()
+            .file_count,
+            2
+        );
+        let ids = pending
+            .result
+            .captures
+            .iter()
+            .map(|capture| capture.asset_id.clone())
+            .collect::<Vec<_>>();
+        let render_id = pending.result.render_id.clone();
+        let directory = pending.output.directory.clone();
+        let jobs = crate::jobs::JobRegistry::default();
+        let (job_id, _) = jobs.start(crate::api::output::JobKind::RenderCapture);
+        let value = crate::jobs::serialize_result(&pending.result).unwrap();
+        let mut output = pending.output;
+        assert!(jobs.complete_if_not_cancelled(&job_id, value, "done", move || output.commit()));
+        let crate::api::output::BackgroundJobStatus::RenderCapture {
+            result: Some(result),
+            ..
+        } = crate::jobs::to_background_status(jobs.status(&job_id).unwrap()).unwrap()
+        else {
+            panic!("capture job must return the typed result");
+        };
+        assert_eq!(result.render_id, render_id);
+        assert!(directory.is_dir());
+        assert!(
+            ids.iter()
+                .all(|id| asset::load(&root, id).unwrap().is_some())
+        );
+        let store = riffra_host::ProjectStore::new(&root);
+        let project = store.initialize().unwrap();
+        let deleted = history::delete_render(
+            &root,
+            &store,
+            &project.project_id,
+            &project.loaded.session,
+            std::iter::empty(),
+            &jobs,
+            &render_id,
+        )
+        .unwrap();
+        assert_eq!(deleted.deleted_file_count, 3);
+        assert!(!directory.exists());
+        assert!(
+            ids.iter()
+                .all(|id| asset::load(&root, id).unwrap().is_none())
+        );
+        let failure = render_capture_pending(
+            CaptureRenderContext {
+                data_root: &root,
+                built_in_instruments: empty_catalog(),
+                session: &session,
+                project_id: "project",
+                source_sequence: 42,
+                created_at_ms: 2,
+                params: crate::api::params::RenderCaptureParams {
+                    targets: vec![
+                        CaptureTarget::Track {
+                            id: "instrument".into(),
+                        },
+                        CaptureTarget::Master,
+                    ],
+                    range: RenderRange::EntireArrangement,
+                    output_directory: None,
+                },
+            },
+            |request| {
+                let OfflineRenderTarget::Captures(outputs) = request.output else {
+                    panic!("expected captures")
+                };
+                for (index, (_, path)) in outputs.into_iter().enumerate() {
+                    fs::write(
+                        path,
+                        wav(request.sample_rate, if index == 0 { 128 } else { 64 }),
+                    )
+                    .unwrap();
+                }
+                Ok(Vec::new())
+            },
+            None,
+            |_, _| {},
+        );
+        assert!(failure.is_err());
+        assert_eq!(fs::read_dir(root.join("renders")).unwrap().count(), 0);
+        assert!(
+            crate::library::search(&root, "Instrument capture")
+                .unwrap()
+                .is_empty()
+        );
+        let silent = render_capture_pending(
+            CaptureRenderContext {
+                data_root: &root,
+                built_in_instruments: empty_catalog(),
+                session: &session,
+                project_id: "project",
+                source_sequence: 42,
+                created_at_ms: 3,
+                params: crate::api::params::RenderCaptureParams {
+                    targets: vec![CaptureTarget::Master],
+                    range: RenderRange::EntireArrangement,
+                    output_directory: None,
+                },
+            },
+            |request| {
+                assert!(request.graph.tracks[0].muted);
+                let OfflineRenderTarget::Captures(outputs) = request.output else {
+                    panic!("expected captures")
+                };
+                fs::write(&outputs[0].1, wav(request.sample_rate, 128)).unwrap();
+                Ok(Vec::new())
+            },
+            None,
+            |_, _| {},
+        )
+        .unwrap();
+        assert_eq!(silent.result.captures.len(), 1);
+        drop(silent);
+        assert_eq!(fs::read_dir(root.join("renders")).unwrap().count(), 0);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -2178,6 +2722,42 @@ pub(super) mod tests {
             serde_json::to_value(&pending.result.stems[0].measurements).unwrap()
         );
         assert!(mix.measurements.sample_peak_dbfs.is_some());
+        let capture = render_capture_with_cancellation(
+            &worker,
+            CaptureRenderContext {
+                data_root: &root,
+                built_in_instruments: &catalog,
+                session: &session,
+                project_id: "native-capture-test",
+                source_sequence: 2,
+                created_at_ms: 4,
+                params: crate::api::params::RenderCaptureParams {
+                    targets: vec![
+                        CaptureTarget::Track { id: "audio".into() },
+                        CaptureTarget::Bus {
+                            id: "bus:group".into(),
+                        },
+                        CaptureTarget::Bus {
+                            id: "bus:return".into(),
+                        },
+                        CaptureTarget::Master,
+                    ],
+                    range: RenderRange::EntireArrangement,
+                    output_directory: None,
+                },
+            },
+            &AtomicBool::new(false),
+            |_, _| {},
+        )
+        .unwrap();
+        assert_eq!(capture.result.frames, mix.frames);
+        assert_eq!(capture.result.captures.len(), 4);
+        for output in &capture.result.captures {
+            let rendered = samples(Path::new(&output.path));
+            assert_eq!(rendered.len(), mix_samples.len());
+            assert!(rendered.iter().any(|sample| sample.abs() > 0.001));
+        }
+        drop(capture);
         pending.output.commit();
         fs::remove_dir_all(root).unwrap();
     }

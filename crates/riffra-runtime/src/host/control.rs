@@ -1199,6 +1199,9 @@ impl HostState {
             RuntimeCommand::RenderStems(params) => {
                 ControlOutput::Job(Some(self.start_render_stems(current, params)?))
             }
+            RuntimeCommand::RenderCapture(params) => {
+                ControlOutput::Job(Some(self.start_render_capture(current, params)?))
+            }
             RuntimeCommand::RenderExport(params) => ControlOutput::RenderExport(
                 render::export_render(&self.data_root, &params.render_id, &params.output_path)
                     .map_err(command_error)?,
@@ -1502,6 +1505,61 @@ impl HostState {
             jobs.fail(&id, error.clone());
             return Err(command_error(error));
         }
+        jobs::to_background_status(status).map_err(command_error)
+    }
+
+    fn start_render_capture(
+        &self,
+        current: CanonicalState,
+        params: crate::api::params::RenderCaptureParams,
+    ) -> Result<BackgroundJobStatus, ProtocolError> {
+        render::validate_capture_params(&current.session, &params)
+            .map_err(|error| ProtocolError::new(ErrorCode::InvalidRequest, error))?;
+        let data_root = self.data_root.clone();
+        let built_in_instruments = Arc::clone(&self.built_in_instruments);
+        let worker = self.render_worker.clone();
+        let jobs = self.jobs.clone();
+        let (id, status) = jobs.start(JobKind::RenderCapture);
+        let Some(cancelled) = jobs.cancellation_flag(&id) else {
+            return Err(command_error("capture job could not be registered"));
+        };
+        let job_id = id.clone();
+        let worker_jobs = jobs.clone();
+        jobs.spawn_worker(&id, "riffra-render-capture-job", move || {
+            worker_jobs.set_running(&job_id, "Capturing canonical arrangement outputs.");
+            match render::render_capture_with_cancellation(
+                &worker,
+                render::CaptureRenderContext {
+                    data_root: &data_root,
+                    built_in_instruments: built_in_instruments.as_ref(),
+                    session: &current.session,
+                    project_id: &current.project_id,
+                    source_sequence: current.sequence,
+                    created_at_ms: riffra_host::now_ms(),
+                    params,
+                },
+                cancelled.as_ref(),
+                |p, m| worker_jobs.set_progress(&job_id, p, m),
+            ) {
+                Ok(pending) => match jobs::serialize_result(&pending.result) {
+                    Ok(value) => {
+                        let mut output = pending.output;
+                        worker_jobs.complete_if_not_cancelled(
+                            &job_id,
+                            value,
+                            "Offline capture completed.",
+                            move || output.commit(),
+                        );
+                    }
+                    Err(error) => jobs::fail(&worker_jobs, &data_root, &job_id, error),
+                },
+                Err(error) => jobs::fail(&worker_jobs, &data_root, &job_id, error),
+            }
+        })
+        .map_err(|error| {
+            jobs.fail(&id, error.clone());
+            command_error(format!("capture job could not start: {error}"))
+        })?;
         jobs::to_background_status(status).map_err(command_error)
     }
 

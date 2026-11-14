@@ -5,7 +5,7 @@ import type {
   MixdownSettings,
   RenderRange,
 } from '@/model/generated';
-import { chooseRenderStemDirectory, saveRenderWav } from '@/native/dialog';
+import { chooseRenderDirectory, saveRenderWav } from '@/native/dialog';
 import { errorText } from '@/shared/errors';
 import { useSessionContext } from '@/shared/session/session-context';
 import controls from '@/shared/ui/controls.module.css';
@@ -126,7 +126,7 @@ export function MixdownDialog(props: Props) {
   const jobId = job?.id;
   const chooseOutput = async () => {
     try {
-      const path = stems ? await chooseRenderStemDirectory() : await saveRenderWav('riffra-render');
+      const path = stems ? await chooseRenderDirectory() : await saveRenderWav('riffra-render');
       if (path) setOutputPath(path);
     } catch (failure) {
       setError(errorText(failure));

@@ -283,6 +283,7 @@ impl BackgroundJobStatusState for BackgroundJobStatus {
             Self::Scan { state, .. }
             | Self::Render { state, .. }
             | Self::RenderStems { state, .. }
+            | Self::RenderCapture { state, .. }
             | Self::AnalysisMeasure { state, .. } => *state,
         }
     }

@@ -27,6 +27,8 @@ pub enum JobKind {
     Render,
     /// A single job that produces several aligned Track stems.
     RenderStems,
+    /// Captures multiple mix outputs in a single offline render.
+    RenderCapture,
     /// Measures existing WAV files without editing a Project.
     AnalysisMeasure,
 }
@@ -57,6 +59,13 @@ pub enum BackgroundJobStatus {
         progress: Option<f32>,
         message: String,
         result: Option<RenderStemsResult>,
+    },
+    RenderCapture {
+        id: String,
+        state: JobState,
+        progress: Option<f32>,
+        message: String,
+        result: Option<RenderCaptureResult>,
     },
     AnalysisMeasure {
         id: String,
@@ -127,6 +136,35 @@ pub struct RenderStemsResult {
     pub skipped_track_ids: Vec<String>,
 }
 
+/// One post-processing output captured from an offline render.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct RenderCapture {
+    pub target: crate::api::params::CaptureTarget,
+    pub name: String,
+    pub bus_kind: Option<riffra_core::MixBusKind>,
+    pub asset_id: AssetId,
+    pub path: String,
+    pub measurements: AudioMeasurements,
+    pub warnings: Vec<String>,
+}
+
+/// Aligned post-processing outputs from one canonical arrangement snapshot.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct RenderCaptureResult {
+    pub render_id: String,
+    pub project_id: String,
+    pub created_at_ms: u64,
+    pub source_sequence: u64,
+    pub sample_rate: u32,
+    pub start_tick: u64,
+    pub end_tick: u64,
+    pub frames: u64,
+    pub captures: Vec<RenderCapture>,
+    pub exported_directory: Option<String>,
+}
+
 /// Result of copying an existing Render without changing its internal files.
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -143,6 +181,7 @@ pub struct RenderExportResult {
 pub enum RenderKind {
     Timeline,
     Stems,
+    Capture,
     Unknown,
 }
 
