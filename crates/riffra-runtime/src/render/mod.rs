@@ -58,6 +58,22 @@ const MAX_RENDER_MINUTES: f64 = 30.0;
 const DEFAULT_OFFLINE_SAMPLE_RATE: u32 = 48_000;
 const DEFAULT_OFFLINE_BLOCK_SIZE: u32 = 512;
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RenderTimebase<'a> {
+    timebase: &'a riffra_core::ProjectTimebase,
+    start_tick: u64,
+    end_tick: u64,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RenderManifest<'a, T: serde::Serialize> {
+    #[serde(flatten)]
+    result: &'a T,
+    musical_range: RenderTimebase<'a>,
+}
+
 struct RenderPlan {
     tail_seconds: f64,
     block_size: u32,
@@ -360,8 +376,15 @@ fn render_timeline_pending(
         .join("render.json");
     fs::write(
         manifest,
-        serde_json::to_vec_pretty(&result)
-            .map_err(|error| format!("Render manifest could not be encoded: {error}"))?,
+        serde_json::to_vec_pretty(&RenderManifest {
+            result: &result,
+            musical_range: RenderTimebase {
+                timebase: &session.arrangement.timebase,
+                start_tick: plan.start_tick,
+                end_tick: plan.end_tick,
+            },
+        })
+        .map_err(|error| format!("Render manifest could not be encoded: {error}"))?,
     )
     .map_err(|error| format!("Render manifest could not be saved: {error}"))?;
     Ok(PendingRenderTimeline {
@@ -816,8 +839,15 @@ fn render_stems_pending(
     }
     fs::write(
         directory.join("render.json"),
-        serde_json::to_vec_pretty(&result)
-            .map_err(|error| format!("Render manifest could not be encoded: {error}"))?,
+        serde_json::to_vec_pretty(&RenderManifest {
+            result: &result,
+            musical_range: RenderTimebase {
+                timebase: &session.arrangement.timebase,
+                start_tick: conditions.start_tick,
+                end_tick: conditions.end_tick,
+            },
+        })
+        .map_err(|error| format!("Render manifest could not be encoded: {error}"))?,
     )
     .map_err(|error| format!("Render manifest could not be saved: {error}"))?;
     Ok(PendingRenderStems {
@@ -1742,7 +1772,15 @@ pub(super) mod tests {
             &fs::read(pending.output.directory.join("render.json")).unwrap(),
         )
         .unwrap();
-        assert_eq!(manifest, serde_json::to_value(&pending.result).unwrap());
+        assert_eq!(
+            manifest["musicalRange"]["startTick"],
+            pending.result.start_tick
+        );
+        assert_eq!(manifest["musicalRange"]["endTick"], pending.result.end_tick);
+        assert_eq!(
+            manifest["musicalRange"]["timebase"],
+            serde_json::to_value(&session.arrangement.timebase).unwrap()
+        );
         let render_id = Path::new(&pending.result.directory)
             .file_name()
             .unwrap()
@@ -2583,6 +2621,22 @@ pub(super) mod tests {
         assert_eq!(
             fs::read(&requested_output).unwrap(),
             fs::read(&rendered.path).unwrap()
+        );
+        let manifest: serde_json::Value = serde_json::from_slice(
+            &fs::read(
+                Path::new(&rendered.path)
+                    .parent()
+                    .unwrap()
+                    .join("render.json"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(manifest["musicalRange"]["startTick"], 0);
+        assert_eq!(manifest["musicalRange"]["endTick"], 2_400);
+        assert_eq!(
+            manifest["musicalRange"]["timebase"],
+            serde_json::to_value(&session.arrangement.timebase).unwrap()
         );
 
         let cancelled_output = exports.join("cancelled.wav");
