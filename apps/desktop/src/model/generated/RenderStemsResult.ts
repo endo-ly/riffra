@@ -38,6 +38,10 @@ startTick: number,
  */
 endTick: number, 
 /**
+ * Requested range kind: `entireArrangement`, `loopRange`, `timeSelection`, or `section`.
+ */
+rangeKind: string, 
+/**
  * Shared frame count, including any render tail.
  */
 frames: number, 

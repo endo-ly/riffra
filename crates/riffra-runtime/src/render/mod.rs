@@ -353,6 +353,7 @@ fn render_timeline_pending(
         frames,
         duration_ms: range_end_ms.saturating_sub(range_start_ms),
         clip_count: plan.clip_count,
+        range_kind: range_kind.to_owned(),
         range_start_ms,
         range_end_ms,
         normalized: options.normalize && session.settings.mixdown.mastering.is_none(),
@@ -817,6 +818,7 @@ fn render_stems_pending(
         sample_rate: conditions.sample_rate,
         start_tick: conditions.start_tick,
         end_tick: conditions.end_tick,
+        range_kind: kind.to_owned(),
         frames,
         stems,
         skipped_track_ids: selection.skipped_track_ids,
@@ -2538,6 +2540,66 @@ pub(super) mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn section_render_records_its_range_and_score_occurrence() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-section-render-{}",
+            riffra_control::new_instance_id()
+        ));
+        let mut session = session_with_clips();
+        session.score_source = Some(riffra_core::ScoreSource {
+            file_name: "score.yaml".into(),
+            yaml: String::new(),
+            path: None,
+            bindings: Default::default(),
+            production_inputs: Default::default(),
+        });
+        session.arrangement.regions = vec![riffra_core::TimelineRegion {
+            id: "score:region:walk".into(),
+            name: "walk".into(),
+            start_tick: TimelineTick(0),
+            end_tick: TimelineTick(960),
+        }];
+        let options = RenderOptions {
+            range: RenderRange::Section {
+                name: "walk".into(),
+                occurrence: 1,
+            },
+            ..RenderOptions::default()
+        };
+
+        let result = render_timeline_with_renderer(
+            timeline_render_context(&root, empty_catalog(), &session, 51, options),
+            |request| {
+                assert_eq!((request.start_tick, request.end_tick), (0, 960));
+                fs::write(request.destination(), wav(request.sample_rate, 128)).unwrap();
+                Ok(Vec::new())
+            },
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(result.range_kind, "section");
+        assert_eq!(result.section_name.as_deref(), Some("walk"));
+        assert_eq!(result.section_occurrence, Some(1));
+        let render_id = Path::new(&result.path)
+            .parent()
+            .unwrap()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let history = super::history::list_renders(&root).unwrap();
+        let entry = history
+            .iter()
+            .find(|entry| entry.render_id == render_id)
+            .expect("section render is listed");
+        assert_eq!(entry.range_kind.as_deref(), Some("section"));
+        assert_eq!(entry.section_name.as_deref(), Some("walk"));
+        assert_eq!(entry.section_occurrence, Some(1));
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

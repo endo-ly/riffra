@@ -154,7 +154,7 @@ mod tests {
             region("verse", 7680, 11520),
         ];
 
-        let sections = score_ranges(&regions, &timebase, 1920, 9600, 4.0);
+        let sections = score_ranges(&regions, &timebase, 1920, 9600, 5.0);
 
         assert_eq!(
             sections

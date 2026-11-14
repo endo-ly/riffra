@@ -89,6 +89,8 @@ pub struct RenderResult {
     pub frames: u64,
     pub duration_ms: u64,
     pub clip_count: usize,
+    /// Requested range kind: `entireArrangement`, `loopRange`, `timeSelection`, or `section`.
+    pub range_kind: String,
     pub range_start_ms: u64,
     pub range_end_ms: u64,
     pub normalized: bool,
@@ -125,6 +127,8 @@ pub struct RenderStemsResult {
     pub start_tick: u64,
     /// Shared end Tick before render tail.
     pub end_tick: u64,
+    /// Requested range kind: `entireArrangement`, `loopRange`, `timeSelection`, or `section`.
+    pub range_kind: String,
     /// Shared frame count, including any render tail.
     pub frames: u64,
     /// Stems in canonical Track order.
@@ -175,6 +179,12 @@ pub struct RenderFileStatus {
 pub struct RenderHistoryEntry {
     pub render_id: String,
     pub kind: RenderKind,
+    /// Requested range kind recorded by the render that created this entry.
+    pub range_kind: Option<String>,
+    /// Score section name for a section render.
+    pub section_name: Option<String>,
+    /// One-based Score section occurrence for a section render.
+    pub section_occurrence: Option<u32>,
     pub project_id: Option<String>,
     pub created_at_ms: Option<u64>,
     pub files: Vec<RenderFileStatus>,

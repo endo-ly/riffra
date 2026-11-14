@@ -102,6 +102,7 @@ it.each(['measured', 'unavailable'] as const)(
       rangeStartMs: 0,
       rangeEndMs: 4000,
       normalized: false,
+      rangeKind: 'entireArrangement',
       trackId: null,
       sectionName: null,
       sectionOccurrence: null,

@@ -19,7 +19,11 @@ path: string,
 /**
  * External WAV copy requested for this job, when present.
  */
-exportedPath: string | null, sampleRate: number, frames: number, durationMs: number, clipCount: number, rangeStartMs: number, rangeEndMs: number, normalized: boolean, trackId: string | null, 
+exportedPath: string | null, sampleRate: number, frames: number, durationMs: number, clipCount: number, 
+/**
+ * Requested range kind: `entireArrangement`, `loopRange`, `timeSelection`, or `section`.
+ */
+rangeKind: string, rangeStartMs: number, rangeEndMs: number, normalized: boolean, trackId: string | null, 
 /**
  * Score section name for a section render.
  */

@@ -495,6 +495,7 @@ mod tests {
             sample_rate: 48_000,
             start_tick: 0,
             end_tick: 480,
+            range_kind: "entireArrangement".into(),
             frames: 1_024,
             stems: Vec::new(),
             skipped_track_ids: Vec::new(),
