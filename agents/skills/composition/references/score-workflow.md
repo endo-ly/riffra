@@ -51,14 +51,19 @@ music/<曲>/
 
 ## 実装
 
-| #   | フェーズ       | すること                                                                               | 書く項目                                                                |
-| --- | -------------- | -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| I1  | 音源の選定     | 欲しい音を満たす音源を選ぶ。VST3、内蔵音源(Sonalloy)(プリセット、自作)のどれでもよい。 | `instruments.<id>.source`・`kit`、`kits`、`sounds/`、`states/`          |
-| I2  | 奏法の対応     | 奏法・制御を音源のキースイッチ・CC に対応させ、ベロシティの効き方の差を補正する        | `source.velocity`（奏法ごとの `articulations` は未実装）                |
-| I3  | 音作り         | 楽器ごとのエフェクトとパラメーター。歌声の全体パラメーター                             | `effects`、`source.vst3.state` / `patch` / `params`（VoiSona は未実装） |
-| I4  | ミックス       | ゲイン、パン、バス、センド、サイドチェイン、オートメーション                           | 楽器の `gain_db` / `pan`、`part_gains`、演奏ごとの `gain_db`、`mix`     |
-| I5  | マスタリング   | `meta.master` の目標を満たすマスターのチェイン                                         | `mix.master`                                                            |
-| I6  | 検証と差し戻し | 書き出して測り、発注の完成の条件と照らし合わせる                                       | —                                                                       |
+| #   | フェーズ       | すること                                                                               | 書く項目                                                                                             |
+| --- | -------------- | -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| I1  | 音源の選定     | 欲しい音を満たす音源を選ぶ。VST3、内蔵音源(Sonalloy)(プリセット、自作)のどれでもよい。 | `instruments.<id>.source`・`kit`、`kits`、`sounds/`、`states/`                                       |
+| I2  | 奏法の対応     | 奏法・制御を音源のキースイッチ・CC に対応させ、ベロシティの効き方の差を補正する        | `source.articulations`、`kind: articulation` / `cc`、`automation.control: "cc:N"`、`source.velocity` |
+| I3  | 音作り         | 楽器ごとのエフェクトとパラメーター。歌声の全体パラメーター                             | `effects`、`source.vst3.state` / `patch` / `params`（VoiSona は未実装）                              |
+| I4  | ミックス       | ゲイン、パン、バス、センド、サイドチェイン、オートメーション                           | 楽器の `gain_db` / `pan`、`part_gains`、演奏ごとの `gain_db`、`mix`                                  |
+| I5  | マスタリング   | `meta.master` の目標を満たすマスターのチェイン                                         | `mix.master`                                                                                         |
+| I6  | 検証と差し戻し | 書き出して測り、発注の完成の条件と照らし合わせる                                       | —                                                                                                    |
+
+- 奏法は`source.articulations`で名前ごとに1つの制御を宣言する。キースイッチは`mode: hold`または`latch`、CCは`number`・`value`・`reset`を0～127で書く。`latch`を使う場合は`default`を定義する
+- セクションの`events`で`kind: articulation`と`kind: cc`を指定する。キット全体の奏法は楽器IDではなくキットIDを`instrument`に書く
+- `riffra score validate <path>`は未定義の奏法名、重複区間、CCの競合、内蔵音源の推奨音域外を診断する。warningは演奏を止めない
+- セクションの出現だけを確認するときは`riffra --attach render start --section <name> --occurrence <n> --wait`を使う。完成WAVの`measurements.scoreSections`で出現ごとのラウドネスを確認し、`complete: false`ならRender範囲がRegionの一部だけを含む
 
 ## 境目のルール
 

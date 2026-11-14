@@ -435,7 +435,7 @@ DesktopのTauri command境界とLive HostのControl Serverの機能分担は次�
 - エディタ窓・ダイアログ・窓管理はDesktop shellに残る。open / 録音 / プレビュー / スキャン / ライブラリ・解析の実行はHost側を使い、エディタ由来の永続化はHost内coordinatorのcommitで完結する
 - `automation.get/clear` は `target` を指定する。`get` は該当Laneを0件または1件の配列で返す。`automation.list` は任意の `owner` でTrack・Bus・Masterの所有するLaneへ絞り込み、省略時は全LaneをID順に返す。読み取りはCanonical sequenceを変更しない
 - `automation.set` は `target`、`interpolation`、`points` でLane全体を置き換える。Pointの `value` は数値、またはDevice用の表示文字列を受け付ける。表示文字列はLive Hostで変換し、正準状態には数値だけが保存される。`session.apply` も同じ契約を使い、変換や検証の失敗ではBatch全体をコミットしない
-- `render start` は接続先Hostの `RenderWorker` にジョブを開始しIDを返す。部分Renderは音楽座標の `start` / `end` と任意の `trackId` で指定する。状態は `job get`、停止は `job cancel` で行う。Workerの所有者は接続先Hostである
+- `render start` は接続先Hostの `RenderWorker` にジョブを開始しIDを返す。部分Renderは音楽座標の `start` / `end`、Scoreセクションの `section` / `occurrence`、任意の `trackId` で指定する。セクションは1始まりの出現番号で選び、保存済みの `TimelineRegion` を範囲にする。状態は `job get`、停止は `job cancel` で行う。Workerの所有者は接続先Hostである
 - `render.stems` は `allTracks` または `trackIds` のいずれか一方と共有 `range` を受け取り、接続先Hostの `RenderWorker` で1つの `renderStems` ジョブを開始する。結果には共通の開始・終了Tick、Sample Rate、フレーム数と各TrackのAsset ID・パスを含み、同じ内容を出力ディレクトリの `render.json` に保存する。明示IDが不正な要求はジョブ開始前に拒否する
 - `render.start` と `render.stems` は任意の出力先を指定でき、既存ファイルを上書きしない。`render.export` は完了済みRenderを指定先へコピーする
 - `analysis.measure` は保存済みWAVの区間測定を非同期Jobとして実行し、進捗・中止は既存Job契約を用いる。解析は楽曲や保存済みの測定値を変更しない。`analysis.inspect` は波形・RMS等の解析結果を同期的に返す
