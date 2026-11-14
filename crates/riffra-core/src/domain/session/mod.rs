@@ -69,9 +69,25 @@ pub struct ScoreSource {
     /// Definition path of each `external: true` instrument in the linked Score.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub bindings: std::collections::BTreeMap<String, String>,
-    /// Fingerprints of the resolved plugin inputs that produced Score devices.
+    /// Resolved inputs and automation values that produced Score devices.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
-    pub production_inputs: std::collections::BTreeMap<String, String>,
+    pub production_inputs: std::collections::BTreeMap<String, ScoreProductionInput>,
+}
+
+/// Resolved plugin inputs for one Score source or effect.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ScoreProductionInput {
+    pub fingerprint: String,
+    pub automation: Vec<ScoreAutomationResolution>,
+}
+
+/// Resolved parameter and values for one Score automation declaration.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ScoreAutomationResolution {
+    pub parameter_id: String,
+    pub values: Vec<f64>,
 }
 
 impl Default for SessionSettings {
@@ -374,7 +390,6 @@ mod tests {
                 tick: TimelineTick(0),
                 value: 0.5,
             }],
-            score_target: None,
         });
 
         // Work state remains editable.

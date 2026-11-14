@@ -582,7 +582,6 @@ mod tests {
                     tick: riffra_core::TimelineTick(240),
                     value: -3.0,
                 }],
-                score_target: None,
             },
             AutomationLane {
                 id: "lane:pan".into(),
@@ -596,7 +595,6 @@ mod tests {
                     tick: riffra_core::TimelineTick(360),
                     value: 0.75,
                 }],
-                score_target: None,
             },
         ];
 
@@ -631,7 +629,6 @@ mod tests {
                     tick: riffra_core::TimelineTick(240),
                     value: 0.0,
                 }],
-                score_target: None,
             });
         }
 
@@ -929,7 +926,6 @@ mod tests {
                     tick: riffra_core::TimelineTick(0),
                     value: -6.0,
                 }],
-                score_target: None,
             })
             .collect();
 

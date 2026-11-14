@@ -76,7 +76,10 @@ fn fingerprint(path: &Path) -> Result<Fingerprint, String> {
 fn record_dependency(dependencies: &mut Dependencies, path: &Path) -> Result<(), String> {
     let canonical =
         std::fs::canonicalize(path).map_err(|error| format!("{}: {error}", path.display()))?;
-    let value = fingerprint(&canonical)?;
+    let value = match dependencies.get(&canonical) {
+        Some(value) => value.clone(),
+        None => fingerprint(&canonical)?,
+    };
     dependencies.insert(canonical.clone(), value.clone());
     if path != canonical {
         dependencies.insert(path.to_path_buf(), value);
@@ -134,7 +137,7 @@ impl ResolvedProduction {
 }
 
 type ResolvedProductionMap = BTreeMap<String, ResolvedProduction>;
-type ResolvedAutomationMap = BTreeMap<usize, ResolvedAutomation>;
+type ScoreAutomationResolutionMap = BTreeMap<usize, ScoreAutomationResolution>;
 type SourceResolution = (
     library::ResolvedPlugin,
     score::production::Vst3Spec,
@@ -150,8 +153,8 @@ struct ScoreDocument {
     bindings: BTreeMap<String, PathBuf>,
     sources: BTreeMap<String, Source>,
     production: ResolvedProductionMap,
-    automation: ResolvedAutomationMap,
-    production_inputs: BTreeMap<String, String>,
+    automation: ScoreAutomationResolutionMap,
+    production_inputs: BTreeMap<String, ScoreProductionInput>,
     dependencies: Dependencies,
 }
 
@@ -203,13 +206,6 @@ fn validate_audio(
     Ok(())
 }
 
-/// Device-parameter automation resolved against the plugin's final state.
-#[derive(Clone)]
-struct ResolvedAutomation {
-    parameter_id: String,
-    values: Vec<f64>,
-}
-
 /// One production use while its parameters and automation are still pending.
 struct PendingUse {
     production: ResolvedProduction,
@@ -218,7 +214,6 @@ struct PendingUse {
     needs_probe: bool,
     has_automation: bool,
     previous_plugin: Option<Vst3Plugin>,
-    previous_automation: BTreeMap<usize, ResolvedAutomation>,
 }
 
 impl PendingUse {
@@ -292,10 +287,6 @@ fn automation_use_key(
     }
 }
 
-fn automation_score_target(use_key: &str, parameter: &str) -> String {
-    format!("{use_key}|{parameter}")
-}
-
 fn previous_source_plugin<'a>(
     session: &'a CreativeSession,
     score_key: &str,
@@ -341,6 +332,7 @@ fn parameter_value_json(value: &score::production::ParameterValue) -> Value {
 fn production_input_fingerprint(
     spec: &score::production::Vst3Spec,
     plugin: &Vst3Plugin,
+    entry: &crate::api::output::PluginEntry,
     automations: &[&PendingAutomation],
 ) -> String {
     let params = spec
@@ -361,6 +353,10 @@ fn production_input_fingerprint(
     let payload = json!({
         "plugin": spec.plugin,
         "identifier": spec.identifier,
+        "resolvedIdentifier": entry.identifier,
+        "version": entry.version,
+        "modifiedAt": entry.modified_at_ms,
+        "path": entry.path,
         "state": plugin.state_data,
         "parameterValues": plugin.parameter_values,
         "params": params,
@@ -372,7 +368,7 @@ fn production_input_fingerprint(
 
 struct PreviousUse {
     plugin: Vst3Plugin,
-    automation: BTreeMap<usize, ResolvedAutomation>,
+    automation: BTreeMap<usize, ScoreAutomationResolution>,
 }
 
 fn resolve_production(
@@ -385,8 +381,8 @@ fn resolve_production(
 ) -> Result<
     (
         ResolvedProductionMap,
-        ResolvedAutomationMap,
-        BTreeMap<String, String>,
+        ScoreAutomationResolutionMap,
+        BTreeMap<String, ScoreProductionInput>,
     ),
     ImportError,
 > {
@@ -432,7 +428,6 @@ fn resolve_production(
                 previous_plugin: previous
                     .and_then(|session| previous_source_plugin(session, &score_key))
                     .cloned(),
-                previous_automation: BTreeMap::new(),
                 spec,
             },
         );
@@ -489,7 +484,6 @@ fn resolve_production(
                             previous_effect_plugin(session, &effect_device_id(owner, &effect.id))
                         })
                         .cloned(),
-                    previous_automation: BTreeMap::new(),
                     spec,
                 },
             );
@@ -538,25 +532,6 @@ fn resolve_production(
                 });
             };
             let parameter = automation_parameter(lane, index, plan)?;
-            let score_target = automation_score_target(&use_key, &parameter);
-            let previous_automation = previous
-                .and_then(|session| {
-                    session
-                        .arrangement
-                        .automation_lanes
-                        .iter()
-                        .find(|lane| lane.score_target.as_deref() == Some(&score_target))
-                })
-                .and_then(|lane| {
-                    let AutomationTarget::DeviceParameter { parameter_id, .. } = &lane.target
-                    else {
-                        return None;
-                    };
-                    Some(ResolvedAutomation {
-                        parameter_id: parameter_id.clone(),
-                        values: lane.points.iter().map(|point| point.value).collect(),
-                    })
-                });
             let Some(pending) = uses.get_mut(&use_key) else {
                 let message = format!("automation target {use_key} was not resolved");
                 return Err(ImportError {
@@ -564,11 +539,6 @@ fn resolve_production(
                     message,
                 });
             };
-            if let Some(previous_automation) = previous_automation {
-                pending
-                    .previous_automation
-                    .insert(index, previous_automation);
-            }
             pending.needs_probe = true;
             pending.has_automation = true;
             let mut requests = Vec::with_capacity(lane.points.len());
@@ -680,7 +650,12 @@ fn resolve_production(
                 .collect::<Vec<_>>();
             (
                 key.clone(),
-                production_input_fingerprint(&pending.spec, pending.base_plugin(), &automations),
+                production_input_fingerprint(
+                    &pending.spec,
+                    pending.base_plugin(),
+                    &pending.production.plugin().entry,
+                    &automations,
+                ),
             )
         })
         .collect::<BTreeMap<_, _>>();
@@ -689,36 +664,36 @@ fn resolve_production(
         && let Some(source) = previous.score_source.as_ref()
     {
         for (key, pending) in &uses {
-            if !pending.needs_probe
-                || source.production_inputs.get(key) != production_inputs.get(key)
-            {
+            let Some(saved) = source.production_inputs.get(key) else {
+                continue;
+            };
+            if !pending.needs_probe || Some(&saved.fingerprint) != production_inputs.get(key) {
                 continue;
             }
             let Some(plugin) = &pending.previous_plugin else {
                 continue;
             };
-            let mut automation = BTreeMap::new();
-            let mut complete = true;
-            for (index, lane) in &automations {
-                if lane.use_key != *key {
-                    continue;
-                }
-                let Some(previous) = pending.previous_automation.get(index).cloned() else {
-                    complete = false;
-                    break;
-                };
-                if previous.values.len() != lane.points.len() {
-                    complete = false;
-                    break;
-                }
-                automation.insert(*index, previous);
-            }
-            if complete {
+            let indices = automations
+                .iter()
+                .filter(|(_, lane)| lane.use_key == *key)
+                .map(|(index, _)| *index)
+                .collect::<Vec<_>>();
+            if indices.len() == saved.automation.len()
+                && indices
+                    .iter()
+                    .zip(&saved.automation)
+                    .all(|(index, resolution)| {
+                        resolution.values.len() == automations[index].points.len()
+                    })
+            {
                 reused.insert(
                     key.clone(),
                     PreviousUse {
                         plugin: plugin.clone(),
-                        automation,
+                        automation: indices
+                            .into_iter()
+                            .zip(saved.automation.iter().cloned())
+                            .collect(),
                     },
                 );
             }
@@ -845,7 +820,7 @@ fn resolve_production(
                 }
                 resolved_automation.insert(
                     *index,
-                    ResolvedAutomation {
+                    ScoreAutomationResolution {
                         parameter_id,
                         values: points,
                     },
@@ -858,6 +833,21 @@ fn resolve_production(
         values.insert(key, previous.plugin);
         resolved_automation.extend(previous.automation);
     }
+    let production_inputs = production_inputs
+        .into_iter()
+        .map(|(key, fingerprint)| {
+            let automation = automations
+                .iter()
+                .filter(|(_, lane)| lane.use_key == key)
+                .map(|(index, _)| resolved_automation[index].clone())
+                .collect();
+            let saved = ScoreProductionInput {
+                fingerprint,
+                automation,
+            };
+            (key, saved)
+        })
+        .collect();
     let mut production = BTreeMap::new();
     for (key, pending) in uses {
         let mut production_value = pending.production;
@@ -1908,7 +1898,7 @@ fn build(
         production,
         automation: resolved_automation,
         production_inputs: _,
-        dependencies: _,
+        dependencies,
     } = document;
     let sources = sources.clone();
     for (id, spec) in &plan.instruments {
@@ -2179,8 +2169,15 @@ fn build(
     };
     let mut automation = build_automation(&structure, previous, &volume_tracks)?;
     let base = path.parent().expect("canonical file has a parent");
-    let mut audio_clips =
-        build_audio_clips(plan, base, previous, staged, mode, &instrument_tracks)?;
+    let mut audio_clips = build_audio_clips(
+        plan,
+        base,
+        previous,
+        staged,
+        mode,
+        &instrument_tracks,
+        dependencies,
+    )?;
 
     let regions = plan
         .sections
@@ -2421,6 +2418,7 @@ fn build_audio_clips(
     staged: &mut StagedResources,
     mode: BuildMode,
     instrument_tracks: &BTreeMap<String, Vec<String>>,
+    dependencies: &Dependencies,
 ) -> Result<Vec<AudioClip>, ImportError> {
     use num_traits::ToPrimitive;
     let mut clips = Vec::new();
@@ -2443,8 +2441,10 @@ fn build_audio_clips(
         }
         let digest = if mode == BuildMode::Stage {
             Some(
-                fingerprint(file)
-                    .map_err(|error| format!("audio clip {}: {error}", file.display()))?,
+                dependencies
+                    .get(file)
+                    .cloned()
+                    .ok_or_else(|| format!("audio clip {} was not validated", file.display()))?,
             )
         } else {
             None
@@ -2572,7 +2572,6 @@ struct LaneAccumulator {
     target: AutomationTarget,
     interpolation: AutomationInterpolation,
     points: BTreeMap<u64, f64>,
-    score_target: Option<String>,
 }
 
 fn automation_key(target: &AutomationTarget) -> String {
@@ -2609,7 +2608,7 @@ fn automation_key(target: &AutomationTarget) -> String {
 /// Canonical structures that automation targets resolve against.
 struct AutomationStructure<'a> {
     plan: &'a ScorePlan,
-    resolved: &'a ResolvedAutomationMap,
+    resolved: &'a ScoreAutomationResolutionMap,
     instrument_tracks: &'a BTreeMap<String, Vec<String>>,
     kit_tracks: &'a BTreeMap<String, String>,
     tracks: &'a [Track],
@@ -2701,13 +2700,15 @@ fn automation_targets(
                 .iter()
                 .filter(|send| track_ids.contains(&send.track_id) && send.return_bus_id == bus_id)
                 .collect::<Vec<_>>();
-            match matching.as_slice() {
-                [send] => vec![AutomationTarget::SendLevel {
-                    send_id: send.id.clone(),
-                }],
-                [] => return Err(fail("automation send is not defined".to_owned())),
-                _ => return Err(fail("automation send is ambiguous".to_owned())),
+            if matching.is_empty() {
+                return Err(fail("automation send is not defined".to_owned()));
             }
+            matching
+                .into_iter()
+                .map(|send| AutomationTarget::SendLevel {
+                    send_id: send.id.clone(),
+                })
+                .collect()
         }
         ScoreTarget::Sidechain { from, to } => {
             let ids = if let Some(track) = kit_tracks.get(from) {
@@ -2784,13 +2785,6 @@ fn build_automation(
     if let Some(mix) = &plan.mix {
         for (index, automation) in mix.automation.iter().enumerate() {
             let targets = automation_targets(structure, index, &automation.target)?;
-            let score_target = match automation_use_key(plan, &automation.target) {
-                Some(use_key) => Some(automation_score_target(
-                    &use_key,
-                    &automation_parameter(automation, index, plan)?,
-                )),
-                None => None,
-            };
             let values = resolved
                 .get(&index)
                 .map(|resolved| resolved.values.as_slice());
@@ -2841,11 +2835,7 @@ fn build_automation(
                             target: target.clone(),
                             interpolation,
                             points: BTreeMap::new(),
-                            score_target: score_target.clone(),
                         });
-                        if entry.score_target.is_none() {
-                            entry.score_target = score_target.clone();
-                        }
                         if entry.interpolation != interpolation {
                             return Err(ImportError {
                                 details: plan.source_detail(
@@ -2902,7 +2892,6 @@ fn build_automation(
             target: accumulator.target,
             interpolation: accumulator.interpolation,
             points,
-            score_target: accumulator.score_target,
         });
     }
     let explicit_volume = result
@@ -3155,7 +3144,6 @@ fn auto_volume_lane(
                 value: lane.gain_db + section.part_gains.get(&lane.id).copied().unwrap_or(0.0),
             })
             .collect(),
-        score_target: None,
     }
 }
 
@@ -4655,13 +4643,13 @@ mod tests {
 
     const INPUT_REUSE: &str = r#"{
         "meta":{"title":"Input Reuse","bpm":120,"meter":"4/4","tuning":"12edo","gate":1},
-        "form":[{"section":"verse","bars":1,"tonic":"C","scale":"ionian"}],
+        "form":[{"section":"verse","bars":1,"tonic":"C","scale":"ionian"},{"section":"verse","bars":1,"tonic":"C","scale":"ionian"}],
         "instruments":{
-            "bass":{"source":{"vst3":{"plugin":"Bass","state":"state.json","params":{"Cutoff":0.5}}}}
+            "bass":{"source":{"vst3":{"plugin":"Bass","params":{"Cutoff":0.5}}}}
         },
         "sections":{"verse":{"lines":{"main":{"instrument":"bass","melody":"theme"}}}},
         "melodies":{"theme":["1 - - - | 3 - - - | 5 - - - | 1' - - -"]},
-        "mix":{"automation":[{"target":{"source":"bass","parameter":"Cutoff"},"section":"verse","points":[{"at":{"bar":1,"step":1},"value":0.2}]}]}
+        "mix":{"automation":[{"target":{"source":"bass","parameter":"Cutoff"},"section":"verse","points":[{"at":{"bar":1,"step":9},"value":0.2},{"at":{"bar":1,"step":1},"value":0.8}]},{"target":{"source":"bass","parameter":"Cutoff"},"section":"verse","occurrence":2,"points":[{"at":{"bar":1,"step":5},"value":0.4}]}]}
     }"#;
 
     #[test]
@@ -4701,18 +4689,6 @@ mod tests {
             },
         )
         .unwrap();
-        std::fs::write(
-            score_dir.join("state.json"),
-            serde_json::to_vec(&serde_json::json!({
-                "schemaVersion": 2,
-                "pluginIdentifier": "bass-class",
-                "pluginPath": plugin_path.to_string_lossy(),
-                "parameterValues": [0.1],
-                "stateData": "c3RhdGU="
-            }))
-            .unwrap(),
-        )
-        .unwrap();
         let score_path = score_dir.join("score.yaml");
         std::fs::write(&score_path, INPUT_REUSE).unwrap();
 
@@ -4722,17 +4698,50 @@ mod tests {
             .as_ref()
             .expect("inline vst3");
         let mut plugin = Vst3Plugin::new(plugin_path.to_string_lossy().into_owned());
-        plugin.parameter_values = vec![0.1];
-        plugin.state_data = Some("c3RhdGU=".into());
         let lane = &plan.mix.as_ref().unwrap().automation[0];
         let pending = PendingAutomation {
             use_key: "instruments.bass.source".into(),
             parameter: "Cutoff".into(),
             interpolation: lane.interpolation,
-            points: vec![score::production::ParameterValue::Normalized(0.2)],
-            requests: vec![None],
+            points: lane
+                .points
+                .iter()
+                .map(|point| point.value.clone())
+                .collect(),
+            requests: vec![None; lane.points.len()],
         };
-        let fingerprint = production_input_fingerprint(spec, &plugin, &[&pending]);
+        let entry = crate::plugins::catalog::selected_named_plugin(
+            &root,
+            "Bass",
+            None,
+            PluginRole::Instrument,
+        )
+        .unwrap();
+        let second_lane = &plan.mix.as_ref().unwrap().automation[1];
+        let second = PendingAutomation {
+            use_key: pending.use_key.clone(),
+            parameter: pending.parameter.clone(),
+            interpolation: second_lane.interpolation,
+            points: second_lane
+                .points
+                .iter()
+                .map(|point| point.value.clone())
+                .collect(),
+            requests: vec![None; second_lane.points.len()],
+        };
+        let fingerprint = ScoreProductionInput {
+            fingerprint: production_input_fingerprint(spec, &plugin, &entry, &[&pending, &second]),
+            automation: vec![
+                ScoreAutomationResolution {
+                    parameter_id: "cutoff-id".into(),
+                    values: vec![0.2, 0.8],
+                },
+                ScoreAutomationResolution {
+                    parameter_id: "cutoff-id".into(),
+                    values: vec![0.4],
+                },
+            ],
+        };
         plugin.path = "C:/old-install/Bass.vst3".into();
         let mut previous = CreativeSession::new(1);
         let mut track = Track::instrument("score:track:1".into(), "bass".into());
@@ -4758,7 +4767,6 @@ mod tests {
                 tick: TimelineTick(0),
                 value: 0.2,
             }],
-            score_target: Some("instruments.bass.source|Cutoff".into()),
         });
         previous.score_source = Some(ScoreSource {
             file_name: "score.yaml".into(),
@@ -4774,7 +4782,7 @@ mod tests {
         let bindings = BTreeMap::new();
         let explicit = BTreeSet::new();
         let catalog = crate::test_support::empty_built_in_catalog();
-        let document = read(ReadInput {
+        let mut document = read(ReadInput {
             path: &score_path,
             bindings: &bindings,
             explicit: &explicit,
@@ -4797,7 +4805,65 @@ mod tests {
             plugin_path.to_string_lossy()
         );
         assert_eq!(document.automation[&0].parameter_id, "cutoff-id");
-        assert_eq!(document.automation[&0].values, [0.2]);
+        assert_eq!(document.automation[&0].values, [0.2, 0.8]);
+        assert_eq!(document.automation[&1].values, [0.4]);
+
+        let store = store(&root);
+        let mut staged = StagedResources::new(&root);
+        let mut session = build(
+            &mut document,
+            Some(&previous),
+            &store,
+            &mut staged,
+            BuildMode::Stage,
+        )
+        .unwrap();
+        let baseline = session.clone();
+        let lane = &session.arrangement.automation_lanes[0];
+        assert_eq!(
+            lane.points
+                .iter()
+                .map(|point| point.value)
+                .collect::<Vec<_>>(),
+            [0.8, 0.2, 0.8, 0.4, 0.2]
+        );
+        for iteration in 0..3 {
+            if iteration == 1 {
+                std::fs::write(&score_path, INPUT_REUSE.replace("3 - - -", "4 - - -")).unwrap();
+            }
+            let mut next = read(ReadInput {
+                path: &score_path,
+                bindings: &bindings,
+                explicit: &explicit,
+                data_root: &root,
+                catalog,
+                scanner: Path::new("unavailable-scanner"),
+                sonalloy: Path::new("unavailable-sonalloy"),
+                previous: Some(&session),
+            })
+            .expect("unchanged inputs must not probe");
+            session = build(
+                &mut next,
+                Some(&session),
+                &store,
+                &mut staged,
+                BuildMode::Stage,
+            )
+            .unwrap();
+            let mut without_note_changes = session.clone();
+            without_note_changes.arrangement.midi_clips = baseline.arrangement.midi_clips.clone();
+            assert!(without_note_changes.score_performance_equals(&baseline));
+            if iteration > 0 {
+                assert_ne!(
+                    session.arrangement.midi_clips[0].notes,
+                    baseline.arrangement.midi_clips[0].notes
+                );
+            }
+            assert_eq!(
+                session.score_source.as_ref().unwrap().production_inputs,
+                baseline.score_source.as_ref().unwrap().production_inputs
+            );
+        }
 
         let changed = INPUT_REUSE.replace("\"Cutoff\":0.5", "\"Cutoff\":0.6");
         std::fs::write(&score_path, &changed).unwrap();
@@ -4812,6 +4878,38 @@ mod tests {
             previous: Some(&previous),
         }) {
             Ok(_) => panic!("changed params must probe the plugin"),
+            Err(error) => error,
+        };
+        assert!(
+            error.message.contains("scanner"),
+            "unexpected error: {}",
+            error.message
+        );
+        std::fs::write(&score_path, INPUT_REUSE).unwrap();
+        let mut updated_entry = entry.clone();
+        updated_entry.version = Some("2.0".into());
+        crate::plugins::catalog::save(
+            &root,
+            &ScanReport {
+                root: root.to_string_lossy().into_owned(),
+                started_at_ms: 1,
+                finished_at_ms: 1,
+                issues: Vec::new(),
+                plugins: vec![updated_entry],
+            },
+        )
+        .unwrap();
+        let error = match read(ReadInput {
+            path: &score_path,
+            bindings: &bindings,
+            explicit: &explicit,
+            data_root: &root,
+            catalog,
+            scanner: Path::new("unavailable-scanner"),
+            sonalloy: Path::new("unavailable-sonalloy"),
+            previous: Some(&session),
+        }) {
+            Ok(_) => panic!("an updated plugin must be probed"),
             Err(error) => error,
         };
         assert!(
@@ -4842,6 +4940,7 @@ mod tests {
         let yaml = with_audio_clip(PRODUCTION);
         let mut document = production_document(&yaml);
         document.path = score_path.clone();
+        validate_audio(&document.plan, &score_dir, &mut document.dependencies).unwrap();
         let mut staged = StagedResources::new(&root);
         let session =
             build(&mut document, None, &store, &mut staged, BuildMode::Stage).expect("audio build");
@@ -4887,6 +4986,7 @@ mod tests {
 
         let mut second = production_document(&yaml);
         second.path = score_path.clone();
+        validate_audio(&second.plan, &score_dir, &mut second.dependencies).unwrap();
         let mut unchanged = StagedResources::new(&root);
         let rebuilt = build(
             &mut second,
@@ -4917,6 +5017,7 @@ mod tests {
         assert_ne!(renamed_yaml, yaml);
         let mut renamed = production_document(&renamed_yaml);
         renamed.path = score_path.clone();
+        validate_audio(&renamed.plan, &score_dir, &mut renamed.dependencies).unwrap();
         let mut renamed_staged = StagedResources::new(&root);
         let rebuilt = build(
             &mut renamed,
@@ -4948,6 +5049,7 @@ mod tests {
         std::fs::write(score_dir.join("audio/rain.wav"), changed_wav).unwrap();
         let mut third = production_document(&yaml);
         third.path = score_path.clone();
+        validate_audio(&third.plan, &score_dir, &mut third.dependencies).unwrap();
         let mut replaced = StagedResources::new(&root);
         let rebuilt = build(
             &mut third,
@@ -4977,6 +5079,7 @@ mod tests {
 
         let mut validated = production_document(&yaml);
         validated.path = score_path;
+        validate_audio(&validated.plan, &score_dir, &mut validated.dependencies).unwrap();
         let mut dry = StagedResources::new(&root);
         build(&mut validated, None, &store, &mut dry, BuildMode::Validate)
             .expect("audio validation");
@@ -5108,6 +5211,55 @@ mod tests {
         );
         assert_eq!(changed.points[0].value, -5.0);
         assert!(!session.score_performance_equals(&rebuilt));
+        let multi_lane = yaml.replace(
+            r#""main":{"instrument":"bass","melody":"theme"}"#,
+            r#""main":{"instrument":"bass","melody":"theme"},"second":{"instrument":"bass","melody":"theme","gain_db":-6}"#,
+        ).replace(
+            r#","effects":[{"id":"duck","vst3":{"plugin":"Compressor"}}]"#, ""
+        ).replace(
+            r#""sidechain":[{"from":"drums","to":{"instrument":"bass","effect":"duck"},"level_db":0,"position":"post"}],"#, ""
+        ).replace(
+            r#",
+                {"target":{"sidechain":{"from":"drums","to":{"instrument":"bass","effect":"duck"}}},"section":"verse","points":[{"at":{"bar":1,"step":1},"value":-4}]}"#, ""
+        );
+        let mut multi_document = production_document(&multi_lane);
+        let multi_session = build(
+            &mut multi_document,
+            None,
+            &store,
+            &mut staged,
+            BuildMode::Stage,
+        )
+        .expect("multi-lane send automation build");
+        let bass_ids = multi_session
+            .arrangement
+            .tracks
+            .iter()
+            .filter(|track| track.score_instrument.as_deref() == Some("bass"))
+            .map(|track| &track.id)
+            .collect::<Vec<_>>();
+        assert_eq!(bass_ids.len(), 2);
+        let sends = multi_session
+            .arrangement
+            .mixer
+            .sends
+            .iter()
+            .filter(|send| bass_ids.contains(&&send.track_id))
+            .collect::<Vec<_>>();
+        assert_eq!(sends.len(), 2);
+        for send in sends {
+            assert!(
+                multi_session
+                    .arrangement
+                    .automation_lanes
+                    .iter()
+                    .any(|lane| lane.target
+                        == AutomationTarget::SendLevel {
+                            send_id: send.id.clone()
+                        }
+                        && lane.points[0].value == -20.0)
+            );
+        }
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -5164,14 +5316,14 @@ mod tests {
         let mut resolved = BTreeMap::new();
         resolved.insert(
             0,
-            ResolvedAutomation {
+            ScoreAutomationResolution {
                 parameter_id: "bass-cutoff".into(),
                 values: vec![0.1],
             },
         );
         resolved.insert(
             1,
-            ResolvedAutomation {
+            ScoreAutomationResolution {
                 parameter_id: "duck-mix".into(),
                 values: vec![0.2, 0.8],
             },
@@ -5544,7 +5696,13 @@ mod tests {
             .as_mut()
             .unwrap()
             .production_inputs
-            .insert("instruments.lead.source".into(), "new-input".into());
+            .insert(
+                "instruments.lead.source".into(),
+                ScoreProductionInput {
+                    fingerprint: "new-input".into(),
+                    automation: Vec::new(),
+                },
+            );
         let outcome = ScoreOutcome {
             session: inputs,
             yaml_changed: false,
@@ -5565,7 +5723,7 @@ mod tests {
                 .unwrap()
                 .production_inputs
                 .get("instruments.lead.source")
-                .map(String::as_str),
+                .map(|input| input.fingerprint.as_str()),
             Some("new-input")
         );
         assert_eq!(candidate.arrangement.revision, session.arrangement.revision);

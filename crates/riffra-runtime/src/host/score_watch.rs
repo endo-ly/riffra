@@ -110,8 +110,8 @@ fn run(shared: &std::sync::Weak<HostState>, worker: &WatcherState) {
             pending = None;
             failed = None;
             let current = state.score_sync_status();
-            if !accepted_sync_matches(&current, &canonical.project_id, &path, canonical.sequence) {
-                state.set_score_sync(super::state::synced_score_sync(&canonical, Vec::new()));
+            if let Some(updated) = accepted_sync_status(current, &canonical, &path) {
+                state.set_score_sync(updated);
             }
             continue;
         }
@@ -181,16 +181,23 @@ fn run(shared: &std::sync::Weak<HostState>, worker: &WatcherState) {
     }
 }
 
-fn accepted_sync_matches(
-    current: &ScoreSyncStatus,
-    project_id: &str,
+fn accepted_sync_status(
+    current: ScoreSyncStatus,
+    canonical: &riffra_core::CanonicalState,
     path: &Path,
-    sequence: u64,
-) -> bool {
-    current.state == ScoreSyncState::Synced
-        && current.project_id.as_deref() == Some(project_id)
-        && current.path.as_deref() == path.to_str()
-        && current.sequence == Some(sequence)
+) -> Option<ScoreSyncStatus> {
+    let same_link = current.state == ScoreSyncState::Synced
+        && current.project_id.as_deref() == Some(&canonical.project_id)
+        && current.path.as_deref() == path.to_str();
+    if same_link && current.sequence == Some(canonical.sequence) {
+        return None;
+    }
+    let diagnostics = if same_link {
+        current.diagnostics
+    } else {
+        Vec::new()
+    };
+    Some(super::state::synced_score_sync(canonical, diagnostics))
 }
 
 fn linked_score(state: &HostState) -> Option<(riffra_core::CanonicalState, PathBuf, String)> {
@@ -253,30 +260,39 @@ mod tests {
             detail: None,
         };
         let current = synced(vec![warning.clone()]);
-
-        assert!(accepted_sync_matches(
-            &current,
-            "project",
-            Path::new("score.yaml"),
-            7
-        ));
-        assert!(!accepted_sync_matches(
-            &current,
-            "other-project",
-            Path::new("score.yaml"),
-            7
-        ));
-        assert!(!accepted_sync_matches(
-            &current,
-            "project",
-            Path::new("other.yaml"),
-            7
-        ));
-        assert!(!accepted_sync_matches(
-            &current,
-            "project",
-            Path::new("score.yaml"),
-            8
-        ));
+        let mut session = riffra_core::CreativeSession::new(1);
+        session.score_source = Some(riffra_core::ScoreSource {
+            file_name: "score.yaml".into(),
+            yaml: "score".into(),
+            path: Some("score.yaml".into()),
+            bindings: Default::default(),
+            production_inputs: Default::default(),
+        });
+        session
+            .arrangement
+            .tracks
+            .push(riffra_core::Track::instrument(
+                "track".into(),
+                "track".into(),
+            ));
+        let mut canonical =
+            riffra_core::AppCore::new("project".into(), session, 7).canonical_state();
+        assert!(
+            accepted_sync_status(current.clone(), &canonical, Path::new("score.yaml")).is_none()
+        );
+        canonical.session.arrangement.tracks[0].muted = true;
+        canonical.session.arrangement.tracks[0].solo = true;
+        canonical.sequence = 8;
+        let updated =
+            accepted_sync_status(current.clone(), &canonical, Path::new("score.yaml")).unwrap();
+        assert_eq!(updated.sequence, Some(8));
+        assert_eq!(updated.diagnostics, vec![warning]);
+        canonical.project_id = "other-project".into();
+        assert!(
+            accepted_sync_status(current, &canonical, Path::new("score.yaml"))
+                .unwrap()
+                .diagnostics
+                .is_empty()
+        );
     }
 }

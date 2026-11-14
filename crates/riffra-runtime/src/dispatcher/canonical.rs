@@ -1142,7 +1142,6 @@ mod tests {
                     tick: TimelineTick(20),
                     value: 0.5,
                 }],
-                score_target: None,
             },
             AutomationLane {
                 id: "master".into(),
@@ -1153,7 +1152,6 @@ mod tests {
                     tick: TimelineTick(0),
                     value: -6.0,
                 }],
-                score_target: None,
             },
             AutomationLane {
                 id: "sidechain".into(),
@@ -1166,7 +1164,6 @@ mod tests {
                     tick: TimelineTick(0),
                     value: 0.0,
                 }],
-                score_target: None,
             },
         ];
 

@@ -1921,7 +1921,6 @@ pub(super) mod tests {
                         tick: TimelineTick(0),
                         value,
                     }],
-                    score_target: None,
                 });
         };
         use riffra_core::{AutomationTarget, BusMixParameter, TrackMixParameter};
@@ -2456,7 +2455,6 @@ pub(super) mod tests {
                     tick: TimelineTick(120),
                     value: -9.0,
                 }],
-                score_target: None,
             });
         let catalog = empty_catalog();
         let plan = build_render_plan(

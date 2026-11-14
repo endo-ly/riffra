@@ -6,8 +6,4 @@ import type { AutomationTarget } from "./AutomationTarget";
 /**
  * Timeline control data for one canonical parameter.
  */
-export type AutomationLane = { id: string, target: AutomationTarget, interpolation: AutomationInterpolation, points: Array<AutomationPoint>, 
-/**
- * Stable Score target that produced this lane, when the lane is Score-owned.
- */
-scoreTarget?: string, };
+export type AutomationLane = { id: string, target: AutomationTarget, interpolation: AutomationInterpolation, points: Array<AutomationPoint>, };
