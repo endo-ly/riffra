@@ -1009,7 +1009,7 @@ pub(crate) fn import(
         changed: true,
         link_changed: true,
         inputs_changed: true,
-        diagnostics: warnings(&document.plan),
+        diagnostics: warnings(&document.plan, catalog),
         dependencies: std::mem::take(&mut document.dependencies),
         staged,
     })
@@ -1107,7 +1107,7 @@ fn rebuild_with_probe(
         &mut staged,
         BuildMode::Stage,
     )?;
-    let diagnostics = warnings(&document.plan);
+    let diagnostics = warnings(&document.plan, catalog);
     let dependencies = std::mem::take(&mut document.dependencies);
     let yaml_changed = previous
         .score_source
@@ -1180,7 +1180,7 @@ pub(crate) fn validate(
     ) {
         Ok(_) => ScoreValidation {
             valid: true,
-            diagnostics: warnings(&document.plan),
+            diagnostics: warnings(&document.plan, catalog),
             summary: Some(summary(&document.plan)),
         },
         Err(error) => ScoreValidation {
@@ -1443,7 +1443,7 @@ pub(crate) fn inspect(
         effects: effect_inspections,
         automation,
         summary: summary(plan),
-        diagnostics: warnings(plan),
+        diagnostics: warnings(plan, catalog),
         buses,
         sends,
         sidechains,
@@ -1766,8 +1766,9 @@ fn diagnostic(error: &ImportError) -> ScoreDiagnostic {
     }
 }
 
-fn warnings(plan: &ScorePlan) -> Vec<ScoreDiagnostic> {
-    plan.production_sources
+fn warnings(plan: &ScorePlan, catalog: &BuiltInInstrumentCatalog) -> Vec<ScoreDiagnostic> {
+    let mut diagnostics = plan
+        .production_sources
         .keys()
         .filter(|id| plan.lanes.iter().filter(|lane| &lane.id == *id).count() > 1)
         .map(|id| {
@@ -1782,6 +1783,57 @@ fn warnings(plan: &ScorePlan) -> Vec<ScoreDiagnostic> {
                 message,
                 detail: Some(detail),
             }
+        })
+        .collect::<Vec<_>>();
+    diagnostics.extend(recommended_range_warnings(plan, catalog));
+    diagnostics
+}
+
+fn recommended_range_warnings(
+    plan: &ScorePlan,
+    catalog: &BuiltInInstrumentCatalog,
+) -> Vec<ScoreDiagnostic> {
+    plan.instruments
+        .iter()
+        .filter(|(id, _)| {
+            !plan.kit_members.contains_key(*id) && !plan.audio_instruments.contains(*id)
+        })
+        .filter_map(|(id, spec)| {
+            let preset = spec.get("preset").and_then(Value::as_str)?;
+            let definition = catalog.resolve(&preset_id(preset)).ok()?;
+            let range = &definition.summary.recommended_range;
+            let notes = plan
+                .lanes
+                .iter()
+                .filter(|lane| lane.id == *id)
+                .flat_map(|lane| &lane.pattern.events)
+                .filter_map(|event| match event {
+                    MusicalEvent::Note { note, .. } => Some(*note),
+                    _ => None,
+                })
+                .filter(|note| *note < range.min_midi || *note > range.max_midi)
+                .collect::<Vec<_>>();
+            if notes.is_empty() {
+                return None;
+            }
+            let lowest = notes.iter().copied().min().expect("notes are not empty");
+            let highest = notes.iter().copied().max().expect("notes are not empty");
+            let path = format!("instruments.{id}.preset");
+            let message = format!(
+                "{} notes outside the recommended MIDI range {}..={} (lowest {lowest}, highest {highest})",
+                notes.len(),
+                range.min_midi,
+                range.max_midi
+            );
+            let detail = plan.source_detail(&path, &message);
+            Some(ScoreDiagnostic {
+                severity: ScoreDiagnosticSeverity::Warning,
+                path,
+                line: detail["line"].as_u64().unwrap_or(0) as usize,
+                column: detail["column"].as_u64().unwrap_or(0) as usize,
+                message,
+                detail: Some(detail),
+            })
         })
         .collect()
 }
@@ -4352,6 +4404,71 @@ mod tests {
         assert!(!inspection.automation.is_empty());
         assert!(!root.join("assets").exists());
         assert!(!root.join("instruments").exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn recommended_ranges_warn_once_per_built_in_instrument_and_skip_kit_members() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-score-range-{}",
+            riffra_control::new_instance_id()
+        ));
+        std::fs::create_dir_all(root.join("resources")).unwrap();
+        std::fs::write(root.join("definition.json"), "{}").unwrap();
+        std::fs::write(
+            root.join("manifest.json"),
+            serde_json::json!({
+                "sourceRelease": "vtest",
+                "presets": [{
+                    "id": "BASS-001",
+                    "name": "Bass",
+                    "author": "Riffra",
+                    "category": "Bass",
+                    "tags": ["test"],
+                    "recommendedRange": {"minMidi": 60, "maxMidi": 72},
+                    "preview": {
+                        "tempoBpm": 120.0,
+                        "ticksPerBeat": 480,
+                        "timeSignature": {"numerator": 4, "denominator": 4},
+                        "lengthTicks": 1920,
+                        "notes": [{"tick": 0, "durationTicks": 480, "note": 60, "velocity": 100}]
+                    },
+                    "definitionPath": "definition.json",
+                    "resourceBasePath": "resources"
+                }]
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let catalog = BuiltInInstrumentCatalog::load(&root).unwrap();
+        let plan = score::compile(
+            r#"{
+                "meta":{"title":"Range","bpm":120,"meter":"4/4","tuning":"12edo","reference_octave":4,"gate":1},
+                "form":[{"section":"phrase","bars":2,"tonic":"C","scale":"ionian"}],
+                "sections":{"phrase":{
+                    "placements":[
+                        {"instrument":"bass","degree":"1,","at":{"bar":1,"step":1},"duration_steps":1},
+                        {"instrument":"bass","degree":"1''","at":{"bar":2,"step":1},"duration_steps":1}
+                    ],
+                    "events":[{"kind":"hit","instrument":"kick","at":{"bar":1,"step":1}}]
+                }},
+                "instruments":{
+                    "bass":{"preset":"BASS/001-test"},
+                    "kick":{"kit":"drums","trigger_note_midi":30}
+                },
+                "kits":{"drums":{"source":{"vst3":{"plugin":"Drums"}}}}
+            }"#,
+        )
+        .unwrap();
+
+        let warnings = recommended_range_warnings(&plan, &catalog);
+
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].path, "instruments.bass.preset");
+        assert!(warnings[0].message.contains("2 notes outside"));
+        assert!(warnings[0].message.contains("60..=72"));
+        assert!(warnings[0].message.contains("lowest 48"));
+        assert!(warnings[0].message.contains("highest 84"));
         std::fs::remove_dir_all(root).unwrap();
     }
 
