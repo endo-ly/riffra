@@ -258,7 +258,29 @@
                 "data2": 64
               }
             ],
-            "instrumentControlEvents": []
+            "instrumentControlEvents": [
+              {
+                "id": "control-keyswitch",
+                "tick": 0,
+                "sourceOrder": 0,
+                "kind": {
+                  "type": "keySwitch",
+                  "note": 26,
+                  "mode": "latch",
+                  "down": true
+                }
+              },
+              {
+                "id": "control-cc",
+                "tick": 0,
+                "sourceOrder": 1,
+                "kind": {
+                  "type": "controlChange",
+                  "number": 11,
+                  "value": 96
+                }
+              }
+            ]
           }
         ]
       }
