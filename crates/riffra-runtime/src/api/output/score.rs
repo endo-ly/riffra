@@ -122,12 +122,6 @@ pub struct ScoreInstrumentInspection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub kit: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub library_range: Option<(u8, u8)>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub library_notes: Option<String>,
 }
 
 /// Execution source used by a Score instrument.

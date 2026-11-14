@@ -15,7 +15,7 @@ riffra project import-score ./song.score.yaml --bind lead=./lead/definition.json
 ```
 
 `--bind` は `external: true` の楽器へ Definition を結び付ける。繰り返し指定でき、指定できるのは外部楽器だけである。Definition の相対パスは Score ファイルのディレクトリを基準に解決する。
-プリセットは Score の上位ディレクトリにある `presets/CATEGORY/NNN-name/definition.json` を参照し、参照元がない場合は同梱カタログの対応する ID を利用する。
+プリセットは Riffra に同梱されたカタログの対応する ID を利用する。
 
 リンクは `ScoreSource` が保持する。絶対パス、楽器 ID ごとの Definition パス、最後に成功して確定された YAML 本文である。リンク先の YAML をプロジェクトフォルダへ移すことはしない。パスやハッシュを Project ID の代わりには使わない。
 ファイル名だけの `file_name` は、リンクが切れた後も表示に使う。
@@ -36,7 +36,7 @@ riffra project rebuild-score --bind lead=./lead/definition.json
 - 必要な Definition が未指定なら、`scoreBindingsRequired` として不足する楽器 ID を返す
 
 本文と演奏内容が同じでも、リンク先または外部音源のバインディングが変われば確定して保存する。演奏内容・本文・リンク先・バインディングのすべてが同じなら、保存も sequence の更新もしない。
-Score 本文が同じでも、参照している library・State・Definition・WAV の内容が変われば解決結果を比較し、実行状態が変わったときだけ確定する。読み込み中に Score 本体または参照ファイルが書き換わった場合は、その候補を適用しない。
+Score 本文が同じでも、参照している State・Definition・WAV の内容が変われば解決結果を比較し、実行状態が変わったときだけ確定する。読み込み中に Score 本体または参照ファイルが書き換わった場合は、その候補を適用しない。
 
 Live Host では開いている Project の YAML を監視する。保存した内容が 500 ms 安定すると再構築し、結果を `score-sync-status-changed` で通知する。監視はリンクされた 1 ファイルだけで、保存した内容が確定済みの本文と同じなら何もしない。エディタの一時ファイルや途中の書き込みでは前回の Session を維持する。恒久的な誤りは一度だけ診断として報告し、内容が変わるまで同じ診断を繰り返さない。
 
@@ -94,8 +94,8 @@ instruments:
     gain_db: -4
     pan: 0
     source:
-      use: modo-bass-60s-p-bass
       vst3:
+        plugin: MODO BASS 2
         state: states/song-bass.json
         patch:
           - op: setXml
@@ -107,7 +107,7 @@ instruments:
       velocity: [[1, 18], [64, 68], [127, 120]]
 ```
 
-`source` の有効フィールドは `use`、`vst3`、`velocity`。`vst3` は `plugin`（`use` がない場合は必須）、`identifier`、`state`、`patch`、`params` を持つ。
+`source` の有効フィールドは `vst3` と `velocity`。`vst3` は必須の `plugin` と、任意の `identifier`、`state`、`patch`、`params` を持つ。
 
 - `plugin` は検証済み VST3 カタログ上の正確なプラグイン名。`identifier` は同じ VST3 クラスへ絞り込む
 - `state` は `PluginStateSnapshot` 形式の JSON。`schemaVersion: 2`、`pluginIdentifier`、`pluginPath`、`parameterValues`、`stateData` を持つ。識別は `pluginIdentifier` で行い、`pluginPath` は取得時の実行パスとして扱う。現在のカタログで同じ識別子のプラグインを選び、その実行パスを使う
@@ -129,9 +129,9 @@ instruments:
   hat: { preset: DRUM/019-needle-closed-hat, kit: drums, trigger_note_midi: 42 }
 kits:
   drums:
-    source: { use: addictive-drums-2 }
+    source: { vst3: { plugin: Addictive Drums 2 } }
     effects:
-      - { id: drum-eq, use: surge-eq }
+      - { id: drum-eq, vst3: { plugin: Surge XT Effects } }
 ```
 
 `kits.<id>` の有効フィールドは `source` と `effects`。`source` は VST3 音源を要求する。各部品の `kit` は存在するキットを参照し、部品側には `source`、`effects`、`audio`、`audio_input` を書けない。キットと楽器の ID は衝突せず、メンバーを持たないキットとキットによるキットの参照はエラーになる。
@@ -146,7 +146,7 @@ kits:
 instruments:
   bass:
     effects:
-      - { id: eq, use: surge-eq }
+      - { id: eq, vst3: { plugin: Surge XT Effects } }
       - id: duck
         vst3:
           plugin: Example Compressor
@@ -154,7 +154,7 @@ instruments:
         bypassed: false
 ```
 
-`effects[]` は `id`（全要素で必須）、`use`、`vst3`、`bypassed`（既定 false）からなる。`use` は `library/effects` のテンプレートを参照し、そこにある `vst3` / `bypassed` と曲側の値を統合する。統合後に 1 つの VST3 として確定する。
+`effects[]` は必須の `id` と `vst3`、任意の `bypassed`（既定 false）からなる。
 `id` はそのチェイン内で一意である。Instrument Track・Audio Track・Kit Track・Bus・Master に付けられる。
 
 `bypassed` は Score 所有の設定であり、GUI の作業状態として残さない。複数のゲインレーンを持つ楽器のエフェクトは所有者が一意にならないためエラーになる。
@@ -178,7 +178,7 @@ mix:
     rhythm: { kind: group, gain_db: -2, pan: 0 }
     room:
       kind: return
-      effects: [{ id: reverb, use: room-plate }]
+      effects: [{ id: reverb, vst3: { plugin: Example Reverb } }]
   sidechain:
     - from: drums
       to: { instrument: bass, effect: duck }
@@ -186,7 +186,7 @@ mix:
       position: post
   master:
     gain_db: -1
-    effects: [{ id: limiter, use: limiter }]
+    effects: [{ id: limiter, vst3: { plugin: Example Limiter } }]
 ```
 
 `mix.tracks` のキーは通常楽器 ID、Audio Track の楽器 ID、または Kit ID。通常楽器と Audio Track の基本 `gain_db` / `pan` は `instruments` 側が正本であり、`mix.tracks` での再指定はエラーになる。キット全体の `gain_db` / `pan` は `mix.tracks.<kit>` に置く。
@@ -245,7 +245,7 @@ instruments:
     gain_db: -5
     pan: 0
     effects:
-      - { id: filter, use: surge-filter }
+      - { id: filter, vst3: { plugin: Surge XT Effects } }
 sections:
   intro:
     audio_clips:
@@ -270,35 +270,7 @@ sections:
 - 取り込んだ音声は Data Root の Asset として不変に保存する。同じ内容の Asset は再利用し、内容が変わったときだけ新しい Asset を作る
 - 音楽的な配置やゲインだけを変えた場合は、AudioClip ID と Asset ID を維持する
 
-### ライブラリ
-
-```yaml
-# library/instruments/modo-bass-60s-p-bass.yaml
-source:
-  vst3:
-    plugin: MODO BASS 2
-    state: ../states/modo-bass-60s-p-bass.json
-range: [28, 72]
-notes: Fingered electric bass, measured settings and caveats
-```
-
-```yaml
-# library/effects/surge-eq.yaml
-vst3:
-  plugin: Surge XT Effects
-  state: ../states/surge-eq.json
-bypassed: false
-```
-
-`source: {use: name}` は `<library-root>/instruments/<name>.yaml`、`effects: [{id: foo, use: name}]` は `<library-root>/effects/<name>.yaml` を参照する。`library-root` は Score ファイルのディレクトリから上位へ探索し、最初に見つかった `library/` を使う。見つかった `library/` に該当名がなければ、さらに上位へ名前ごとの探索を続けない。
-
-- `use` に任意パス、`..`、絶対パス、拡張子を書くことはできない。名前は `[a-z0-9][a-z0-9-]*` に限る
-- 相対パスは、その値を記述した YAML ファイルを基準に解決する
-- ライブラリの `source` を基本値とし、曲側の `source` で上書きする。マップはキー単位で統合し、スカラーは曲側を優先する。配列は置換し、`vst3.patch` だけはライブラリの操作列の後ろへ曲側の操作を連結する。`params` はキーごとに統合する
-- 曲側で `vst3.state` を置換した場合は、以前の State を前提とするライブラリの `patch` を破棄し、曲側の `patch` だけを適用する
-- ライブラリと曲側で `plugin` / `identifier` が異なる混在状態は作らない。別プラグインへ変える場合は、曲側で完結した `vst3` 設定を書くか、別テンプレートを使う
-- 再帰的な `use` は実装しない。ライブラリの音源・エフェクトは 1 つの完結したテンプレートとする
-- `range` と `notes` はライブラリのメタデータであり、Score の `source` へ文字列として統合しない。現時点では値の妥当性と `score inspect` での表示に使う
+State と WAV は Score のある曲フォルダ内に置き、Score から相対パスで指定する。上位ディレクトリへの参照やシンボリックリンクによる曲フォルダ外への参照は使えない。
 
 ## 展開前の検証
 
@@ -309,10 +281,10 @@ riffra score validate ./song.yaml
 riffra score inspect ./song.yaml
 ```
 
-`score validate` は文法・構造・楽器参照・ライブラリ・VST3・State・Patch・パラメーター・キット・音声・ミックス・オートメーションを診断し、`valid` と展開サマリーを返す。`valid` は error が 0 件のときに true となり、warning だけでは import / rebuild を止めない。
+`score validate` は文法・構造・楽器参照・VST3・State・Patch・パラメーター・キット・音声・ミックス・オートメーションを診断し、`valid` と展開サマリーを返す。`valid` は error が 0 件のときに true となり、warning だけでは import / rebuild を止めない。
 `score inspect` は展開済みのセクション・楽器・レーン・トラック・キット・エフェクト・バス・Send・Sidechain・オートメーション・音声クリップを返す。`--events` を指定すると、各イベントを来源位置つきで返す。
 
-どちらも Project・Session・音源スナップショット・永続 Audio Asset を作らない。参照ファイルの読み込みと、分離された plugin-scanner による一時的なパラメーター照会は行う。プラグイン未インストール、ライブラリ欠損、State の不正、音声範囲超過、ミックスの循環、オートメーションの不正はエラーになる。
+どちらも Project・Session・音源スナップショット・永続 Audio Asset を作らない。参照ファイルの読み込みと、分離された plugin-scanner による一時的なパラメーター照会は行う。プラグイン未インストール、State の不正、音声範囲超過、ミックスの循環、オートメーションの不正はエラーになる。
 診断は `error` / `warning` の severity、YAML の項目パス、行・列、根拠のファイルを持つ。通常 VST3 の楽器で追加ゲインレーンが増える場合は warning を出し、演奏は止めない。
 
 `session inspect` は既に確定した Session を調べる操作であり、役割が異なる。
@@ -369,7 +341,7 @@ Definition 本体と実際に参照するアセットだけを収集し、保存
 参照先にシンボリックリンクや読み込めないリソースがある場合はエラーにする。
 同じ Definition を使う複数のレーンはスナップショットを共有する。
 
-VST3 の State は Score の `state` と `library/states` のファイルから読み込み、選択したプラグインの実パスへ組み直す。AudioClip の WAV は Data Root の Asset として不変に保存し、元ファイルを後から編集・削除しても再生に影響しない。
+VST3 の State は Score の `state` で指定した曲フォルダ内のファイルから読み込み、選択したプラグインの実パスへ組み直す。AudioClip の WAV は Data Root の Asset として不変に保存し、元ファイルを後から編集・削除しても再生に影響しない。
 
 再構築で音源・エフェクト・Asset を再利用するかは「同一性と再利用」の規則で決める。プラグインの入力と選択されたカタログ情報が一致し、Device の状態も前回 Score から生成した状態と一致する場合、その Device と Score の宣言ごとに解決したオートメーション値を再利用する。
 

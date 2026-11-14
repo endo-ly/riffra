@@ -24,33 +24,31 @@ Score YAML を、曲を打ち込む唯一の方法にする。設計担当と実
 
 ## 現状（2026-11-12 に確認）
 
-| 項目           | 状態                                                                                                                                                                                                                                   |
-| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 読み込み       | CLI `riffra project import-score`、MCP `project` の `import_score`。8小節の試し書きで、構成・和声・食い・端数小節・リタルダンド・マスターの目標値まで正しく展開された                                                                  |
-| 読み直し       | CLI `riffra project rebuild-score`、MCP `project` の `rebuild_score`。同じ Project をリンク先の YAML で更新し、Project ID・Session ID・変更のないトラックの Device ID を維持する。Live Host は保存を検知して自動で更新する             |
-| 事前検証       | CLI `riffra score validate` / `riffra score inspect`、MCP `score` の `validate` / `inspect`。Project を作らず、音源スナップショットも増やさない                                                                                        |
-| 案内           | MCP の説明文、`riffra-headless` スキル、Riffra `docs/score-yaml.md` に書いた                                                                                                                                                           |
-| 楽器           | 内蔵音源の `preset` / `definition` / `external` と、Riffra の VST3 `source`・`effects`・`kit`・`audio`・`audio_clips`・`mix`。Riffra はライブラリとカタログから解決して正準状態を生成し、Sonalloy は拡張を無視して内蔵音源だけを鳴らす |
-| トラック       | 演奏レーンごとにトラックと音源インスタンスができる。`gain_db` が違う演奏も別トラックになる。キットは部品を 1 トラック・1 インスタンスへ集約し、音声は Audio Track と AudioClip になる                                                  |
-| 出どころの情報 | 展開時、各イベントに YAML のパス・トークン位置・行列・セクション・何回目の出現かが計算される（`EventSource`）。`score inspect` はこれを返すが、音符には残さない                                                                        |
-| 元の YAML      | `ScoreSource` に最後に確定した全文・絶対パス・外部楽器の Definition パスが保存される。編集の正本はファイルであり、Project 内の本文は確定済みの控えである                                                                               |
-| 解析コード     | Riffra `crates/riffra-runtime/src/score/` と Sonalloy `crates/sonalloy-cli/src/score/` に同じコードがある                                                                                                                              |
+| 項目           | 状態                                                                                                                                                                                                                                  |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 読み込み       | CLI `riffra project import-score`、MCP `project` の `import_score`。8小節の試し書きで、構成・和声・食い・端数小節・リタルダンド・マスターの目標値まで正しく展開された                                                                 |
+| 読み直し       | CLI `riffra project rebuild-score`、MCP `project` の `rebuild_score`。同じ Project をリンク先の YAML で更新し、Project ID・Session ID・変更のないトラックの Device ID を維持する。Live Host は保存を検知して自動で更新する            |
+| 事前検証       | CLI `riffra score validate` / `riffra score inspect`、MCP `score` の `validate` / `inspect`。Project を作らず、音源スナップショットも増やさない                                                                                       |
+| 案内           | MCP の説明文、`riffra-headless` スキル、Riffra `docs/score-yaml.md` に書いた                                                                                                                                                          |
+| 楽器           | 内蔵音源の `preset` / `definition` / `external` と、Riffra の VST3 `source`・`effects`・`kit`・`audio`・`audio_clips`・`mix`。Riffra は Score の直接指定とカタログから正準状態を生成し、Sonalloy は拡張を無視して内蔵音源だけを鳴らす |
+| トラック       | 演奏レーンごとにトラックと音源インスタンスができる。`gain_db` が違う演奏も別トラックになる。キットは部品を 1 トラック・1 インスタンスへ集約し、音声は Audio Track と AudioClip になる                                                 |
+| 出どころの情報 | 展開時、各イベントに YAML のパス・トークン位置・行列・セクション・何回目の出現かが計算される（`EventSource`）。`score inspect` はこれを返すが、音符には残さない                                                                       |
+| 元の YAML      | `ScoreSource` に最後に確定した全文・絶対パス・外部楽器の Definition パスが保存される。編集の正本はファイルであり、Project 内の本文は確定済みの控えである                                                                              |
+| 解析コード     | Riffra `crates/riffra-runtime/src/score/` と Sonalloy `crates/sonalloy-cli/src/score/` に同じコードがある                                                                                                                             |
 
 ## 関係するファイル
 
-| 役割                              | 場所                                                                                                                                             |
-| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Score YAML の仕様（文法の正本）   | Sonalloy `.agents/skills/create-instrument/references/score_spec.md`                                                                             |
-| Riffra での読み込みの説明         | Riffra `docs/score-yaml.md`                                                                                                                      |
-| 解析・展開                        | Riffra `crates/riffra-runtime/src/score/`、Sonalloy `crates/sonalloy-cli/src/score/`                                                             |
-| YAML からプロジェクトを作る処理   | Riffra `crates/riffra-runtime/src/score_yaml_import.rs`                                                                                          |
-| `ScoreSource`                     | Riffra `crates/riffra-core/src/domain/session/mod.rs`                                                                                            |
-| `EventSource`                     | Riffra `crates/riffra-runtime/src/score/mod.rs`                                                                                                  |
-| 読み込みのコマンド                | Riffra `apps/cli/src/args.rs`、`crates/riffra-runtime/src/dispatcher/project.rs`                                                                 |
-| MCP ツールの定義と説明文          | Riffra `apps/mcp/src/tools.rs`                                                                                                                   |
-| スキル                            | Riffra `agents/skills/riffra-headless/`、`agents/skills/composition/`                                                                            |
-| VST3 ごとの鳴らし方               | creation `docs/modo.md`、`docs/pianoverse.md`、`docs/sampleTank4.md`、`docs/amplitube.md`、`docs/ample-lite-articulations.md`、`docs/voisona.md` |
-| VST3 の状態を作るスクリプトと台帳 | creation `tools/modo/`、`tools/pianoverse/`、`tools/sampletank/catalog.csv`、`tools/amplitube/gear.json`、`tools/voisona/voisona_state.py`       |
+| 役割                            | 場所                                                                                 |
+| ------------------------------- | ------------------------------------------------------------------------------------ |
+| Score YAML の仕様（文法の正本） | Sonalloy `.agents/skills/create-instrument/references/score_spec.md`                 |
+| Riffra での読み込みの説明       | Riffra `docs/score-yaml.md`                                                          |
+| 解析・展開                      | Riffra `crates/riffra-runtime/src/score/`、Sonalloy `crates/sonalloy-cli/src/score/` |
+| YAML からプロジェクトを作る処理 | Riffra `crates/riffra-runtime/src/score_yaml_import.rs`                              |
+| `ScoreSource`                   | Riffra `crates/riffra-core/src/domain/session/mod.rs`                                |
+| `EventSource`                   | Riffra `crates/riffra-runtime/src/score/mod.rs`                                      |
+| 読み込みのコマンド              | Riffra `apps/cli/src/args.rs`、`crates/riffra-runtime/src/dispatcher/project.rs`     |
+| MCP ツールの定義と説明文        | Riffra `apps/mcp/src/tools.rs`                                                       |
+| スキル                          | Riffra `agents/skills/riffra-headless/`、`agents/skills/composition/`                |
 
 ---
 
@@ -74,7 +72,7 @@ Score YAML を、曲を打ち込む唯一の方法にする。設計担当と実
 | ドラムキット         | `kits` に音源を1つ書き、部品の楽器から `kit` で参照する。キットは1つのトラックになり、属する楽器は自分の `source` と `effects` を持てない。部品の `gain_db` と `pan` は内蔵音源で鳴らすときだけ効き、キットの中の音量差はプラグインの状態で付ける。Sonalloy は `kit` を無視し、各部品が自分の内蔵音源で鳴る | AD2 と MODO DRUM は1つのインスタンスで全部品を鳴らす。部品ごとに別インスタンスにすると、重いうえにルームやブリードが成り立たない                                                                                                       |
 | 演奏ごとの `gain_db` | 今と同じく別トラック・別インスタンスにする。`source` を持つ楽器でこれが起きたら、検証で警告する                                                                                                                                                                                                             | 重なって鳴る演奏の音量を別々に付けるには、トラックを分けるしかない。演奏ごとの `gain_db` は実装担当が付けるので、重い音源で増えたときに自分で判断できる                                                                                |
 | ベロシティの補正     | 折れ線の対応 `velocity: [[入力, 出力], ...]` だけにする。入力は 1〜127 を覆い、出力も 1〜127 に収める                                                                                                                                                                                                       | 折れ線ならオフセットも曲線も表せ、範囲外が構造上起きない                                                                                                                                                                               |
-| ライブラリの参照     | 音源・エフェクトの定義は Riffra が管理する素材として参照し、Project は使用した内容を保持する。                                                                                                                                                                                                              | Creation の配置に依存せず、Project を持ち出して再構築できるようにする                                                                                                                                                                  |
+| ライブラリの参照     | 音源・エフェクトは Score に直接指定し、State と WAV は曲フォルダに置く。                                                                                                                                                                                                                                    | 再構築は曲フォルダを明示して行う                                                                                                                                                                                                       |
 | 録音と効果音         | `audio: true` の楽器を作り、セクションの `audio_clips` に音声ファイルを置く。音声ファイルは曲のフォルダの `audio/` に置く。Sonalloy はこの楽器とクリップを無視する                                                                                                                                          | YAML を完全な正本にするには、録音や効果音も YAML で表せる必要がある                                                                                                                                                                    |
 
 書き方の案:
@@ -117,7 +115,7 @@ sections:
 | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 奏法の書き方         | 名前付きの奏法は、区間のイベント `kind: articulation` で書く。トークンに付ける書き方は作らない                                                                                                                                                 | このPCの VST3 の奏法は、キースイッチや CC で状態を切り替える仕組みで、区間が実際の動きに合う。1音だけの奏法も1音ぶんの区間で書ける。トークンの書き方を足すと、`^ ! _` との組み合わせの規則が増える |
 | 奏法の名前           | 仕様で決めた語彙だけを使う。最初は今の音源が実際に持つ `mute`、`dead`、`slide`、`hammer`、`harmonic`。新しい奏法は仕様に足してから使う                                                                                                         | 自由な名前にすると `mute` と `palm_mute` のような揺れが出て、音源との対応が抜ける                                                                                                                  |
-| 音源との対応         | `source.articulations` とライブラリに、奏法名とキースイッチ・CC の対応を書く。`default` は区間の後に戻す奏法                                                                                                                                   | 対応は音源ごとに違うので、音源の側に書く                                                                                                                                                           |
+| 音源との対応         | `source.articulations` に、奏法名とキースイッチ・CC の対応を書く。`default` は区間の後に戻す奏法                                                                                                                                               | 対応は音源ごとに違うので、音源の側に書く                                                                                                                                                           |
 | キースイッチの出し方 | 区間の開始の 1/32 拍前にキースイッチのノートを出し、区間の終わりまで押し続ける。終わったら `default` を同じように出す。CC の奏法は、区間の始まりで値を送り、終わりで `default` に戻す。対応のない奏法名は Riffra ではエラー、Sonalloy では無視 | MODO には、押している間だけ効くキースイッチと、押すと切り替わるキースイッチがある。少し前から終わりまで押し続ければ、どちらでも効く。終わりに既定へ戻せば、状態が後ろへ漏れない                    |
 | CC                   | 点は `{kind: cc, instrument, number, value}`（0〜127）。変化は既存の `automation` で `control: "cc:<番号>"` と書く                                                                                                                             | 奏法の一部やエクスプレッションは CC でしか届かない。既存の `automation` を広げれば、新しい書き方を覚えなくてよい                                                                                   |
 
@@ -178,7 +176,7 @@ mix:
     bass: { output: rhythm, sends: { room: -18 } }
   buses:
     rhythm: { kind: group, gain_db: -2 }
-    room: { kind: return, effects: [{ use: room-plate }] }
+    room: { kind: return, effects: [{ id: reverb, vst3: { plugin: Example Reverb } }] }
   sidechain:
     - { from: drums, to: { instrument: bass, effect: duck }, level_db: 0 }
   automation:
@@ -255,25 +253,24 @@ mix:
 | 仮決定                     | 内容                                                                                                                                                                                                      | 理由                                                                             |
 | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
 | 検証のコマンド             | CLI `riffra score validate` / `riffra score inspect`、MCP の新しい `score` ツール。拡張の項目も確かめる（プラグインの有無、状態ファイルの有無、パラメーター名、奏法の対応、音域、知声の推奨音域とテンポ） | 拡張の項目は Sonalloy では確かめられない。読み込んで初めて誤りが分かるのでは遅い |
-| 音域                       | ライブラリの `range` と内蔵音源の `recommended_range` で確かめ、外れたら警告する。実装担当は直さず、設計へ差し戻す                                                                                        | 直し方が音楽の判断になる                                                         |
+| 音域                       | 内蔵音源の `recommended_range` で確かめ、外れたら警告する。実装担当は直さず、設計へ差し戻す                                                                                                               | 直し方が音楽の判断になる                                                         |
 | セクション単位の書き出し   | 書き出しの範囲に `{kind: section, name, occurrence}` を足す                                                                                                                                               | 直した箇所だけを聴き直すことが多い                                               |
 | セクションごとのラウドネス | YAML から作ったプロジェクトの書き出しでは、`form` の出現ごとのラウドネスを毎回測る                                                                                                                        | 実装担当が、セクション間の音量の起伏を数字で確かめられる                         |
 | セクションの意図           | `sections.<名前>.notes` に自然言語で書く（共通の項目、演奏に効かない）                                                                                                                                    | 発注の情報をセクションのすぐ近くに置ける                                         |
 
-### creation 側
+### 曲フォルダ
 
-| 仮決定           | 内容                                                                                                                            | 理由                                             |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
-| 素材の管理       | 曲をまたいで使う音源・エフェクトは Riffra が管理し、Project は使用する内容を保持する。                                          | 制作環境のディレクトリ構成に依存せず再利用できる |
-| 制作用スクリプト | 音源や歌声の状態を作る creation のスクリプトは、必要な曲の制作に使う。                                                          | 各曲で使った音源設定を確認できる                 |
-| 担当ごとの指示   | `score-workflow.md` の中に書き、別のファイルを作らない                                                                          | 2か所に書くと片方だけが古くなる                  |
-| 曲のフォルダ     | `music/<曲>/` に `score.yaml`、`sounds/`（自作の内蔵音源）、`states/`（この曲だけの状態）、`audio/`（録音・効果音）、`renders/` | 正本と書き出しの置き場を揃える                   |
+| 仮決定         | 内容                                                                                                                            | 理由                                             |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| 素材の管理     | 音源・エフェクトは Score に指定し、使用する State と音声素材は曲フォルダに置く。                                                | 制作環境のディレクトリ構成に依存せず再利用できる |
+| 担当ごとの指示 | `score-workflow.md` の中に書き、別のファイルを作らない                                                                          | 2か所に書くと片方だけが古くなる                  |
+| 曲のフォルダ   | `music/<曲>/` に `score.yaml`、`sounds/`（自作の内蔵音源）、`states/`（この曲だけの状態）、`audio/`（録音・効果音）、`renders/` | 正本と書き出しの置き場を揃える                   |
 
 ---
 
 ## 作業
 
-5つの段階で進める。各段階は、確かめ方の欄の曲を creation の `music/<曲>/` に実際に作って終える。段階に入るときに、その段階に関わる仮決定を見直す。
+各段階は、確かめ方の欄の曲で検証する。
 
 ### どの段階にも共通する作業
 
@@ -319,26 +316,25 @@ mix:
 | 2-6  | エフェクト                  | `effects` を、楽器・キット・バス・マスターのチェインとして作る。`id` で参照できるようにする                                                                                                                                                                                                | Riffra                                                          | Surge XT Effects のチェインが YAML だけで設定される                                                                         |
 | 2-7  | ミックス                    | `mix.tracks`（出力先・センド）、`mix.buses`（グループ・リターン）、`mix.sidechain` を作る                                                                                                                                                                                                  | Riffra                                                          | グループ、リターン、キットからベースへのサイドチェインが YAML だけで作れる                                                  |
 | 2-8  | オートメーション            | `mix.automation` のセクション・出現・小節の位置を、曲全体の位置に直してレーンを作る                                                                                                                                                                                                        | Riffra                                                          | 同じセクションの1回目と2回目に、別のオートメーションを付けられる                                                            |
-| 2-9  | 音源・エフェクトの参照      | Riffra 管理下の定義を Score から使い、Project が採用した内容を保持する。                                                                                                                                                                                                                   | Riffra                                                          | Creation がない環境でも Project を再構築できる                                                                              |
+| 2-9  | 音源・エフェクトの参照      | Score に VST3 と State を直接指定し、Project は生成した状態を保持する。                                                                                                                                                                                                                    | Riffra                                                          | 曲フォルダの入力から Project を再構築できる                                                                                 |
 | 2-10 | 音源・エフェクトの登録      | 音源やエフェクトの状態を Riffra の素材として登録し、検索・再利用できるようにする。                                                                                                                                                                                                         | Riffra                                                          | 登録した状態を曲から利用できる                                                                                              |
-| 2-11 | Project の持ち出し          | Score の再構築に必要な定義・状態・素材を Project とともに持ち出す。外部プラグインの依存は明示する。                                                                                                                                                                                        | Riffra                                                          | 別環境で依存を確認し、Project を再構築できる                                                                                |
+| 2-11 | Project の持ち出し          | Project の再生に必要な状態・素材を書き出す。Score の再構築には曲フォルダを明示する。                                                                                                                                                                                                       | Riffra                                                          | 別環境で依存を確認し、曲フォルダから再構築できる                                                                            |
 | 2-12 | 担当の分け方                | 担当の分け方の表を手順書に反映する                                                                                                                                                                                                                                                         | `score-workflow.md`                                             | —                                                                                                                           |
-| 2-13 | 曲のフォルダの形            | 曲のフォルダの形を creation の `AGENTS.md` に書く                                                                                                                                                                                                                                          | creation `AGENTS.md`                                            | —                                                                                                                           |
 
 確かめ方: VST3 のベース・ドラム・鍵盤とエフェクト・バスを使う曲を、設計担当と実装担当を分けて作る。同じ YAML を Sonalloy で開くと、内蔵音源で鳴ることも確かめる。
 
 ### 段階3: 奏法と仕上がりの確認をそろえる
 
 できるようになること: キースイッチ・CC の奏法を YAML に書ける。実装担当が仕上がりを数字で確かめられる。
-この位置にする理由: 段階2の音源とライブラリを土台にする。
+この位置にする理由: 音源とミックスの指定を土台にする。
 
 | 番号 | 作業                       | 具体的な内容                                                                                                                                                                    | 触るファイル                  | 終わりの条件                                                                                    |
 | ---- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- | ----------------------------------------------------------------------------------------------- |
 | 3-1  | 奏法のイベント             | `kind: articulation` を足す。語彙にない名前はエラー。区間の重なりはエラー                                                                                                       | 両方の `score/`               | —                                                                                               |
 | 3-2  | キースイッチと CC の出し方 | `source.articulations` の対応から、区間の 1/32 拍前にキースイッチのノートを出して区間の終わりまで押し続け、終わりに `default` を出す。CC の奏法は区間の始まりと終わりに値を送る | Riffra `score_yaml_import.rs` | MODO の押している間だけ効く奏法と、切り替え型の奏法が、どちらも区間どおりに効き、後ろへ漏れない |
 | 3-3  | CC のイベント              | `kind: cc` と、`automation` の `control: "cc:<番号>"` を足す                                                                                                                    | 両方の `score/`、Riffra       | —                                                                                               |
-| 3-4  | ライブラリの奏法           | Riffra が管理する音源に、MODO・Ample の奏法の対応を追加する。                                                                                                                   | Riffra                        | 曲で奏法を参照できる                                                                            |
-| 3-5  | 音域の警告                 | ライブラリの `range` と内蔵音源の `recommended_range` から外れた音を、検証で警告する                                                                                            | Riffra の検証                 | —                                                                                               |
+| 3-4  | 音源の奏法                 | Riffra が管理する音源に、MODO・Ample の奏法の対応を追加する。                                                                                                                   | Riffra                        | 曲で奏法を参照できる                                                                            |
+| 3-5  | 音域の警告                 | 内蔵音源の `recommended_range` から外れた音を、検証で警告する                                                                                                                   | Riffra の検証                 | —                                                                                               |
 | 3-6  | セクション単位の書き出し   | 書き出しの範囲に `{kind: section, name, occurrence}` を足す                                                                                                                     | Riffra の書き出し             | 「walk の2回目」だけを書き出せる                                                                |
 | 3-7  | セクションごとのラウドネス | YAML から作ったプロジェクトの書き出しで、`form` の出現ごとのラウドネスを結果に入れる                                                                                            | Riffra の書き出し             | 書き出しの結果に出現ごとの値が並ぶ                                                              |
 
@@ -356,9 +352,8 @@ mix:
 | 4-3  | VoiSona の状態の生成 | `voisona_state.py` の処理（音符・歌詞・表現・テンポ・拍子・全体のパラメーターから状態を組む）を Riffra に移し、作り直しのたびに状態を作り直す | Riffra                  | 歌のパートが YAML だけで歌う                              |
 | 4-4  | 空回し時間           | VoiSona を含む書き出しで、空回しを `10 + 0.04 × 音符数` 秒に自動で設定する                                                                    | Riffra の書き出し       | 235 音の歌が設定なしで最後まで書き出される                |
 | 4-5  | 歌の警告             | 知声の推奨音域（G3〜D5）とテンポ（80〜145 BPM）を外れたら、検証で警告する                                                                     | Riffra の検証           | —                                                         |
-| 4-6  | 古いスクリプトの整理 | `voisona_state.py` を消し、`docs/voisona.md` の手順を YAML の書き方に置き換える                                                               | creation                | —                                                         |
 
-確かめ方: 1番・2番がある歌モノを作る。歌の確認に文字起こしは使わない（creation `AGENTS.md`）。
+確かめ方: 1番・2番がある歌モノを作る。歌の確認は実際の音声で行う。
 
 ### 段階5: GUI で直した内容を YAML に戻す
 

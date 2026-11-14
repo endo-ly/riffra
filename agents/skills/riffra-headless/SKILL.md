@@ -63,10 +63,10 @@ Score YAML から Project を作ると、Project はそのファイルへリン�
 
 - `project import-score <path>`: YAML を新しい Project として読み込み、リンクする。`--bind ID=DEFINITION` で外部楽器の Definition を結び付ける
 - `project rebuild-score [--path PATH] [--bind ID=DEFINITION]`: アクティブな Project をリンク先の YAML で更新する。`--path` を省略するとリンク先を読む
-- `score validate <path>`: Project を作らずに文法・参照・ライブラリ・音源・ミックス・オートメーション・音声を診断する
+- `score validate <path>`: Project を作らずに文法・参照・音源・ミックス・オートメーション・音声を診断する
 - `score inspect <path>`: Project を作らずに展開結果（トラック・キット・エフェクト・ルーティング・オートメーション・音声クリップを含む）を確認する
 
-Score は内蔵音源だけでなく、VST3 の `source`、キット、エフェクト、Group / Return / Send / Sidechain、オートメーション、Audio Track と WAV クリップを記述できる。参照設定は `library/instruments` と `library/effects` に置き、曲側では `use` で参照する。
+Score は内蔵音源だけでなく、VST3 の `source`、キット、エフェクト、Group / Return / Send / Sidechain、オートメーション、Audio Track と WAV クリップを記述できる。VST3 名と State、パラメーターは Score に直接指定し、State と WAV は曲フォルダ内に置く。
 
 リンクされた Project では YAML が所有する部分（時間軸・Score 由来の構成・演奏・和声・ミックス構造など）を直接編集できない。作業状態（ループ・パンチ・ミュート・ソロ・armed・monitoring など）だけを変更できる。YAML に Riffra がまだ実装していない拡張を書いた場合は、項目パスと行・列を持つ `notImplemented` 診断で拒否される。書式と未実装の一覧は [docs/score-yaml.md](../../../docs/score-yaml.md) を参照する。
 

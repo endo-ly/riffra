@@ -2105,15 +2105,7 @@ mod tests {
         let yaml = to_yaml(&doc).unwrap();
         let plan = compile(&yaml).unwrap();
         assert_eq!(plan.lanes[0].id, "part");
-        assert_eq!(
-            plan.production_sources["part"]
-                .vst3
-                .as_ref()
-                .unwrap()
-                .plugin
-                .as_deref(),
-            Some("Synth")
-        );
+        assert_eq!(plan.production_sources["part"].vst3.plugin, "Synth");
         assert_eq!(
             plan.instruments["part"]["source"]["vst3"]["plugin"],
             "Synth"
@@ -2129,13 +2121,15 @@ mod tests {
     fn kits_resolve_members_and_reject_inconsistent_declarations() {
         let mut doc = document();
         doc["kits"] = json!({"drums":{"source":{"use":"drum-kit"}}});
+        assert_eq!(
+            compile(&to_yaml(&doc).unwrap()).unwrap_err().path,
+            "kits.drums.source.use"
+        );
+        doc["kits"] = json!({"drums":{"source":{"vst3":{"plugin":"drum-kit"}}}});
         doc["instruments"]["kick"] = json!({"kit":"drums", "trigger_note_midi":36});
         let plan = compile(&to_yaml(&doc).unwrap()).unwrap();
         assert_eq!(plan.kit_members["kick"], "drums");
-        assert_eq!(
-            plan.kits["drums"].source.library.as_deref(),
-            Some("drum-kit")
-        );
+        assert_eq!(plan.kits["drums"].source.vst3.plugin, "drum-kit");
         assert!(plan.kits["drums"].effects.is_empty());
 
         doc["sections"]["phrase"]["events"] =
@@ -2293,9 +2287,10 @@ mod tests {
     fn mix_routes_and_automation_resolve_against_the_score() {
         let mut doc = document();
         doc["instruments"]["part"]["source"] = json!({"vst3":{"plugin":"Synth"}});
-        doc["instruments"]["part"]["effects"] = json!([{"id":"duck", "use":"compressor"}]);
+        doc["instruments"]["part"]["effects"] =
+            json!([{"id":"duck", "vst3":{"plugin":"compressor"}}]);
         doc["instruments"]["kick"] = json!({"kit":"drums", "trigger_note_midi":36});
-        doc["kits"] = json!({"drums":{"source":{"use":"drum-kit"}}});
+        doc["kits"] = json!({"drums":{"source":{"vst3":{"plugin":"drum-kit"}}}});
         doc["mix"] = json!({
             "buses":{"rhythm":{"kind":"group"},"room":{"kind":"return"}},
             "tracks":{"part":{"output":"rhythm", "sends":{"room":-18}},"drums":{"gain_db":-2}},

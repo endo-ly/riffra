@@ -12,4 +12,4 @@ definition?: string,
 /**
  * Whether the definition is a bundled preset.
  */
-builtIn: boolean, pluginName?: string, pluginIdentifier?: string, pluginPath?: string, kit?: string, libraryRange?: [number, number], libraryNotes?: string, };
+builtIn: boolean, pluginName?: string, pluginIdentifier?: string, pluginPath?: string, kit?: string, };

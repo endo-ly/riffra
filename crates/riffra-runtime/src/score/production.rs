@@ -9,14 +9,13 @@ pub(crate) mod mix;
 
 #[derive(Debug, Clone)]
 pub(crate) struct SourceSpec {
-    pub(crate) library: Option<String>,
-    pub(crate) vst3: Option<Vst3Spec>,
+    pub(crate) vst3: Vst3Spec,
     pub(crate) velocity: Option<Vec<(u8, u8)>>,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct Vst3Spec {
-    pub(crate) plugin: Option<String>,
+    pub(crate) plugin: String,
     pub(crate) identifier: Option<String>,
     pub(crate) state: Option<String>,
     pub(crate) patch: Vec<PluginStatePatchOperation>,
@@ -32,8 +31,7 @@ pub(crate) enum ParameterValue {
 #[derive(Debug, Clone)]
 pub(crate) struct EffectSpec {
     pub(crate) id: String,
-    pub(crate) library: Option<String>,
-    pub(crate) vst3: Option<Vst3Spec>,
+    pub(crate) vst3: Vst3Spec,
     pub(crate) bypassed: Option<bool>,
 }
 
@@ -41,87 +39,6 @@ pub(crate) struct EffectSpec {
 pub(crate) struct KitSpec {
     pub(crate) source: SourceSpec,
     pub(crate) effects: Vec<EffectSpec>,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct InstrumentTemplate {
-    pub(crate) source: SourceSpec,
-    pub(crate) range: Option<(u8, u8)>,
-    pub(crate) notes: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct EffectTemplate {
-    pub(crate) vst3: Vst3Spec,
-    pub(crate) bypassed: Option<bool>,
-}
-
-pub(crate) fn parse_instrument_template(text: &str) -> Result<InstrumentTemplate> {
-    let mut origin = super::Source::default();
-    let parsed = super::parse::parse(text, &mut origin).and_then(|value| {
-        fields(&value, &["source", "range", "notes"], "")?;
-        let source = parse_source(super::required(&value, "source", "")?, "source")?;
-        if source.library.is_some() {
-            return Err(Error::new(
-                "source.use",
-                "library templates cannot reference another template",
-            ));
-        }
-        let range = value
-            .get("range")
-            .map(|range| {
-                let range = array(range, "range")?;
-                if range.len() != 2 {
-                    return Err(Error::new(
-                        "range",
-                        "expected a MIDI range with two endpoints",
-                    ));
-                }
-                let mut values = [0_u8; 2];
-                for (i, value) in range.iter().enumerate() {
-                    values[i] = u8::try_from(integer(value, &format!("range[{i}]"))?)
-                        .ok()
-                        .filter(|v| *v <= 127)
-                        .ok_or_else(|| {
-                            Error::new(format!("range[{i}]"), "expected MIDI note 0..127")
-                        })?;
-                }
-                if values[0] > values[1] {
-                    return Err(Error::new("range", "range start must not exceed its end"));
-                }
-                Ok((values[0], values[1]))
-            })
-            .transpose()?;
-        let notes = value
-            .get("notes")
-            .map(|value| string(value, "notes").map(str::to_owned))
-            .transpose()?;
-        Ok(InstrumentTemplate {
-            source,
-            range,
-            notes,
-        })
-    });
-    parsed.map_err(|error| error.locate(&origin))
-}
-
-pub(crate) fn parse_effect_template(text: &str) -> Result<EffectTemplate> {
-    let mut origin = super::Source::default();
-    let parsed = super::parse::parse(text, &mut origin).and_then(|value| {
-        fields(&value, &["vst3", "bypassed"], "")?;
-        let vst3 = parse_vst3(super::required(&value, "vst3", "")?, "vst3")?;
-        validate_vst3(&None, &Some(vst3.clone()), "")?;
-        let bypassed = value
-            .get("bypassed")
-            .map(|value| {
-                value
-                    .as_bool()
-                    .ok_or_else(|| Error::new("bypassed", "expected a boolean"))
-            })
-            .transpose()?;
-        Ok(EffectTemplate { vst3, bypassed })
-    });
-    parsed.map_err(|error| error.locate(&origin))
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -300,7 +217,7 @@ pub(super) fn parse_effects(value: &Value, path: &str) -> Result<Vec<EffectSpec>
     let mut effects = Vec::new();
     for (index, value) in array(value, path)?.iter().enumerate() {
         let item_path = format!("{path}[{index}]");
-        fields(value, &["id", "use", "vst3", "bypassed"], &item_path)?;
+        fields(value, &["id", "vst3", "bypassed"], &item_path)?;
         let id = super::text_field(value, "id", &item_path)?;
         if id.is_empty() || !ids.insert(id.to_owned()) {
             return Err(Error::new(
@@ -308,15 +225,10 @@ pub(super) fn parse_effects(value: &Value, path: &str) -> Result<Vec<EffectSpec>
                 "effect id must be nonempty and unique in its chain",
             ));
         }
-        let library = library_name(value, &item_path)?;
-        let vst3 = value
-            .get("vst3")
-            .map(|v| parse_vst3(v, &format!("{item_path}.vst3")))
-            .transpose()?;
-        if library.is_none() && vst3.is_none() {
-            return Err(Error::new(&item_path, "effect requires use or vst3"));
-        }
-        validate_vst3(&library, &vst3, &item_path)?;
+        let vst3 = parse_vst3(
+            super::required(value, "vst3", &item_path)?,
+            &format!("{item_path}.vst3"),
+        )?;
         let bypassed = value
             .get("bypassed")
             .map(|v| {
@@ -327,7 +239,6 @@ pub(super) fn parse_effects(value: &Value, path: &str) -> Result<Vec<EffectSpec>
             .transpose()?;
         effects.push(EffectSpec {
             id: id.to_owned(),
-            library,
             vst3,
             bypassed,
         });
@@ -349,24 +260,6 @@ fn optional_string(value: &Value, key: &str, path: &str) -> Result<Option<String
         .transpose()
 }
 
-fn library_name(value: &Value, path: &str) -> Result<Option<String>> {
-    let name = optional_string(value, "use", path)?;
-    if let Some(name) = &name {
-        let mut bytes = name.bytes();
-        if !bytes
-            .next()
-            .is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
-            || !bytes.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
-        {
-            return Err(Error::new(
-                format!("{path}.use"),
-                "library name must use lowercase letters, digits, and hyphens",
-            ));
-        }
-    }
-    Ok(name)
-}
-
 pub(super) fn parse_source(value: &Value, path: &str) -> Result<SourceSpec> {
     for key in ["voisona", "articulations"] {
         if value.get(key).is_some() {
@@ -378,43 +271,16 @@ pub(super) fn parse_source(value: &Value, path: &str) -> Result<SourceSpec> {
             return Err(error);
         }
     }
-    fields(value, &["use", "vst3", "velocity"], path)?;
-    let library = library_name(value, path)?;
-    let vst3 = value
-        .get("vst3")
-        .map(|v| parse_vst3(v, &format!("{path}.vst3")))
-        .transpose()?;
-    if library.is_none() && vst3.is_none() {
-        return Err(Error::new(path, "source requires use or vst3"));
-    }
+    fields(value, &["vst3", "velocity"], path)?;
+    let vst3 = parse_vst3(
+        super::required(value, "vst3", path)?,
+        &format!("{path}.vst3"),
+    )?;
     let velocity = value
         .get("velocity")
         .map(|v| parse_velocity(v, &format!("{path}.velocity")))
         .transpose()?;
-    validate_vst3(&library, &vst3, path)?;
-    Ok(SourceSpec {
-        library,
-        vst3,
-        velocity,
-    })
-}
-
-fn validate_vst3(library: &Option<String>, vst3: &Option<Vst3Spec>, path: &str) -> Result<()> {
-    if let Some(vst3) = vst3 {
-        if library.is_none() && vst3.plugin.is_none() {
-            return Err(Error::new(
-                format!("{path}.vst3.plugin").trim_start_matches('.'),
-                "plugin is required without a library reference",
-            ));
-        }
-        if library.is_none() && vst3.state.is_none() && !vst3.patch.is_empty() {
-            return Err(Error::new(
-                format!("{path}.vst3.patch").trim_start_matches('.'),
-                "patch requires state",
-            ));
-        }
-    }
-    Ok(())
+    Ok(SourceSpec { vst3, velocity })
 }
 
 fn parse_vst3(value: &Value, path: &str) -> Result<Vst3Spec> {
@@ -423,7 +289,8 @@ fn parse_vst3(value: &Value, path: &str) -> Result<Vst3Spec> {
         &["plugin", "identifier", "state", "patch", "params"],
         path,
     )?;
-    let plugin = optional_string(value, "plugin", path)?;
+    let plugin = optional_string(value, "plugin", path)?
+        .ok_or_else(|| Error::new(format!("{path}.plugin"), "required field is missing"))?;
     let identifier = optional_string(value, "identifier", path)?;
     let state = optional_string(value, "state", path)?;
     let mut patch = Vec::new();
@@ -436,6 +303,9 @@ fn parse_vst3(value: &Value, path: &str) -> Result<Vst3Spec> {
                 Error::new(format!("{path}.patch[{index}]"), error.to_string())
             })?);
         }
+    }
+    if state.is_none() && !patch.is_empty() {
+        return Err(Error::new(format!("{path}.patch"), "patch requires state"));
     }
     let mut params = BTreeMap::new();
     if let Some(values) = value.get("params") {
@@ -512,28 +382,28 @@ mod tests {
     #[test]
     fn source_values_are_typed_and_invalid_fields_are_located() {
         let value = json!({
-            "use": "bass",
-            "vst3": {"params": {"Mix": 0.5, "Mode": {"display": "Wide"}}},
+            "vst3": {"plugin":"synth", "params": {"Mix": 0.5, "Mode": {"display": "Wide"}}},
             "velocity": [[1, 18], [64, 68], [127, 120]]
         });
         let source = parse_source(&value, "instruments.bass.source").unwrap();
-        assert_eq!(source.library.as_deref(), Some("bass"));
         assert_eq!(source.velocity.unwrap()[1], (64, 68));
-        let params = source.vst3.unwrap().params;
+        let params = source.vst3.params;
         assert!(matches!(params["Mix"], ParameterValue::Normalized(0.5)));
         assert!(matches!(&params["Mode"], ParameterValue::Display(value) if value == "Wide"));
 
         for (replacement, path) in [
+            (json!({"use":"bass"}), "instruments.bass.source.use"),
+            (json!({"vst3":{}}), "instruments.bass.source.vst3.plugin"),
             (
                 json!({"vst3":{"plugin":"synth", "params":{"Mix":1.2}}}),
                 "instruments.bass.source.vst3.params.Mix",
             ),
             (
-                json!({"use":"bass", "velocity":[[1, 1], [1, 2], [127, 127]]}),
+                json!({"vst3":{"plugin":"synth"}, "velocity":[[1, 1], [1, 2], [127, 127]]}),
                 "instruments.bass.source.velocity[1]",
             ),
             (
-                json!({"use":"bass", "unexpected":true}),
+                json!({"vst3":{"plugin":"synth"}, "unexpected":true}),
                 "instruments.bass.source.unexpected",
             ),
         ] {
@@ -549,27 +419,29 @@ mod tests {
     #[test]
     fn effects_require_unique_ids_and_resolvable_sources() {
         let effects = json!([
-            {"id":"eq", "use":"eq-template"},
+            {"id":"eq", "vst3":{"plugin":"Equalizer"}},
             {"id":"compressor", "vst3":{"plugin":"Compressor"}, "bypassed":true}
         ]);
         let parsed = parse_effects(&effects, "instruments.bass.effects").unwrap();
         assert_eq!(parsed[0].id, "eq");
-        assert_eq!(parsed[0].library.as_deref(), Some("eq-template"));
-        assert_eq!(
-            parsed[1].vst3.as_ref().unwrap().plugin.as_deref(),
-            Some("Compressor")
-        );
+        assert_eq!(parsed[1].vst3.plugin, "Compressor");
         assert_eq!(parsed[1].bypassed, Some(true));
 
-        let duplicate = json!([{"id":"eq", "use":"a"}, {"id":"eq", "use":"b"}]);
+        let duplicate =
+            json!([{"id":"eq", "vst3":{"plugin":"a"}}, {"id":"eq", "vst3":{"plugin":"b"}}]);
         assert_eq!(
             parse_effects(&duplicate, "effects").unwrap_err().path,
             "effects[1].id"
         );
+        let obsolete = json!([{"id":"eq", "use":"eq"}]);
+        assert_eq!(
+            parse_effects(&obsolete, "effects").unwrap_err().path,
+            "effects[0].use"
+        );
         let missing = json!([{"id":"eq"}]);
         assert_eq!(
             parse_effects(&missing, "effects").unwrap_err().path,
-            "effects[0]"
+            "effects[0].vst3"
         );
     }
 }
