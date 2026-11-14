@@ -4643,13 +4643,13 @@ mod tests {
 
     const INPUT_REUSE: &str = r#"{
         "meta":{"title":"Input Reuse","bpm":120,"meter":"4/4","tuning":"12edo","gate":1},
-        "form":[{"section":"verse","bars":1,"tonic":"C","scale":"ionian"},{"section":"verse","bars":1,"tonic":"C","scale":"ionian"}],
+        "form":[{"section":"verse","bars":1,"tonic":"C","scale":"ionian"},{"section":"verse","bars":1,"tonic":"C","scale":"ionian"},{"section":"bridge","bars":1,"tonic":"C","scale":"ionian"}],
         "instruments":{
             "bass":{"source":{"vst3":{"plugin":"Bass","params":{"Cutoff":0.5}}}}
         },
-        "sections":{"verse":{"lines":{"main":{"instrument":"bass","melody":"theme"}}}},
+        "sections":{"verse":{"lines":{"main":{"instrument":"bass","melody":"theme"}}},"bridge":{"lines":{"main":{"instrument":"bass","melody":"theme"}}}},
         "melodies":{"theme":["1 - - - | 3 - - - | 5 - - - | 1' - - -"]},
-        "mix":{"automation":[{"target":{"source":"bass","parameter":"Cutoff"},"section":"verse","points":[{"at":{"bar":1,"step":9},"value":0.2},{"at":{"bar":1,"step":1},"value":0.8}]},{"target":{"source":"bass","parameter":"Cutoff"},"section":"verse","occurrence":2,"points":[{"at":{"bar":1,"step":5},"value":0.4}]}]}
+        "mix":{"automation":[{"target":{"source":"bass","parameter":"Cutoff"},"section":"verse","points":[{"at":{"bar":1,"step":9},"value":0.2},{"at":{"bar":1,"step":1},"value":0.8}]},{"target":{"source":"bass","parameter":"Cutoff"},"section":"bridge","points":[{"at":{"bar":1,"step":5},"value":0.4}]}]}
     }"#;
 
     #[test]
@@ -4743,6 +4743,7 @@ mod tests {
             ],
         };
         plugin.path = "C:/old-install/Bass.vst3".into();
+        plugin.parameter_values = vec![0.5];
         let mut previous = CreativeSession::new(1);
         let mut track = Track::instrument("score:track:1".into(), "bass".into());
         let mut instrument = TrackInstrument::vst3(
@@ -4754,6 +4755,8 @@ mod tests {
         *instrument.as_vst3_mut().unwrap() = plugin;
         track.instrument = Some(instrument);
         track.score_instrument = Some("bass".into());
+        track.muted = true;
+        track.solo = true;
         previous.arrangement.tracks.push(track);
         previous.arrangement.automation_lanes.push(AutomationLane {
             id: "score:automation:test".into(),
@@ -4819,13 +4822,24 @@ mod tests {
         )
         .unwrap();
         let baseline = session.clone();
+        let bass = &baseline.arrangement.tracks[0];
+        assert!(bass.muted && bass.solo);
+        assert_eq!(
+            bass.instrument
+                .as_ref()
+                .unwrap()
+                .as_vst3()
+                .unwrap()
+                .parameter_values,
+            [0.5]
+        );
         let lane = &session.arrangement.automation_lanes[0];
         assert_eq!(
             lane.points
                 .iter()
                 .map(|point| point.value)
                 .collect::<Vec<_>>(),
-            [0.8, 0.2, 0.8, 0.4, 0.2]
+            [0.8, 0.2, 0.8, 0.2, 0.4]
         );
         for iteration in 0..3 {
             if iteration == 1 {
@@ -4851,18 +4865,36 @@ mod tests {
             )
             .unwrap();
             let mut without_note_changes = session.clone();
-            without_note_changes.arrangement.midi_clips = baseline.arrangement.midi_clips.clone();
-            assert!(without_note_changes.score_performance_equals(&baseline));
+            assert_eq!(
+                without_note_changes.arrangement.midi_clips.len(),
+                baseline.arrangement.midi_clips.len()
+            );
+            for (actual, expected) in without_note_changes
+                .arrangement
+                .midi_clips
+                .iter_mut()
+                .zip(&baseline.arrangement.midi_clips)
+            {
+                actual.notes = expected.notes.clone();
+            }
+            without_note_changes.arrangement.revision = baseline.arrangement.revision;
+            without_note_changes.score_source.as_mut().unwrap().yaml =
+                baseline.score_source.as_ref().unwrap().yaml.clone();
+            assert_eq!(without_note_changes, baseline);
             if iteration > 0 {
                 assert_ne!(
-                    session.arrangement.midi_clips[0].notes,
-                    baseline.arrangement.midi_clips[0].notes
+                    session.arrangement.midi_clips[0]
+                        .notes
+                        .iter()
+                        .map(|note| note.note)
+                        .collect::<Vec<_>>(),
+                    baseline.arrangement.midi_clips[0]
+                        .notes
+                        .iter()
+                        .map(|note| note.note)
+                        .collect::<Vec<_>>()
                 );
             }
-            assert_eq!(
-                session.score_source.as_ref().unwrap().production_inputs,
-                baseline.score_source.as_ref().unwrap().production_inputs
-            );
         }
 
         let changed = INPUT_REUSE.replace("\"Cutoff\":0.5", "\"Cutoff\":0.6");
