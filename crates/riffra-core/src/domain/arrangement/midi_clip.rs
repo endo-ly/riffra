@@ -90,6 +90,23 @@ pub enum InstrumentControlEventKind {
         #[ts(rename = "durationTicks")]
         duration_ticks: u64,
     },
+    KeySwitch {
+        note: u8,
+        mode: KeySwitchMode,
+        down: bool,
+    },
+    ControlChange {
+        number: u8,
+        value: u8,
+    },
+}
+
+/// Lifetime of one VST3 key switch selection.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, TS, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum KeySwitchMode {
+    Hold,
+    Latch,
 }
 
 /// A non-destructive MIDI clip on the arrangement.
@@ -195,6 +212,12 @@ impl MidiClip {
                             .0
                             .checked_add(*duration_ticks)
                             .is_some_and(|end| end <= self.duration_ticks)
+                }
+                InstrumentControlEventKind::KeySwitch { note, mode, down } => {
+                    *note <= 127 && (*mode == KeySwitchMode::Hold || *down)
+                }
+                InstrumentControlEventKind::ControlChange { number, value } => {
+                    *number <= 127 && *value <= 127
                 }
             };
             if event.id.trim().is_empty()

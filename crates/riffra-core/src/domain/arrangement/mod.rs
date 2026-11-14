@@ -25,8 +25,8 @@ pub use automation::{
     TrackMixParameter,
 };
 pub use midi_clip::{
-    InstrumentControlEvent, InstrumentControlEventKind, MidiClip, MidiClipMove, MidiClipPatch,
-    MidiEvent, MidiEventKind, MidiNote,
+    InstrumentControlEvent, InstrumentControlEventKind, KeySwitchMode, MidiClip, MidiClipMove,
+    MidiClipPatch, MidiEvent, MidiEventKind, MidiNote,
 };
 pub use mixer::{
     EffectOwner, MixBus, MixBusKind, MixBusPatch, Mixer, Send, SendPatch, SendPosition,

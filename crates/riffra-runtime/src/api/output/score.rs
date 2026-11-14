@@ -274,6 +274,10 @@ pub struct ScoreInspection {
     pub sections: Vec<ScoreSectionInspection>,
     pub instruments: Vec<ScoreInstrumentInspection>,
     pub lanes: Vec<ScoreLaneInspection>,
+    /// Logical VST3 key switch and CC controls with their Score source locations;
+    /// empty unless the command requests events.
+    #[ts(type = "unknown[]")]
+    pub performance_controls: Vec<serde_json::Value>,
     pub diagnostics: Vec<ScoreDiagnostic>,
     pub buses: Vec<ScoreBusInspection>,
     pub sends: Vec<ScoreSendInspection>,

@@ -22,8 +22,6 @@ type Result<T> = std::result::Result<T, Error>;
 pub(crate) enum Extension {
     Lyrics,
     LineLyrics,
-    Articulation,
-    Cc,
     Breath,
     VoiceDynamics,
     VoiceStyle,
@@ -34,8 +32,6 @@ impl Extension {
         match self {
             Self::Lyrics => "lyrics",
             Self::LineLyrics => "line lyrics",
-            Self::Articulation => "articulation event",
-            Self::Cc => "cc event",
             Self::Breath => "breath event",
             Self::VoiceDynamics => "voice dynamics event",
             Self::VoiceStyle => "voice style event",
@@ -44,8 +40,6 @@ impl Extension {
 
     fn event(kind: &str) -> Option<Self> {
         match kind {
-            "articulation" => Some(Self::Articulation),
-            "cc" => Some(Self::Cc),
             "breath" => Some(Self::Breath),
             "voice_dynamics" => Some(Self::VoiceDynamics),
             "voice_style" => Some(Self::VoiceStyle),
@@ -293,6 +287,35 @@ pub(crate) struct ScoreLane {
     pub(crate) sources: Vec<EventSource>,
 }
 
+/// A logical VST3 performance control expanded to an absolute musical tick.
+#[derive(Debug, Clone)]
+pub(crate) struct PerformanceControl {
+    pub(crate) source: String,
+    pub(crate) tick: u64,
+    pub(crate) at_quarters: String,
+    pub(crate) kind: PerformanceControlKind,
+    pub(crate) path: String,
+    pub(crate) section: String,
+    pub(crate) occurrence: usize,
+    pub(crate) bar: usize,
+    pub(crate) step: String,
+    pub(crate) line: usize,
+    pub(crate) column: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PerformanceControlKind {
+    KeySwitch {
+        note: u8,
+        mode: production::KeySwitchMode,
+        down: bool,
+    },
+    ControlChange {
+        number: u8,
+        value: u8,
+    },
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct EventSource {
     pub(crate) path: String,
@@ -327,6 +350,7 @@ pub(crate) struct ScorePlan {
     pub(crate) audio_clips: BTreeMap<String, Vec<production::AudioClipSpec>>,
     pub(crate) mix: Option<production::mix::Mix>,
     pub(crate) lanes: Vec<ScoreLane>,
+    pub(crate) performance_controls: Vec<PerformanceControl>,
     pub(crate) sections: Vec<Occurrence>,
     pub(crate) length_ticks: u64,
     pub(crate) ticks_per_beat: u16,
@@ -531,7 +555,20 @@ pub(crate) fn compile(text: &str) -> Result<ScorePlan> {
                     .flat_map(|lane| lane.points.iter().map(|point| point.at.offset.clone())),
             );
         }
-        let mut plan = lower::lower(&view, &additional_times)?;
+        let control_sources = lower::ControlSources {
+            articulations: sources
+                .iter()
+                .map(|(id, source)| (id.clone(), source.articulations.clone()))
+                .chain(
+                    kits.iter()
+                        .map(|(id, kit)| (id.clone(), kit.source.articulations.clone())),
+                )
+                .collect(),
+            kits: kits.keys().cloned().collect(),
+            members: kit_members.clone(),
+            audio: audio_instruments.clone(),
+        };
+        let mut plan = lower::lower(&view, &control_sources, &additional_times)?;
         plan.instruments = object(&document["instruments"], "instruments")?.clone();
         plan.production_sources = sources;
         plan.production_effects = effects;
@@ -646,9 +683,73 @@ pub(crate) fn compile(text: &str) -> Result<ScorePlan> {
                     }
                 }
             }
+            for control in &mut plan.performance_controls {
+                if let Some((section, occurrence, bar, step)) =
+                    tick_position(control.tick, &plan.sections, plan.ticks_per_beat)
+                {
+                    control.section = section;
+                    control.occurrence = occurrence;
+                    control.bar = bar;
+                    control.step = step;
+                }
+                (control.line, control.column) = source_line(&control.path, &source);
+            }
             plan.source = source;
             plan
         })
+}
+
+fn tick_position(
+    tick: u64,
+    sections: &[Occurrence],
+    ticks_per_beat: u16,
+) -> Option<(String, usize, usize, String)> {
+    let (index, section) = sections
+        .iter()
+        .enumerate()
+        .find(|(_, section)| tick >= section.start_tick && tick < section.end_tick)
+        .or_else(|| {
+            sections
+                .iter()
+                .enumerate()
+                .next_back()
+                .filter(|(_, section)| tick == section.end_tick)
+        })?;
+    let (numerator, denominator) = syntax::meter(&section.meter).expect("resolved meter");
+    let elapsed = q(
+        i64::try_from(tick - section.start_tick).expect("resolved musical time"),
+        i64::from(ticks_per_beat),
+    );
+    let bar_length = q(i64::from(numerator) * 4, i64::from(denominator));
+    let index_in_section = (&elapsed / &bar_length)
+        .to_integer()
+        .to_usize()
+        .expect("resolved bar")
+        .min(section.bars - 1);
+    let step = ((elapsed
+        - bar_length * q(i64::try_from(index_in_section).expect("resolved bar"), 1))
+        * q(4, 1)
+        + q(1, 1))
+    .to_string();
+    Some((
+        section.section.clone(),
+        index + 1,
+        index_in_section + 1,
+        step,
+    ))
+}
+
+fn source_line(path: &str, source: &Source) -> (usize, usize) {
+    let mut path = path;
+    loop {
+        if let Some(&(line, column)) = source.positions.get(path) {
+            return (line, column);
+        }
+        let Some(index) = path.rfind(['.', '[']) else {
+            return (0, 0);
+        };
+        path = &path[..index];
+    }
 }
 
 fn validate_kit_performance(document: &Value, plan: &ScorePlan, source: &Source) -> Result<()> {
@@ -778,6 +879,15 @@ fn reject_extensions(document: &Value) -> Result<()> {
         Some((extension, path)) => Err(Error::not_implemented(&path, extension)),
         None => Ok(()),
     }
+}
+
+/// Parses an `automation.control` value addressed to a MIDI continuous controller.
+pub(super) fn cc_number(control: &str) -> Option<u8> {
+    let number = control.strip_prefix("cc:")?;
+    if number.is_empty() || !number.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    number.parse::<u8>().ok().filter(|number| *number <= 127)
 }
 
 /// Convert finite decibels to a finite linear gain, returning `None` on overflow.
@@ -2099,6 +2209,94 @@ mod tests {
     }
 
     #[test]
+    fn performance_controls_expand_keyswitches_cc_and_conflicts() {
+        let mut doc = document();
+        doc["instruments"]["part"] = json!({
+            "source": {
+                "vst3": {"plugin": "Synth"},
+                "articulations": {
+                    "default": {"keyswitch": 24, "mode": "latch"},
+                    "mute": {"keyswitch": 26, "mode": "latch"},
+                    "open": {"keyswitch": 27, "mode": "hold"},
+                    "harmonic": {"cc": {"number": 68, "value": 127, "reset": 0}}
+                }
+            }
+        });
+        doc["sections"]["phrase"]["events"] = json!([
+            {"kind": "articulation", "instrument": "part", "name": "mute", "at": {"bar": 1, "step": 1}, "duration_quarters": 1},
+            {"kind": "articulation", "instrument": "part", "name": "open", "at": {"bar": 1, "step": 5}, "duration_quarters": 1},
+            {"kind": "cc", "instrument": "part", "number": 11, "value": 96, "at": {"bar": 1, "step": 9}}
+        ]);
+        let plan = compile(&to_yaml(&doc).unwrap()).unwrap();
+        let controls = &plan.performance_controls;
+        assert!(matches!(
+            controls[0].kind,
+            PerformanceControlKind::KeySwitch {
+                note: 26,
+                down: true,
+                mode: production::KeySwitchMode::Latch
+            }
+        ));
+        assert_eq!(controls[0].tick, 0);
+        assert!(matches!(
+            controls[1].kind,
+            PerformanceControlKind::KeySwitch {
+                note: 27,
+                down: true,
+                mode: production::KeySwitchMode::Hold
+            }
+        ));
+        assert_eq!(controls[1].at_quarters, "31/32");
+        assert!(matches!(
+            controls[2].kind,
+            PerformanceControlKind::KeySwitch {
+                note: 27,
+                down: false,
+                ..
+            }
+        ));
+        assert!(matches!(
+            controls[3].kind,
+            PerformanceControlKind::ControlChange {
+                number: 11,
+                value: 96
+            }
+        ));
+        assert_eq!(controls[3].tick, 2 * u64::from(plan.ticks_per_beat));
+        assert_eq!(controls[3].section, "phrase");
+        assert_eq!(controls[3].occurrence, 1);
+        assert_eq!(controls[3].bar, 1);
+        assert_eq!(controls[3].step, "9");
+        assert!(controls[3].line > 0);
+
+        doc["sections"]["phrase"]["events"] = json!([
+            {"kind": "cc", "instrument": "part", "number": 11, "value": 96, "at": {"bar": 1, "step": 1}},
+            {"kind": "automation", "instrument": "part", "control": "cc:11", "from_value": 96, "to_value": 64, "at": {"bar": 1, "step": 1}, "duration_quarters": 1}
+        ]);
+        assert_eq!(
+            compile(&to_yaml(&doc).unwrap()).unwrap_err().path,
+            "sections.phrase.events[0]"
+        );
+
+        doc["sections"]["phrase"]["events"] = json!([
+            {"kind": "articulation", "instrument": "part", "name": "mute", "at": {"bar": 1, "step": 1}, "duration_quarters": 2},
+            {"kind": "articulation", "instrument": "part", "name": "open", "at": {"bar": 1, "step": 5}, "duration_quarters": 1}
+        ]);
+        assert_eq!(
+            compile(&to_yaml(&doc).unwrap()).unwrap_err().path,
+            "sections.phrase.events[1]"
+        );
+
+        doc["sections"]["phrase"]["events"] = json!([
+            {"kind": "articulation", "instrument": "part", "name": "missing", "at": {"bar": 1, "step": 1}, "duration_quarters": 1}
+        ]);
+        assert_eq!(
+            compile(&to_yaml(&doc).unwrap()).unwrap_err().path,
+            "sections.phrase.events[0].name"
+        );
+    }
+
+    #[test]
     fn production_source_preserves_musical_lanes_and_original_locations() {
         let mut doc = document();
         doc["instruments"]["part"] = json!({"source":{"vst3":{"plugin":"Synth"}}});
@@ -2220,7 +2418,12 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("lyrics");
-        for _ in 0..5 {
+        let events = document["sections"]["verse"]["events"]
+            .as_array_mut()
+            .unwrap();
+        events.remove(0);
+        events.remove(0);
+        for _ in 0..3 {
             assert_eq!(
                 compile(&document.to_string()).unwrap_err().path,
                 "sections.verse.events[0]"

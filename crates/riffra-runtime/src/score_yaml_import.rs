@@ -1559,6 +1559,41 @@ pub(crate) fn inspect(
                 },
             })
             .collect(),
+        performance_controls: if events {
+            plan.performance_controls
+                .iter()
+                .map(|control| {
+                    json!({
+                        "source": control.source,
+                        "tick": control.tick,
+                        "atQuarters": control.at_quarters,
+                        "event": match control.kind {
+                            score::PerformanceControlKind::KeySwitch { note, mode, down } => json!({
+                                "type": "keySwitch",
+                                "note": note,
+                                "mode": match mode {
+                                    score::production::KeySwitchMode::Hold => "hold",
+                                    score::production::KeySwitchMode::Latch => "latch",
+                                },
+                                "down": down,
+                            }),
+                            score::PerformanceControlKind::ControlChange { number, value } => {
+                                json!({"type": "controlChange", "number": number, "value": value})
+                            }
+                        },
+                        "path": control.path,
+                        "line": control.line,
+                        "column": control.column,
+                        "section": control.section,
+                        "occurrence": control.occurrence,
+                        "bar": control.bar,
+                        "step": control.step,
+                    })
+                })
+                .collect()
+        } else {
+            Vec::new()
+        },
     })
 }
 
@@ -1770,7 +1805,8 @@ fn summary(plan: &ScorePlan) -> ScoreSummary {
             .iter()
             .flat_map(|lane| &lane.pattern.events)
             .filter(|event| !matches!(event, MusicalEvent::Note { .. }))
-            .count(),
+            .count()
+            + plan.performance_controls.len(),
     }
 }
 
@@ -2109,13 +2145,19 @@ fn build(
         } else {
             reset_events(lane, plan, &sources[&lane.id].report)?
         };
-        let clip = midi_clip(
+        let mut clip = midi_clip(
             previous_clip,
             &lane.id,
             &track.id,
             plan.length_ticks,
             &events,
             velocity,
+        )?;
+        clip.instrument_control_events = performance_control_events(
+            &clip.id,
+            plan.performance_controls
+                .iter()
+                .filter(|control| control.source == lane.id),
         )?;
         instrument_tracks
             .entry(lane.id.clone())
@@ -2188,13 +2230,19 @@ fn build(
                     .find(|clip| clip.track_id == claimed.id)
             })
         });
-        let clip = midi_clip(
+        let mut clip = midi_clip(
             previous_clip,
             kit_id,
             &track.id,
             plan.length_ticks,
             &events,
             velocity.as_deref(),
+        )?;
+        clip.instrument_control_events = performance_control_events(
+            &clip.id,
+            plan.performance_controls
+                .iter()
+                .filter(|control| control.source == *kit_id),
         )?;
         kit_tracks.insert(kit_id.clone(), track.id.clone());
         tracks.push(track);
@@ -3161,6 +3209,39 @@ fn midi_clip(
         });
     }
     Ok(clip)
+}
+
+/// Converts logical Score performance controls into clip-relative MIDI controls.
+fn performance_control_events<'a>(
+    clip_id: &str,
+    controls: impl Iterator<Item = &'a score::PerformanceControl>,
+) -> Result<Vec<InstrumentControlEvent>, ImportError> {
+    controls
+        .enumerate()
+        .map(|(order, control)| {
+            Ok(InstrumentControlEvent {
+                id: format!("{clip_id}:control:{order}"),
+                tick: TimelineTick(control.tick),
+                source_order: u32::try_from(order)
+                    .map_err(|_| "too many score performance controls".to_string())?,
+                kind: match control.kind {
+                    score::PerformanceControlKind::KeySwitch { note, mode, down } => {
+                        InstrumentControlEventKind::KeySwitch {
+                            note,
+                            mode: match mode {
+                                score::production::KeySwitchMode::Hold => KeySwitchMode::Hold,
+                                score::production::KeySwitchMode::Latch => KeySwitchMode::Latch,
+                            },
+                            down,
+                        }
+                    }
+                    score::PerformanceControlKind::ControlChange { number, value } => {
+                        InstrumentControlEventKind::ControlChange { number, value }
+                    }
+                },
+            })
+        })
+        .collect()
 }
 
 /// Applies a monotonic Score velocity map once to one expanded note.

@@ -11,6 +11,26 @@ pub(crate) mod mix;
 pub(crate) struct SourceSpec {
     pub(crate) vst3: Vst3Spec,
     pub(crate) velocity: Option<Vec<(u8, u8)>>,
+    pub(crate) articulations: BTreeMap<String, ArticulationSpec>,
+}
+
+/// One named articulation and the VST3 control that selects it.
+#[derive(Debug, Clone)]
+pub(crate) struct ArticulationSpec {
+    pub(crate) control: ArticulationControl,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum ArticulationControl {
+    KeySwitch { note: u8, mode: KeySwitchMode },
+    Controller { number: u8, value: u8, reset: u8 },
+}
+
+/// How a key switch remains selected for its articulation interval.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum KeySwitchMode {
+    Hold,
+    Latch,
 }
 
 #[derive(Debug, Clone)]
@@ -261,17 +281,15 @@ fn optional_string(value: &Value, key: &str, path: &str) -> Result<Option<String
 }
 
 pub(super) fn parse_source(value: &Value, path: &str) -> Result<SourceSpec> {
-    for key in ["voisona", "articulations"] {
-        if value.get(key).is_some() {
-            let mut error = Error::new(
-                format!("{path}.{key}"),
-                format!("source {key} is not implemented by Riffra"),
-            );
-            error.kind = Some("notImplemented");
-            return Err(error);
-        }
+    if value.get("voisona").is_some() {
+        let mut error = Error::new(
+            format!("{path}.voisona"),
+            "source voisona is not implemented by Riffra",
+        );
+        error.kind = Some("notImplemented");
+        return Err(error);
     }
-    fields(value, &["vst3", "velocity"], path)?;
+    fields(value, &["vst3", "velocity", "articulations"], path)?;
     let vst3 = parse_vst3(
         super::required(value, "vst3", path)?,
         &format!("{path}.vst3"),
@@ -280,7 +298,125 @@ pub(super) fn parse_source(value: &Value, path: &str) -> Result<SourceSpec> {
         .get("velocity")
         .map(|v| parse_velocity(v, &format!("{path}.velocity")))
         .transpose()?;
-    Ok(SourceSpec { vst3, velocity })
+    let articulations = value
+        .get("articulations")
+        .map(|v| parse_articulations(v, &format!("{path}.articulations")))
+        .transpose()?
+        .unwrap_or_default();
+    Ok(SourceSpec {
+        vst3,
+        velocity,
+        articulations,
+    })
+}
+
+fn parse_articulations(value: &Value, path: &str) -> Result<BTreeMap<String, ArticulationSpec>> {
+    let mut articulations = BTreeMap::new();
+    for (name, definition) in object(value, path)? {
+        let definition_path = format!("{path}.{name}");
+        if name.is_empty() {
+            return Err(Error::new(
+                &definition_path,
+                "articulation name must not be empty",
+            ));
+        }
+        fields(definition, &["keyswitch", "mode", "cc"], &definition_path)?;
+        let control = match (definition.get("keyswitch"), definition.get("cc")) {
+            (Some(note), None) => {
+                let note = integer(note, &format!("{definition_path}.keyswitch"))?;
+                let note = u8::try_from(note)
+                    .ok()
+                    .filter(|note| *note <= 127)
+                    .ok_or_else(|| {
+                        Error::new(
+                            format!("{definition_path}.keyswitch"),
+                            "expected MIDI note 0..127",
+                        )
+                    })?;
+                let mode = super::text_field(definition, "mode", &definition_path)?;
+                let mode = match mode {
+                    "hold" => KeySwitchMode::Hold,
+                    "latch" => KeySwitchMode::Latch,
+                    _ => {
+                        return Err(Error::new(
+                            format!("{definition_path}.mode"),
+                            "expected hold or latch",
+                        ));
+                    }
+                };
+                ArticulationControl::KeySwitch { note, mode }
+            }
+            (None, Some(controller)) => {
+                if definition.get("mode").is_some() {
+                    return Err(Error::new(
+                        format!("{definition_path}.mode"),
+                        "mode applies only to a key switch",
+                    ));
+                }
+                let controller_path = format!("{definition_path}.cc");
+                fields(controller, &["number", "value", "reset"], &controller_path)?;
+                let mut values = [0_u8; 3];
+                for (index, key) in ["number", "value", "reset"].into_iter().enumerate() {
+                    let value = integer(
+                        super::required(controller, key, &controller_path)?,
+                        &format!("{controller_path}.{key}"),
+                    )?;
+                    values[index] = u8::try_from(value)
+                        .ok()
+                        .filter(|value| *value <= 127)
+                        .ok_or_else(|| {
+                            Error::new(
+                                format!("{controller_path}.{key}"),
+                                "expected MIDI value 0..127",
+                            )
+                        })?;
+                }
+                ArticulationControl::Controller {
+                    number: values[0],
+                    value: values[1],
+                    reset: values[2],
+                }
+            }
+            _ => {
+                return Err(Error::new(
+                    &definition_path,
+                    "expected exactly one of keyswitch or cc",
+                ));
+            }
+        };
+        if name == "default"
+            && !matches!(
+                control,
+                ArticulationControl::KeySwitch {
+                    mode: KeySwitchMode::Latch,
+                    ..
+                }
+            )
+        {
+            return Err(Error::new(
+                &definition_path,
+                "default must be a latch key switch",
+            ));
+        }
+        articulations.insert(name.clone(), ArticulationSpec { control });
+    }
+    let default = articulations.get("default");
+    if articulations.values().any(|articulation| {
+        matches!(
+            articulation.control,
+            ArticulationControl::KeySwitch {
+                mode: KeySwitchMode::Latch,
+                ..
+            }
+        )
+    }) && default.is_none()
+    {
+        return Err(Error::new(
+            path,
+            "latch articulations require a default articulation",
+        ));
+    }
+    Ok(articulations)
 }
 
 fn parse_vst3(value: &Value, path: &str) -> Result<Vst3Spec> {
@@ -383,10 +519,23 @@ mod tests {
     fn source_values_are_typed_and_invalid_fields_are_located() {
         let value = json!({
             "vst3": {"plugin":"synth", "params": {"Mix": 0.5, "Mode": {"display": "Wide"}}},
-            "velocity": [[1, 18], [64, 68], [127, 120]]
+            "velocity": [[1, 18], [64, 68], [127, 120]],
+            "articulations": {
+                "default": {"keyswitch": 24, "mode": "latch"},
+                "mute": {"keyswitch": 26, "mode": "latch"},
+                "harmonic": {"cc": {"number": 68, "value": 127, "reset": 0}}
+            }
         });
         let source = parse_source(&value, "instruments.bass.source").unwrap();
         assert_eq!(source.velocity.unwrap()[1], (64, 68));
+        assert!(matches!(
+            source.articulations["harmonic"].control,
+            ArticulationControl::Controller {
+                number: 68,
+                value: 127,
+                reset: 0
+            }
+        ));
         let params = source.vst3.params;
         assert!(matches!(params["Mix"], ParameterValue::Normalized(0.5)));
         assert!(matches!(&params["Mode"], ParameterValue::Display(value) if value == "Wide"));
@@ -405,6 +554,22 @@ mod tests {
             (
                 json!({"vst3":{"plugin":"synth"}, "unexpected":true}),
                 "instruments.bass.source.unexpected",
+            ),
+            (
+                json!({"vst3":{"plugin":"synth"}, "articulations":{"mute":{"keyswitch":24,"mode":"latch"}}}),
+                "instruments.bass.source.articulations",
+            ),
+            (
+                json!({"vst3":{"plugin":"synth"}, "articulations":{"default":{"keyswitch":24,"mode":"hold"}}}),
+                "instruments.bass.source.articulations.default",
+            ),
+            (
+                json!({"vst3":{"plugin":"synth"}, "articulations":{"mute":{"cc":{"number":1,"value":128,"reset":0}}}}),
+                "instruments.bass.source.articulations.mute.cc.value",
+            ),
+            (
+                json!({"vst3":{"plugin":"synth"}, "articulations":{"mute":{"keyswitch":24,"mode":"hold","cc":{"number":1,"value":1,"reset":0}}}}),
+                "instruments.bass.source.articulations.mute",
             ),
         ] {
             assert_eq!(
