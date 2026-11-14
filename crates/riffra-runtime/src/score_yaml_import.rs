@@ -891,6 +891,8 @@ pub(crate) struct ScoreOutcome {
     pub(crate) changed: bool,
     /// Whether the linked file path or external instrument bindings differ.
     pub(crate) link_changed: bool,
+    /// Whether the resolved plugin inputs differ from the accepted fingerprint.
+    pub(crate) inputs_changed: bool,
     /// Warnings produced while resolving the Score.
     pub(crate) diagnostics: Vec<ScoreDiagnostic>,
     dependencies: Dependencies,
@@ -900,7 +902,7 @@ pub(crate) struct ScoreOutcome {
 impl ScoreOutcome {
     /// Returns whether accepting this Score changes anything the Project stores.
     fn has_changes(&self) -> bool {
-        self.changed || self.yaml_changed || self.link_changed
+        self.changed || self.yaml_changed || self.link_changed || self.inputs_changed
     }
 
     /// Returns the Session to commit, or `None` when the Project already matches.
@@ -969,6 +971,7 @@ pub(crate) fn import(
         yaml_changed: true,
         changed: true,
         link_changed: true,
+        inputs_changed: true,
         diagnostics: warnings(&document.plan),
         dependencies: std::mem::take(&mut document.dependencies),
         staged,
@@ -1033,9 +1036,14 @@ pub(crate) fn rebuild(
         .score_source
         .as_ref()
         .is_none_or(|source| source.yaml != document.yaml);
+    let inputs_changed = previous
+        .score_source
+        .as_ref()
+        .is_none_or(|source| source.production_inputs != document.production_inputs);
     Ok(ScoreOutcome {
         changed: !previous.score_performance_equals(&session),
         link_changed: link_changed(previous, &session),
+        inputs_changed,
         session,
         yaml_changed,
         diagnostics,
@@ -5455,6 +5463,7 @@ mod tests {
             yaml_changed: false,
             changed: false,
             link_changed: false,
+            inputs_changed: false,
             diagnostics: Vec::new(),
             dependencies,
             staged: StagedResources::new(&root),
@@ -5484,6 +5493,7 @@ mod tests {
             yaml_changed: false,
             changed: false,
             link_changed: false,
+            inputs_changed: false,
             diagnostics: Vec::new(),
             dependencies: Dependencies::new(),
             staged: StagedResources::new(Path::new("")),
@@ -5499,6 +5509,7 @@ mod tests {
             yaml_changed: false,
             changed: false,
             link_changed: true,
+            inputs_changed: false,
             diagnostics: Vec::new(),
             dependencies: Dependencies::new(),
             staged: StagedResources::new(Path::new("")),
@@ -5509,6 +5520,39 @@ mod tests {
             candidate.score_source.as_ref().unwrap().path.as_deref(),
             Some("/scores/moved.yaml")
         );
+
+        // A changed input fingerprint is recorded even when the performance is identical.
+        let mut inputs = session.clone();
+        inputs
+            .score_source
+            .as_mut()
+            .unwrap()
+            .production_inputs
+            .insert("instruments.lead.source".into(), "new-input".into());
+        let outcome = ScoreOutcome {
+            session: inputs,
+            yaml_changed: false,
+            changed: false,
+            link_changed: false,
+            inputs_changed: true,
+            diagnostics: Vec::new(),
+            dependencies: Dependencies::new(),
+            staged: StagedResources::new(Path::new("")),
+        };
+        let candidate = outcome
+            .candidate(&session)
+            .expect("a fingerprint change commits");
+        assert_eq!(
+            candidate
+                .score_source
+                .as_ref()
+                .unwrap()
+                .production_inputs
+                .get("instruments.lead.source")
+                .map(String::as_str),
+            Some("new-input")
+        );
+        assert_eq!(candidate.arrangement.revision, session.arrangement.revision);
         assert!(candidate.score_performance_equals(&session));
     }
 }
