@@ -330,9 +330,11 @@ bool MidiScheduler::compile(const MidiClipSpec& source, const MidiCompileOptions
                         offset,
                         juce::MidiMessage::noteOn(1, control.note, static_cast<juce::uint8>(127)),
                         1, MidiControlKind::keyswitchLatch, control.note, 0);
+                    const auto tick = options.startTick + control.tick;
+                    const auto releaseTick =
+                        tick < std::numeric_limits<std::uint64_t>::max() ? tick + 1 : tick;
                     appendControl(
-                        timebase.tickToSample(options.startTick + control.tick + 1, sampleRate) -
-                            destination.startSample,
+                        timebase.tickToSample(releaseTick, sampleRate) - destination.startSample,
                         juce::MidiMessage::noteOff(1, control.note), 1,
                         MidiControlKind::keyswitchLatch, control.note, 0);
                 } else if (control.down) {
@@ -456,7 +458,7 @@ void MidiScheduler::schedule(const std::vector<CompiledMidiClip>& clips,
         if (latch >= 0) {
             destination.addEvent(juce::MidiMessage::noteOn(1, latch, static_cast<juce::uint8>(127)),
                                  0);
-            destination.addEvent(juce::MidiMessage::noteOff(1, latch), 0);
+            destination.addEvent(juce::MidiMessage::noteOff(1, latch), sampleCount > 1 ? 1 : 0);
         }
         for (std::size_t number = 0; number < controllers.size(); ++number)
             if (controllers[number] >= 0)

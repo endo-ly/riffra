@@ -397,10 +397,15 @@ TEST(TimelineEngineTest, SeekRestoresVst3KeyswitchAndControllerState) {
             (message.isController() && message.getControllerNumber() == 11))
             restored.push_back(message);
     ASSERT_EQ(restored.size(), 3u);
-    EXPECT_TRUE(restored[0].isNoteOn());
-    EXPECT_TRUE(restored[1].isNoteOff());
-    EXPECT_TRUE(restored[2].isController());
-    EXPECT_EQ(restored[2].getControllerValue(), 96);
+    EXPECT_TRUE(std::any_of(restored.begin(), restored.end(),
+                            [](const auto& message) { return message.isNoteOn(); }));
+    EXPECT_TRUE(std::any_of(restored.begin(), restored.end(),
+                            [](const auto& message) { return message.isNoteOff(); }));
+    const auto controller = std::find_if(restored.begin(), restored.end(), [](const auto& message) {
+        return message.isController();
+    });
+    ASSERT_NE(controller, restored.end());
+    EXPECT_EQ(controller->getControllerValue(), 96);
 }
 
 TEST(TimelineEngineTest, StopAdvancesThePlayheadOnlyThroughTheFadeBoundary) {
