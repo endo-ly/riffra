@@ -683,7 +683,7 @@ mod tests {
             ("plugin.state.get", device.clone()),
             (
                 "plugin.state.set",
-                json!({"owner":{"kind":"track","id":"track:1"}, "deviceId": "device:1", "state": {"schemaVersion": 1, "pluginPath": "p.vst3", "parameterValues": []}}),
+                json!({"owner":{"kind":"track","id":"track:1"}, "deviceId": "device:1", "state": {"schemaVersion": 2, "pluginIdentifier": "plugin-class", "pluginPath": "p.vst3", "parameterValues": []}}),
             ),
             ("plugin.state.inspect", device.clone()),
             (

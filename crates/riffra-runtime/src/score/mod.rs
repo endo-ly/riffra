@@ -1,6 +1,7 @@
 pub(crate) mod events;
 mod lower;
 mod parse;
+pub(super) mod production;
 mod resolve;
 pub(super) mod syntax;
 mod time;
@@ -19,14 +20,7 @@ type Result<T> = std::result::Result<T, Error>;
 /// A known Score extension that Riffra does not execute yet.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Extension {
-    Kits,
     Lyrics,
-    Mix,
-    InstrumentSource,
-    InstrumentEffects,
-    InstrumentKit,
-    InstrumentAudio,
-    AudioClips,
     LineLyrics,
     Articulation,
     Cc,
@@ -38,14 +32,7 @@ pub(crate) enum Extension {
 impl Extension {
     const fn label(self) -> &'static str {
         match self {
-            Self::Kits => "kits",
             Self::Lyrics => "lyrics",
-            Self::Mix => "mix",
-            Self::InstrumentSource => "instrument source",
-            Self::InstrumentEffects => "instrument effects",
-            Self::InstrumentKit => "instrument kit",
-            Self::InstrumentAudio => "instrument audio",
-            Self::AudioClips => "section audio clips",
             Self::LineLyrics => "line lyrics",
             Self::Articulation => "articulation event",
             Self::Cc => "cc event",
@@ -309,6 +296,8 @@ pub(crate) struct ScoreLane {
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct EventSource {
     pub(crate) path: String,
+    #[serde(skip_serializing)]
+    trigger: bool,
     pub(crate) spelling: Option<String>,
     #[serde(skip_serializing)]
     pub(crate) token_offset: Option<usize>,
@@ -330,6 +319,13 @@ pub(crate) struct ScorePlan {
     source: Source,
     pub(crate) title: String,
     pub(crate) instruments: serde_json::Map<String, Value>,
+    pub(crate) production_sources: BTreeMap<String, production::SourceSpec>,
+    pub(crate) production_effects: BTreeMap<String, Vec<production::EffectSpec>>,
+    pub(crate) kits: BTreeMap<String, production::KitSpec>,
+    pub(crate) kit_members: BTreeMap<String, String>,
+    pub(crate) audio_instruments: std::collections::BTreeSet<String>,
+    pub(crate) audio_clips: BTreeMap<String, Vec<production::AudioClipSpec>>,
+    pub(crate) mix: Option<production::mix::Mix>,
     pub(crate) lanes: Vec<ScoreLane>,
     pub(crate) sections: Vec<Occurrence>,
     pub(crate) length_ticks: u64,
@@ -354,6 +350,19 @@ impl ScorePlan {
     pub(crate) fn source_detail(&self, path: &str, message: &str) -> Value {
         *Error::new(path, message).locate(&self.source).detail
     }
+
+    pub(crate) fn position_tick(
+        &self,
+        section: &Occurrence,
+        position: &production::Position,
+    ) -> u64 {
+        let bar = match position.bar {
+            production::Bar::Number(n) => n,
+            production::Bar::Last => section.bars,
+        };
+        section.bar_start_ticks[bar - 1]
+            + time::tick(&position.offset, self.ticks_per_beat).expect("validated position")
+    }
 }
 
 /// Parse, validate, and expand Score YAML into a musical plan.
@@ -364,8 +373,211 @@ pub(crate) fn compile(text: &str) -> Result<ScorePlan> {
     let mut source = Source::default();
     let result = parse::parse(text, &mut source).and_then(|document| {
         reject_extensions(&document)?;
-        resolve::validate_structure(&document, &std::collections::BTreeSet::new())?;
-        lower::lower(&document)
+        let mut view = document.clone();
+        let mix = view
+            .as_object_mut()
+            .and_then(|root| root.remove("mix"))
+            .map(|value| production::mix::parse(&value))
+            .transpose()?;
+        let mut sources = BTreeMap::new();
+        let mut effects = BTreeMap::new();
+        let kits = view
+            .as_object_mut()
+            .and_then(|root| root.remove("kits"))
+            .map(|value| production::parse_kits(&value))
+            .transpose()?
+            .unwrap_or_default();
+        let mut kit_members = BTreeMap::new();
+        let mut audio_instruments = std::collections::BTreeSet::new();
+        let mut audio_clips = BTreeMap::new();
+        if let Some(sections) = view.get_mut("sections").and_then(Value::as_object_mut) {
+            for (name, section) in sections {
+                if let Some(value) = section
+                    .as_object_mut()
+                    .and_then(|section| section.remove("audio_clips"))
+                {
+                    audio_clips.insert(
+                        name.clone(),
+                        production::parse_audio_clips(
+                            &value,
+                            &format!("sections.{name}.audio_clips"),
+                        )?,
+                    );
+                }
+            }
+        }
+        if let Some(instruments) = view.get_mut("instruments").and_then(Value::as_object_mut) {
+            for (id, instrument) in instruments {
+                if kits.contains_key(id) {
+                    return Err(Error::new(
+                        format!("kits.{id}"),
+                        "kit id conflicts with an instrument id",
+                    ));
+                }
+                if let Some(value) = instrument
+                    .as_object_mut()
+                    .and_then(|spec| spec.remove("kit"))
+                {
+                    let path = format!("instruments.{id}.kit");
+                    let kit = string(&value, &path)?;
+                    if !kits.contains_key(kit) {
+                        return Err(Error::new(path, format!("undefined kit {kit}")));
+                    }
+                    for key in ["source", "effects", "audio", "audio_input"] {
+                        if instrument.get(key).is_some() {
+                            return Err(Error::new(
+                                format!("instruments.{id}.{key}"),
+                                "kit members cannot specify this field",
+                            ));
+                        }
+                    }
+                    if instrument.get("trigger_note_midi").is_none() {
+                        return Err(Error::new(
+                            format!("instruments.{id}.trigger_note_midi"),
+                            "kit members require a trigger note",
+                        ));
+                    }
+                    kit_members.insert(id.clone(), kit.to_owned());
+                }
+                if let Some(value) = instrument
+                    .as_object_mut()
+                    .and_then(|spec| spec.remove("audio"))
+                {
+                    if value != Value::Bool(true) {
+                        return Err(Error::new(
+                            format!("instruments.{id}.audio"),
+                            "audio must be true",
+                        ));
+                    }
+                    for key in ["preset", "definition", "external", "source", "audio_input"] {
+                        if instrument.get(key).is_some() {
+                            return Err(Error::new(
+                                format!("instruments.{id}.{key}"),
+                                "audio instruments cannot specify this field",
+                            ));
+                        }
+                    }
+                    audio_instruments.insert(id.clone());
+                }
+                if let Some(value) = instrument
+                    .as_object_mut()
+                    .and_then(|spec| spec.remove("effects"))
+                {
+                    effects.insert(
+                        id.clone(),
+                        production::parse_effects(&value, &format!("instruments.{id}.effects"))?,
+                    );
+                }
+                if let Some(value) = instrument
+                    .as_object_mut()
+                    .and_then(|spec| spec.remove("source"))
+                {
+                    let path = format!("instruments.{id}.source");
+                    if instrument.get("audio_input").is_some() {
+                        return Err(Error::new(
+                            format!("instruments.{id}.audio_input"),
+                            "audio input is not supported for production sources",
+                        ));
+                    }
+                    sources.insert(id.clone(), production::parse_source(&value, &path)?);
+                }
+            }
+        }
+        for id in kits.keys() {
+            if !kit_members.values().any(|kit| kit == id) {
+                return Err(Error::new(
+                    format!("kits.{id}"),
+                    "kit must have at least one member",
+                ));
+            }
+            let score_key = format!("kit:{id}");
+            if view
+                .get("instruments")
+                .and_then(Value::as_object)
+                .is_some_and(|instruments| instruments.contains_key(&score_key))
+            {
+                return Err(Error::new(
+                    format!("kits.{id}"),
+                    "kit id conflicts with an instrument score id",
+                ));
+            }
+        }
+        let source_less = sources
+            .keys()
+            .chain(kit_members.keys())
+            .chain(audio_instruments.iter())
+            .cloned()
+            .collect();
+        resolve::validate_structure(&view, &source_less)?;
+        for (section, clips) in &audio_clips {
+            for (index, clip) in clips.iter().enumerate() {
+                if !audio_instruments.contains(&clip.instrument) {
+                    return Err(Error::new(
+                        format!("sections.{section}.audio_clips[{index}].instrument"),
+                        "audio clip must reference an audio instrument",
+                    ));
+                }
+            }
+        }
+        let mut additional_times: Vec<_> = audio_clips
+            .values()
+            .flatten()
+            .map(|clip| clip.at.offset.clone())
+            .collect();
+        if let Some(mix) = &mix {
+            additional_times.extend(
+                mix.automation
+                    .iter()
+                    .flat_map(|lane| lane.points.iter().map(|point| point.at.offset.clone())),
+            );
+        }
+        let mut plan = lower::lower(&view, &additional_times)?;
+        plan.instruments = object(&document["instruments"], "instruments")?.clone();
+        plan.production_sources = sources;
+        plan.production_effects = effects;
+        plan.kits = kits;
+        plan.kit_members = kit_members;
+        plan.audio_instruments = audio_instruments;
+        plan.audio_clips = audio_clips;
+        plan.mix = mix;
+        for (section, clips) in &plan.audio_clips {
+            for (index, clip) in clips.iter().enumerate() {
+                let path = format!("sections.{section}.audio_clips[{index}].at");
+                for occurrence in plan.sections.iter().filter(|item| item.section == *section) {
+                    let bar = match clip.at.bar {
+                        production::Bar::Number(n) => n,
+                        production::Bar::Last => occurrence.bars,
+                    };
+                    if bar == 0 || bar > occurrence.bars {
+                        return Err(Error::new(&path, "bar is outside the section"));
+                    }
+                    let offset = time::tick(&clip.at.offset, plan.ticks_per_beat)
+                        .map_err(|error| error.at(&path))?;
+                    if offset
+                        >= occurrence.bar_end_ticks[bar - 1] - occurrence.bar_start_ticks[bar - 1]
+                    {
+                        return Err(Error::new(&path, "position is outside the selected bar"));
+                    }
+                }
+            }
+        }
+        if let Some(lane) = plan
+            .lanes
+            .iter()
+            .find(|lane| plan.audio_instruments.contains(&lane.id))
+        {
+            let path = lane.sources.first().map_or_else(
+                || format!("instruments.{}", lane.id),
+                |source| source.path.clone(),
+            );
+            return Err(Error::new(
+                path,
+                "audio instruments cannot receive performance events",
+            ));
+        }
+        validate_kit_performance(&document, &plan, &source)?;
+        production::mix::validate(&plan)?;
+        Ok(plan)
     });
     result
         .map_err(|error| error.locate(&source))
@@ -439,40 +651,90 @@ pub(crate) fn compile(text: &str) -> Result<ScorePlan> {
         })
 }
 
+fn validate_kit_performance(document: &Value, plan: &ScorePlan, source: &Source) -> Result<()> {
+    fn reject_gain(value: &Value, path: &str, members: &BTreeMap<String, String>) -> Result<()> {
+        match value {
+            Value::Object(fields) => {
+                if fields
+                    .get("instrument")
+                    .and_then(Value::as_str)
+                    .is_some_and(|id| members.contains_key(id))
+                    && fields.contains_key("gain_db")
+                {
+                    return Err(Error::new(
+                        format!("{path}.gain_db"),
+                        "kit members cannot have individual event gain",
+                    ));
+                }
+                for (key, child) in fields {
+                    reject_gain(child, &format!("{path}.{key}"), members)?;
+                }
+            }
+            Value::Array(items) => {
+                for (index, child) in items.iter().enumerate() {
+                    reject_gain(child, &format!("{path}[{index}]"), members)?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+    if let Some(sections) = document.get("sections") {
+        reject_gain(sections, "sections", &plan.kit_members)?;
+    }
+    if let Some(sections) = document.get("sections").and_then(Value::as_object) {
+        for (section, value) in sections {
+            if let Some(gains) = value.get("part_gains").and_then(Value::as_object)
+                && let Some(id) = gains.keys().find(|id| plan.kit_members.contains_key(*id))
+            {
+                return Err(Error::new(
+                    format!("sections.{section}.part_gains.{id}"),
+                    "kit members cannot have individual gain automation",
+                ));
+            }
+        }
+    }
+    for lane in plan
+        .lanes
+        .iter()
+        .filter(|lane| plan.kit_members.contains_key(&lane.id))
+    {
+        for (event, origin) in lane.pattern.events.iter().zip(&lane.sources) {
+            match event {
+                MusicalEvent::Note { .. } if origin.trigger => {}
+                MusicalEvent::Note { .. } => {
+                    return Err(Error::new(
+                        &origin.path,
+                        "kit members only support trigger notes",
+                    ));
+                }
+                _ => {
+                    return Err(Error::new(
+                        &origin.path,
+                        "kit members cannot use instrument control events",
+                    ));
+                }
+            }
+            let gain_path = format!("{}.gain_db", origin.path);
+            if source.values.contains_key(&gain_path) {
+                return Err(Error::new(
+                    gain_path,
+                    "kit members cannot have individual event gain",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Returns every known extension site as a source field path, in document order.
 fn extension_sites(document: &Value) -> Vec<(Extension, String)> {
     let mut sites = Vec::new();
-    for (key, extension) in [
-        ("kits", Extension::Kits),
-        ("lyrics", Extension::Lyrics),
-        ("mix", Extension::Mix),
-    ] {
-        if document.get(key).is_some() {
-            sites.push((extension, key.to_owned()));
-        }
-    }
-    if let Some(instruments) = document.get("instruments").and_then(Value::as_object) {
-        for (id, spec) in instruments {
-            for (key, extension) in [
-                ("source", Extension::InstrumentSource),
-                ("effects", Extension::InstrumentEffects),
-                ("kit", Extension::InstrumentKit),
-                ("audio", Extension::InstrumentAudio),
-            ] {
-                if spec.get(key).is_some() {
-                    sites.push((extension, format!("instruments.{id}.{key}")));
-                }
-            }
-        }
+    if document.get("lyrics").is_some() {
+        sites.push((Extension::Lyrics, "lyrics".to_owned()));
     }
     if let Some(sections) = document.get("sections").and_then(Value::as_object) {
         for (name, section) in sections {
-            if section.get("audio_clips").is_some() {
-                sites.push((
-                    Extension::AudioClips,
-                    format!("sections.{name}.audio_clips"),
-                ));
-            }
             if let Some(lines) = section.get("lines").and_then(Value::as_object) {
                 for (line, value) in lines {
                     if value.get("lyrics").is_some() {
@@ -1837,13 +2099,92 @@ mod tests {
     }
 
     #[test]
+    fn production_source_preserves_musical_lanes_and_original_locations() {
+        let mut doc = document();
+        doc["instruments"]["part"] = json!({"source":{"vst3":{"plugin":"Synth"}}});
+        let yaml = to_yaml(&doc).unwrap();
+        let plan = compile(&yaml).unwrap();
+        assert_eq!(plan.lanes[0].id, "part");
+        assert_eq!(plan.production_sources["part"].vst3.plugin, "Synth");
+        assert_eq!(
+            plan.instruments["part"]["source"]["vst3"]["plugin"],
+            "Synth"
+        );
+
+        doc["instruments"]["part"]["source"]["vst3"]["params"] = json!({"Mix": 1.5});
+        let error = compile(&to_yaml(&doc).unwrap()).unwrap_err();
+        assert_eq!(error.path, "instruments.part.source.vst3.params.Mix");
+        assert!(error.detail["line"].as_u64().unwrap() > 0);
+    }
+
+    #[test]
+    fn kits_resolve_members_and_reject_inconsistent_declarations() {
+        let mut doc = document();
+        doc["kits"] = json!({"drums":{"source":{"use":"drum-kit"}}});
+        assert_eq!(
+            compile(&to_yaml(&doc).unwrap()).unwrap_err().path,
+            "kits.drums.source.use"
+        );
+        doc["kits"] = json!({"drums":{"source":{"vst3":{"plugin":"drum-kit"}}}});
+        doc["instruments"]["kick"] = json!({"kit":"drums", "trigger_note_midi":36});
+        let plan = compile(&to_yaml(&doc).unwrap()).unwrap();
+        assert_eq!(plan.kit_members["kick"], "drums");
+        assert_eq!(plan.kits["drums"].source.vst3.plugin, "drum-kit");
+        assert!(plan.kits["drums"].effects.is_empty());
+
+        doc["sections"]["phrase"]["events"] =
+            json!([{"kind":"hit", "instrument":"kick", "at":{"bar":1,"step":1}}]);
+        assert!(compile(&to_yaml(&doc).unwrap()).is_ok());
+        doc["sections"]["phrase"]["part_gains"] = json!({"kick":-1});
+        assert_eq!(
+            compile(&to_yaml(&doc).unwrap()).unwrap_err().path,
+            "sections.phrase.part_gains.kick"
+        );
+        doc["sections"]["phrase"]
+            .as_object_mut()
+            .unwrap()
+            .remove("part_gains");
+        doc["sections"]["phrase"]["lines"]["main"]["instrument"] = json!("kick");
+        assert!(
+            compile(&to_yaml(&doc).unwrap())
+                .unwrap_err()
+                .message
+                .contains("trigger notes")
+        );
+        doc["sections"]["phrase"]["lines"]["main"]["instrument"] = json!("part");
+        doc["sections"]["phrase"]["events"] = json!([
+            {"kind":"mod_wheel", "instrument":"kick", "value":0, "at":{"bar":1,"step":1}}
+        ]);
+        assert!(
+            compile(&to_yaml(&doc).unwrap())
+                .unwrap_err()
+                .message
+                .contains("control events")
+        );
+        doc["sections"]["phrase"]["events"] =
+            json!([{"kind":"hit", "instrument":"kick", "at":{"bar":1,"step":1}}]);
+
+        doc["instruments"]["kick"]["kit"] = json!("missing");
+        assert_eq!(
+            compile(&to_yaml(&doc).unwrap()).unwrap_err().path,
+            "instruments.kick.kit"
+        );
+        doc["instruments"]["kick"]["kit"] = json!("drums");
+        doc["instruments"]["kick"]["effects"] = json!([]);
+        assert_eq!(
+            compile(&to_yaml(&doc).unwrap()).unwrap_err().path,
+            "instruments.kick.effects"
+        );
+    }
+
+    #[test]
     fn unimplemented_extensions_are_rejected_with_their_source_position() {
         let error = compile(EXTENSION_SCORE).expect_err("extensions are not implemented");
-        assert_eq!(error.path, "kits");
-        assert!(error.message.contains("kit") || error.message.contains("kits"));
+        assert_eq!(error.path, "lyrics");
+        assert!(error.message.contains("lyrics"));
         let detail = &error.detail;
         assert_eq!(detail["kind"], "notImplemented");
-        assert_eq!(detail["path"], "kits");
+        assert_eq!(detail["path"], "lyrics");
         assert!(detail["line"].as_u64().expect("line") > 0);
         assert!(detail["column"].as_u64().expect("column") > 0);
 
@@ -1851,39 +2192,22 @@ mod tests {
         document.as_object_mut().unwrap().remove("kits");
         assert_eq!(compile(&document.to_string()).unwrap_err().path, "lyrics");
         document.as_object_mut().unwrap().remove("lyrics");
-        assert_eq!(compile(&document.to_string()).unwrap_err().path, "mix");
         document.as_object_mut().unwrap().remove("mix");
 
         let lead = document["instruments"]["lead"].as_object_mut().unwrap();
         lead.remove("source");
-        assert_eq!(
-            compile(&document.to_string()).unwrap_err().path,
-            "instruments.lead.effects"
-        );
         document["instruments"]["lead"]
             .as_object_mut()
             .unwrap()
             .remove("effects");
-        assert_eq!(
-            compile(&document.to_string()).unwrap_err().path,
-            "instruments.bass.kit"
-        );
         document["instruments"]["bass"]
             .as_object_mut()
             .unwrap()
             .remove("kit");
-        assert_eq!(
-            compile(&document.to_string()).unwrap_err().path,
-            "instruments.take.audio"
-        );
         document["instruments"]["take"]
             .as_object_mut()
             .unwrap()
             .remove("audio");
-        assert_eq!(
-            compile(&document.to_string()).unwrap_err().path,
-            "sections.verse.audio_clips"
-        );
         document["sections"]["verse"]
             .as_object_mut()
             .unwrap()
@@ -1906,6 +2230,98 @@ mod tests {
                 .unwrap()
                 .remove(0);
         }
+    }
+
+    #[test]
+    fn audio_instruments_cannot_be_played_or_combined_with_a_source() {
+        let mut doc = document();
+        doc["instruments"]["take"] = json!({"audio":true});
+        let plan = compile(&to_yaml(&doc).unwrap()).unwrap();
+        assert!(plan.audio_instruments.contains("take"));
+        doc["instruments"]["take"]["preset"] = json!("piano");
+        assert_eq!(
+            compile(&to_yaml(&doc).unwrap()).unwrap_err().path,
+            "instruments.take.preset"
+        );
+        doc["instruments"]["take"]
+            .as_object_mut()
+            .unwrap()
+            .remove("preset");
+        doc["sections"]["phrase"]["lines"]["main"]["instrument"] = json!("take");
+        assert!(
+            compile(&to_yaml(&doc).unwrap())
+                .unwrap_err()
+                .message
+                .contains("cannot receive performance events")
+        );
+    }
+
+    #[test]
+    fn audio_clips_resolve_in_each_section_occurrence_with_exact_positions() {
+        let mut doc = document();
+        doc["instruments"]["take"] = json!({"audio":true});
+        doc["sections"]["phrase"]["audio_clips"] = json!([{
+            "id":"rain", "instrument":"take", "file":"audio/rain.wav",
+            "at":{"bar":1,"offset_quarters":"1/7"}, "duration_seconds":3,
+            "fade_in_seconds":0.5
+        }]);
+        let occurrence = doc["form"][0].clone();
+        doc["form"].as_array_mut().unwrap().push(occurrence);
+        let plan = compile(&to_yaml(&doc).unwrap()).unwrap();
+        assert_eq!(plan.sections.len(), 2);
+        assert_eq!(plan.ticks_per_beat % 7, 0);
+        assert_eq!(plan.audio_clips["phrase"][0].id, "rain");
+        doc["sections"]["phrase"]["audio_clips"][0]["at"]["offset_quarters"] = json!("4");
+        assert_eq!(
+            compile(&to_yaml(&doc).unwrap()).unwrap_err().path,
+            "sections.phrase.audio_clips[0].at"
+        );
+        doc["sections"]["phrase"]["audio_clips"][0]["instrument"] = json!("part");
+        assert_eq!(
+            compile(&to_yaml(&doc).unwrap()).unwrap_err().path,
+            "sections.phrase.audio_clips[0].instrument"
+        );
+    }
+
+    #[test]
+    fn mix_routes_and_automation_resolve_against_the_score() {
+        let mut doc = document();
+        doc["instruments"]["part"]["source"] = json!({"vst3":{"plugin":"Synth"}});
+        doc["instruments"]["part"]["effects"] =
+            json!([{"id":"duck", "vst3":{"plugin":"compressor"}}]);
+        doc["instruments"]["kick"] = json!({"kit":"drums", "trigger_note_midi":36});
+        doc["kits"] = json!({"drums":{"source":{"vst3":{"plugin":"drum-kit"}}}});
+        doc["mix"] = json!({
+            "buses":{"rhythm":{"kind":"group"},"room":{"kind":"return"}},
+            "tracks":{"part":{"output":"rhythm", "sends":{"room":-18}},"drums":{"gain_db":-2}},
+            "sidechain":[{"from":"drums", "to":{"instrument":"part", "effect":"duck"}}],
+            "automation":[{"target":{"source":"part", "parameter":"Cutoff"},"section":"phrase", "points":[{"at":{"bar":1,"offset_quarters":"1/7"},"value":0.5}]}]
+        });
+        let plan = compile(&to_yaml(&doc).unwrap()).unwrap();
+        let mix = plan.mix.unwrap();
+        assert_eq!(mix.tracks.len(), 2);
+        assert_eq!(mix.buses.len(), 2);
+        assert_eq!(mix.sidechain.len(), 1);
+        assert_eq!(mix.automation.len(), 1);
+        assert_eq!(plan.ticks_per_beat % 7, 0);
+
+        doc["mix"]["tracks"]["part"]["output"] = json!("room");
+        assert_eq!(
+            compile(&to_yaml(&doc).unwrap()).unwrap_err().path,
+            "mix.tracks.part.output"
+        );
+        doc["mix"]["tracks"]["part"]["output"] = json!("rhythm");
+        doc["mix"]["sidechain"][0]["to"]["effect"] = json!("missing");
+        assert_eq!(
+            compile(&to_yaml(&doc).unwrap()).unwrap_err().path,
+            "mix.sidechain[0].to"
+        );
+        doc["mix"]["sidechain"][0]["to"]["effect"] = json!("duck");
+        doc["mix"]["automation"][0]["occurrence"] = json!(2);
+        assert_eq!(
+            compile(&to_yaml(&doc).unwrap()).unwrap_err().path,
+            "mix.automation[0].occurrence"
+        );
     }
 
     #[test]

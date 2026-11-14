@@ -92,6 +92,10 @@ pub struct PluginPresetInfo {
 #[serde(rename_all = "camelCase")]
 pub struct PluginStateSnapshot {
     pub schema_version: u32,
+    /// Stable VST3 class identifier reported by the scanner.
+    pub plugin_identifier: String,
+    /// Path of the plugin when the snapshot was taken. Informational only;
+    /// validation uses [`Self::plugin_identifier`].
     pub plugin_path: String,
     pub parameter_values: Vec<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

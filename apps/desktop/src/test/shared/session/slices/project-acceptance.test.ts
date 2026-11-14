@@ -153,7 +153,9 @@ describe('project store', () => {
       acceptScoreSync(store, {
         state: 'failed',
         projectId: 'other-project',
-        diagnostics: [{ path: 'meta.title', message: 'wrong project', line: 1, column: 1 }],
+        diagnostics: [
+          { severity: 'error', path: 'meta.title', message: 'wrong project', line: 1, column: 1 },
+        ],
       }),
     ).toBeNull();
 
@@ -162,7 +164,13 @@ describe('project store', () => {
       projectId,
       path: 'C:/music/song/score.yaml',
       diagnostics: [
-        { path: 'instruments.lead.voices', message: 'unknown field', line: 12, column: 5 },
+        {
+          severity: 'error',
+          path: 'instruments.lead.voices',
+          message: 'unknown field',
+          line: 12,
+          column: 5,
+        },
       ],
     });
     expect(failed?.scoreSync?.state).toBe('failed');

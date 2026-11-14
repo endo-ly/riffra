@@ -93,6 +93,7 @@ fn run(shared: &std::sync::Weak<HostState>, worker: &WatcherState) {
                 &canonical.project_id,
                 &path,
                 vec![ScoreDiagnostic {
+                    severity: crate::api::output::ScoreDiagnosticSeverity::Error,
                     path: String::new(),
                     message: format!(
                         "the linked Score file could not be read: {}",
@@ -105,17 +106,13 @@ fn run(shared: &std::sync::Weak<HostState>, worker: &WatcherState) {
             ));
             continue;
         };
-        if yaml == accepted {
+        let current = state.score_sync_status();
+        if yaml == accepted && current.state == ScoreSyncState::Synced {
             pending = None;
             failed = None;
-            state.set_score_sync(ScoreSyncStatus {
-                state: ScoreSyncState::Synced,
-                project_id: Some(canonical.project_id),
-                path: Some(path.to_string_lossy().into_owned()),
-                sequence: Some(canonical.sequence),
-                updated_at_ms: Some(canonical.session.updated_at_ms),
-                diagnostics: Vec::new(),
-            });
+            if let Some(updated) = accepted_sync_status(current, &canonical, &path) {
+                state.set_score_sync(updated);
+            }
             continue;
         }
         if failed
@@ -184,6 +181,25 @@ fn run(shared: &std::sync::Weak<HostState>, worker: &WatcherState) {
     }
 }
 
+fn accepted_sync_status(
+    current: ScoreSyncStatus,
+    canonical: &riffra_core::CanonicalState,
+    path: &Path,
+) -> Option<ScoreSyncStatus> {
+    let same_link = current.state == ScoreSyncState::Synced
+        && current.project_id.as_deref() == Some(&canonical.project_id)
+        && current.path.as_deref() == path.to_str();
+    if same_link && current.sequence == Some(canonical.sequence) {
+        return None;
+    }
+    let diagnostics = if same_link {
+        current.diagnostics
+    } else {
+        Vec::new()
+    };
+    Some(super::state::synced_score_sync(canonical, diagnostics))
+}
+
 fn linked_score(state: &HostState) -> Option<(riffra_core::CanonicalState, PathBuf, String)> {
     let canonical = state.project.read().canonical.clone();
     let source = canonical.session.score_source.as_ref()?;
@@ -209,10 +225,171 @@ fn failed_status(
 fn diagnostics(error: &ProtocolError) -> Vec<ScoreDiagnostic> {
     let detail = error.details.clone().unwrap_or_default();
     vec![ScoreDiagnostic {
+        severity: crate::api::output::ScoreDiagnosticSeverity::Error,
         path: detail["path"].as_str().unwrap_or_default().to_owned(),
         message: error.message.clone(),
         line: detail["line"].as_u64().unwrap_or(0) as usize,
         column: detail["column"].as_u64().unwrap_or(0) as usize,
         detail: Some(detail),
     }]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn synced(diagnostics: Vec<ScoreDiagnostic>) -> ScoreSyncStatus {
+        ScoreSyncStatus {
+            state: ScoreSyncState::Synced,
+            project_id: Some("project".into()),
+            path: Some("score.yaml".into()),
+            sequence: Some(7),
+            updated_at_ms: Some(1),
+            diagnostics,
+        }
+    }
+
+    #[test]
+    fn restoring_accepted_yaml_after_failure_recomputes_warnings() {
+        use crate::api::output::{
+            PluginEntry, PluginFormat, PluginRole, PluginScanState, ScanReport,
+        };
+
+        let root = std::env::temp_dir().join(format!(
+            "riffra-score-watch-{}",
+            riffra_control::new_instance_id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let score_path = root.join("score.yaml");
+        let plugin_path = root.join("Bass.vst3");
+        std::fs::create_dir_all(&plugin_path).unwrap();
+        let yaml = r#"{
+            "meta":{"title":"Warnings","bpm":120,"meter":"4/4","tuning":"12edo","gate":1},
+            "form":[{"section":"verse","bars":1,"tonic":"C","scale":"ionian"}],
+            "instruments":{"bass":{"source":{"vst3":{"plugin":"Bass"}}}},
+            "sections":{"verse":{"lines":{"main":{"instrument":"bass","melody":"theme"},"second":{"instrument":"bass","melody":"theme","gain_db":-6}}}},
+            "melodies":{"theme":["1 - - - | 3 - - - | 5 - - - | 1' - - -"]}
+        }"#;
+        std::fs::write(&score_path, yaml).unwrap();
+        crate::plugins::catalog::save(
+            &root,
+            &ScanReport {
+                root: root.to_string_lossy().into_owned(),
+                started_at_ms: 0,
+                finished_at_ms: 0,
+                plugins: vec![PluginEntry {
+                    id: "bass".into(),
+                    name: "Bass".into(),
+                    vendor: None,
+                    version: None,
+                    identifier: Some("bass-class".into()),
+                    format: PluginFormat::Vst3,
+                    role: Some(PluginRole::Instrument),
+                    path: plugin_path.to_string_lossy().into_owned(),
+                    bundle: true,
+                    modified_at_ms: None,
+                    scan_state: PluginScanState::Validated,
+                }],
+                issues: Vec::new(),
+            },
+        )
+        .unwrap();
+        let imported = crate::score_yaml_import::import(
+            &crate::api::params::ProjectImportScoreParams {
+                path: score_path.clone(),
+                bindings: Default::default(),
+            },
+            &root,
+            crate::test_support::empty_built_in_catalog(),
+            Path::new("unused"),
+            Path::new("unused"),
+        )
+        .unwrap();
+        assert_eq!(imported.diagnostics.len(), 1);
+        let state = HostState::for_test(
+            &root,
+            imported.session.clone(),
+            crate::AudioSupervisor::offline("test"),
+            true,
+        );
+        let canonical = state.project.read().canonical.clone();
+        state.set_score_sync(super::super::state::synced_score_sync(
+            &canonical,
+            imported.diagnostics.clone(),
+        ));
+        let watcher = ScoreWatcher::start(&state).unwrap();
+        let wait_for = |expected| {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                let status = state.score_sync_status();
+                if status.state == expected {
+                    break status;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "unexpected score status: {status:?}"
+                );
+                std::thread::sleep(Duration::from_millis(25));
+            }
+        };
+        std::fs::write(&score_path, "not: [valid").unwrap();
+        let failed = wait_for(ScoreSyncState::Failed);
+        assert_eq!(
+            failed.diagnostics[0].severity,
+            crate::api::output::ScoreDiagnosticSeverity::Error
+        );
+        std::fs::write(&score_path, yaml).unwrap();
+        let restored = wait_for(ScoreSyncState::Synced);
+        assert_eq!(restored.diagnostics, imported.diagnostics);
+        watcher.shutdown();
+        drop(state);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn an_unchanged_accepted_score_keeps_its_diagnostics() {
+        let warning = ScoreDiagnostic {
+            severity: crate::api::output::ScoreDiagnosticSeverity::Warning,
+            path: "mix.tracks.drums".into(),
+            message: "additional gain lane".into(),
+            line: 1,
+            column: 2,
+            detail: None,
+        };
+        let current = synced(vec![warning.clone()]);
+        let mut session = riffra_core::CreativeSession::new(1);
+        session.score_source = Some(riffra_core::ScoreSource {
+            file_name: "score.yaml".into(),
+            yaml: "score".into(),
+            path: Some("score.yaml".into()),
+            bindings: Default::default(),
+            production_inputs: Default::default(),
+        });
+        session
+            .arrangement
+            .tracks
+            .push(riffra_core::Track::instrument(
+                "track".into(),
+                "track".into(),
+            ));
+        let mut canonical =
+            riffra_core::AppCore::new("project".into(), session, 7).canonical_state();
+        assert!(
+            accepted_sync_status(current.clone(), &canonical, Path::new("score.yaml")).is_none()
+        );
+        canonical.session.arrangement.tracks[0].muted = true;
+        canonical.session.arrangement.tracks[0].solo = true;
+        canonical.sequence = 8;
+        let updated =
+            accepted_sync_status(current.clone(), &canonical, Path::new("score.yaml")).unwrap();
+        assert_eq!(updated.sequence, Some(8));
+        assert_eq!(updated.diagnostics, vec![warning]);
+        canonical.project_id = "other-project".into();
+        assert!(
+            accepted_sync_status(current, &canonical, Path::new("score.yaml"))
+                .unwrap()
+                .diagnostics
+                .is_empty()
+        );
+    }
 }

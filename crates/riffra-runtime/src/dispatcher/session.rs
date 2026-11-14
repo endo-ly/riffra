@@ -574,6 +574,7 @@ fn resolve_automation_points(
 #[cfg(test)]
 mod tests {
     use super::resolve_device_bindings;
+    use crate::api::output::{PluginEntry, PluginFormat, PluginRole, PluginScanState, ScanReport};
     use crate::dispatcher::Dispatcher;
     use crate::test_support::{command, mutated_session, output_type, output_value};
     use riffra_control::{ControlRequest, ErrorCode, new_instance_id};
@@ -581,6 +582,36 @@ mod tests {
     use serde_json::json;
     use std::collections::BTreeMap;
     use std::fs;
+
+    fn production_catalog(root: &std::path::Path, entries: &[(&str, &str)]) {
+        let report = ScanReport {
+            root: root.to_string_lossy().into_owned(),
+            started_at_ms: 0,
+            finished_at_ms: 0,
+            issues: Vec::new(),
+            plugins: entries
+                .iter()
+                .map(|(path, identifier)| PluginEntry {
+                    id: identifier.to_string(),
+                    name: std::path::Path::new(path)
+                        .file_stem()
+                        .unwrap()
+                        .to_string_lossy()
+                        .into_owned(),
+                    vendor: None,
+                    version: None,
+                    identifier: Some(identifier.to_string()),
+                    format: PluginFormat::Vst3,
+                    role: Some(PluginRole::Instrument),
+                    path: path.to_string(),
+                    bundle: true,
+                    modified_at_ms: None,
+                    scan_state: PluginScanState::Validated,
+                })
+                .collect(),
+        };
+        crate::plugins::catalog::save(root, &report).unwrap();
+    }
 
     #[test]
     fn instrument_track_creation_commits_once_and_rolls_back_failed_assignment() {
@@ -1443,6 +1474,13 @@ mod tests {
             crate::test_support::prepare_built_in_resource_root(&root),
         )
         .unwrap();
+        production_catalog(
+            &root,
+            &[
+                (r"C:\Plugins\NewDrums.vst3", "new-drums-class"),
+                (r"C:\Plugins\Other.vst3", "other-class"),
+            ],
+        );
         let mut dispatcher = dispatcher;
         dispatcher.test_sidechain_capability =
             Some(crate::api::output::DeviceSidechainCapability {
@@ -1551,7 +1589,7 @@ mod tests {
             {"command":"track.add","params":{"name":"Drums","kind":"instrument"}},
             {"command":"instrument.vst3.set","params":{"trackName":"Lead","pluginPath":"C:\\Plugins\\NewLead.vst3"}},
             {"command":"instrument.vst3.set","params":{"trackName":"Drums","pluginPath":"C:\\Plugins\\NewDrums.vst3"}},
-            {"command":"plugin.state.import","params":{"owner":{"kind":"track","name":"Drums"},"state":{"schemaVersion":1,"pluginPath":"C:\\Plugins\\NewDrums.vst3","parameterValues":[0.25,0.75],"stateData":"a2l0"}}},
+            {"command":"plugin.state.import","params":{"owner":{"kind":"track","name":"Drums"},"state":{"schemaVersion":2,"pluginIdentifier":"new-drums-class","pluginPath":"C:\\Plugins\\NewDrums.vst3","parameterValues":[0.25,0.75],"stateData":"a2l0"}}},
             {"command":"music.midi-clip.create","params":{"trackName":"Lead","name":"Verse","start":"1:1","end":"5:1"}},
             {"command":"music.note.insert","params":{"trackName":"Lead","clipName":"Verse","notes":[{"pitch":"D4","position":"1:1","duration":"1/4"}]}},
             {"command":"mixer.bus.add","params":{"name":"Group","kind":"group"}},
@@ -1562,7 +1600,7 @@ mod tests {
             {"command":"automation.set","params":{"target":{"kind":"masterGain"},"interpolation":"linear","points":[{"id":"point:master","tick":0,"value":-6}]}}
         ]);
         let mut failed_operations = operations.as_array().unwrap().clone();
-        failed_operations.push(json!({"command":"plugin.state.import","params":{"owner":{"kind":"track","name":"Drums"},"state":{"schemaVersion":1,"pluginPath":"C:\\Plugins\\Other.vst3","parameterValues":[]}}}));
+        failed_operations.push(json!({"command":"plugin.state.import","params":{"owner":{"kind":"track","name":"Drums"},"state":{"schemaVersion":2,"pluginIdentifier":"other-class","pluginPath":"C:\\Plugins\\NewDrums.vst3","parameterValues":[]}}}));
         let failed = dispatcher.dispatch(
             command(
                 "session.apply",

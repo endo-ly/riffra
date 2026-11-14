@@ -44,6 +44,14 @@ pub(crate) struct HostState {
 pub(crate) fn initial_score_sync(
     canonical: &CanonicalState,
 ) -> crate::api::output::ScoreSyncStatus {
+    synced_score_sync(canonical, Vec::new())
+}
+
+/// Reports a linked Score as synchronized with its candidate diagnostics.
+pub(crate) fn synced_score_sync(
+    canonical: &CanonicalState,
+    diagnostics: Vec<crate::api::output::ScoreDiagnostic>,
+) -> crate::api::output::ScoreSyncStatus {
     let Some(source) = canonical.session.score_source.as_ref() else {
         return crate::api::output::ScoreSyncStatus {
             state: crate::api::output::ScoreSyncState::Unlinked,
@@ -61,7 +69,7 @@ pub(crate) fn initial_score_sync(
         path: source.path.clone(),
         sequence: Some(canonical.sequence),
         updated_at_ms: Some(canonical.session.updated_at_ms),
-        diagnostics: Vec::new(),
+        diagnostics,
     }
 }
 

@@ -744,6 +744,7 @@ mod tests {
             yaml: "日".repeat(64 * 1024),
             path: None,
             bindings: Default::default(),
+            production_inputs: Default::default(),
         });
         let mut payload = String::from_utf8(serialize_session_document(&session).unwrap()).unwrap();
         let yaml_start = payload.find("\"yaml\": \"").unwrap() + "\"yaml\": \"".len();
@@ -798,6 +799,7 @@ mod tests {
             yaml: "score".into(),
             path: None,
             bindings: Default::default(),
+            production_inputs: Default::default(),
         });
         let legacy_order = format!(
             "{{\n  \"schemaVersion\": {SESSION_SCHEMA_VERSION},\n  \"session\": {{\n    \"scoreSource\": {},\n    \"sessionId\": {},\n    \"updatedAtMs\": {},\n    \"projectName\": {},\n    \"arrangement\": {},\n    \"settings\": {}\n  }}\n}}\n",

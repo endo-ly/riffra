@@ -89,7 +89,7 @@ pub(crate) const TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "project",
-        description: "List, create, open, rename, or export Riffra Projects, or import a `.riffra` package or a Score YAML file as a new Project. Open switches the Host's active Project; rebuild_score reapplies the active Project's linked Score file to the same Project.",
+        description: "List, create, open, rename, or export Riffra Projects, or import a `.riffra` package or a Score YAML file as a new Project. Open switches the Host's active Project; rebuild_score reapplies the active Project's linked Score file and its library, state, and audio dependencies to the same Project.",
         actions: &[
             action("list", "project.list"),
             action("create", "project.create"),
@@ -112,7 +112,7 @@ pub(crate) const TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "score",
-        description: "Read a Score YAML file before importing it. validate diagnoses syntax, source references, and playable content; inspect returns the expanded sections, instruments, lanes, notes, and events. Neither command changes a Project.",
+        description: "Read a Score YAML file before importing it. validate diagnoses syntax, library references, VST3 sources, state, kits, audio, mix routing, and automation; inspect returns the expanded sections, instruments, lanes, tracks, kits, effects, buses, sends, sidechains, automation, audio clips, and events. Neither command changes a Project or creates persistent assets.",
         actions: &[
             action("validate", "score.validate"),
             action("inspect", "score.inspect"),

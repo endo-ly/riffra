@@ -168,6 +168,7 @@ mod tests {
             yaml: "score".into(),
             path: None,
             bindings: Default::default(),
+            production_inputs: Default::default(),
         });
 
         // Act

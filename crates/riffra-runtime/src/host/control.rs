@@ -463,7 +463,10 @@ impl HostState {
             .audio
             .get_plugin_state(owner, device_id)
             .map_err(audio_error)?;
-        Ok((plugin_state_snapshot(&plugin_path, state)?, bypassed))
+        Ok((
+            plugin_state_snapshot(&self.data_root, &plugin_path, state)?,
+            bypassed,
+        ))
     }
 
     /// Applies `next` to the live plugin and persists it, restoring `previous` if persisting fails.
@@ -975,13 +978,14 @@ impl HostState {
                     .audio
                     .set_plugin_program(&params.owner, &params.device_id, program_index)
                     .map_err(audio_error)?;
-                let state_snapshot = match plugin_state_snapshot(&plugin_path, state) {
-                    Ok(snapshot) => snapshot,
-                    Err(error) => {
-                        rollback();
-                        return Err(error);
-                    }
-                };
+                let state_snapshot =
+                    match plugin_state_snapshot(&self.data_root, &plugin_path, state) {
+                        Ok(snapshot) => snapshot,
+                        Err(error) => {
+                            rollback();
+                            return Err(error);
+                        }
+                    };
                 let commit = context.commit(|mut app| {
                     app.persist_plugin_state(
                         &params.owner,
@@ -1005,7 +1009,9 @@ impl HostState {
             RuntimeCommand::PluginStateSet(params) => {
                 let (plugin_path, bypassed) =
                     canonical_plugin_device(&current, &params.owner, &params.device_id)?;
-                crate::plugins::validate_plugin_state(&params.state, &plugin_path)?;
+                let plugin = crate::plugins::validated_entry_at_path(&self.data_root, &plugin_path)
+                    .map_err(command_error)?;
+                crate::plugins::validate_plugin_state(&params.state, &plugin)?;
                 self.wait_for_device_projection(&current)?;
                 let previous_state = self
                     .audio
@@ -1755,11 +1761,20 @@ fn canonical_built_in_instrument_inspection(
 }
 
 fn plugin_state_snapshot(
+    data_root: &std::path::Path,
     plugin_path: &str,
     state: GraphPluginState,
 ) -> Result<PluginStateSnapshot, ProtocolError> {
+    let plugin =
+        crate::plugins::validated_entry_at_path(data_root, plugin_path).map_err(command_error)?;
+    let plugin_identifier = plugin.identifier.ok_or_else(|| {
+        command_error(format!(
+            "plugin catalog entry has no stable identifier: {plugin_path}"
+        ))
+    })?;
     let snapshot = PluginStateSnapshot {
-        schema_version: 1,
+        schema_version: 2,
+        plugin_identifier,
         plugin_path: plugin_path.into(),
         parameter_values: state.parameter_values,
         state_data: state.state_data,

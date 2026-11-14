@@ -1,21 +1,30 @@
 //! Score YAML to canonical production state.
 //!
 //! A Score document is read once, compiled with Riffra analysis, resolved
-//! against the built-in catalog and Sonalloy inspection, and only then
-//! converted into canonical production state. Rebuilding a linked Project
-//! reuses tracks, devices, and instrument snapshots whose sources did not
-//! change.
+//! against the VST3 plugin catalog and Sonalloy inspection, and
+//! only then converted into canonical production state. Rebuilding a linked
+//! Project reuses tracks, devices, and instrument snapshots whose sources did
+//! not change.
+
+mod parameters;
+mod plugin_source;
 
 use crate::api::output::{
-    ScoreChordInspection, ScoreDiagnostic, ScoreInspection, ScoreInstrumentInspection,
-    ScoreLaneInspection, ScoreSectionInspection, ScoreSummary, ScoreValidation,
+    ScoreAudioClipInspection, ScoreAutomationInspection, ScoreBusInspection, ScoreChordInspection,
+    ScoreDiagnostic, ScoreDiagnosticSeverity, ScoreEffectInspection, ScoreInspection,
+    ScoreInstrumentInspection, ScoreInstrumentKind, ScoreKitInspection, ScoreLaneInspection,
+    ScoreSectionInspection, ScoreSendInspection, ScoreSidechainInspection, ScoreSummary,
+    ScoreTrackInspection, ScoreValidation,
 };
 use crate::api::params::ProjectImportScoreParams;
 use crate::instrument::{BuiltInInstrumentCatalog, UserInstrumentStore};
+use crate::plugins::validation::{DisplayRequest, ParameterDescription};
 use crate::score::{self, ScoreLane, ScorePlan, events::MusicalEvent, syntax};
 use riffra_core::*;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
+use std::io::Read as _;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, thiserror::Error)]
@@ -34,6 +43,50 @@ impl From<String> for ImportError {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct Fingerprint {
+    bytes: u64,
+    digest: [u8; 32],
+}
+
+type Dependencies = BTreeMap<PathBuf, Fingerprint>;
+
+fn fingerprint(path: &Path) -> Result<Fingerprint, String> {
+    let mut file =
+        std::fs::File::open(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    let mut bytes = 0_u64;
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .map_err(|error| format!("{}: {error}", path.display()))?;
+        if read == 0 {
+            break;
+        }
+        bytes += read as u64;
+        hasher.update(&buffer[..read]);
+    }
+    Ok(Fingerprint {
+        bytes,
+        digest: hasher.finalize().into(),
+    })
+}
+
+fn record_dependency(dependencies: &mut Dependencies, path: &Path) -> Result<(), String> {
+    let canonical =
+        std::fs::canonicalize(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    let value = match dependencies.get(&canonical) {
+        Some(value) => value.clone(),
+        None => fingerprint(&canonical)?,
+    };
+    dependencies.insert(canonical.clone(), value.clone());
+    if path != canonical {
+        dependencies.insert(path.to_path_buf(), value);
+    }
+    Ok(())
+}
+
 /// A built-in source a Score instrument resolves to.
 #[derive(Clone)]
 struct BuiltIn {
@@ -50,6 +103,52 @@ struct Source {
     built_in: Option<BuiltIn>,
 }
 
+/// A production source or effect resolved from the plugin catalog.
+enum ResolvedProduction {
+    Source {
+        plugin: plugin_source::ResolvedPlugin,
+        velocity: Option<Vec<(u8, u8)>>,
+    },
+    Effect {
+        plugin: plugin_source::ResolvedPlugin,
+        bypassed: bool,
+    },
+}
+
+impl ResolvedProduction {
+    fn plugin(&self) -> &plugin_source::ResolvedPlugin {
+        match self {
+            Self::Source { plugin, .. } | Self::Effect { plugin, .. } => plugin,
+        }
+    }
+
+    fn velocity(&self) -> Option<&[(u8, u8)]> {
+        match self {
+            Self::Source { velocity, .. } => velocity.as_deref(),
+            Self::Effect { .. } => None,
+        }
+    }
+
+    fn plugin_mut(&mut self) -> &mut plugin_source::ResolvedPlugin {
+        match self {
+            Self::Source { plugin, .. } | Self::Effect { plugin, .. } => plugin,
+        }
+    }
+}
+
+type ResolvedProductionMap = BTreeMap<String, ResolvedProduction>;
+type ScoreAutomationResolutionMap = BTreeMap<usize, ScoreAutomationResolution>;
+type SourceResolution = (
+    plugin_source::ResolvedPlugin,
+    score::production::Vst3Spec,
+    Option<Vec<(u8, u8)>>,
+);
+type EffectResolution = (
+    plugin_source::ResolvedPlugin,
+    score::production::Vst3Spec,
+    bool,
+);
+
 /// One validated Score file with every instrument source resolved.
 struct ScoreDocument {
     path: PathBuf,
@@ -57,6 +156,767 @@ struct ScoreDocument {
     plan: ScorePlan,
     bindings: BTreeMap<String, PathBuf>,
     sources: BTreeMap<String, Source>,
+    production: ResolvedProductionMap,
+    automation: ScoreAutomationResolutionMap,
+    production_inputs: BTreeMap<String, ScoreProductionInput>,
+    dependencies: Dependencies,
+}
+
+fn is_production_instrument(plan: &ScorePlan, id: &str) -> bool {
+    plan.production_sources.contains_key(id)
+        || plan.kit_members.contains_key(id)
+        || plan.audio_instruments.contains(id)
+}
+
+fn local_input_path(base: &Path, input: &str) -> Result<PathBuf, String> {
+    let path = Path::new(input);
+    if path.components().any(|part| {
+        !matches!(
+            part,
+            std::path::Component::Normal(_) | std::path::Component::CurDir
+        )
+    }) {
+        return Err(format!(
+            "input path must be relative to the score directory: {input}"
+        ));
+    }
+    let root = std::fs::canonicalize(base).map_err(|error| error.to_string())?;
+    let resolved =
+        std::fs::canonicalize(root.join(path)).map_err(|error| format!("{input}: {error}"))?;
+    if !resolved.starts_with(&root) {
+        return Err(format!("input path escapes the score directory: {input}"));
+    }
+    Ok(resolved)
+}
+
+fn validate_audio(
+    plan: &ScorePlan,
+    base: &Path,
+    dependencies: &mut Dependencies,
+) -> Result<(), ImportError> {
+    use num_traits::ToPrimitive;
+    for (section, clips) in &plan.audio_clips {
+        for (index, clip) in clips.iter().enumerate() {
+            let field = format!("sections.{section}.audio_clips[{index}]");
+            let fail = |message: String| ImportError {
+                details: plan.source_detail(&field, &message),
+                message,
+            };
+            let path = local_input_path(base, &clip.file).map_err(fail)?;
+            record_dependency(dependencies, &path).map_err(fail)?;
+            let (rate, total) = riffra_host::read_wav_metadata(&path)
+                .map_err(|error| fail(format!("{}: {error}", path.display())))?;
+            let frames = |seconds: f64| (seconds * f64::from(rate)).round().to_u64();
+            let start = frames(clip.offset_seconds)
+                .ok_or_else(|| fail("audio offset exceeds supported frame range".to_owned()))?;
+            let duration = match clip.duration_seconds {
+                Some(seconds) => frames(seconds).ok_or_else(|| {
+                    fail("audio duration exceeds supported frame range".to_owned())
+                })?,
+                None => total.saturating_sub(start),
+            };
+            if duration == 0 || start.checked_add(duration).is_none_or(|end| end > total) {
+                return Err(fail(
+                    "audio clip range is outside the source file".to_owned(),
+                ));
+            }
+            if [clip.fade_in_seconds, clip.fade_out_seconds]
+                .into_iter()
+                .any(|seconds| frames(seconds).is_none_or(|fade| fade > duration))
+            {
+                return Err(fail("audio clip fade exceeds its duration".to_owned()));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// One production use while its parameters and automation are still pending.
+struct PendingUse {
+    production: ResolvedProduction,
+    spec: score::production::Vst3Spec,
+    displays: Vec<DisplayRequest>,
+    needs_probe: bool,
+    has_automation: bool,
+    previous_plugin: Option<Vst3Plugin>,
+}
+
+impl PendingUse {
+    fn base_plugin(&self) -> &Vst3Plugin {
+        &self.production.plugin().plugin
+    }
+
+    fn base_key(&self) -> Result<String, String> {
+        serde_json::to_string(self.base_plugin()).map_err(|error| error.to_string())
+    }
+}
+
+/// One automation lane whose plugin parameter is resolved after the probe.
+struct PendingAutomation {
+    use_key: String,
+    parameter: String,
+    interpolation: score::production::mix::Interpolation,
+    points: Vec<score::production::ParameterValue>,
+    requests: Vec<Option<usize>>,
+}
+
+fn effect_field(plan: &ScorePlan, effect: &score::production::mix::EffectRef) -> Option<String> {
+    use score::production::mix::Owner;
+    let index = match &effect.owner {
+        Owner::Instrument(id) => plan
+            .production_effects
+            .get(id)?
+            .iter()
+            .position(|item| item.id == effect.id)?,
+        Owner::Kit(id) => plan
+            .kits
+            .get(id)?
+            .effects
+            .iter()
+            .position(|item| item.id == effect.id)?,
+        Owner::Bus(id) => plan
+            .mix
+            .as_ref()?
+            .buses
+            .get(id)?
+            .effects
+            .iter()
+            .position(|item| item.id == effect.id)?,
+        Owner::Master => plan
+            .mix
+            .as_ref()?
+            .master_effects
+            .iter()
+            .position(|item| item.id == effect.id)?,
+    };
+    Some(match &effect.owner {
+        Owner::Instrument(id) => format!("instruments.{id}.effects[{index}]"),
+        Owner::Kit(id) => format!("kits.{id}.effects[{index}]"),
+        Owner::Bus(id) => format!("mix.buses.{id}.effects[{index}]"),
+        Owner::Master => format!("mix.master.effects[{index}]"),
+    })
+}
+
+fn automation_use_key(
+    plan: &ScorePlan,
+    target: &score::production::mix::AutomationTarget,
+) -> Option<String> {
+    match target {
+        score::production::mix::AutomationTarget::Effect { effect, .. } => {
+            effect_field(plan, effect)
+        }
+        score::production::mix::AutomationTarget::Source { instrument, .. } => {
+            Some(format!("instruments.{instrument}.source"))
+        }
+        _ => None,
+    }
+}
+
+fn previous_source_plugin<'a>(
+    session: &'a CreativeSession,
+    score_key: &str,
+) -> Option<&'a Vst3Plugin> {
+    session
+        .arrangement
+        .tracks
+        .iter()
+        .find(|track| track.score_instrument.as_deref() == Some(score_key))
+        .and_then(|track| track.instrument.as_ref())
+        .and_then(TrackInstrument::as_vst3)
+}
+
+fn previous_effect_plugin<'a>(
+    session: &'a CreativeSession,
+    device_id: &str,
+) -> Option<&'a Vst3Plugin> {
+    session
+        .arrangement
+        .tracks
+        .iter()
+        .flat_map(|track| &track.effects)
+        .chain(
+            session
+                .arrangement
+                .mixer
+                .buses
+                .iter()
+                .flat_map(|bus| &bus.effects),
+        )
+        .chain(&session.arrangement.mixer.master_effects)
+        .find(|effect| effect.id == device_id)
+        .map(|effect| &effect.plugin)
+}
+
+fn parameter_value_json(value: &score::production::ParameterValue) -> Value {
+    match value {
+        score::production::ParameterValue::Normalized(value) => json!({"normalized": value}),
+        score::production::ParameterValue::Display(value) => json!({"display": value}),
+    }
+}
+
+fn plugin_state_fingerprint(plugin: &Vst3Plugin) -> String {
+    let digest = Sha256::digest(serde_json::to_vec(plugin).expect("plugin state serializes"));
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn production_input_fingerprint(
+    spec: &score::production::Vst3Spec,
+    plugin: &Vst3Plugin,
+    entry: &crate::api::output::PluginEntry,
+    automations: &[&PendingAutomation],
+) -> String {
+    let params = spec
+        .params
+        .iter()
+        .map(|(name, value)| (name.clone(), parameter_value_json(value)))
+        .collect::<BTreeMap<_, _>>();
+    let automations = automations
+        .iter()
+        .map(|automation| {
+            json!({
+                "parameter": automation.parameter,
+                "interpolation": format!("{:?}", automation.interpolation),
+                "points": automation.points.iter().map(parameter_value_json).collect::<Vec<_>>(),
+            })
+        })
+        .collect::<Vec<_>>();
+    let payload = json!({
+        "plugin": spec.plugin,
+        "identifier": spec.identifier,
+        "resolvedIdentifier": entry.identifier,
+        "version": entry.version,
+        "modifiedAt": entry.modified_at_ms,
+        "path": entry.path,
+        "state": plugin.state_data,
+        "parameterValues": plugin.parameter_values,
+        "params": params,
+        "automation": automations,
+    });
+    let digest = Sha256::digest(serde_json::to_vec(&payload).expect("fingerprint serializes"));
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+struct PreviousUse {
+    plugin: Vst3Plugin,
+    automation: BTreeMap<usize, ScoreAutomationResolution>,
+}
+
+struct ProductionResolutionInput<'a> {
+    plan: &'a ScorePlan,
+    base: &'a Path,
+    data_root: &'a Path,
+    scanner: &'a Path,
+    dependencies: &'a mut Dependencies,
+    previous: Option<&'a CreativeSession>,
+}
+
+fn resolve_production(
+    input: ProductionResolutionInput<'_>,
+    describe: &impl Fn(&Path, &Vst3Plugin, &[DisplayRequest]) -> Result<ParameterDescription, String>,
+) -> Result<
+    (
+        ResolvedProductionMap,
+        ScoreAutomationResolutionMap,
+        BTreeMap<String, ScoreProductionInput>,
+    ),
+    ImportError,
+> {
+    let ProductionResolutionInput {
+        plan,
+        base,
+        data_root,
+        scanner,
+        dependencies,
+        previous,
+    } = input;
+    let mut uses = BTreeMap::<String, PendingUse>::new();
+    let mut insert_source = |field: String,
+                             source: &score::production::SourceSpec,
+                             score_key: String|
+     -> Result<(), ImportError> {
+        let mut resolve = || -> Result<SourceResolution, plugin_source::ResolveError> {
+            let vst3 = source.vst3.clone();
+            let plugin = plugin_source::resolve_plugin(
+                data_root,
+                base,
+                &vst3,
+                crate::api::output::PluginRole::Instrument,
+                dependencies,
+            )?;
+            Ok((plugin, vst3, source.velocity.clone()))
+        };
+        let (plugin, spec, velocity) = resolve().map_err(|error| ImportError {
+            details: plan.source_detail(&format!("{field}.vst3.{}", error.field), &error.message),
+            message: error.message,
+        })?;
+        let displays =
+            parameters::display_requests(&spec.params).map_err(|message| ImportError {
+                details: plan.source_detail(&field, &message),
+                message,
+            })?;
+        uses.insert(
+            field,
+            PendingUse {
+                production: ResolvedProduction::Source { plugin, velocity },
+                displays,
+                needs_probe: !spec.params.is_empty(),
+                has_automation: false,
+                previous_plugin: previous
+                    .and_then(|session| previous_source_plugin(session, &score_key))
+                    .cloned(),
+                spec,
+            },
+        );
+        Ok(())
+    };
+    for (id, source) in &plan.production_sources {
+        insert_source(format!("instruments.{id}.source"), source, id.clone())?;
+    }
+    for (id, kit) in &plan.kits {
+        insert_source(
+            format!("kits.{id}.source"),
+            &kit.source,
+            format!("kit:{id}"),
+        )?;
+    }
+    let mut insert_effects = |field: String,
+                              owner: &str,
+                              effects: &[score::production::EffectSpec]|
+     -> Result<(), ImportError> {
+        for (index, effect) in effects.iter().enumerate() {
+            let path = format!("{field}[{index}]");
+            let mut resolve = || -> Result<EffectResolution, plugin_source::ResolveError> {
+                let vst3 = effect.vst3.clone();
+                let plugin = plugin_source::resolve_plugin(
+                    data_root,
+                    base,
+                    &vst3,
+                    crate::api::output::PluginRole::Effect,
+                    dependencies,
+                )?;
+                Ok((plugin, vst3, effect.bypassed.unwrap_or(false)))
+            };
+            let (plugin, spec, bypassed) = resolve().map_err(|error| ImportError {
+                details: plan
+                    .source_detail(&format!("{path}.vst3.{}", error.field), &error.message),
+                message: error.message,
+            })?;
+            uses.insert(
+                path.clone(),
+                PendingUse {
+                    production: ResolvedProduction::Effect { plugin, bypassed },
+                    displays: parameters::display_requests(&spec.params).map_err(|message| {
+                        ImportError {
+                            details: plan.source_detail(&path, &message),
+                            message,
+                        }
+                    })?,
+                    needs_probe: !spec.params.is_empty(),
+                    has_automation: false,
+                    previous_plugin: previous
+                        .and_then(|session| {
+                            previous_effect_plugin(session, &effect_device_id(owner, &effect.id))
+                        })
+                        .cloned(),
+                    spec,
+                },
+            );
+        }
+        Ok(())
+    };
+    for (id, effects) in &plan.production_effects {
+        insert_effects(
+            format!("instruments.{id}.effects"),
+            &owner_instrument(id),
+            effects,
+        )?;
+    }
+    for (id, kit) in &plan.kits {
+        insert_effects(format!("kits.{id}.effects"), &owner_kit(id), &kit.effects)?;
+    }
+    if let Some(mix) = &plan.mix {
+        for (id, bus) in &mix.buses {
+            insert_effects(
+                format!("mix.buses.{id}.effects"),
+                &owner_bus(id),
+                &bus.effects,
+            )?;
+        }
+        insert_effects(
+            "mix.master.effects".to_owned(),
+            "master",
+            &mix.master_effects,
+        )?;
+    }
+    let mut automations = BTreeMap::<usize, PendingAutomation>::new();
+    if let Some(mix) = &plan.mix {
+        for (index, lane) in mix.automation.iter().enumerate() {
+            if !matches!(
+                lane.target,
+                score::production::mix::AutomationTarget::Effect { .. }
+                    | score::production::mix::AutomationTarget::Source { .. }
+            ) {
+                continue;
+            }
+            let Some(use_key) = automation_use_key(plan, &lane.target) else {
+                let message = "plugin automation target was not resolved".to_owned();
+                return Err(ImportError {
+                    details: plan.source_detail(&format!("mix.automation[{index}]"), &message),
+                    message,
+                });
+            };
+            let parameter = automation_parameter(lane, index, plan)?;
+            let Some(pending) = uses.get_mut(&use_key) else {
+                let message = format!("automation target {use_key} was not resolved");
+                return Err(ImportError {
+                    details: plan.source_detail("mix.automation", &message),
+                    message,
+                });
+            };
+            pending.needs_probe = true;
+            pending.has_automation = true;
+            let mut requests = Vec::with_capacity(lane.points.len());
+            for point in &lane.points {
+                requests.push(match &point.value {
+                    score::production::ParameterValue::Normalized(_) => None,
+                    score::production::ParameterValue::Display(display) => {
+                        let (name, index) =
+                            parameters::selector(&parameter).map_err(|message| ImportError {
+                                details: plan.source_detail("mix.automation", &message),
+                                message,
+                            })?;
+                        pending.displays.push(DisplayRequest {
+                            name: name.into(),
+                            index,
+                            display: display.clone(),
+                        });
+                        Some(pending.displays.len() - 1)
+                    }
+                });
+            }
+            automations.insert(
+                index,
+                PendingAutomation {
+                    use_key,
+                    parameter,
+                    interpolation: lane.interpolation,
+                    points: lane
+                        .points
+                        .iter()
+                        .map(|point| point.value.clone())
+                        .collect(),
+                    requests,
+                },
+            );
+        }
+    }
+    if let Some(mix) = &plan.mix {
+        let mut capabilities =
+            BTreeMap::<String, crate::api::output::DeviceSidechainCapability>::new();
+        for (index, route) in mix.sidechain.iter().enumerate() {
+            let path = format!("mix.sidechain[{index}].to");
+            let field = effect_field(plan, &route.to).ok_or_else(|| ImportError {
+                details: plan.source_detail(&path, "sidechain target was not resolved"),
+                message: "sidechain target was not resolved".to_owned(),
+            })?;
+            let Some(pending) = uses.get(&field) else {
+                return Err(ImportError {
+                    details: plan.source_detail(&path, "sidechain target was not resolved"),
+                    message: "sidechain target was not resolved".to_owned(),
+                });
+            };
+            let ResolvedProduction::Effect { plugin, .. } = &pending.production else {
+                return Err(ImportError {
+                    details: plan.source_detail(&path, "sidechain target is not an effect"),
+                    message: "sidechain target is not an effect".to_owned(),
+                });
+            };
+            let target_device = effect_device_id_for(&route.to);
+            let previous_capability = previous
+                .and_then(|session| previous_effect_plugin(session, &target_device))
+                .is_some_and(|prior| {
+                    prior.path == plugin.plugin.path && prior.state_data == plugin.plugin.state_data
+                });
+            if previous_capability
+                && previous.is_some_and(|session| {
+                    session
+                        .arrangement
+                        .mixer
+                        .sidechain_sends
+                        .iter()
+                        .any(|send| send.target_device_id == target_device)
+                })
+            {
+                continue;
+            }
+            let plugin_path = plugin.plugin.path.clone();
+            let capability = if let Some(capability) = capabilities.get(&plugin_path) {
+                capability.clone()
+            } else {
+                let capability = crate::plugins::validation::probe_sidechain_capability(
+                    scanner,
+                    Path::new(&plugin_path),
+                )
+                .map_err(|message| ImportError {
+                    details: plan.source_detail(&path, &message),
+                    message,
+                })?;
+                capabilities.insert(plugin_path.clone(), capability.clone());
+                capability
+            };
+            if !capability.available {
+                let message = capability
+                    .reason
+                    .unwrap_or_else(|| "plugin has no auxiliary sidechain input".to_owned());
+                return Err(ImportError {
+                    details: plan.source_detail(&path, &message),
+                    message,
+                });
+            }
+        }
+    }
+    let production_inputs = uses
+        .iter()
+        .map(|(key, pending)| {
+            let automations = automations
+                .values()
+                .filter(|automation| automation.use_key == *key)
+                .collect::<Vec<_>>();
+            (
+                key.clone(),
+                production_input_fingerprint(
+                    &pending.spec,
+                    pending.base_plugin(),
+                    &pending.production.plugin().entry,
+                    &automations,
+                ),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut reused = BTreeMap::<String, PreviousUse>::new();
+    if let Some(previous) = previous
+        && let Some(source) = previous.score_source.as_ref()
+    {
+        for (key, pending) in &uses {
+            let Some(saved) = source.production_inputs.get(key) else {
+                continue;
+            };
+            if !pending.needs_probe || Some(&saved.fingerprint) != production_inputs.get(key) {
+                continue;
+            }
+            let Some(plugin) = &pending.previous_plugin else {
+                continue;
+            };
+            if saved.state_fingerprint != plugin_state_fingerprint(plugin) {
+                continue;
+            }
+            let indices = automations
+                .iter()
+                .filter(|(_, lane)| lane.use_key == *key)
+                .map(|(index, _)| *index)
+                .collect::<Vec<_>>();
+            if indices.len() == saved.automation.len()
+                && indices
+                    .iter()
+                    .zip(&saved.automation)
+                    .all(|(index, resolution)| {
+                        resolution.values.len() == automations[index].points.len()
+                    })
+            {
+                reused.insert(
+                    key.clone(),
+                    PreviousUse {
+                        plugin: plugin.clone(),
+                        automation: indices
+                            .into_iter()
+                            .zip(saved.automation.iter().cloned())
+                            .collect(),
+                    },
+                );
+            }
+        }
+    }
+    let mut groups = BTreeMap::<String, Vec<String>>::new();
+    for (key, pending) in &uses {
+        if !pending.needs_probe || reused.contains_key(key) {
+            continue;
+        }
+        let base_key = pending.base_key().map_err(|error| ImportError {
+            details: plan.source_detail(key, &error),
+            message: error,
+        })?;
+        groups.entry(base_key).or_default().push(key.clone());
+    }
+    let mut values = BTreeMap::<String, Vst3Plugin>::new();
+    let mut resolved_automation = BTreeMap::new();
+    for keys in groups.into_values() {
+        let mut displays = Vec::new();
+        let mut ranges = BTreeMap::<String, (usize, usize)>::new();
+        for key in &keys {
+            let pending = &uses[key];
+            let start = displays.len();
+            displays.extend(pending.displays.iter().cloned());
+            ranges.insert(key.clone(), (start, pending.displays.len()));
+        }
+        let base_plugin = uses[&keys[0]].base_plugin();
+        let description =
+            describe(scanner, base_plugin, &displays).map_err(|message| ImportError {
+                details: plan.source_detail(&keys[0], &message),
+                message,
+            })?;
+        for key in &keys {
+            let pending = &uses[key];
+            let (start, len) = ranges[key];
+            let conversions = &description.conversions[start..start + len];
+            let mut plugin = pending.production.plugin().plugin.clone();
+            if !pending.spec.params.is_empty() {
+                plugin.parameter_values = parameters::assign_values(
+                    &description.parameters,
+                    &description.parameter_values,
+                    conversions,
+                    &pending.spec.params,
+                )
+                .map_err(|message| ImportError {
+                    details: plan.source_detail(key, &message),
+                    message,
+                })?;
+            } else if pending.has_automation {
+                plugin.parameter_values = description.parameter_values.clone();
+            }
+            values.insert(key.clone(), plugin);
+            for (index, automation) in &automations {
+                if automation.use_key != *key {
+                    continue;
+                }
+                let parameter =
+                    parameters::find_parameter(&description.parameters, &automation.parameter)
+                        .map_err(|message| ImportError {
+                            details: plan
+                                .source_detail(&format!("mix.automation[{index}]"), &message),
+                            message,
+                        })?;
+                let parameter_id = parameter.parameter_id.clone().ok_or_else(|| {
+                    let message = format!(
+                        "plugin parameter {:?} has no stable identifier for automation",
+                        parameter.name
+                    );
+                    ImportError {
+                        details: plan.source_detail(&format!("mix.automation[{index}]"), &message),
+                        message,
+                    }
+                })?;
+                if !parameter.automatable {
+                    let message =
+                        format!("plugin parameter {:?} is not automatable", parameter.name);
+                    return Err(ImportError {
+                        details: plan.source_detail(&format!("mix.automation[{index}]"), &message),
+                        message,
+                    });
+                }
+                if parameter.discrete
+                    && automation.interpolation != score::production::mix::Interpolation::Step
+                {
+                    let message = format!(
+                        "plugin parameter {:?} is discrete and requires step interpolation",
+                        parameter.name
+                    );
+                    return Err(ImportError {
+                        details: plan.source_detail(&format!("mix.automation[{index}]"), &message),
+                        message,
+                    });
+                }
+                let mut points = Vec::with_capacity(automation.points.len());
+                for (point_index, point) in automation.points.iter().enumerate() {
+                    points.push(match point {
+                        score::production::ParameterValue::Normalized(value) => *value,
+                        score::production::ParameterValue::Display(display) => {
+                            let request = automation.requests[point_index]
+                                .expect("display values have a request");
+                            f64::from(
+                                parameters::automation_value(
+                                    parameter,
+                                    conversions,
+                                    request,
+                                    display.as_str(),
+                                )
+                                .map_err(|message| {
+                                    ImportError {
+                                        details: plan.source_detail(
+                                            &format!(
+                                                "mix.automation[{index}].points[{point_index}]"
+                                            ),
+                                            &message,
+                                        ),
+                                        message,
+                                    }
+                                })?,
+                            )
+                        }
+                    });
+                }
+                resolved_automation.insert(
+                    *index,
+                    ScoreAutomationResolution {
+                        parameter_id,
+                        values: points,
+                    },
+                );
+            }
+        }
+    }
+    for (key, mut previous) in reused {
+        previous.plugin.path = uses[&key].production.plugin().plugin.path.clone();
+        values.insert(key, previous.plugin);
+        resolved_automation.extend(previous.automation);
+    }
+    let production_inputs = production_inputs
+        .into_iter()
+        .map(|(key, fingerprint)| {
+            let automation = automations
+                .iter()
+                .filter(|(_, lane)| lane.use_key == key)
+                .map(|(index, _)| resolved_automation[index].clone())
+                .collect();
+            let saved = ScoreProductionInput {
+                fingerprint,
+                state_fingerprint: plugin_state_fingerprint(
+                    values.get(&key).unwrap_or_else(|| uses[&key].base_plugin()),
+                ),
+                automation,
+            };
+            (key, saved)
+        })
+        .collect();
+    let mut production = BTreeMap::new();
+    for (key, pending) in uses {
+        let mut production_value = pending.production;
+        if let Some(plugin) = values.remove(&key) {
+            production_value.plugin_mut().plugin = plugin;
+        }
+        production.insert(key, production_value);
+    }
+    Ok((production, resolved_automation, production_inputs))
+}
+
+fn automation_parameter(
+    lane: &score::production::mix::Automation,
+    index: usize,
+    plan: &ScorePlan,
+) -> Result<String, ImportError> {
+    let path = format!("mix.automation[{index}]");
+    match &lane.target {
+        score::production::mix::AutomationTarget::Effect { parameter, .. }
+        | score::production::mix::AutomationTarget::Source { parameter, .. } => {
+            Ok(parameter.clone())
+        }
+        _ => {
+            let message = "automation target has no plugin parameter".to_owned();
+            Err(ImportError {
+                details: plan.source_detail(&path, &message),
+                message,
+            })
+        }
+    }
 }
 
 /// A canonical Session candidate and the snapshots it staged.
@@ -68,13 +928,18 @@ pub(crate) struct ScoreOutcome {
     pub(crate) changed: bool,
     /// Whether the linked file path or external instrument bindings differ.
     pub(crate) link_changed: bool,
-    staged: BTreeSet<PathBuf>,
+    /// Whether the resolved plugin inputs differ from the accepted fingerprint.
+    pub(crate) inputs_changed: bool,
+    /// Warnings produced while resolving the Score.
+    pub(crate) diagnostics: Vec<ScoreDiagnostic>,
+    dependencies: Dependencies,
+    staged: StagedResources,
 }
 
 impl ScoreOutcome {
     /// Returns whether accepting this Score changes anything the Project stores.
     fn has_changes(&self) -> bool {
-        self.changed || self.yaml_changed || self.link_changed
+        self.changed || self.yaml_changed || self.link_changed || self.inputs_changed
     }
 
     /// Returns the Session to commit, or `None` when the Project already matches.
@@ -95,19 +960,22 @@ impl ScoreOutcome {
         })
     }
 
-    /// Keeps the staged snapshots because canonical state now references them.
+    /// Keeps the staged resources because canonical state now references them.
     pub(crate) fn retain(&mut self) {
         self.staged.clear();
     }
-}
 
-impl Drop for ScoreOutcome {
-    fn drop(&mut self) {
-        for snapshot in &self.staged {
-            if let Err(error) = std::fs::remove_dir_all(snapshot) {
-                tracing::warn!(%error, "score instrument snapshot cleanup failed");
-            }
+    /// Reports whether a dependency changed while the candidate was prepared.
+    pub(crate) fn source_changed(&self) -> bool {
+        if let Some(source) = self.session.score_source.as_ref()
+            && let Some(path) = source.path.as_deref()
+            && std::fs::read_to_string(path).map_or(true, |text| text != source.yaml)
+        {
+            return true;
         }
+        self.dependencies
+            .iter()
+            .any(|(path, expected)| fingerprint(path).map_or(true, |current| current != *expected))
     }
 }
 
@@ -119,23 +987,30 @@ pub(crate) fn import(
     params: &ProjectImportScoreParams,
     data_root: &Path,
     catalog: &BuiltInInstrumentCatalog,
+    scanner: &Path,
     sonalloy: &Path,
 ) -> Result<ScoreOutcome, ImportError> {
-    let mut document = read(
-        &params.path,
-        &params.bindings,
-        &params.bindings.keys().cloned().collect(),
+    let mut document = read(ReadInput {
+        path: &params.path,
+        bindings: &params.bindings,
+        explicit: &params.bindings.keys().cloned().collect(),
+        data_root,
         catalog,
+        scanner,
         sonalloy,
-    )?;
+        previous: None,
+    })?;
     let store = UserInstrumentStore::new(data_root, sonalloy);
-    let mut staged = BTreeSet::new();
-    let session = build(&mut document, None, &store, &mut staged)?;
+    let mut staged = StagedResources::new(data_root);
+    let session = build(&mut document, None, &store, &mut staged, BuildMode::Stage)?;
     Ok(ScoreOutcome {
         session,
         yaml_changed: true,
         changed: true,
         link_changed: true,
+        inputs_changed: true,
+        diagnostics: warnings(&document.plan),
+        dependencies: std::mem::take(&mut document.dependencies),
         staged,
     })
 }
@@ -153,8 +1028,46 @@ pub(crate) fn rebuild(
     bindings: &BTreeMap<String, PathBuf>,
     data_root: &Path,
     catalog: &BuiltInInstrumentCatalog,
+    scanner: &Path,
     sonalloy: &Path,
 ) -> Result<ScoreOutcome, ImportError> {
+    rebuild_with_probe(
+        RebuildInput {
+            previous,
+            path,
+            bindings,
+            data_root,
+            catalog,
+            scanner,
+            sonalloy,
+        },
+        &crate::plugins::validation::describe_parameters,
+    )
+}
+
+struct RebuildInput<'a> {
+    previous: &'a CreativeSession,
+    path: Option<&'a Path>,
+    bindings: &'a BTreeMap<String, PathBuf>,
+    data_root: &'a Path,
+    catalog: &'a BuiltInInstrumentCatalog,
+    scanner: &'a Path,
+    sonalloy: &'a Path,
+}
+
+fn rebuild_with_probe(
+    input: RebuildInput<'_>,
+    describe: &impl Fn(&Path, &Vst3Plugin, &[DisplayRequest]) -> Result<ParameterDescription, String>,
+) -> Result<ScoreOutcome, ImportError> {
+    let RebuildInput {
+        previous,
+        path,
+        bindings,
+        data_root,
+        catalog,
+        scanner,
+        sonalloy,
+    } = input;
     let source = previous.score_source.as_ref().ok_or_else(|| {
         ImportError::from("the active Project is not linked to a Score".to_string())
     })?;
@@ -172,25 +1085,46 @@ pub(crate) fn rebuild(
         .map(|(id, path)| (id.clone(), PathBuf::from(path)))
         .collect();
     effective.extend(bindings.iter().map(|(id, path)| (id.clone(), path.clone())));
-    let mut document = read(
-        &path,
-        &effective,
-        &bindings.keys().cloned().collect(),
-        catalog,
-        sonalloy,
+    let mut document = read_with_probe(
+        ReadInput {
+            path: &path,
+            bindings: &effective,
+            explicit: &bindings.keys().cloned().collect(),
+            data_root,
+            catalog,
+            scanner,
+            sonalloy,
+            previous: Some(previous),
+        },
+        describe,
     )?;
     let store = UserInstrumentStore::new(data_root, sonalloy);
-    let mut staged = BTreeSet::new();
-    let session = build(&mut document, Some(previous), &store, &mut staged)?;
+    let mut staged = StagedResources::new(data_root);
+    let session = build(
+        &mut document,
+        Some(previous),
+        &store,
+        &mut staged,
+        BuildMode::Stage,
+    )?;
+    let diagnostics = warnings(&document.plan);
+    let dependencies = std::mem::take(&mut document.dependencies);
     let yaml_changed = previous
         .score_source
         .as_ref()
         .is_none_or(|source| source.yaml != document.yaml);
+    let inputs_changed = previous
+        .score_source
+        .as_ref()
+        .is_none_or(|source| source.production_inputs != document.production_inputs);
     Ok(ScoreOutcome {
         changed: !previous.score_performance_equals(&session),
         link_changed: link_changed(previous, &session),
+        inputs_changed,
         session,
         yaml_changed,
+        diagnostics,
+        dependencies,
         staged,
     })
 }
@@ -204,17 +1138,6 @@ fn link_changed(previous: &CreativeSession, next: &CreativeSession) -> bool {
     }
 }
 
-/// Reports whether the linked Score file no longer matches the accepted body.
-pub(crate) fn source_changed(session: &CreativeSession) -> bool {
-    let Some(source) = session.score_source.as_ref() else {
-        return false;
-    };
-    let Some(path) = source.path.as_deref() else {
-        return false;
-    };
-    std::fs::read_to_string(path).map_or(true, |text| text != source.yaml)
-}
-
 /// Validates a Score document without creating a Project or snapshot.
 ///
 /// # Errors
@@ -222,24 +1145,43 @@ pub(crate) fn source_changed(session: &CreativeSession) -> bool {
 pub(crate) fn validate(
     path: &Path,
     bindings: &BTreeMap<String, PathBuf>,
+    data_root: &Path,
     catalog: &BuiltInInstrumentCatalog,
+    scanner: &Path,
     sonalloy: &Path,
 ) -> ScoreValidation {
-    match read(
+    let mut document = match read(ReadInput {
         path,
         bindings,
-        &bindings.keys().cloned().collect(),
+        explicit: &bindings.keys().cloned().collect(),
+        data_root,
         catalog,
+        scanner,
         sonalloy,
-    )
-    .and_then(|document| {
-        validate_performance(&document.plan, &document.sources)?;
-        Ok(summary(&document.plan))
+        previous: None,
     }) {
-        Ok(summary) => ScoreValidation {
+        Ok(document) => document,
+        Err(error) => {
+            return ScoreValidation {
+                valid: false,
+                diagnostics: vec![diagnostic(&error)],
+                summary: None,
+            };
+        }
+    };
+    let store = UserInstrumentStore::new(data_root, sonalloy);
+    let mut staged = StagedResources::new(data_root);
+    match build(
+        &mut document,
+        None,
+        &store,
+        &mut staged,
+        BuildMode::Validate,
+    ) {
+        Ok(_) => ScoreValidation {
             valid: true,
-            diagnostics: Vec::new(),
-            summary: Some(summary),
+            diagnostics: warnings(&document.plan),
+            summary: Some(summary(&document.plan)),
         },
         Err(error) => ScoreValidation {
             valid: false,
@@ -257,20 +1199,256 @@ pub(crate) fn inspect(
     path: &Path,
     bindings: &BTreeMap<String, PathBuf>,
     events: bool,
+    data_root: &Path,
     catalog: &BuiltInInstrumentCatalog,
+    scanner: &Path,
     sonalloy: &Path,
 ) -> Result<ScoreInspection, ImportError> {
-    let document = read(
+    let mut document = read(ReadInput {
         path,
         bindings,
-        &bindings.keys().cloned().collect(),
+        explicit: &bindings.keys().cloned().collect(),
+        data_root,
         catalog,
+        scanner,
         sonalloy,
+        previous: None,
+    })?;
+    let store = UserInstrumentStore::new(data_root, sonalloy);
+    let mut staged = StagedResources::new(data_root);
+    let session = build(
+        &mut document,
+        None,
+        &store,
+        &mut staged,
+        BuildMode::Validate,
     )?;
-    validate_performance(&document.plan, &document.sources)?;
     let plan = &document.plan;
+    use score::production::mix::{BusKind, Owner, SendPosition};
+    let position = |value| {
+        match value {
+            SendPosition::Pre => "pre",
+            SendPosition::Post => "post",
+        }
+        .to_owned()
+    };
+    let mut buses = Vec::new();
+    let mut sends = Vec::new();
+    let mut sidechains = Vec::new();
+    if let Some(mix) = &plan.mix {
+        for (id, bus) in &mix.buses {
+            buses.push(ScoreBusInspection {
+                id: id.clone(),
+                kind: match bus.kind {
+                    BusKind::Group => "group",
+                    BusKind::Return => "return",
+                }
+                .into(),
+                gain_db: bus.gain_db,
+                pan: bus.pan,
+            });
+        }
+        for (from, track) in &mix.tracks {
+            for (bus, send) in &track.sends {
+                sends.push(ScoreSendInspection {
+                    from: from.clone(),
+                    bus: bus.clone(),
+                    level_db: send.level_db,
+                    position: position(send.position),
+                    enabled: send.enabled,
+                });
+            }
+        }
+        for route in &mix.sidechain {
+            let (kind, id) = match &route.to.owner {
+                Owner::Instrument(id) => ("instrument", Some(id.clone())),
+                Owner::Kit(id) => ("kit", Some(id.clone())),
+                Owner::Bus(id) => ("bus", Some(id.clone())),
+                Owner::Master => ("master", None),
+            };
+            sidechains.push(ScoreSidechainInspection {
+                from: route.from.clone(),
+                owner_kind: kind.into(),
+                owner_id: id,
+                effect: route.to.id.clone(),
+                level_db: route.send.level_db,
+                position: position(route.send.position),
+                enabled: route.send.enabled,
+            });
+        }
+    }
+    let audio_clips = plan
+        .audio_clips
+        .iter()
+        .flat_map(|(section, clips)| {
+            clips.iter().map(move |clip| ScoreAudioClipInspection {
+                id: clip.id.clone(),
+                section: section.clone(),
+                instrument: clip.instrument.clone(),
+                file: clip.file.clone(),
+                start_ticks: plan
+                    .sections
+                    .iter()
+                    .filter(|item| item.section == *section)
+                    .map(|item| plan.position_tick(item, &clip.at))
+                    .collect(),
+                offset_seconds: clip.offset_seconds,
+                duration_seconds: clip.duration_seconds,
+                gain_db: clip.gain_db,
+                pan: clip.pan,
+                fade_in_seconds: clip.fade_in_seconds,
+                fade_out_seconds: clip.fade_out_seconds,
+            })
+        })
+        .collect();
+    let mut plugins_by_path = BTreeMap::new();
+    for resolved in document.production.values() {
+        let plugin = resolved.plugin();
+        plugins_by_path
+            .entry(plugin.plugin.path.clone())
+            .or_insert(&plugin.entry);
+    }
+    let yaml_effect_ids = score_effect_identifiers(plan);
+    let track_inspections = session
+        .arrangement
+        .tracks
+        .iter()
+        .filter_map(|track| {
+            let (id, kind) = score_track_identity(plan, track)?;
+            let (device_id, plugin_name, plugin_identifier) =
+                track
+                    .instrument
+                    .as_ref()
+                    .map_or((None, None, None), |instrument| {
+                        (
+                            Some(instrument.id.clone()),
+                            Some(instrument.name.clone()),
+                            instrument
+                                .as_vst3()
+                                .and_then(|plugin| plugins_by_path.get(&plugin.path))
+                                .and_then(|entry| entry.identifier.clone()),
+                        )
+                    });
+            let output = track.output_bus_id.as_deref().and_then(|id| {
+                session
+                    .arrangement
+                    .mixer
+                    .buses
+                    .iter()
+                    .find(|bus| bus.id == id)
+                    .map(|bus| bus.name.clone())
+            });
+            Some(ScoreTrackInspection {
+                id,
+                kind: kind.into(),
+                track_id: track.id.clone(),
+                name: track.name.clone(),
+                gain_db: track.gain_db,
+                pan: track.pan,
+                output,
+                device_id,
+                plugin_name,
+                plugin_identifier,
+                effect_ids: track
+                    .effects
+                    .iter()
+                    .map(|effect| {
+                        yaml_effect_ids
+                            .get(&effect.id)
+                            .cloned()
+                            .unwrap_or_else(|| effect.id.clone())
+                    })
+                    .collect(),
+                note_count: notes_on_track(&session, &track.id),
+            })
+        })
+        .collect::<Vec<_>>();
+    let kit_inspections =
+        plan.kits
+            .iter()
+            .filter_map(|(id, kit)| {
+                let score_key = format!("kit:{id}");
+                let track =
+                    session.arrangement.tracks.iter().find(|track| {
+                        track.score_instrument.as_deref() == Some(score_key.as_str())
+                    })?;
+                let instrument = track.instrument.as_ref()?;
+                let plugin = instrument.as_vst3();
+                Some(ScoreKitInspection {
+                    id: id.clone(),
+                    track_id: track.id.clone(),
+                    device_id: instrument.id.clone(),
+                    plugin_name: instrument.name.clone(),
+                    plugin_identifier: plugin
+                        .and_then(|plugin| plugins_by_path.get(&plugin.path))
+                        .and_then(|entry| entry.identifier.clone()),
+                    members: plan
+                        .kit_members
+                        .iter()
+                        .filter(|(_, kit_id)| *kit_id == id)
+                        .map(|(member, _)| member.clone())
+                        .collect(),
+                    effect_ids: kit.effects.iter().map(|effect| effect.id.clone()).collect(),
+                    note_count: notes_on_track(&session, &track.id),
+                })
+            })
+            .collect::<Vec<_>>();
+    let mut effect_inspections = Vec::new();
+    let mut push_effects =
+        |owner_kind: &str, owner_id: Option<String>, effects: &[EffectDevice]| {
+            for effect in effects {
+                effect_inspections.push(ScoreEffectInspection {
+                    owner_kind: owner_kind.into(),
+                    owner_id: owner_id.clone(),
+                    id: yaml_effect_ids
+                        .get(&effect.id)
+                        .cloned()
+                        .unwrap_or_else(|| effect.id.clone()),
+                    plugin_name: effect.name.clone(),
+                    plugin_identifier: plugins_by_path
+                        .get(&effect.plugin.path)
+                        .and_then(|entry| entry.identifier.clone()),
+                    plugin_path: effect.plugin.path.clone(),
+                    bypassed: effect.bypassed,
+                });
+            }
+        };
+    for track in &session.arrangement.tracks {
+        if let Some((id, kind)) = score_track_identity(plan, track) {
+            push_effects(kind, Some(id), &track.effects);
+        }
+    }
+    for bus in &session.arrangement.mixer.buses {
+        push_effects("bus", Some(bus.name.clone()), &bus.effects);
+    }
+    push_effects("master", None, &session.arrangement.mixer.master_effects);
+    let automation = session
+        .arrangement
+        .automation_lanes
+        .iter()
+        .map(|lane| ScoreAutomationInspection {
+            target: automation_target_label(plan, &session, &lane.target),
+            interpolation: match lane.interpolation {
+                AutomationInterpolation::Linear => "linear",
+                AutomationInterpolation::Step => "step",
+                AutomationInterpolation::LinearAmplitude { .. } => "linearAmplitude",
+            }
+            .into(),
+            points: lane.points.len(),
+        })
+        .collect();
     Ok(ScoreInspection {
+        tracks: track_inspections,
+        kits: kit_inspections,
+        effects: effect_inspections,
+        automation,
         summary: summary(plan),
+        diagnostics: warnings(plan),
+        buses,
+        sends,
+        sidechains,
+        audio_clips,
+        master_gain_db: plan.mix.as_ref().map(|mix| mix.master_gain_db),
         sections: plan
             .sections
             .iter()
@@ -297,12 +1475,45 @@ pub(crate) fn inspect(
             .instruments
             .keys()
             .map(|id| {
-                let source = &document.sources[id];
-                ScoreInstrumentInspection {
-                    id: id.clone(),
-                    name: source.name.clone(),
-                    definition: source.definition.to_string_lossy().into_owned(),
-                    built_in: source.built_in.is_some(),
+                if let Some(source) = document.sources.get(id) {
+                    ScoreInstrumentInspection {
+                        id: id.clone(),
+                        name: source.name.clone(),
+                        kind: ScoreInstrumentKind::Builtin,
+                        definition: Some(source.definition.to_string_lossy().into_owned()),
+                        built_in: source.built_in.is_some(),
+                        plugin_name: None,
+                        plugin_identifier: None,
+                        plugin_path: None,
+                        kit: None,
+                    }
+                } else {
+                    let path = plan.kit_members.get(id).map_or_else(
+                        || format!("instruments.{id}.source"),
+                        |kit| format!("kits.{kit}.source"),
+                    );
+                    let plugin = document
+                        .production
+                        .get(&path)
+                        .map(ResolvedProduction::plugin);
+                    ScoreInstrumentInspection {
+                        id: id.clone(),
+                        name: plugin.map_or_else(|| id.clone(), |plugin| plugin.entry.name.clone()),
+                        kind: if plan.kit_members.contains_key(id) {
+                            ScoreInstrumentKind::KitMember
+                        } else if plan.audio_instruments.contains(id) {
+                            ScoreInstrumentKind::Audio
+                        } else {
+                            ScoreInstrumentKind::Vst3
+                        },
+                        definition: None,
+                        built_in: false,
+                        plugin_name: plugin.map(|plugin| plugin.entry.name.clone()),
+                        plugin_identifier: plugin
+                            .and_then(|plugin| plugin.entry.identifier.clone()),
+                        plugin_path: plugin.map(|plugin| plugin.plugin.path.clone()),
+                        kit: plan.kit_members.get(id).cloned(),
+                    }
                 }
             })
             .collect(),
@@ -351,6 +1562,154 @@ pub(crate) fn inspect(
     })
 }
 
+fn score_track_identity(plan: &ScorePlan, track: &Track) -> Option<(String, &'static str)> {
+    let score = track.score_instrument.as_deref()?;
+    if let Some(kit) = score
+        .strip_prefix("kit:")
+        .filter(|kit| plan.kits.contains_key(*kit))
+    {
+        Some((kit.to_owned(), "kit"))
+    } else if plan.audio_instruments.contains(score) {
+        Some((score.to_owned(), "audio"))
+    } else {
+        Some((score.to_owned(), "instrument"))
+    }
+}
+
+fn score_effect_identifiers(plan: &ScorePlan) -> BTreeMap<String, String> {
+    let mut identifiers = BTreeMap::new();
+    for (id, effects) in &plan.production_effects {
+        for effect in effects {
+            identifiers.insert(
+                effect_device_id(&owner_instrument(id), &effect.id),
+                effect.id.clone(),
+            );
+        }
+    }
+    for (id, kit) in &plan.kits {
+        for effect in &kit.effects {
+            identifiers.insert(
+                effect_device_id(&owner_kit(id), &effect.id),
+                effect.id.clone(),
+            );
+        }
+    }
+    if let Some(mix) = &plan.mix {
+        for (id, bus) in &mix.buses {
+            for effect in &bus.effects {
+                identifiers.insert(
+                    effect_device_id(&owner_bus(id), &effect.id),
+                    effect.id.clone(),
+                );
+            }
+        }
+        for effect in &mix.master_effects {
+            identifiers.insert(effect_device_id("master", &effect.id), effect.id.clone());
+        }
+    }
+    identifiers
+}
+
+fn notes_on_track(session: &CreativeSession, track_id: &str) -> usize {
+    session
+        .arrangement
+        .midi_clips
+        .iter()
+        .filter(|clip| clip.track_id == track_id)
+        .map(|clip| clip.notes.len())
+        .sum()
+}
+
+fn automation_target_label(
+    plan: &ScorePlan,
+    session: &CreativeSession,
+    target: &AutomationTarget,
+) -> String {
+    let track_label = |track_id: &str| {
+        session
+            .arrangement
+            .tracks
+            .iter()
+            .find(|track| track.id == track_id)
+            .and_then(|track| score_track_identity(plan, track))
+            .map_or_else(
+                || format!("track:{track_id}"),
+                |(id, kind)| format!("{kind}:{id}"),
+            )
+    };
+    match target {
+        AutomationTarget::TrackMix {
+            track_id,
+            parameter,
+        } => format!(
+            "{}:{}",
+            track_label(track_id),
+            match parameter {
+                TrackMixParameter::Volume => "volume",
+                TrackMixParameter::Pan => "pan",
+            }
+        ),
+        AutomationTarget::BusMix { bus_id, parameter } => format!(
+            "bus:{}:{}",
+            session
+                .arrangement
+                .mixer
+                .buses
+                .iter()
+                .find(|bus| bus.id == *bus_id)
+                .map_or_else(|| bus_id.clone(), |bus| bus.name.clone()),
+            match parameter {
+                BusMixParameter::Gain => "gain",
+                BusMixParameter::Pan => "pan",
+            }
+        ),
+        AutomationTarget::MasterGain => "master:gain".to_owned(),
+        AutomationTarget::SendLevel { send_id } => {
+            let send = session
+                .arrangement
+                .mixer
+                .sends
+                .iter()
+                .find(|send| send.id == *send_id);
+            send.map_or_else(
+                || format!("send:{send_id}"),
+                |send| {
+                    let bus = session
+                        .arrangement
+                        .mixer
+                        .buses
+                        .iter()
+                        .find(|bus| bus.id == send.return_bus_id)
+                        .map_or_else(|| send.return_bus_id.clone(), |bus| bus.name.clone());
+                    format!("{}:send:{bus}", track_label(&send.track_id))
+                },
+            )
+        }
+        AutomationTarget::SidechainSendLevel { sidechain_send_id } => {
+            let send = session
+                .arrangement
+                .mixer
+                .sidechain_sends
+                .iter()
+                .find(|send| send.id == *sidechain_send_id);
+            send.map_or_else(
+                || format!("sidechain:{sidechain_send_id}"),
+                |send| {
+                    format!(
+                        "{}:sidechain:{}",
+                        track_label(&send.source_track_id),
+                        send.target_device_id
+                    )
+                },
+            )
+        }
+        AutomationTarget::DeviceParameter {
+            device_id,
+            parameter_id,
+        } => format!("device:{device_id}:{parameter_id}"),
+    }
+}
+
 fn score_error(error: score::Error) -> ImportError {
     ImportError {
         message: error.to_string(),
@@ -360,6 +1719,7 @@ fn score_error(error: score::Error) -> ImportError {
 
 fn diagnostic(error: &ImportError) -> ScoreDiagnostic {
     ScoreDiagnostic {
+        severity: ScoreDiagnosticSeverity::Error,
         path: error.details["path"]
             .as_str()
             .unwrap_or_default()
@@ -369,6 +1729,26 @@ fn diagnostic(error: &ImportError) -> ScoreDiagnostic {
         column: error.details["column"].as_u64().unwrap_or(0) as usize,
         detail: Some(error.details.clone()),
     }
+}
+
+fn warnings(plan: &ScorePlan) -> Vec<ScoreDiagnostic> {
+    plan.production_sources
+        .keys()
+        .filter(|id| plan.lanes.iter().filter(|lane| &lane.id == *id).count() > 1)
+        .map(|id| {
+            let path = format!("instruments.{id}.source");
+            let message = "performance gain lanes require separate VST3 instances".to_owned();
+            let detail = plan.source_detail(&path, &message);
+            ScoreDiagnostic {
+                severity: ScoreDiagnosticSeverity::Warning,
+                path,
+                line: detail["line"].as_u64().unwrap_or(0) as usize,
+                column: detail["column"].as_u64().unwrap_or(0) as usize,
+                message,
+                detail: Some(detail),
+            }
+        })
+        .collect()
 }
 
 fn summary(plan: &ScorePlan) -> ScoreSummary {
@@ -394,21 +1774,62 @@ fn summary(plan: &ScorePlan) -> ScoreSummary {
     }
 }
 
-fn read(
-    path: &Path,
-    bindings: &BTreeMap<String, PathBuf>,
-    explicit: &BTreeSet<String>,
-    catalog: &BuiltInInstrumentCatalog,
-    sonalloy: &Path,
+struct ReadInput<'a> {
+    path: &'a Path,
+    bindings: &'a BTreeMap<String, PathBuf>,
+    explicit: &'a BTreeSet<String>,
+    data_root: &'a Path,
+    catalog: &'a BuiltInInstrumentCatalog,
+    scanner: &'a Path,
+    sonalloy: &'a Path,
+    previous: Option<&'a CreativeSession>,
+}
+
+fn read(input: ReadInput<'_>) -> Result<ScoreDocument, ImportError> {
+    read_with_probe(input, &crate::plugins::validation::describe_parameters)
+}
+
+fn read_with_probe(
+    input: ReadInput<'_>,
+    describe: &impl Fn(&Path, &Vst3Plugin, &[DisplayRequest]) -> Result<ParameterDescription, String>,
 ) -> Result<ScoreDocument, ImportError> {
+    let ReadInput {
+        path,
+        bindings,
+        explicit,
+        data_root,
+        catalog,
+        scanner,
+        sonalloy,
+        previous,
+    } = input;
     let yaml = std::fs::read_to_string(path)
         .map_err(|error| format!("could not read score: {}: {error}", path.display()))?;
     let path = std::fs::canonicalize(path).map_err(|error| error.to_string())?;
     let plan = score::compile(&yaml).map_err(score_error)?;
+    let base = path.parent().expect("canonical file has a parent");
+    let mut dependencies = Dependencies::new();
+    record_dependency(&mut dependencies, &path).map_err(ImportError::from)?;
+    validate_audio(&plan, base, &mut dependencies)?;
+    let (production, automation, production_inputs) = resolve_production(
+        ProductionResolutionInput {
+            plan: &plan,
+            base,
+            data_root,
+            scanner,
+            dependencies: &mut dependencies,
+            previous,
+        },
+        describe,
+    )?;
     let missing: Vec<_> = plan
         .instruments
         .iter()
-        .filter(|(id, spec)| spec["external"] == true && !bindings.contains_key(*id))
+        .filter(|(id, spec)| {
+            spec["external"] == true
+                && !bindings.contains_key(*id)
+                && !is_production_instrument(&plan, id)
+        })
         .map(|(id, _)| id.clone())
         .collect();
     if !missing.is_empty() {
@@ -430,25 +1851,27 @@ fn read(
             return Err(format!("binding '{id}' does not identify an external instrument").into());
         }
     }
-    let base = path.parent().expect("canonical file has a parent");
-    let presets = base
-        .ancestors()
-        .map(|ancestor| ancestor.join("presets"))
-        .find(|root| root.is_dir());
     let mut resolved = BTreeMap::<PathBuf, Source>::new();
     let mut sources = BTreeMap::new();
     let mut effective = BTreeMap::new();
     for (id, spec) in &plan.instruments {
+        if is_production_instrument(&plan, id) {
+            continue;
+        }
         let field = format!("instruments.{id}");
         let definition =
-            resolve_definition(spec, bindings.get(id), base, presets.as_deref(), catalog).map_err(
-                |message| ImportError {
+            resolve_definition(spec, bindings.get(id), base, catalog).map_err(|message| {
+                ImportError {
                     details: plan.source_detail(&field, &message),
                     message,
-                },
-            )?;
+                }
+            })?;
         let canonical =
             std::fs::canonicalize(&definition).map_err(|error| format!("{field}: {error}"))?;
+        record_dependency(&mut dependencies, &canonical).map_err(|message| ImportError {
+            details: plan.source_detail(&field, &message),
+            message,
+        })?;
         if spec["external"] == true {
             effective.insert(id.clone(), canonical.clone());
         }
@@ -484,7 +1907,64 @@ fn read(
         plan,
         bindings: effective,
         sources,
+        production,
+        automation,
+        production_inputs,
+        dependencies,
     })
+}
+
+/// How a Score build treats resources that outlive the candidate Session.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BuildMode {
+    /// Stage snapshots and assets for a candidate that may be accepted.
+    Stage,
+    /// Resolve the same structure without writing persistent resources.
+    Validate,
+}
+
+/// Snapshots staged for a candidate and discarded unless it is accepted.
+struct StagedResources {
+    data_root: PathBuf,
+    snapshots: BTreeSet<PathBuf>,
+    assets: Vec<(AssetId, String)>,
+}
+
+impl StagedResources {
+    fn new(data_root: &Path) -> Self {
+        Self {
+            data_root: data_root.to_path_buf(),
+            snapshots: BTreeSet::new(),
+            assets: Vec::new(),
+        }
+    }
+
+    fn clear(&mut self) {
+        self.snapshots.clear();
+        self.assets.clear();
+    }
+
+    #[cfg(test)]
+    fn is_empty(&self) -> bool {
+        self.snapshots.is_empty() && self.assets.is_empty()
+    }
+}
+
+impl Drop for StagedResources {
+    fn drop(&mut self) {
+        for snapshot in &self.snapshots {
+            if let Err(error) = std::fs::remove_dir_all(snapshot) {
+                tracing::warn!(%error, "score instrument snapshot cleanup failed");
+            }
+        }
+        for (id, location) in &self.assets {
+            if let Err(error) =
+                riffra_host::discard_staged_audio_import(&self.data_root, id, location)
+            {
+                tracing::warn!(%error, %id, "score audio asset cleanup failed");
+            }
+        }
+    }
 }
 
 /// Builds the canonical Session for one resolved Score document.
@@ -492,7 +1972,8 @@ fn build(
     document: &mut ScoreDocument,
     previous: Option<&CreativeSession>,
     store: &UserInstrumentStore,
-    staged: &mut BTreeSet<PathBuf>,
+    staged: &mut StagedResources,
+    mode: BuildMode,
 ) -> Result<CreativeSession, ImportError> {
     validate_performance(&document.plan, &document.sources)?;
     let ScoreDocument {
@@ -501,9 +1982,16 @@ fn build(
         plan,
         bindings,
         sources,
+        production,
+        automation: resolved_automation,
+        production_inputs: _,
+        dependencies,
     } = document;
     let sources = sources.clone();
     for (id, spec) in &plan.instruments {
+        if plan.audio_instruments.contains(id) || plan.kit_members.contains_key(id) {
+            continue;
+        }
         if plan.lanes.iter().any(|lane| lane.id == *id) {
             continue;
         }
@@ -531,18 +2019,45 @@ fn build(
         })
         .unwrap_or_default();
     let claims = match_tracks(plan, &previous_tracks);
+    let mut claimed_tracks = claims
+        .values()
+        .map(|track| track.id.clone())
+        .collect::<BTreeSet<_>>();
     let mut assignment = BTreeMap::<PathBuf, TrackInstrument>::new();
-    let mut tracks = Vec::with_capacity(plan.lanes.len());
-    let mut clips = Vec::with_capacity(plan.lanes.len());
-    let mut automation = Vec::new();
-    let mut tracks_by_part = BTreeMap::<String, Vec<String>>::new();
+    let mut tracks = Vec::with_capacity(
+        plan.lanes.len() + plan.kits.len() + plan.audio_instruments.len() + previous_tracks.len(),
+    );
+    let mut clips = Vec::with_capacity(plan.lanes.len() + plan.kits.len());
+    let mut volume_tracks = Vec::new();
+    let mut instrument_tracks = BTreeMap::<String, Vec<String>>::new();
+    let mut kit_tracks = BTreeMap::<String, String>::new();
     for (index, lane) in plan.lanes.iter().enumerate() {
+        if plan.kit_members.contains_key(&lane.id) || plan.audio_instruments.contains(&lane.id) {
+            continue;
+        }
         let spec = &plan.instruments[&lane.id];
-        let source = &sources[&lane.id];
         let claimed = claims.get(&index).copied();
-        let (mut instrument, reused) = match claimed.and_then(|track| track.instrument.as_ref()) {
-            Some(existing) if compatible(existing, source, store)? => (existing.clone(), true),
-            _ => (assigned(source, store, staged, &mut assignment)?, false),
+        let resolved = production.get(&format!("instruments.{}.source", lane.id));
+        let velocity = resolved.and_then(ResolvedProduction::velocity);
+        let instrument = if let Some(ResolvedProduction::Source { plugin, .. }) = resolved {
+            let (instrument, _) = vst3_instrument(plugin, claimed)?;
+            instrument
+        } else {
+            let source = sources
+                .get(&lane.id)
+                .ok_or_else(|| format!("instrument '{}' has no resolved source", lane.id))?;
+            let (mut instrument, reused) = match claimed.and_then(|track| track.instrument.as_ref())
+            {
+                Some(existing) if compatible(existing, source, store)? => (existing.clone(), true),
+                _ => (
+                    assigned(source, store, staged, mode, &mut assignment)?,
+                    false,
+                ),
+            };
+            if !reused {
+                instrument.id = format!("score:device:{}", riffra_control::new_instance_id());
+            }
+            instrument
         };
         let mut track = match claimed {
             Some(previous) => previous.clone(),
@@ -551,45 +2066,36 @@ fn build(
                 lane.id.clone(),
             ),
         };
-        if !reused {
-            instrument.id = format!("score:device:{}", riffra_control::new_instance_id());
-        }
         track.instrument = Some(instrument);
         track.kind = TrackKind::Instrument;
         track.gain_db = lane.gain_db;
         track.pan = spec["pan"].as_f64().unwrap_or(0.0);
         track.pan_law = PanLaw::LinearBalance;
+        track.effects.clear();
         track.score_instrument = Some(lane.id.clone());
-        tracks_by_part
-            .entry(lane.id.clone())
-            .or_default()
-            .push(track.id.clone());
-        tracks.push(track);
-    }
-    for (index, lane) in plan.lanes.iter().enumerate() {
-        let spec = &plan.instruments[&lane.id];
-        let source = &sources[&lane.id];
-        let track_id = tracks[index].id.clone();
         if let Some(input) = spec["audio_input"].as_str() {
-            let source_tracks = tracks_by_part
+            let source_tracks = instrument_tracks
                 .get(input)
                 .ok_or_else(|| format!("unknown audio input part '{input}'"))?
                 .clone();
-            tracks[index].external_audio_source_track_ids = source_tracks;
+            track.external_audio_source_track_ids = source_tracks;
         } else {
-            tracks[index].external_audio_source_track_ids.clear();
+            track.external_audio_source_track_ids.clear();
         }
-        let required_channels = source.report["external_audio"]["required_input_channels"]
-            .as_u64()
-            .unwrap_or(0);
-        if (required_channels > 0) != !tracks[index].external_audio_source_track_ids.is_empty() {
-            return Err(format!(
-                "instrument '{}' audio input does not match its source routes",
-                lane.id
-            )
-            .into());
+        if resolved.is_none() {
+            let source = &sources[&lane.id];
+            let required_channels = source.report["external_audio"]["required_input_channels"]
+                .as_u64()
+                .unwrap_or(0);
+            if (required_channels > 0) != !track.external_audio_source_track_ids.is_empty() {
+                return Err(format!(
+                    "instrument '{}' audio input does not match its source routes",
+                    lane.id
+                )
+                .into());
+            }
         }
-        let previous_clip = claims.get(&index).and_then(|claimed| {
+        let previous_clip = claimed.and_then(|claimed| {
             previous.and_then(|session| {
                 session
                     .arrangement
@@ -598,134 +2104,168 @@ fn build(
                     .find(|clip| clip.track_id == claimed.id)
             })
         });
-        let mut clip = previous_clip.cloned().unwrap_or_else(|| MidiClip {
-            id: format!("score:clip:{}", riffra_control::new_instance_id()),
-            name: lane.id.clone(),
-            track_id: track_id.clone(),
-            asset_id: None,
-            start_tick: TimelineTick(0),
-            duration_ticks: plan.length_ticks,
-            notes: Vec::new(),
-            events: Vec::new(),
-            instrument_control_events: Vec::new(),
-            muted: false,
-            loop_enabled: false,
-            recording_take_id: None,
-        });
-        clip.name = lane.id.clone();
-        clip.track_id = track_id.clone();
-        clip.start_tick = TimelineTick(0);
-        clip.duration_ticks = plan.length_ticks;
-        clip.notes.clear();
-        clip.events.clear();
-        clip.instrument_control_events.clear();
-        let events = reset_events(lane, plan, &source.report)?;
-        for (order, event) in events.iter().enumerate() {
-            let control = match event {
-                MusicalEvent::Note {
-                    tick,
-                    duration_ticks,
-                    note,
-                    velocity,
-                } => {
-                    clip.notes.push(MidiNote {
-                        lyric: None,
-                        id: format!("{}:{order}", clip.id),
-                        note: *note,
-                        start_tick: TimelineTick(*tick),
-                        duration_ticks: *duration_ticks,
-                        velocity: *velocity,
-                        channel: 1,
-                    });
-                    continue;
-                }
-                MusicalEvent::SustainPedal { tick, down } => (
-                    *tick,
-                    InstrumentControlEventKind::SustainPedal { down: *down },
-                ),
-                MusicalEvent::PitchBend { tick, value } => (
-                    *tick,
-                    InstrumentControlEventKind::PitchBend { value: *value },
-                ),
-                MusicalEvent::ModWheel { tick, value } => (
-                    *tick,
-                    InstrumentControlEventKind::ModWheel { value: *value },
-                ),
-                MusicalEvent::Aftertouch { tick, value } => (
-                    *tick,
-                    InstrumentControlEventKind::Aftertouch { value: *value },
-                ),
-                MusicalEvent::ParameterChange {
-                    tick,
-                    parameter,
-                    native_value,
-                } => (
-                    *tick,
-                    InstrumentControlEventKind::ParameterChange {
-                        parameter: parameter.clone(),
-                        native_value: *native_value,
-                    },
-                ),
-                MusicalEvent::ParameterRamp {
-                    tick,
-                    duration_ticks,
-                    parameter,
-                    from_value,
-                    to_value,
-                } => (
-                    *tick,
-                    InstrumentControlEventKind::ParameterRamp {
-                        parameter: parameter.clone(),
-                        from_value: *from_value,
-                        to_value: *to_value,
-                        duration_ticks: *duration_ticks,
-                    },
-                ),
-            };
-            clip.instrument_control_events.push(InstrumentControlEvent {
-                id: format!("{}:{order}", clip.id),
-                tick: TimelineTick(control.0),
-                source_order: u32::try_from(order)
-                    .map_err(|_| "too many score events".to_string())?,
-                kind: control.1,
-            });
-        }
+        let events = if resolved.is_some() {
+            lane.pattern.events.clone()
+        } else {
+            reset_events(lane, plan, &sources[&lane.id].report)?
+        };
+        let clip = midi_clip(
+            previous_clip,
+            &lane.id,
+            &track.id,
+            plan.length_ticks,
+            &events,
+            velocity,
+        )?;
+        instrument_tracks
+            .entry(lane.id.clone())
+            .or_default()
+            .push(track.id.clone());
+        let track_id = track.id.clone();
+        tracks.push(track);
         clips.push(clip);
-        let previous_lane = claims.get(&index).and_then(|claimed| {
+        volume_tracks.push((index, track_id, claimed.map(|track| track.id.clone())));
+    }
+    for kit_id in plan.kits.keys() {
+        let score_key = format!("kit:{kit_id}");
+        let claimed = claim_track(&previous_tracks, &mut claimed_tracks, |track| {
+            track.kind == TrackKind::Instrument
+                && track.score_instrument.as_deref() == Some(score_key.as_str())
+        });
+        let key = format!("kits.{kit_id}.source");
+        let Some(ResolvedProduction::Source { plugin, velocity }) = production.get(&key) else {
+            let message = format!("kit {kit_id} has no resolved VST3 source");
+            return Err(ImportError {
+                details: plan.source_detail(&key, &message),
+                message,
+            });
+        };
+        let (mut instrument, _) = vst3_instrument(plugin, claimed)?;
+        instrument.name = plugin.entry.name.clone();
+        let mut track = match claimed {
+            Some(previous) => previous.clone(),
+            None => Track::instrument(
+                format!("score:track:{}", riffra_control::new_instance_id()),
+                kit_id.clone(),
+            ),
+        };
+        if claimed.is_none() {
+            track.name = kit_id.clone();
+        }
+        track.instrument = Some(instrument);
+        track.kind = TrackKind::Instrument;
+        let track_mix = plan.mix.as_ref().and_then(|mix| mix.tracks.get(kit_id));
+        track.gain_db = track_mix.and_then(|track| track.gain_db).unwrap_or(0.0);
+        track.pan = track_mix.and_then(|track| track.pan).unwrap_or(0.0);
+        track.pan_law = PanLaw::LinearBalance;
+        track.effects.clear();
+        track.external_audio_source_track_ids.clear();
+        track.score_instrument = Some(score_key.clone());
+        let mut events = Vec::new();
+        for lane in plan
+            .lanes
+            .iter()
+            .filter(|lane| plan.kit_members.get(&lane.id) == Some(kit_id))
+        {
+            events.extend(
+                lane.pattern
+                    .events
+                    .iter()
+                    .filter(|event| matches!(event, MusicalEvent::Note { .. }))
+                    .cloned(),
+            );
+        }
+        events.sort_by_key(|event| match event {
+            MusicalEvent::Note { tick, .. } => *tick,
+            _ => 0,
+        });
+        let previous_clip = claimed.and_then(|claimed| {
             previous.and_then(|session| {
-                session.arrangement.automation_lanes.iter().find(|lane| {
-                    lane.target
-                        == AutomationTarget::TrackMix {
-                            track_id: claimed.id.clone(),
-                            parameter: TrackMixParameter::Volume,
-                        }
-                })
+                session
+                    .arrangement
+                    .midi_clips
+                    .iter()
+                    .find(|clip| clip.track_id == claimed.id)
             })
         });
-        automation.push(AutomationLane {
-            id: previous_lane.map_or_else(
-                || format!("score:volume:{}", riffra_control::new_instance_id()),
-                |lane| lane.id.clone(),
-            ),
-            target: AutomationTarget::TrackMix {
-                track_id,
-                parameter: TrackMixParameter::Volume,
-            },
-            interpolation: AutomationInterpolation::LinearAmplitude {
-                duration_seconds: 0.005,
-            },
-            points: plan
-                .sections
-                .iter()
-                .enumerate()
-                .map(|(section_index, section)| AutomationPoint {
-                    id: format!("score:gain:{}:{section_index}", lane.id),
-                    tick: TimelineTick(section.start_tick),
-                    value: lane.gain_db + section.part_gains.get(&lane.id).copied().unwrap_or(0.0),
-                })
-                .collect(),
-        });
+        let clip = midi_clip(
+            previous_clip,
+            kit_id,
+            &track.id,
+            plan.length_ticks,
+            &events,
+            velocity.as_deref(),
+        )?;
+        kit_tracks.insert(kit_id.clone(), track.id.clone());
+        tracks.push(track);
+        clips.push(clip);
     }
+    for id in &plan.audio_instruments {
+        let spec = &plan.instruments[id];
+        let claimed = claim_track(&previous_tracks, &mut claimed_tracks, |track| {
+            track.kind == TrackKind::Audio && track.score_instrument.as_deref() == Some(id.as_str())
+        });
+        let mut track = claimed.map_or_else(
+            || {
+                Track::audio(
+                    format!("score:track:{}", riffra_control::new_instance_id()),
+                    id.clone(),
+                )
+            },
+            |track| track.clone(),
+        );
+        if claimed.is_none() {
+            track.name = id.clone();
+        }
+        track.kind = TrackKind::Audio;
+        track.instrument = None;
+        track.gain_db = spec["gain_db"].as_f64().unwrap_or(0.0);
+        track.pan = spec["pan"].as_f64().unwrap_or(0.0);
+        track.pan_law = PanLaw::LinearBalance;
+        track.effects.clear();
+        track.external_audio_source_track_ids.clear();
+        track.score_instrument = Some(id.clone());
+        instrument_tracks
+            .entry(id.clone())
+            .or_default()
+            .push(track.id.clone());
+        tracks.push(track);
+    }
+    attach_track_effects(
+        plan,
+        production,
+        &mut tracks,
+        &instrument_tracks,
+        &kit_tracks,
+    )?;
+    let mixer = build_mixer(
+        plan,
+        production,
+        previous,
+        &mut tracks,
+        &instrument_tracks,
+        &kit_tracks,
+    )?;
+    let structure = AutomationStructure {
+        plan,
+        resolved: resolved_automation,
+        instrument_tracks: &instrument_tracks,
+        kit_tracks: &kit_tracks,
+        tracks: &tracks,
+        mixer: &mixer,
+    };
+    let mut automation = build_automation(&structure, previous, &volume_tracks)?;
+    let base = path.parent().expect("canonical file has a parent");
+    let mut audio_clips = build_audio_clips(
+        plan,
+        base,
+        previous,
+        staged,
+        mode,
+        &instrument_tracks,
+        dependencies,
+    )?;
+
     let regions = plan
         .sections
         .iter()
@@ -775,6 +2315,7 @@ fn build(
             .iter()
             .map(|(id, path)| (id.clone(), path.to_string_lossy().into_owned()))
             .collect(),
+        production_inputs: document.production_inputs.clone(),
     });
     session.arrangement.timebase = ProjectTimebase {
         ppq: u32::from(plan.ticks_per_beat),
@@ -798,6 +2339,7 @@ fn build(
             })
             .collect(),
     };
+    session.settings.master_db = plan.mix.as_ref().map_or(0.0, |mix| mix.master_gain_db);
     session.settings.mixdown.musical_end_tick = plan.length_ticks;
     session.settings.mixdown.fade_out_seconds = plan.fade_out_seconds;
     session.settings.mixdown.mastering = plan.master.as_ref().map(|master| LoudnessMastering {
@@ -823,7 +2365,7 @@ fn build(
         .iter()
         .map(|track| track.id.as_str())
         .collect::<BTreeSet<_>>();
-    let (retained_clips, retained_automation) = previous.map_or_else(
+    let (retained_clips, retained_audio_clips) = previous.map_or_else(
         || (Vec::new(), Vec::new()),
         |previous| {
             (
@@ -836,33 +2378,1192 @@ fn build(
                     .collect::<Vec<_>>(),
                 previous
                     .arrangement
-                    .automation_lanes
+                    .audio_clips
                     .iter()
-                    .filter(|lane| !targets_track(&lane.target, &previous_track_ids))
+                    .filter(|clip| retained_track_ids.contains(clip.track_id.as_str()))
                     .cloned()
                     .collect::<Vec<_>>(),
             )
         },
     );
     tracks.extend(retained_tracks);
+    {
+        let track_ids = tracks
+            .iter()
+            .map(|track| track.id.clone())
+            .collect::<BTreeSet<_>>();
+        let group_ids = mixer
+            .buses
+            .iter()
+            .filter(|bus| bus.kind == MixBusKind::Group)
+            .map(|bus| bus.id.clone())
+            .collect::<BTreeSet<_>>();
+        for track in tracks
+            .iter_mut()
+            .filter(|track| track.score_instrument.is_none())
+        {
+            if track
+                .output_bus_id
+                .as_ref()
+                .is_some_and(|id| !group_ids.contains(id))
+            {
+                track.output_bus_id = None;
+            }
+            track
+                .external_audio_source_track_ids
+                .retain(|id| track_ids.contains(id) && *id != track.id);
+        }
+    }
     clips.extend(retained_clips);
-    automation.extend(retained_automation);
+    if let Some(previous) = previous {
+        let track_ids = tracks
+            .iter()
+            .map(|track| track.id.as_str())
+            .collect::<BTreeSet<_>>();
+        let bus_ids = mixer
+            .buses
+            .iter()
+            .map(|bus| bus.id.as_str())
+            .collect::<BTreeSet<_>>();
+        let send_ids = mixer
+            .sends
+            .iter()
+            .map(|send| send.id.as_str())
+            .collect::<BTreeSet<_>>();
+        let sidechain_ids = mixer
+            .sidechain_sends
+            .iter()
+            .map(|send| send.id.as_str())
+            .collect::<BTreeSet<_>>();
+        let mut device_ids = tracks
+            .iter()
+            .flat_map(|track| track.effects.iter().map(|effect| effect.id.as_str()))
+            .collect::<BTreeSet<_>>();
+        device_ids.extend(
+            tracks
+                .iter()
+                .filter_map(|track| track.instrument.as_ref())
+                .map(|instrument| instrument.id.as_str()),
+        );
+        device_ids.extend(
+            mixer
+                .buses
+                .iter()
+                .flat_map(|bus| bus.effects.iter().map(|effect| effect.id.as_str())),
+        );
+        device_ids.extend(mixer.master_effects.iter().map(|effect| effect.id.as_str()));
+        automation.extend(
+            previous
+                .arrangement
+                .automation_lanes
+                .iter()
+                .filter(|lane| {
+                    let score_owned = targets_track(&lane.target, &previous_track_ids);
+                    !score_owned
+                        && match &lane.target {
+                            AutomationTarget::TrackMix { track_id, .. } => {
+                                track_ids.contains(track_id.as_str())
+                            }
+                            AutomationTarget::BusMix { bus_id, .. } => {
+                                !bus_id.starts_with("score:bus:")
+                                    && bus_ids.contains(bus_id.as_str())
+                            }
+                            AutomationTarget::MasterGain => false,
+                            AutomationTarget::SendLevel { send_id } => {
+                                !send_id.starts_with("score:send:")
+                                    && send_ids.contains(send_id.as_str())
+                            }
+                            AutomationTarget::SidechainSendLevel { sidechain_send_id } => {
+                                !sidechain_send_id.starts_with("score:sidechain:")
+                                    && sidechain_ids.contains(sidechain_send_id.as_str())
+                            }
+                            AutomationTarget::DeviceParameter { device_id, .. } => {
+                                !device_id.starts_with("score:")
+                                    && device_ids.contains(device_id.as_str())
+                            }
+                        }
+                })
+                .cloned(),
+        );
+    }
     session.arrangement.tracks = tracks;
     session.arrangement.midi_clips = clips;
+    audio_clips.extend(retained_audio_clips);
+    session.arrangement.audio_clips = audio_clips;
     session.arrangement.automation_lanes = automation;
     session.arrangement.regions = regions;
     session.arrangement.harmony_events = harmony;
+    session.arrangement.mixer = mixer;
     session.validate_and_normalize().map_err(ImportError::from)
+}
+
+/// Builds audio clips for every Score audio declaration and every section occurrence.
+fn build_audio_clips(
+    plan: &ScorePlan,
+    base: &Path,
+    previous: Option<&CreativeSession>,
+    staged: &mut StagedResources,
+    mode: BuildMode,
+    instrument_tracks: &BTreeMap<String, Vec<String>>,
+    dependencies: &Dependencies,
+) -> Result<Vec<AudioClip>, ImportError> {
+    use num_traits::ToPrimitive;
+    let mut clips = Vec::new();
+    let mut imported = BTreeMap::<PathBuf, AssetId>::new();
+    let mut imported_digest = BTreeMap::<Fingerprint, AssetId>::new();
+    let previous_assets = previous
+        .map(|session| {
+            session
+                .arrangement
+                .audio_clips
+                .iter()
+                .map(|clip| clip.asset_id.clone())
+                .collect::<BTreeSet<_>>()
+        })
+        .unwrap_or_default();
+    let mut previous_digests = BTreeMap::<AssetId, Option<Fingerprint>>::new();
+    let mut asset_for_file = |file: &Path, name: &str| -> Result<AssetId, ImportError> {
+        if let Some(asset_id) = imported.get(file) {
+            return Ok(asset_id.clone());
+        }
+        let digest = if mode == BuildMode::Stage {
+            Some(
+                dependencies
+                    .get(file)
+                    .cloned()
+                    .ok_or_else(|| format!("audio clip {} was not validated", file.display()))?,
+            )
+        } else {
+            None
+        };
+        if let Some(digest) = &digest
+            && let Some(asset_id) = imported_digest.get(digest)
+        {
+            imported.insert(file.to_path_buf(), asset_id.clone());
+            return Ok(asset_id.clone());
+        }
+        if let Some(digest) = &digest {
+            for asset_id in &previous_assets {
+                let previous_digest =
+                    previous_digests.entry(asset_id.clone()).or_insert_with(|| {
+                        riffra_host::load(&staged.data_root, asset_id)
+                            .ok()
+                            .flatten()
+                            .filter(|asset| asset.kind == AssetKind::Audio)
+                            .and_then(|asset| fingerprint(Path::new(&asset.content_location)).ok())
+                    });
+                if previous_digest.as_ref() == Some(digest) {
+                    imported.insert(file.to_path_buf(), asset_id.clone());
+                    imported_digest.insert(digest.clone(), asset_id.clone());
+                    return Ok(asset_id.clone());
+                }
+            }
+        }
+        if mode == BuildMode::Validate {
+            return Ok(mint_asset_id());
+        }
+        let (asset_id, location) = riffra_host::stage_audio_import(&staged.data_root, file, name)?;
+        staged.assets.push((asset_id.clone(), location));
+        imported.insert(file.to_path_buf(), asset_id.clone());
+        if let Some(digest) = digest {
+            imported_digest.insert(digest, asset_id.clone());
+        }
+        Ok(asset_id)
+    };
+    for instrument in &plan.audio_instruments {
+        let track_id = instrument_tracks
+            .get(instrument)
+            .and_then(|tracks| tracks.first())
+            .ok_or_else(|| format!("audio instrument '{instrument}' has no track"))?
+            .clone();
+        for (section, specs) in &plan.audio_clips {
+            let mut occurrence_number = 0;
+            for occurrence in plan
+                .sections
+                .iter()
+                .filter(|occurrence| occurrence.section == *section)
+            {
+                occurrence_number += 1;
+                for spec in specs {
+                    if spec.instrument != *instrument {
+                        continue;
+                    }
+                    let id = format!(
+                        "score:audio:{}:{}:{occurrence_number}:{}",
+                        score_id_component(instrument),
+                        score_id_component(section),
+                        score_id_component(&spec.id)
+                    );
+                    let file = local_input_path(base, &spec.file)?;
+                    let (rate, total) = riffra_host::read_wav_metadata(&file)
+                        .map_err(|error| format!("{}: {error}", file.display()))?;
+                    let frames = |seconds: f64| -> Result<u64, ImportError> {
+                        (seconds * f64::from(rate)).round().to_u64().ok_or_else(|| {
+                            ImportError::from(
+                                "audio time exceeds the supported frame range".to_owned(),
+                            )
+                        })
+                    };
+                    let start = frames(spec.offset_seconds)?;
+                    let duration = match spec.duration_seconds {
+                        Some(seconds) => frames(seconds)?,
+                        None => total.saturating_sub(start),
+                    };
+                    let name = format!("score-{instrument}-{}", spec.id);
+                    let asset_id = asset_for_file(&file, &name)?;
+                    clips.push(AudioClip {
+                        id,
+                        track_id: track_id.clone(),
+                        asset_id,
+                        start_tick: TimelineTick(plan.position_tick(occurrence, &spec.at)),
+                        source_range: FrameRange {
+                            start,
+                            end: start + duration,
+                        },
+                        source_sample_rate: rate,
+                        timeline_duration: FrameDuration {
+                            frames: duration,
+                            sample_rate: rate,
+                        },
+                        gain_db: spec.gain_db,
+                        pan: spec.pan,
+                        fade_in: FrameDuration {
+                            frames: frames(spec.fade_in_seconds)?,
+                            sample_rate: rate,
+                        },
+                        fade_out: FrameDuration {
+                            frames: frames(spec.fade_out_seconds)?,
+                            sample_rate: rate,
+                        },
+                        fade_shape: FadeShape::EqualPower,
+                        loop_enabled: false,
+                        muted: false,
+                        name: spec.id.clone(),
+                        recording_take_id: None,
+                        take_variant: AudioTakeVariant::Raw,
+                    });
+                }
+            }
+        }
+    }
+    Ok(clips)
+}
+
+struct LaneAccumulator {
+    target: AutomationTarget,
+    interpolation: AutomationInterpolation,
+    points: BTreeMap<u64, f64>,
+}
+
+fn automation_key(target: &AutomationTarget) -> String {
+    match target {
+        AutomationTarget::TrackMix {
+            track_id,
+            parameter,
+        } => format!(
+            "track:{track_id}:{}",
+            match parameter {
+                TrackMixParameter::Volume => "volume",
+                TrackMixParameter::Pan => "pan",
+            }
+        ),
+        AutomationTarget::BusMix { bus_id, parameter } => format!(
+            "bus:{bus_id}:{}",
+            match parameter {
+                BusMixParameter::Gain => "gain",
+                BusMixParameter::Pan => "pan",
+            }
+        ),
+        AutomationTarget::MasterGain => "master:gain".to_owned(),
+        AutomationTarget::SendLevel { send_id } => format!("send:{send_id}"),
+        AutomationTarget::SidechainSendLevel { sidechain_send_id } => {
+            format!("sidechain:{sidechain_send_id}")
+        }
+        AutomationTarget::DeviceParameter {
+            device_id,
+            parameter_id,
+        } => format!("device:{device_id}:{parameter_id}"),
+    }
+}
+
+/// Canonical structures that automation targets resolve against.
+struct AutomationStructure<'a> {
+    plan: &'a ScorePlan,
+    resolved: &'a ScoreAutomationResolutionMap,
+    instrument_tracks: &'a BTreeMap<String, Vec<String>>,
+    kit_tracks: &'a BTreeMap<String, String>,
+    tracks: &'a [Track],
+    mixer: &'a Mixer,
+}
+
+/// Maps one Score automation target to its canonical targets.
+fn automation_targets(
+    structure: &AutomationStructure<'_>,
+    lane_index: usize,
+    target: &score::production::mix::AutomationTarget,
+) -> Result<Vec<AutomationTarget>, ImportError> {
+    use score::production::mix::AutomationTarget as ScoreTarget;
+    let plan = structure.plan;
+    let resolved = structure.resolved;
+    let instrument_tracks = structure.instrument_tracks;
+    let kit_tracks = structure.kit_tracks;
+    let tracks = structure.tracks;
+    let mixer = structure.mixer;
+    let path = format!("mix.automation[{lane_index}].target");
+    let fail = |message: String| ImportError {
+        details: plan.source_detail(&path, &message),
+        message,
+    };
+    let track_ids = |owner: &score::production::mix::Owner| -> Option<Vec<String>> {
+        match owner {
+            score::production::mix::Owner::Instrument(id) => instrument_tracks.get(id).cloned(),
+            score::production::mix::Owner::Kit(id) => {
+                kit_tracks.get(id).map(|track| vec![track.clone()])
+            }
+            _ => None,
+        }
+    };
+    let bus_id = |id: &str| {
+        plan.mix
+            .as_ref()
+            .and_then(|mix| mix.buses.get(id))
+            .map(|bus| canonical_bus_id(bus.kind, id))
+            .or_else(|| {
+                mixer
+                    .buses
+                    .iter()
+                    .find(|bus| bus.name == id)
+                    .map(|bus| bus.id.clone())
+            })
+    };
+    let parameter_id = |index: usize| {
+        resolved
+            .get(&index)
+            .map(|resolved| resolved.parameter_id.clone())
+    };
+    let targets = match target {
+        ScoreTarget::Track { owner, parameter } => {
+            let ids = track_ids(owner)
+                .ok_or_else(|| fail("automation track owner is not defined".to_owned()))?;
+            let parameter = match parameter.as_str() {
+                "volume" => TrackMixParameter::Volume,
+                "pan" => TrackMixParameter::Pan,
+                _ => return Err(fail("undefined track automation parameter".to_owned())),
+            };
+            ids.into_iter()
+                .map(|track_id| AutomationTarget::TrackMix {
+                    track_id,
+                    parameter,
+                })
+                .collect()
+        }
+        ScoreTarget::Bus { id, parameter } => {
+            let bus_id =
+                bus_id(id).ok_or_else(|| fail("automation bus is not defined".to_owned()))?;
+            let parameter = match parameter.as_str() {
+                "gain" => BusMixParameter::Gain,
+                "pan" => BusMixParameter::Pan,
+                _ => return Err(fail("undefined bus automation parameter".to_owned())),
+            };
+            vec![AutomationTarget::BusMix { bus_id, parameter }]
+        }
+        ScoreTarget::Master => vec![AutomationTarget::MasterGain],
+        ScoreTarget::Send { instrument, bus } => {
+            let track_ids = instrument_tracks
+                .get(instrument)
+                .cloned()
+                .or_else(|| kit_tracks.get(instrument).map(|track| vec![track.clone()]))
+                .ok_or_else(|| fail("automation send source is not defined".to_owned()))?;
+            let bus_id =
+                bus_id(bus).ok_or_else(|| fail("automation send bus is not defined".to_owned()))?;
+            let matching = mixer
+                .sends
+                .iter()
+                .filter(|send| track_ids.contains(&send.track_id) && send.return_bus_id == bus_id)
+                .collect::<Vec<_>>();
+            if matching.is_empty() {
+                return Err(fail("automation send is not defined".to_owned()));
+            }
+            matching
+                .into_iter()
+                .map(|send| AutomationTarget::SendLevel {
+                    send_id: send.id.clone(),
+                })
+                .collect()
+        }
+        ScoreTarget::Sidechain { from, to } => {
+            let ids = if let Some(track) = kit_tracks.get(from) {
+                vec![track.clone()]
+            } else {
+                instrument_tracks
+                    .get(from)
+                    .ok_or_else(|| fail("automation sidechain source is not defined".to_owned()))?
+                    .clone()
+            };
+            let target = effect_device_id_for(to);
+            ids.iter()
+                .filter_map(|track_id| {
+                    mixer.sidechain_sends.iter().find(|send| {
+                        send.source_track_id == *track_id && send.target_device_id == target
+                    })
+                })
+                .map(|send| AutomationTarget::SidechainSendLevel {
+                    sidechain_send_id: send.id.clone(),
+                })
+                .collect()
+        }
+        ScoreTarget::Effect { effect, .. } => {
+            let parameter_id = parameter_id(lane_index)
+                .ok_or_else(|| fail("plugin parameter was not resolved".to_owned()))?;
+            vec![AutomationTarget::DeviceParameter {
+                device_id: effect_device_id_for(effect),
+                parameter_id,
+            }]
+        }
+        ScoreTarget::Source { instrument, .. } => {
+            let parameter_id = parameter_id(lane_index)
+                .ok_or_else(|| fail("plugin parameter was not resolved".to_owned()))?;
+            let ids = instrument_tracks
+                .get(instrument)
+                .ok_or_else(|| fail("automation source is not defined".to_owned()))?;
+            ids.iter()
+                .filter_map(|track_id| {
+                    tracks
+                        .iter()
+                        .find(|track| track.id == *track_id)
+                        .and_then(|track| track.instrument.as_ref())
+                })
+                .map(|instrument| AutomationTarget::DeviceParameter {
+                    device_id: instrument.id.clone(),
+                    parameter_id: parameter_id.clone(),
+                })
+                .collect()
+        }
+    };
+    Ok(targets)
+}
+
+fn effect_device_id_for(effect: &score::production::mix::EffectRef) -> String {
+    match &effect.owner {
+        score::production::mix::Owner::Instrument(id) => {
+            effect_device_id(&owner_instrument(id), &effect.id)
+        }
+        score::production::mix::Owner::Kit(id) => effect_device_id(&owner_kit(id), &effect.id),
+        score::production::mix::Owner::Bus(id) => effect_device_id(&owner_bus(id), &effect.id),
+        score::production::mix::Owner::Master => effect_device_id("master", &effect.id),
+    }
+}
+
+/// Builds explicit Score automation and the section gain lanes it replaces.
+fn build_automation(
+    structure: &AutomationStructure<'_>,
+    previous: Option<&CreativeSession>,
+    volume_tracks: &[(usize, String, Option<String>)],
+) -> Result<Vec<AutomationLane>, ImportError> {
+    let plan = structure.plan;
+    let resolved = structure.resolved;
+    let mut lanes = BTreeMap::<String, LaneAccumulator>::new();
+    if let Some(mix) = &plan.mix {
+        for (index, automation) in mix.automation.iter().enumerate() {
+            let targets = automation_targets(structure, index, &automation.target)?;
+            let values = resolved
+                .get(&index)
+                .map(|resolved| resolved.values.as_slice());
+            let interpolation = match automation.interpolation {
+                score::production::mix::Interpolation::Linear => AutomationInterpolation::Linear,
+                score::production::mix::Interpolation::Step => AutomationInterpolation::Step,
+            };
+            for (occurrence_index, occurrence) in plan
+                .sections
+                .iter()
+                .filter(|occurrence| occurrence.section == automation.section)
+                .enumerate()
+            {
+                if automation
+                    .occurrence
+                    .is_some_and(|number| number != occurrence_index + 1)
+                {
+                    continue;
+                }
+                for (point_index, point) in automation.points.iter().enumerate() {
+                    let tick = plan.position_tick(occurrence, &point.at);
+                    let value = match values {
+                        Some(values) => *values.get(point_index).ok_or_else(|| ImportError {
+                            details: plan.source_detail(
+                                &format!("mix.automation[{index}].points[{point_index}]"),
+                                "automation value was not resolved",
+                            ),
+                            message: "automation value was not resolved".to_owned(),
+                        })?,
+                        None => match &point.value {
+                            score::production::ParameterValue::Normalized(value) => *value,
+                            score::production::ParameterValue::Display(_) => {
+                                let message =
+                                    "display values require a plugin parameter target".to_owned();
+                                return Err(ImportError {
+                                    details: plan.source_detail(
+                                        &format!("mix.automation[{index}].points[{point_index}]"),
+                                        &message,
+                                    ),
+                                    message,
+                                });
+                            }
+                        },
+                    };
+                    for target in &targets {
+                        let key = automation_key(target);
+                        let entry = lanes.entry(key).or_insert_with(|| LaneAccumulator {
+                            target: target.clone(),
+                            interpolation,
+                            points: BTreeMap::new(),
+                        });
+                        if entry.interpolation != interpolation {
+                            return Err(ImportError {
+                                details: plan.source_detail(
+                                    &format!("mix.automation[{index}].interpolation"),
+                                    "automation for the same target must use one interpolation",
+                                ),
+                                message:
+                                    "automation for the same target must use one interpolation"
+                                        .to_owned(),
+                            });
+                        }
+                        if let Some(previous) = entry.points.insert(tick, value)
+                            && previous.to_bits() != value.to_bits()
+                        {
+                            let message =
+                                "conflicting automation values at the same tick".to_owned();
+                            return Err(ImportError {
+                                details: plan.source_detail(
+                                    &format!("mix.automation[{index}].points[{point_index}]"),
+                                    &message,
+                                ),
+                                message,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let mut result = Vec::with_capacity(lanes.len() + volume_tracks.len());
+    for (key, accumulator) in lanes {
+        let previous_lane = previous.and_then(|session| {
+            session
+                .arrangement
+                .automation_lanes
+                .iter()
+                .find(|lane| lane.target == accumulator.target)
+        });
+        let lane_id =
+            previous_lane.map_or_else(|| format!("score:automation:{key}"), |lane| lane.id.clone());
+        let points = accumulator
+            .points
+            .into_iter()
+            .map(|(tick, value)| AutomationPoint {
+                id: previous_lane
+                    .and_then(|lane| lane.points.iter().find(|point| point.tick.0 == tick))
+                    .map_or_else(|| format!("{lane_id}:{tick}"), |point| point.id.clone()),
+                tick: TimelineTick(tick),
+                value,
+            })
+            .collect();
+        result.push(AutomationLane {
+            id: lane_id,
+            target: accumulator.target,
+            interpolation: accumulator.interpolation,
+            points,
+        });
+    }
+    let explicit_volume = result
+        .iter()
+        .filter_map(|lane| match &lane.target {
+            AutomationTarget::TrackMix {
+                track_id,
+                parameter: TrackMixParameter::Volume,
+            } => Some(track_id.clone()),
+            _ => None,
+        })
+        .collect::<BTreeSet<_>>();
+    for (lane_index, track_id, claimed_id) in volume_tracks {
+        if explicit_volume.contains(track_id.as_str()) {
+            continue;
+        }
+        let lane = &plan.lanes[*lane_index];
+        let claimed = claimed_id.as_deref().and_then(|id| {
+            previous.and_then(|session| {
+                session
+                    .arrangement
+                    .tracks
+                    .iter()
+                    .find(|track| track.id == id)
+            })
+        });
+        result.push(auto_volume_lane(plan, previous, claimed, lane, track_id));
+    }
+    Ok(result)
 }
 
 fn targets_track(target: &AutomationTarget, track_ids: &BTreeSet<&str>) -> bool {
     match target {
         AutomationTarget::TrackMix { track_id, .. } => track_ids.contains(track_id.as_str()),
-        AutomationTarget::DeviceParameter { device_id, .. } => {
-            track_ids.contains(device_id.as_str())
+        AutomationTarget::DeviceParameter { device_id, .. } => device_id.starts_with("score:"),
+        AutomationTarget::BusMix { bus_id, .. } => bus_id.starts_with("score:bus:"),
+        AutomationTarget::SendLevel { send_id } => send_id.starts_with("score:send:"),
+        AutomationTarget::SidechainSendLevel { sidechain_send_id } => {
+            sidechain_send_id.starts_with("score:sidechain:")
         }
-        _ => false,
+        AutomationTarget::MasterGain => true,
     }
+}
+
+/// Claims one previous Score track matching a semantic key.
+fn claim_track<'a>(
+    previous: &[&'a Track],
+    claimed: &mut BTreeSet<String>,
+    predicate: impl Fn(&Track) -> bool,
+) -> Option<&'a Track> {
+    previous
+        .iter()
+        .copied()
+        .find(|track| !claimed.contains(&track.id) && predicate(track))
+        .inspect(|track| {
+            claimed.insert(track.id.clone());
+        })
+}
+
+/// Builds a VST3 instrument, keeping the previous device when the plugin matches.
+fn vst3_instrument(
+    plugin: &plugin_source::ResolvedPlugin,
+    previous: Option<&Track>,
+) -> Result<(TrackInstrument, bool), ImportError> {
+    let reused = previous
+        .and_then(|track| track.instrument.as_ref())
+        .and_then(TrackInstrument::as_vst3)
+        .is_some_and(|existing| existing.path == plugin.plugin.path);
+    let mut instrument = if reused {
+        previous
+            .and_then(|track| track.instrument.clone())
+            .expect("a reused instrument exists")
+    } else {
+        TrackInstrument::vst3(
+            format!("score:device:{}", riffra_control::new_instance_id()),
+            plugin.entry.name.clone(),
+            plugin.plugin.path.clone(),
+        )?
+    };
+    match &mut instrument.source {
+        TrackInstrumentSource::Vst3(state) => *state = plugin.plugin.clone(),
+        TrackInstrumentSource::Internal { .. } => {
+            unreachable!("VST3 instrument source was created or reused")
+        }
+    }
+    Ok((instrument, reused))
+}
+
+/// Creates one full-length MIDI clip from expanded Score events.
+fn midi_clip(
+    previous: Option<&MidiClip>,
+    name: &str,
+    track_id: &str,
+    duration_ticks: u64,
+    events: &[MusicalEvent],
+    velocity_map: Option<&[(u8, u8)]>,
+) -> Result<MidiClip, ImportError> {
+    let mut clip = previous.cloned().unwrap_or_else(|| MidiClip {
+        id: format!("score:clip:{}", riffra_control::new_instance_id()),
+        name: name.to_owned(),
+        track_id: track_id.to_owned(),
+        asset_id: None,
+        start_tick: TimelineTick(0),
+        duration_ticks,
+        notes: Vec::new(),
+        events: Vec::new(),
+        instrument_control_events: Vec::new(),
+        muted: false,
+        loop_enabled: false,
+        recording_take_id: None,
+    });
+    clip.name = name.to_owned();
+    clip.track_id = track_id.to_owned();
+    clip.start_tick = TimelineTick(0);
+    clip.duration_ticks = duration_ticks;
+    clip.notes.clear();
+    clip.events.clear();
+    clip.instrument_control_events.clear();
+    for (order, event) in events.iter().enumerate() {
+        let control = match event {
+            MusicalEvent::Note {
+                tick,
+                duration_ticks,
+                note,
+                velocity,
+            } => {
+                clip.notes.push(MidiNote {
+                    lyric: None,
+                    id: format!("{}:{order}", clip.id),
+                    note: *note,
+                    start_tick: TimelineTick(*tick),
+                    duration_ticks: *duration_ticks,
+                    velocity: mapped_velocity(velocity_map, *velocity),
+                    channel: 1,
+                });
+                continue;
+            }
+            MusicalEvent::SustainPedal { tick, down } => (
+                *tick,
+                InstrumentControlEventKind::SustainPedal { down: *down },
+            ),
+            MusicalEvent::PitchBend { tick, value } => (
+                *tick,
+                InstrumentControlEventKind::PitchBend { value: *value },
+            ),
+            MusicalEvent::ModWheel { tick, value } => (
+                *tick,
+                InstrumentControlEventKind::ModWheel { value: *value },
+            ),
+            MusicalEvent::Aftertouch { tick, value } => (
+                *tick,
+                InstrumentControlEventKind::Aftertouch { value: *value },
+            ),
+            MusicalEvent::ParameterChange {
+                tick,
+                parameter,
+                native_value,
+            } => (
+                *tick,
+                InstrumentControlEventKind::ParameterChange {
+                    parameter: parameter.clone(),
+                    native_value: *native_value,
+                },
+            ),
+            MusicalEvent::ParameterRamp {
+                tick,
+                duration_ticks,
+                parameter,
+                from_value,
+                to_value,
+            } => (
+                *tick,
+                InstrumentControlEventKind::ParameterRamp {
+                    parameter: parameter.clone(),
+                    from_value: *from_value,
+                    to_value: *to_value,
+                    duration_ticks: *duration_ticks,
+                },
+            ),
+        };
+        clip.instrument_control_events.push(InstrumentControlEvent {
+            id: format!("{}:{order}", clip.id),
+            tick: TimelineTick(control.0),
+            source_order: u32::try_from(order).map_err(|_| "too many score events".to_string())?,
+            kind: control.1,
+        });
+    }
+    Ok(clip)
+}
+
+/// Applies a monotonic Score velocity map once to one expanded note.
+fn mapped_velocity(map: Option<&[(u8, u8)]>, velocity: u8) -> u8 {
+    let Some(map) = map else {
+        return velocity;
+    };
+    let value = f64::from(velocity);
+    for pair in map.windows(2) {
+        let [(input_a, output_a), (input_b, output_b)] = [pair[0], pair[1]];
+        if velocity <= input_b {
+            if input_b == input_a {
+                return output_b.clamp(1, 127);
+            }
+            let t = (value - f64::from(input_a)) / f64::from(input_b - input_a);
+            let mapped = f64::from(output_a) + t * f64::from(output_b - output_a);
+            return mapped.round().clamp(1.0, 127.0) as u8;
+        }
+    }
+    map.last()
+        .map_or(velocity, |(_, output)| (*output).clamp(1, 127))
+}
+
+/// Builds the volume lane generated from the Score's section gains.
+fn auto_volume_lane(
+    plan: &ScorePlan,
+    previous: Option<&CreativeSession>,
+    claimed: Option<&Track>,
+    lane: &ScoreLane,
+    track_id: &str,
+) -> AutomationLane {
+    let previous_lane = claimed.and_then(|track| {
+        previous.and_then(|session| {
+            session.arrangement.automation_lanes.iter().find(|lane| {
+                lane.target
+                    == AutomationTarget::TrackMix {
+                        track_id: track.id.clone(),
+                        parameter: TrackMixParameter::Volume,
+                    }
+            })
+        })
+    });
+    AutomationLane {
+        id: previous_lane.map_or_else(
+            || format!("score:volume:{}", riffra_control::new_instance_id()),
+            |lane| lane.id.clone(),
+        ),
+        target: AutomationTarget::TrackMix {
+            track_id: track_id.to_owned(),
+            parameter: TrackMixParameter::Volume,
+        },
+        interpolation: AutomationInterpolation::LinearAmplitude {
+            duration_seconds: 0.005,
+        },
+        points: plan
+            .sections
+            .iter()
+            .enumerate()
+            .map(|(section_index, section)| AutomationPoint {
+                id: format!("score:gain:{}:{section_index}", lane.id),
+                tick: TimelineTick(section.start_tick),
+                value: lane.gain_db + section.part_gains.get(&lane.id).copied().unwrap_or(0.0),
+            })
+            .collect(),
+    }
+}
+
+fn score_id_component(value: &str) -> String {
+    value.replace('%', "%25").replace(':', "%3A")
+}
+
+fn canonical_bus_id(kind: score::production::mix::BusKind, id: &str) -> String {
+    format!(
+        "score:bus:{}:{}",
+        match kind {
+            score::production::mix::BusKind::Group => "group",
+            score::production::mix::BusKind::Return => "return",
+        },
+        score_id_component(id)
+    )
+}
+
+fn owner_instrument(id: &str) -> String {
+    format!("instrument:{}", score_id_component(id))
+}
+
+fn owner_kit(id: &str) -> String {
+    format!("kit:{}", score_id_component(id))
+}
+
+fn owner_bus(id: &str) -> String {
+    format!("bus:{}", score_id_component(id))
+}
+
+fn effect_device_id(owner: &str, id: &str) -> String {
+    format!("score:effect:{owner}:{}", score_id_component(id))
+}
+
+/// Builds one ordered effect chain from resolved production effects.
+fn effect_chain(
+    plan: &ScorePlan,
+    production: &ResolvedProductionMap,
+    owner: &str,
+    field: &str,
+    effects: &[score::production::EffectSpec],
+) -> Result<Vec<EffectDevice>, ImportError> {
+    let mut chain = Vec::with_capacity(effects.len());
+    for (index, effect) in effects.iter().enumerate() {
+        let key = format!("{field}[{index}]");
+        let Some(ResolvedProduction::Effect { plugin, bypassed }) = production.get(&key) else {
+            let message = format!("effect {key} was not resolved");
+            return Err(ImportError {
+                details: plan.source_detail(&key, &message),
+                message,
+            });
+        };
+        chain.push(EffectDevice {
+            id: effect_device_id(owner, &effect.id),
+            name: plugin.entry.name.clone(),
+            bypassed: *bypassed,
+            plugin: plugin.plugin.clone(),
+        });
+    }
+    Ok(chain)
+}
+
+/// Attaches Score-owned effect chains to their owning tracks.
+fn attach_track_effects(
+    plan: &ScorePlan,
+    production: &ResolvedProductionMap,
+    tracks: &mut [Track],
+    instrument_tracks: &BTreeMap<String, Vec<String>>,
+    kit_tracks: &BTreeMap<String, String>,
+) -> Result<(), ImportError> {
+    for (id, effects) in &plan.production_effects {
+        let (owner, field, track_ids) = if let Some(track_ids) = instrument_tracks.get(id) {
+            (
+                owner_instrument(id),
+                format!("instruments.{id}.effects"),
+                track_ids.clone(),
+            )
+        } else {
+            let track_id = kit_tracks
+                .get(id)
+                .ok_or_else(|| format!("effect owner '{id}' has no track"))?;
+            (
+                owner_kit(id),
+                format!("kits.{id}.effects"),
+                vec![track_id.clone()],
+            )
+        };
+        if track_ids.len() > 1 && !effects.is_empty() {
+            let message = "effects on a multi-lane instrument have no single owner".to_owned();
+            return Err(ImportError {
+                details: plan.source_detail(&field, &message),
+                message,
+            });
+        }
+        let chain = effect_chain(plan, production, &owner, &field, effects)?;
+        if let Some(track) = tracks.iter_mut().find(|track| track.id == track_ids[0]) {
+            track.effects = chain;
+        }
+    }
+    for (id, kit) in &plan.kits {
+        let track_id = kit_tracks
+            .get(id)
+            .ok_or_else(|| format!("kit '{id}' has no track"))?;
+        let chain = effect_chain(
+            plan,
+            production,
+            &owner_kit(id),
+            &format!("kits.{id}.effects"),
+            &kit.effects,
+        )?;
+        if let Some(track) = tracks.iter_mut().find(|track| track.id == *track_id) {
+            track.effects = chain;
+        }
+    }
+    Ok(())
+}
+
+/// Builds the mixer, routing, and sidechains owned by the Score.
+fn build_mixer(
+    plan: &ScorePlan,
+    production: &ResolvedProductionMap,
+    previous: Option<&CreativeSession>,
+    tracks: &mut [Track],
+    instrument_tracks: &BTreeMap<String, Vec<String>>,
+    kit_tracks: &BTreeMap<String, String>,
+) -> Result<Mixer, ImportError> {
+    let empty = score::production::mix::Mix {
+        tracks: BTreeMap::new(),
+        buses: BTreeMap::new(),
+        sidechain: Vec::new(),
+        automation: Vec::new(),
+        master_gain_db: 0.0,
+        master_effects: Vec::new(),
+    };
+    let mix = plan.mix.as_ref().unwrap_or(&empty);
+    let mut buses = BTreeMap::<String, MixBus>::new();
+    let mut bus_ids = BTreeMap::<String, String>::new();
+    for (id, bus) in &mix.buses {
+        let canonical = canonical_bus_id(bus.kind, id);
+        let (muted, solo) = previous
+            .and_then(|session| {
+                session.arrangement.mixer.buses.iter().find(|candidate| {
+                    candidate.name == *id
+                        && candidate.kind
+                            == match bus.kind {
+                                score::production::mix::BusKind::Group => MixBusKind::Group,
+                                score::production::mix::BusKind::Return => MixBusKind::Return,
+                            }
+                })
+            })
+            .map_or((false, false), |bus| (bus.muted, bus.solo));
+        buses.insert(
+            canonical.clone(),
+            MixBus {
+                id: canonical.clone(),
+                name: id.clone(),
+                kind: match bus.kind {
+                    score::production::mix::BusKind::Group => MixBusKind::Group,
+                    score::production::mix::BusKind::Return => MixBusKind::Return,
+                },
+                gain_db: bus.gain_db,
+                pan: bus.pan,
+                pan_law: PanLaw::LinearBalance,
+                muted,
+                solo,
+                effects: effect_chain(
+                    plan,
+                    production,
+                    &owner_bus(id),
+                    &format!("mix.buses.{id}.effects"),
+                    &bus.effects,
+                )?,
+            },
+        );
+        bus_ids.insert(id.clone(), canonical);
+    }
+    if let Some(previous) = previous {
+        for bus in &previous.arrangement.mixer.buses {
+            if bus.id.starts_with("score:bus:") {
+                continue;
+            }
+            buses.insert(bus.id.clone(), bus.clone());
+            bus_ids
+                .entry(bus.name.clone())
+                .or_insert_with(|| bus.id.clone());
+        }
+    }
+    let mut sends = Vec::new();
+    for track in tracks
+        .iter_mut()
+        .filter(|track| track.score_instrument.is_some())
+    {
+        let Some((score_id, _)) = score_track_identity(plan, track) else {
+            continue;
+        };
+        let Some(track_mix) = mix.tracks.get(&score_id) else {
+            track.output_bus_id = None;
+            continue;
+        };
+        track.output_bus_id = track_mix.output.as_deref().and_then(|output| {
+            if output == "master" {
+                None
+            } else {
+                bus_ids.get(output).cloned()
+            }
+        });
+        for (bus, send) in &track_mix.sends {
+            let Some(return_bus_id) = bus_ids.get(bus) else {
+                continue;
+            };
+            sends.push(Send {
+                id: format!("score:send:{}:{return_bus_id}", track.id),
+                track_id: track.id.clone(),
+                return_bus_id: return_bus_id.clone(),
+                level_db: send.level_db,
+                position: match send.position {
+                    score::production::mix::SendPosition::Pre => SendPosition::PreFader,
+                    score::production::mix::SendPosition::Post => SendPosition::PostFader,
+                },
+                enabled: send.enabled,
+            });
+        }
+    }
+    let master_effects = effect_chain(
+        plan,
+        production,
+        "master",
+        "mix.master.effects",
+        &mix.master_effects,
+    )?;
+    let previous_score_tracks = previous
+        .map(|previous| {
+            previous
+                .arrangement
+                .tracks
+                .iter()
+                .filter(|track| track.score_instrument.is_some())
+                .map(|track| track.id.as_str())
+                .collect::<BTreeSet<_>>()
+        })
+        .unwrap_or_default();
+    let mut all_track_ids = tracks
+        .iter()
+        .map(|track| track.id.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut all_effect_ids = tracks
+        .iter()
+        .flat_map(|track| &track.effects)
+        .chain(buses.values().flat_map(|bus| &bus.effects))
+        .chain(&master_effects)
+        .map(|effect| effect.id.as_str())
+        .collect::<BTreeSet<_>>();
+    if let Some(previous) = previous {
+        all_track_ids.extend(
+            previous
+                .arrangement
+                .tracks
+                .iter()
+                .filter(|track| track.score_instrument.is_none())
+                .map(|track| track.id.as_str()),
+        );
+        all_effect_ids.extend(
+            previous
+                .arrangement
+                .tracks
+                .iter()
+                .filter(|track| track.score_instrument.is_none())
+                .flat_map(|track| &track.effects)
+                .map(|effect| effect.id.as_str()),
+        );
+        let bus_ids = buses.keys().cloned().collect::<BTreeSet<_>>();
+        for send in &previous.arrangement.mixer.sends {
+            if send.id.starts_with("score:send:")
+                || previous_score_tracks.contains(send.track_id.as_str())
+                || !all_track_ids.contains(send.track_id.as_str())
+                || !bus_ids.contains(&send.return_bus_id)
+            {
+                continue;
+            }
+            sends.push(send.clone());
+        }
+    }
+    let mut sidechain_sends = Vec::new();
+    for route in &mix.sidechain {
+        let source_tracks = if let Some(track) = kit_tracks.get(&route.from) {
+            vec![track.clone()]
+        } else if let Some(tracks) = instrument_tracks.get(&route.from) {
+            tracks.clone()
+        } else {
+            let message = format!("undefined sidechain source '{}'", route.from);
+            return Err(ImportError {
+                details: plan.source_detail("mix.sidechain", &message),
+                message,
+            });
+        };
+        let target = match &route.to.owner {
+            score::production::mix::Owner::Instrument(id) => {
+                effect_device_id(&owner_instrument(id), &route.to.id)
+            }
+            score::production::mix::Owner::Kit(id) => {
+                effect_device_id(&owner_kit(id), &route.to.id)
+            }
+            score::production::mix::Owner::Bus(id) => {
+                effect_device_id(&owner_bus(id), &route.to.id)
+            }
+            score::production::mix::Owner::Master => effect_device_id("master", &route.to.id),
+        };
+        for source in source_tracks {
+            sidechain_sends.push(SidechainSend {
+                id: format!("score:sidechain:{source}:{target}"),
+                source_track_id: source,
+                target_device_id: target.clone(),
+                level_db: route.send.level_db,
+                position: match route.send.position {
+                    score::production::mix::SendPosition::Pre => SendPosition::PreFader,
+                    score::production::mix::SendPosition::Post => SendPosition::PostFader,
+                },
+                enabled: route.send.enabled,
+            });
+        }
+    }
+    if let Some(previous) = previous {
+        for send in &previous.arrangement.mixer.sidechain_sends {
+            if send.id.starts_with("score:sidechain:")
+                || previous_score_tracks.contains(send.source_track_id.as_str())
+                || !all_track_ids.contains(send.source_track_id.as_str())
+                || !all_effect_ids.contains(send.target_device_id.as_str())
+            {
+                continue;
+            }
+            sidechain_sends.push(send.clone());
+        }
+    }
+    Ok(Mixer {
+        master_effects,
+        buses: buses.into_values().collect(),
+        sends,
+        sidechain_sends,
+    })
 }
 
 /// Pairs previous Score tracks with new lanes, preferring exact lane keys.
@@ -872,6 +3573,7 @@ fn match_tracks<'a>(plan: &ScorePlan, previous: &[&'a Track]) -> BTreeMap<usize,
     for (index, lane) in plan.lanes.iter().enumerate() {
         if let Some(track) = previous.iter().find(|track| {
             !claimed.contains(&track.id)
+                && track.kind == TrackKind::Instrument
                 && track.score_instrument.as_deref() == Some(lane.id.as_str())
                 && track.gain_db.to_bits() == lane.gain_db.to_bits()
         }) {
@@ -893,6 +3595,7 @@ fn match_tracks<'a>(plan: &ScorePlan, previous: &[&'a Track]) -> BTreeMap<usize,
             .iter()
             .filter(|track| {
                 !claimed.contains(&track.id)
+                    && track.kind == TrackKind::Instrument
                     && track.score_instrument.as_deref() == Some(lane.id.as_str())
             })
             .collect::<Vec<_>>();
@@ -934,7 +3637,8 @@ fn compatible(
 fn assigned(
     source: &Source,
     store: &UserInstrumentStore,
-    staged: &mut BTreeSet<PathBuf>,
+    staged: &mut StagedResources,
+    mode: BuildMode,
     assignments: &mut BTreeMap<PathBuf, TrackInstrument>,
 ) -> Result<TrackInstrument, ImportError> {
     if let Some(instrument) = assignments.get(&source.definition) {
@@ -947,9 +3651,19 @@ fn assigned(
             built_in.preset_id.clone(),
             built_in.definition_json.clone(),
         )?
+    } else if mode == BuildMode::Validate {
+        let definition_json = std::fs::read_to_string(&source.definition)
+            .map_err(|error| format!("instrument definition could not be read: {error}"))?;
+        TrackInstrument::user_snapshot(
+            "score:instrument".into(),
+            source.name.clone(),
+            format!("user:{}", riffra_control::new_instance_id()),
+            riffra_control::new_instance_id(),
+            definition_json,
+        )?
     } else {
         let snapshot = store.snapshot_definition(&source.definition)?;
-        staged.insert(snapshot.package_root.clone());
+        staged.snapshots.insert(snapshot.package_root.clone());
         TrackInstrument::user_snapshot(
             "score:instrument".into(),
             source.name.clone(),
@@ -968,6 +3682,25 @@ fn validate_performance(
     sources: &BTreeMap<String, Source>,
 ) -> Result<(), ImportError> {
     for lane in &plan.lanes {
+        if is_production_instrument(plan, &lane.id) {
+            for (index, event) in lane.pattern.events.iter().enumerate() {
+                if matches!(
+                    event,
+                    MusicalEvent::ParameterChange { .. } | MusicalEvent::ParameterRamp { .. }
+                ) {
+                    let message = "Sonalloy instrument parameter events cannot target a production VST3; use mix automation".to_owned();
+                    let path = lane
+                        .sources
+                        .get(index)
+                        .map_or("", |source| source.path.as_str());
+                    return Err(ImportError {
+                        details: plan.source_detail(path, &message),
+                        message,
+                    });
+                }
+            }
+            continue;
+        }
         let source = &sources[&lane.id];
         let spec = &plan.instruments[&lane.id];
         let required_channels = source.report["external_audio"]["required_input_channels"]
@@ -1066,11 +3799,10 @@ fn resolve_definition(
     spec: &Value,
     binding: Option<&PathBuf>,
     base: &Path,
-    presets: Option<&Path>,
     catalog: &BuiltInInstrumentCatalog,
 ) -> Result<PathBuf, String> {
     if let Some(definition) = spec["definition"].as_str() {
-        return Ok(base.join(definition));
+        return local_input_path(base, definition);
     }
     if spec["external"] == true {
         return binding
@@ -1085,12 +3817,6 @@ fn resolve_definition(
         .any(|part| part.is_empty() || part == "." || part == ".." || part.contains(['\\', ':']))
     {
         return Err("unsafe preset reference".into());
-    }
-    if let Some(root) = presets {
-        let definition = root.join(preset).join("definition.json");
-        if definition.is_file() {
-            return Ok(definition);
-        }
     }
     let id = preset_id(preset);
     let builtin = catalog.resolve(&id)?;
@@ -1345,11 +4071,312 @@ mod tests {
             plan,
             bindings: BTreeMap::new(),
             sources,
+            production: BTreeMap::new(),
+            automation: BTreeMap::new(),
+            production_inputs: BTreeMap::new(),
+            dependencies: Dependencies::new(),
+        }
+    }
+
+    fn resolved_plugin(name: &str) -> plugin_source::ResolvedPlugin {
+        use crate::api::output::{PluginEntry, PluginFormat, PluginRole, PluginScanState};
+        plugin_source::ResolvedPlugin {
+            entry: PluginEntry {
+                id: name.to_lowercase(),
+                name: name.into(),
+                vendor: None,
+                version: None,
+                identifier: Some(format!("{name}-class")),
+                format: PluginFormat::Vst3,
+                role: Some(PluginRole::Instrument),
+                path: format!("/plugins/{name}.vst3"),
+                bundle: true,
+                modified_at_ms: None,
+                scan_state: PluginScanState::Validated,
+            },
+            plugin: Vst3Plugin::new(format!("/plugins/{name}.vst3")),
+        }
+    }
+
+    fn effect_name(effect: &score::production::EffectSpec) -> String {
+        effect.vst3.plugin.clone()
+    }
+
+    fn insert_effects(
+        production: &mut BTreeMap<String, ResolvedProduction>,
+        field: &str,
+        effects: &[score::production::EffectSpec],
+    ) {
+        for (index, effect) in effects.iter().enumerate() {
+            production.insert(
+                format!("{field}[{index}]"),
+                ResolvedProduction::Effect {
+                    plugin: resolved_plugin(&effect_name(effect)),
+                    bypassed: effect.bypassed.unwrap_or(false),
+                },
+            );
+        }
+    }
+
+    fn production_document(yaml: &str) -> ScoreDocument {
+        let plan = score::compile(yaml).expect("production score compiles");
+        let mut production = BTreeMap::new();
+        for (id, source) in &plan.production_sources {
+            let name = source.vst3.plugin.clone();
+            production.insert(
+                format!("instruments.{id}.source"),
+                ResolvedProduction::Source {
+                    plugin: resolved_plugin(&name),
+                    velocity: source.velocity.clone(),
+                },
+            );
+        }
+        for (id, kit) in &plan.kits {
+            let name = kit.source.vst3.plugin.clone();
+            production.insert(
+                format!("kits.{id}.source"),
+                ResolvedProduction::Source {
+                    plugin: resolved_plugin(&name),
+                    velocity: kit.source.velocity.clone(),
+                },
+            );
+            insert_effects(&mut production, &format!("kits.{id}.effects"), &kit.effects);
+        }
+        for (id, effects) in &plan.production_effects {
+            insert_effects(
+                &mut production,
+                &format!("instruments.{id}.effects"),
+                effects,
+            );
+        }
+        if let Some(mix) = &plan.mix {
+            for (id, bus) in &mix.buses {
+                insert_effects(
+                    &mut production,
+                    &format!("mix.buses.{id}.effects"),
+                    &bus.effects,
+                );
+            }
+            insert_effects(&mut production, "mix.master.effects", &mix.master_effects);
+        }
+        ScoreDocument {
+            path: PathBuf::from("/scores/production.yaml"),
+            yaml: yaml.into(),
+            plan,
+            bindings: BTreeMap::new(),
+            sources: BTreeMap::new(),
+            production,
+            automation: BTreeMap::new(),
+            production_inputs: BTreeMap::new(),
+            dependencies: Dependencies::new(),
         }
     }
 
     fn store(root: &Path) -> UserInstrumentStore {
         UserInstrumentStore::new(root, Path::new("sonalloy"))
+    }
+
+    #[test]
+    fn validation_and_inspection_resolve_vst_without_sonalloy_or_persistent_assets() {
+        use crate::api::output::{
+            PluginEntry, PluginFormat, PluginRole, PluginScanState, ScanReport,
+        };
+        let root =
+            std::env::temp_dir().join(format!("riffra-score-production-{}", uuid::Uuid::now_v7()));
+        let score_dir = root.join("music/song");
+        let library_dir = root.join("library/instruments");
+        let vst_path = root.join("Synth.vst3");
+        std::fs::create_dir_all(&score_dir).unwrap();
+        std::fs::create_dir_all(&vst_path).unwrap();
+        let report = ScanReport {
+            root: root.to_string_lossy().into_owned(),
+            started_at_ms: 0,
+            finished_at_ms: 0,
+            issues: Vec::new(),
+            plugins: vec![PluginEntry {
+                id: "synth".into(),
+                name: "Synth".into(),
+                vendor: None,
+                version: None,
+                identifier: Some("class-id".into()),
+                format: PluginFormat::Vst3,
+                role: Some(PluginRole::Instrument),
+                path: vst_path.to_string_lossy().into_owned(),
+                bundle: true,
+                modified_at_ms: None,
+                scan_state: PluginScanState::Validated,
+            }],
+        };
+        crate::plugins::catalog::save(&root, &report).unwrap();
+        let mut score: Value = serde_json::from_str(SCORE).unwrap();
+        score["instruments"]["lead"] =
+            json!({"external":true, "source":{"vst3":{"plugin":"Synth"}}});
+        let score_path = score_dir.join("score.yaml");
+        std::fs::write(&score_path, score.to_string()).unwrap();
+        let catalog = crate::test_support::empty_built_in_catalog();
+        let validation = validate(
+            &score_path,
+            &BTreeMap::new(),
+            &root,
+            catalog,
+            Path::new("unused-scanner"),
+            Path::new("unavailable-sonalloy"),
+        );
+        assert!(validation.valid, "{:?}", validation.diagnostics);
+        std::fs::create_dir_all(&library_dir).unwrap();
+        std::fs::write(
+            library_dir.join("lead.yaml"),
+            "source: {vst3: {plugin: Wrong}}\n",
+        )
+        .unwrap();
+        let preset = root.join("presets/FAKE/001-decoy");
+        std::fs::create_dir_all(&preset).unwrap();
+        std::fs::write(preset.join("definition.json"), "{}").unwrap();
+        assert!(
+            resolve_definition(
+                &json!({"preset":"FAKE/001-decoy"}),
+                None,
+                &score_dir,
+                catalog
+            )
+            .is_err()
+        );
+        let inspection = inspect(
+            &score_path,
+            &BTreeMap::new(),
+            false,
+            &root,
+            catalog,
+            Path::new("unused-scanner"),
+            Path::new("unavailable-sonalloy"),
+        )
+        .unwrap();
+        assert!(matches!(
+            inspection.instruments[0].kind,
+            ScoreInstrumentKind::Vst3
+        ));
+        assert_eq!(inspection.instruments[0].definition, None);
+        assert_eq!(
+            inspection.instruments[0].plugin_identifier.as_deref(),
+            Some("class-id")
+        );
+        assert_eq!(inspection.tracks.len(), 1);
+        assert_eq!(inspection.tracks[0].id, "lead");
+        assert_eq!(inspection.tracks[0].kind, "instrument");
+        assert_eq!(inspection.tracks[0].note_count, 4);
+        assert_eq!(
+            inspection.tracks[0].plugin_identifier.as_deref(),
+            Some("class-id")
+        );
+        assert!(!inspection.automation.is_empty());
+        assert!(!root.join("assets").exists());
+        assert!(!root.join("instruments").exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn production_diagnostics_identify_plugin_state_and_patch_fields() {
+        use crate::api::output::{
+            PluginEntry, PluginFormat, PluginRole, PluginScanState, ScanReport,
+        };
+        let root =
+            std::env::temp_dir().join(format!("riffra-score-diagnostics-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(&root).unwrap();
+        let entries = [
+            ("Bass", PluginRole::Instrument),
+            ("Drums", PluginRole::Instrument),
+            ("Compressor", PluginRole::Effect),
+            ("EQ", PluginRole::Effect),
+            ("Reverb", PluginRole::Effect),
+        ];
+        let plugins = entries
+            .into_iter()
+            .map(|(name, role)| {
+                let path = root.join(format!("{name}.vst3"));
+                std::fs::create_dir_all(&path).unwrap();
+                PluginEntry {
+                    id: name.into(),
+                    name: name.into(),
+                    vendor: None,
+                    version: None,
+                    identifier: Some(format!("{name}-class")),
+                    format: PluginFormat::Vst3,
+                    role: Some(role),
+                    path: path.to_string_lossy().into_owned(),
+                    bundle: true,
+                    modified_at_ms: None,
+                    scan_state: PluginScanState::Validated,
+                }
+            })
+            .collect();
+        crate::plugins::catalog::save(
+            &root,
+            &ScanReport {
+                root: root.to_string_lossy().into_owned(),
+                started_at_ms: 0,
+                finished_at_ms: 0,
+                plugins,
+                issues: vec![],
+            },
+        )
+        .unwrap();
+        let path = root.join("score.yaml");
+        for (owner, expected) in [
+            ("plugin", "instruments.bass.source.vst3.plugin"),
+            ("source", "instruments.bass.source.vst3.state"),
+            ("invalid", "instruments.bass.source.vst3.state"),
+            ("mismatch", "instruments.bass.source.vst3.state"),
+            ("kit", "kits.drums.source.vst3.state"),
+            ("effect", "instruments.bass.effects[0].vst3.state"),
+            ("patch", "instruments.bass.source.vst3.patch"),
+        ] {
+            let mut score: Value = serde_json::from_str(PRODUCTION).unwrap();
+            match owner {
+                "plugin" => {
+                    score["instruments"]["bass"]["source"]["vst3"]["plugin"] = json!("Missing")
+                }
+                "source" => {
+                    score["instruments"]["bass"]["source"]["vst3"]["state"] = json!("missing.json")
+                }
+                "invalid" | "mismatch" => {
+                    let contents = if owner == "invalid" {
+                        "{".to_owned()
+                    } else {
+                        json!({"schemaVersion":2,"pluginIdentifier":"other-class","pluginPath":"old", "parameterValues":[], "stateData":null}).to_string()
+                    };
+                    std::fs::write(root.join("invalid.json"), contents).unwrap();
+                    score["instruments"]["bass"]["source"]["vst3"]["state"] = json!("invalid.json");
+                }
+                "kit" => score["kits"]["drums"]["source"]["vst3"]["state"] = json!("missing.json"),
+                "effect" => {
+                    score["instruments"]["bass"]["effects"][0]["vst3"]["state"] =
+                        json!("missing.json")
+                }
+                "patch" => {
+                    std::fs::write(root.join("state.json"), json!({"schemaVersion":2,"pluginIdentifier":"Bass-class","pluginPath":"old", "parameterValues":[], "stateData":null}).to_string()).unwrap();
+                    let vst3 = &mut score["instruments"]["bass"]["source"]["vst3"];
+                    vst3["state"] = json!("state.json");
+                    vst3["patch"] = json!([{"op":"set", "path":"Plugin/Mode", "value":"Warm"}]);
+                }
+                _ => unreachable!(),
+            }
+            std::fs::write(&path, score.to_string()).unwrap();
+            let result = validate(
+                &path,
+                &BTreeMap::new(),
+                &root,
+                crate::test_support::empty_built_in_catalog(),
+                Path::new("unused-scanner"),
+                Path::new("unavailable-sonalloy"),
+            );
+            assert!(!result.valid, "{owner}");
+            assert_eq!(result.diagnostics[0].path, expected, "{owner}");
+            assert!(
+                result.diagnostics[0].line > 0 && result.diagnostics[0].column > 0,
+                "{owner}"
+            );
+        }
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     fn notes(session: &CreativeSession) -> Vec<(u64, u8)> {
@@ -1360,6 +4387,1356 @@ mod tests {
             .collect()
     }
 
+    const PRODUCTION: &str = r#"{
+        "meta":{"title":"Production","bpm":120,"meter":"4/4","tuning":"12edo","gate":1},
+        "form":[{"section":"verse","bars":1,"tonic":"C","scale":"ionian"}],
+        "instruments":{
+            "bass":{"source":{"vst3":{"plugin":"Bass"},"velocity":[[1,64],[127,64]]},"effects":[{"id":"duck","vst3":{"plugin":"Compressor"}}]},
+            "kick":{"kit":"drums","trigger_note_midi":36},
+            "snare":{"kit":"drums","trigger_note_midi":38},
+            "ambience":{"audio":true,"gain_db":-5}
+        },
+        "kits":{"drums":{"source":{"vst3":{"plugin":"Drums"},"velocity":[[1,40],[127,40]]},"effects":[{"id":"kit-eq","vst3":{"plugin":"EQ"}}]}},
+        "drums":{"beat":{"parts":{"kick":"x...|....|....|....","snare":"....|x...|....|...."}}},
+        "sections":{"verse":{"drums":"beat","lines":{"main":{"instrument":"bass","melody":"theme"}}}},
+        "melodies":{"theme":["1 - - - | 3 - - - | 5 - - - | 1' - - -"]},
+        "mix":{
+            "tracks":{
+                "bass":{"output":"rhythm","sends":{"room":-18}},
+                "drums":{"gain_db":-2,"pan":0.0,"output":"rhythm","sends":{"room":{"level_db":-14,"position":"pre","enabled":true}}}
+            },
+            "buses":{
+                "rhythm":{"kind":"group","gain_db":-2,"pan":0},
+                "room":{"kind":"return","effects":[{"id":"reverb","vst3":{"plugin":"Reverb"}}]}
+            },
+            "sidechain":[{"from":"drums","to":{"instrument":"bass","effect":"duck"},"level_db":0,"position":"post"}],
+            "master":{"gain_db":-1,"effects":[{"id":"limiter","vst3":{"plugin":"Limiter"}}]}
+        }
+    }"#;
+
+    #[test]
+    fn velocity_maps_interpolate_and_keep_the_endpoints() {
+        let map = [(1, 18), (64, 68), (127, 120)];
+
+        assert_eq!(mapped_velocity(None, 100), 100);
+        assert_eq!(mapped_velocity(Some(&map), 1), 18);
+        assert_eq!(mapped_velocity(Some(&map), 32), 43);
+        assert_eq!(mapped_velocity(Some(&map), 64), 68);
+        assert_eq!(mapped_velocity(Some(&map), 96), 94);
+        assert_eq!(mapped_velocity(Some(&map), 127), 120);
+    }
+
+    #[test]
+    fn production_build_aggregates_kits_applies_velocity_and_builds_the_mixer() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-score-production-build-{}",
+            riffra_control::new_instance_id()
+        ));
+        let store = store(&root);
+        let mut document = production_document(PRODUCTION);
+        let mut staged = StagedResources::new(&root);
+        let session = build(&mut document, None, &store, &mut staged, BuildMode::Stage)
+            .expect("production build");
+
+        assert_eq!(session.arrangement.tracks.len(), 3);
+        let bass = &session.arrangement.tracks[0];
+        assert_eq!(bass.score_instrument.as_deref(), Some("bass"));
+        assert!(matches!(
+            bass.instrument.as_ref().expect("bass device").source,
+            TrackInstrumentSource::Vst3(_)
+        ));
+        assert_eq!(bass.effects[0].id, "score:effect:instrument:bass:duck");
+        assert_eq!(session.arrangement.midi_clips[0].notes.len(), 4);
+        assert!(
+            session.arrangement.midi_clips[0]
+                .notes
+                .iter()
+                .all(|note| note.velocity == 64)
+        );
+
+        let drums = &session.arrangement.tracks[1];
+        assert_eq!(drums.score_instrument.as_deref(), Some("kit:drums"));
+        assert_eq!(drums.gain_db, -2.0);
+        assert_eq!(drums.effects[0].id, "score:effect:kit:drums:kit-eq");
+        let kit_clip = &session.arrangement.midi_clips[1];
+        assert_eq!(kit_clip.notes.len(), 2);
+        assert!(kit_clip.notes.iter().all(|note| note.velocity == 40));
+        assert_eq!(
+            kit_clip
+                .notes
+                .iter()
+                .map(|note| note.note)
+                .collect::<Vec<_>>(),
+            [36, 38]
+        );
+
+        let ambience = &session.arrangement.tracks[2];
+        assert_eq!(ambience.kind, TrackKind::Audio);
+        assert_eq!(ambience.score_instrument.as_deref(), Some("ambience"));
+        assert_eq!(ambience.gain_db, -5.0);
+
+        let mixer = &session.arrangement.mixer;
+        assert_eq!(mixer.buses.len(), 2);
+        assert_eq!(mixer.sends.len(), 2);
+        assert_eq!(mixer.sidechain_sends.len(), 1);
+        assert_eq!(mixer.master_effects.len(), 1);
+        assert_eq!(session.settings.master_db, -1.0);
+        assert_eq!(
+            bass.output_bus_id.as_deref(),
+            Some("score:bus:group:rhythm")
+        );
+        assert_eq!(
+            mixer.sidechain_sends[0].target_device_id,
+            "score:effect:instrument:bass:duck"
+        );
+        assert!(staged.is_empty());
+
+        let mut again = production_document(PRODUCTION);
+        let rebuilt = build(
+            &mut again,
+            Some(&session),
+            &store,
+            &mut staged,
+            BuildMode::Stage,
+        )
+        .expect("no-op production rebuild");
+        assert!(session.score_performance_equals(&rebuilt));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    const KIT_SEND: &str = r#"{
+        "meta":{"title":"Kit Send","bpm":120,"meter":"4/4","tuning":"12edo","gate":1},
+        "form":[{"section":"verse","bars":1,"tonic":"C","scale":"ionian"}],
+        "instruments":{
+            "kit:lead":{"source":{"vst3":{"plugin":"Lead"}}},
+            "kick":{"kit":"drums","trigger_note_midi":36}
+        },
+        "kits":{"drums":{"source":{"vst3":{"plugin":"Drums"}}}},
+        "drums":{"beat":{"parts":{"kick":"x...|....|....|...."}}},
+        "sections":{"verse":{"drums":"beat","lines":{"lead":{"instrument":"kit:lead","melody":"theme"}}}},
+        "melodies":{"theme":["1 - - - | 3 - - - | 5 - - - | 1' - - -"]},
+        "mix":{
+            "tracks":{
+                "kit:lead":{"output":"rhythm","sends":{"room":-12}},
+                "drums":{"gain_db":-2,"output":"rhythm","sends":{"room":-14}}
+            },
+            "buses":{"rhythm":{"kind":"group"},"room":{"kind":"return"}},
+            "automation":[
+                {"target":{"send":{"instrument":"drums","bus":"room"}},"section":"verse","points":[{"at":{"bar":1,"step":1},"value":-20}]},
+                {"target":{"send":{"instrument":"kit:lead","bus":"room"}},"section":"verse","points":[{"at":{"bar":1,"step":1},"value":-18}]}
+            ]
+        }
+    }"#;
+
+    #[test]
+    fn kit_and_instrument_ids_keep_their_own_mix_and_send_automation() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-score-kit-send-{}",
+            riffra_control::new_instance_id()
+        ));
+        let store = store(&root);
+        let mut document = production_document(KIT_SEND);
+        let mut staged = StagedResources::new(&root);
+        let session = build(&mut document, None, &store, &mut staged, BuildMode::Stage)
+            .expect("kit send build");
+
+        let lead = session
+            .arrangement
+            .tracks
+            .iter()
+            .find(|track| track.score_instrument.as_deref() == Some("kit:lead"))
+            .expect("lead track");
+        let drums = session
+            .arrangement
+            .tracks
+            .iter()
+            .find(|track| track.score_instrument.as_deref() == Some("kit:drums"))
+            .expect("drums track");
+        assert_eq!(
+            score_track_identity(&document.plan, lead),
+            Some(("kit:lead".into(), "instrument"))
+        );
+        assert_eq!(
+            score_track_identity(&document.plan, drums),
+            Some(("drums".into(), "kit"))
+        );
+        assert_eq!(
+            lead.output_bus_id.as_deref(),
+            Some("score:bus:group:rhythm")
+        );
+        assert_eq!(
+            drums.output_bus_id.as_deref(),
+            Some("score:bus:group:rhythm")
+        );
+        assert_eq!(lead.gain_db, 0.0);
+        assert_eq!(drums.gain_db, -2.0);
+
+        let send = |track_id: &str, level_db: f64| {
+            session
+                .arrangement
+                .mixer
+                .sends
+                .iter()
+                .find(|send| {
+                    send.track_id == track_id
+                        && send.return_bus_id == "score:bus:return:room"
+                        && send.level_db == level_db
+                })
+                .unwrap_or_else(|| panic!("missing send for {track_id} at {level_db}"))
+                .id
+                .clone()
+        };
+        let lead_send = send(&lead.id, -12.0);
+        let drums_send = send(&drums.id, -14.0);
+        for (send_id, value) in [(&drums_send, -20.0), (&lead_send, -18.0)] {
+            assert!(session.arrangement.automation_lanes.iter().any(|lane| {
+                lane.target
+                    == AutomationTarget::SendLevel {
+                        send_id: (*send_id).clone(),
+                    }
+                    && lane.points[0].value == value
+            }));
+        }
+
+        let track_ids = session
+            .arrangement
+            .tracks
+            .iter()
+            .map(|track| track.id.clone())
+            .collect::<Vec<_>>();
+        let mut again = production_document(KIT_SEND);
+        let rebuilt = build(
+            &mut again,
+            Some(&session),
+            &store,
+            &mut staged,
+            BuildMode::Stage,
+        )
+        .expect("kit send rebuild");
+        assert_eq!(
+            rebuilt
+                .arrangement
+                .tracks
+                .iter()
+                .map(|track| track.id.clone())
+                .collect::<Vec<_>>(),
+            track_ids
+        );
+        assert_eq!(
+            rebuilt
+                .arrangement
+                .automation_lanes
+                .iter()
+                .map(|lane| lane.id.clone())
+                .collect::<Vec<_>>(),
+            session
+                .arrangement
+                .automation_lanes
+                .iter()
+                .map(|lane| lane.id.clone())
+                .collect::<Vec<_>>()
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn production_rebuild_keeps_semantic_ids_and_updates_only_the_change() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-score-production-rebuild-{}",
+            riffra_control::new_instance_id()
+        ));
+        let store = store(&root);
+        let mut first = production_document(PRODUCTION);
+        let mut staged = StagedResources::new(&root);
+        let session = build(&mut first, None, &store, &mut staged, BuildMode::Stage)
+            .expect("initial production build");
+        let track_ids = session
+            .arrangement
+            .tracks
+            .iter()
+            .map(|track| track.id.clone())
+            .collect::<Vec<_>>();
+        let device_ids = session
+            .arrangement
+            .tracks
+            .iter()
+            .filter_map(|track| track.instrument.as_ref())
+            .map(|instrument| instrument.id.clone())
+            .collect::<Vec<_>>();
+        let clip_ids = session
+            .arrangement
+            .midi_clips
+            .iter()
+            .map(|clip| clip.id.clone())
+            .collect::<Vec<_>>();
+        let effect_ids = session
+            .arrangement
+            .tracks
+            .iter()
+            .flat_map(|track| &track.effects)
+            .map(|effect| effect.id.clone())
+            .collect::<Vec<_>>();
+        let bus_ids = session
+            .arrangement
+            .mixer
+            .buses
+            .iter()
+            .map(|bus| bus.id.clone())
+            .collect::<Vec<_>>();
+        let send_ids = session
+            .arrangement
+            .mixer
+            .sends
+            .iter()
+            .map(|send| send.id.clone())
+            .collect::<Vec<_>>();
+        let sidechain_ids = session
+            .arrangement
+            .mixer
+            .sidechain_sends
+            .iter()
+            .map(|send| send.id.clone())
+            .collect::<Vec<_>>();
+
+        let changed = PRODUCTION
+            .replace("3 - - -", "4 - - -")
+            .replace(r#""drums":{"gain_db":-2"#, r#""drums":{"gain_db":-4"#)
+            .replace(r#""master":{"gain_db":-1"#, r#""master":{"gain_db":-3"#);
+        let mut second = production_document(&changed);
+        let rebuilt = build(
+            &mut second,
+            Some(&session),
+            &store,
+            &mut staged,
+            BuildMode::Stage,
+        )
+        .expect("production rebuild");
+
+        assert_eq!(
+            rebuilt
+                .arrangement
+                .tracks
+                .iter()
+                .map(|track| track.id.clone())
+                .collect::<Vec<_>>(),
+            track_ids
+        );
+        assert_eq!(
+            rebuilt
+                .arrangement
+                .tracks
+                .iter()
+                .filter_map(|track| track.instrument.as_ref())
+                .map(|instrument| instrument.id.clone())
+                .collect::<Vec<_>>(),
+            device_ids
+        );
+        assert_eq!(
+            rebuilt
+                .arrangement
+                .midi_clips
+                .iter()
+                .map(|clip| clip.id.clone())
+                .collect::<Vec<_>>(),
+            clip_ids
+        );
+        assert_eq!(
+            rebuilt
+                .arrangement
+                .tracks
+                .iter()
+                .flat_map(|track| &track.effects)
+                .map(|effect| effect.id.clone())
+                .collect::<Vec<_>>(),
+            effect_ids
+        );
+        assert_eq!(
+            rebuilt
+                .arrangement
+                .mixer
+                .buses
+                .iter()
+                .map(|bus| bus.id.clone())
+                .collect::<Vec<_>>(),
+            bus_ids
+        );
+        assert_eq!(
+            rebuilt
+                .arrangement
+                .mixer
+                .sends
+                .iter()
+                .map(|send| send.id.clone())
+                .collect::<Vec<_>>(),
+            send_ids
+        );
+        assert_eq!(
+            rebuilt
+                .arrangement
+                .mixer
+                .sidechain_sends
+                .iter()
+                .map(|send| send.id.clone())
+                .collect::<Vec<_>>(),
+            sidechain_ids
+        );
+        assert_eq!(rebuilt.arrangement.midi_clips[0].notes[1].note, 65);
+        assert_eq!(rebuilt.arrangement.tracks[1].gain_db, -4.0);
+        assert_eq!(rebuilt.settings.master_db, -3.0);
+        assert!(rebuilt.score_performance_equals(&rebuilt));
+        assert!(!session.score_performance_equals(&rebuilt));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    fn one_sample_wav() -> Vec<u8> {
+        let mut wav = Vec::from(&b"RIFF"[..]);
+        wav.extend_from_slice(&40_u32.to_le_bytes());
+        wav.extend_from_slice(b"WAVEfmt ");
+        wav.extend_from_slice(&16_u32.to_le_bytes());
+        wav.extend_from_slice(&1_u16.to_le_bytes());
+        wav.extend_from_slice(&1_u16.to_le_bytes());
+        wav.extend_from_slice(&44_100_u32.to_le_bytes());
+        wav.extend_from_slice(&88_200_u32.to_le_bytes());
+        wav.extend_from_slice(&2_u16.to_le_bytes());
+        wav.extend_from_slice(&16_u16.to_le_bytes());
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&2_u32.to_le_bytes());
+        wav.extend_from_slice(&[0, 0]);
+        wav
+    }
+
+    fn with_audio_clip(score: &str) -> String {
+        score
+            .replace(
+                r#""ambience":{"audio":true,"gain_db":-5}"#,
+                r#""ambience":{"audio":true,"gain_db":-5},"ambience2":{"audio":true,"gain_db":-8}"#,
+            )
+            .replace(
+                r#""sections":{"verse":{"drums":"beat","lines":{"main":{"instrument":"bass","melody":"theme"}}}}"#,
+                r#""sections":{"verse":{"drums":"beat","lines":{"main":{"instrument":"bass","melody":"theme"}},"audio_clips":[{"id":"rain","instrument":"ambience","file":"audio/rain.wav","at":{"bar":1,"step":1}},{"id":"thunder","instrument":"ambience2","file":"audio/thunder.wav","at":{"bar":1,"step":1}}]}}"#,
+            )
+    }
+
+    const INPUT_REUSE: &str = r#"{
+        "meta":{"title":"Input Reuse","bpm":120,"meter":"4/4","tuning":"12edo","gate":1},
+        "form":[{"section":"verse","bars":1,"tonic":"C","scale":"ionian"},{"section":"verse","bars":1,"tonic":"C","scale":"ionian"},{"section":"bridge","bars":1,"tonic":"C","scale":"ionian"}],
+        "instruments":{
+            "bass":{"source":{"vst3":{"plugin":"Bass","params":{"Cutoff":0.5}}}}
+        },
+        "sections":{"verse":{"lines":{"main":{"instrument":"bass","melody":"theme"}}},"bridge":{"lines":{"main":{"instrument":"bass","melody":"theme"}}}},
+        "melodies":{"theme":["1 - - - | 3 - - - | 5 - - - | 1' - - -"]},
+        "mix":{"automation":[{"target":{"source":"bass","parameter":"Cutoff"},"section":"verse","points":[{"at":{"bar":1,"step":9},"value":0.2},{"at":{"bar":1,"step":1},"value":0.8}]},{"target":{"source":"bass","parameter":"Cutoff"},"section":"bridge","points":[{"at":{"bar":1,"step":5},"value":0.4}]}]}
+    }"#;
+
+    #[test]
+    fn rebuild_restores_score_plugin_state_after_manual_edits() {
+        use crate::api::output::{
+            PluginEntry, PluginFormat, PluginRole, PluginScanState, ScanReport,
+        };
+
+        let root = std::env::temp_dir().join(format!(
+            "riffra-score-manual-edit-{}",
+            riffra_control::new_instance_id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let score_path = root.join("score.yaml");
+        let yaml = r#"{
+            "meta":{"title":"State","bpm":120,"meter":"4/4","tuning":"12edo","gate":1},
+            "form":[{"section":"verse","bars":1,"tonic":"C","scale":"ionian"}],
+            "instruments":{"bass":{"source":{"vst3":{"plugin":"Bass","params":{"Cutoff":0.5}}},"effects":[{"id":"filter","vst3":{"plugin":"Filter","state":"filter-state.json","params":{"Cutoff":0.5}}}]}},
+            "sections":{"verse":{"lines":{"main":{"instrument":"bass","melody":"theme"}}}},
+            "melodies":{"theme":["1 - - - | 3 - - - | 5 - - - | 1' - - -"]}
+        }"#;
+        std::fs::write(&score_path, yaml).unwrap();
+        std::fs::write(
+            root.join("filter-state.json"),
+            serde_json::to_vec(&json!({
+                "schemaVersion": 2,
+                "pluginIdentifier": "Filter-class",
+                "pluginPath": root.join("Filter.vst3").to_string_lossy(),
+                "parameterValues": [0.1],
+                "stateData": "c2NvcmU="
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let entries = [
+            ("Bass", PluginRole::Instrument),
+            ("Filter", PluginRole::Effect),
+        ]
+        .into_iter()
+        .map(|(name, role)| {
+            let path = root.join(format!("{name}.vst3"));
+            std::fs::create_dir_all(&path).unwrap();
+            PluginEntry {
+                id: name.into(),
+                name: name.into(),
+                vendor: None,
+                version: None,
+                identifier: Some(format!("{name}-class")),
+                format: PluginFormat::Vst3,
+                role: Some(role),
+                path: path.to_string_lossy().into_owned(),
+                bundle: true,
+                modified_at_ms: None,
+                scan_state: PluginScanState::Validated,
+            }
+        })
+        .collect();
+        crate::plugins::catalog::save(
+            &root,
+            &ScanReport {
+                root: root.to_string_lossy().into_owned(),
+                started_at_ms: 0,
+                finished_at_ms: 0,
+                plugins: entries,
+                issues: Vec::new(),
+            },
+        )
+        .unwrap();
+        let probes = std::cell::Cell::new(0);
+        let describe = |_: &Path, plugin: &Vst3Plugin, displays: &[DisplayRequest]| {
+            probes.set(probes.get() + 1);
+            assert!(displays.is_empty());
+            Ok(serde_json::from_value(json!({
+                "type": "pluginParameters", "path": plugin.path,
+                "parameters": [{"index": 0, "parameterId": "cutoff", "name": "Cutoff", "choices": []}],
+                "parameterValues": [0.0], "conversions": []
+            })).unwrap())
+        };
+        let bindings = BTreeMap::new();
+        let explicit = BTreeSet::new();
+        let catalog = crate::test_support::empty_built_in_catalog();
+        let store = store(&root);
+        let mut staged = StagedResources::new(&root);
+        let mut document = read_with_probe(
+            ReadInput {
+                path: &score_path,
+                bindings: &bindings,
+                explicit: &explicit,
+                data_root: &root,
+                catalog,
+                scanner: Path::new("unused"),
+                sonalloy: Path::new("unused"),
+                previous: None,
+            },
+            &describe,
+        )
+        .unwrap();
+        let session = build(&mut document, None, &store, &mut staged, BuildMode::Stage).unwrap();
+        assert_eq!(probes.get(), 2);
+
+        let unchanged = rebuild(
+            &session,
+            None,
+            &bindings,
+            &root,
+            catalog,
+            Path::new("unavailable-scanner"),
+            Path::new("unused"),
+        )
+        .unwrap();
+        assert!(unchanged.candidate(&session).is_none());
+        assert_eq!(probes.get(), 2);
+        let mut edited = session.clone();
+        edited.arrangement.tracks[0]
+            .instrument
+            .as_mut()
+            .unwrap()
+            .as_vst3_mut()
+            .unwrap()
+            .parameter_values[0] = 0.9;
+        edited.arrangement.tracks[0].effects[0].plugin.state_data = Some("bWFudWFs".into());
+
+        let outcome = rebuild_with_probe(
+            RebuildInput {
+                previous: &edited,
+                path: None,
+                bindings: &bindings,
+                data_root: &root,
+                catalog,
+                scanner: Path::new("unused"),
+                sonalloy: Path::new("unused"),
+            },
+            &describe,
+        )
+        .unwrap();
+        assert!(outcome.changed);
+        assert!(!outcome.yaml_changed);
+        let restored = outcome
+            .candidate(&edited)
+            .expect("manual edits must be replaced");
+        assert_eq!(probes.get(), 4);
+        let track = &restored.arrangement.tracks[0];
+        assert_eq!(
+            track
+                .instrument
+                .as_ref()
+                .unwrap()
+                .as_vst3()
+                .unwrap()
+                .parameter_values,
+            [0.5]
+        );
+        assert_eq!(track.effects[0].plugin.parameter_values, [0.5]);
+        assert_eq!(
+            track.effects[0].plugin.state_data.as_deref(),
+            Some("c2NvcmU=")
+        );
+        let unchanged = rebuild(
+            &restored,
+            None,
+            &bindings,
+            &root,
+            catalog,
+            Path::new("unavailable-scanner"),
+            Path::new("unused"),
+        )
+        .unwrap();
+        assert!(unchanged.candidate(&restored).is_none());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn unchanged_plugin_inputs_reuse_the_canonical_state_without_a_probe() {
+        use crate::api::output::{
+            PluginEntry, PluginFormat, PluginRole, PluginScanState, ScanReport,
+        };
+
+        let root = std::env::temp_dir().join(format!(
+            "riffra-score-input-reuse-{}",
+            riffra_control::new_instance_id()
+        ));
+        let score_dir = root.join("music/song");
+        std::fs::create_dir_all(&score_dir).unwrap();
+        let plugin_path = root.join("Bass.vst3");
+        std::fs::create_dir_all(&plugin_path).unwrap();
+        crate::plugins::catalog::save(
+            &root,
+            &ScanReport {
+                root: root.to_string_lossy().into_owned(),
+                started_at_ms: 0,
+                finished_at_ms: 0,
+                issues: Vec::new(),
+                plugins: vec![PluginEntry {
+                    id: "bass".into(),
+                    name: "Bass".into(),
+                    vendor: None,
+                    version: None,
+                    identifier: Some("bass-class".into()),
+                    format: PluginFormat::Vst3,
+                    role: Some(PluginRole::Instrument),
+                    path: plugin_path.to_string_lossy().into_owned(),
+                    bundle: true,
+                    modified_at_ms: None,
+                    scan_state: PluginScanState::Validated,
+                }],
+            },
+        )
+        .unwrap();
+        let score_path = score_dir.join("score.yaml");
+        std::fs::write(&score_path, INPUT_REUSE).unwrap();
+
+        let plan = score::compile(INPUT_REUSE).unwrap();
+        let spec = &plan.production_sources["bass"].vst3;
+        let mut plugin = Vst3Plugin::new(plugin_path.to_string_lossy().into_owned());
+        let lane = &plan.mix.as_ref().unwrap().automation[0];
+        let pending = PendingAutomation {
+            use_key: "instruments.bass.source".into(),
+            parameter: "Cutoff".into(),
+            interpolation: lane.interpolation,
+            points: lane
+                .points
+                .iter()
+                .map(|point| point.value.clone())
+                .collect(),
+            requests: vec![None; lane.points.len()],
+        };
+        let entry = crate::plugins::catalog::selected_named_plugin(
+            &root,
+            "Bass",
+            None,
+            PluginRole::Instrument,
+        )
+        .unwrap();
+        let second_lane = &plan.mix.as_ref().unwrap().automation[1];
+        let second = PendingAutomation {
+            use_key: pending.use_key.clone(),
+            parameter: pending.parameter.clone(),
+            interpolation: second_lane.interpolation,
+            points: second_lane
+                .points
+                .iter()
+                .map(|point| point.value.clone())
+                .collect(),
+            requests: vec![None; second_lane.points.len()],
+        };
+        let input_fingerprint =
+            production_input_fingerprint(spec, &plugin, &entry, &[&pending, &second]);
+        plugin.parameter_values = vec![0.5];
+        let fingerprint = ScoreProductionInput {
+            fingerprint: input_fingerprint,
+            state_fingerprint: plugin_state_fingerprint(&plugin),
+            automation: vec![
+                ScoreAutomationResolution {
+                    parameter_id: "cutoff-id".into(),
+                    values: vec![0.2, 0.8],
+                },
+                ScoreAutomationResolution {
+                    parameter_id: "cutoff-id".into(),
+                    values: vec![0.4],
+                },
+            ],
+        };
+        let mut previous = CreativeSession::new(1);
+        let mut track = Track::instrument("score:track:1".into(), "bass".into());
+        let mut instrument = TrackInstrument::vst3(
+            "score:device:1".into(),
+            "Bass".into(),
+            plugin_path.to_string_lossy().into_owned(),
+        )
+        .unwrap();
+        *instrument.as_vst3_mut().unwrap() = plugin;
+        track.instrument = Some(instrument);
+        track.score_instrument = Some("bass".into());
+        track.muted = true;
+        track.solo = true;
+        previous.arrangement.tracks.push(track);
+        previous.arrangement.automation_lanes.push(AutomationLane {
+            id: "score:automation:test".into(),
+            target: AutomationTarget::DeviceParameter {
+                device_id: "score:device:1".into(),
+                parameter_id: "cutoff-id".into(),
+            },
+            interpolation: AutomationInterpolation::Linear,
+            points: vec![AutomationPoint {
+                id: "point:test".into(),
+                tick: TimelineTick(0),
+                value: 0.2,
+            }],
+        });
+        previous.score_source = Some(ScoreSource {
+            file_name: "score.yaml".into(),
+            yaml: INPUT_REUSE.into(),
+            path: Some(score_path.to_string_lossy().into_owned()),
+            bindings: BTreeMap::new(),
+            production_inputs: BTreeMap::from([(
+                "instruments.bass.source".into(),
+                fingerprint.clone(),
+            )]),
+        });
+
+        let bindings = BTreeMap::new();
+        let explicit = BTreeSet::new();
+        let catalog = crate::test_support::empty_built_in_catalog();
+        let mut document = read(ReadInput {
+            path: &score_path,
+            bindings: &bindings,
+            explicit: &explicit,
+            data_root: &root,
+            catalog,
+            scanner: Path::new("unavailable-scanner"),
+            sonalloy: Path::new("unavailable-sonalloy"),
+            previous: Some(&previous),
+        })
+        .expect("unchanged inputs reuse the previous plugin without probing");
+        assert_eq!(
+            document.production_inputs.get("instruments.bass.source"),
+            Some(&fingerprint)
+        );
+        assert_eq!(
+            document.production["instruments.bass.source"]
+                .plugin()
+                .plugin
+                .path,
+            plugin_path.to_string_lossy()
+        );
+        assert_eq!(document.automation[&0].parameter_id, "cutoff-id");
+        assert_eq!(document.automation[&0].values, [0.2, 0.8]);
+        assert_eq!(document.automation[&1].values, [0.4]);
+
+        let store = store(&root);
+        let mut staged = StagedResources::new(&root);
+        let mut session = build(
+            &mut document,
+            Some(&previous),
+            &store,
+            &mut staged,
+            BuildMode::Stage,
+        )
+        .unwrap();
+        let baseline = session.clone();
+        let bass = &baseline.arrangement.tracks[0];
+        assert!(bass.muted && bass.solo);
+        assert_eq!(
+            bass.instrument
+                .as_ref()
+                .unwrap()
+                .as_vst3()
+                .unwrap()
+                .parameter_values,
+            [0.5]
+        );
+        let lane = &session.arrangement.automation_lanes[0];
+        assert_eq!(
+            lane.points
+                .iter()
+                .map(|point| point.value)
+                .collect::<Vec<_>>(),
+            [0.8, 0.2, 0.8, 0.2, 0.4]
+        );
+        for iteration in 0..3 {
+            if iteration == 1 {
+                std::fs::write(&score_path, INPUT_REUSE.replace("3 - - -", "4 - - -")).unwrap();
+            }
+            let mut next = read(ReadInput {
+                path: &score_path,
+                bindings: &bindings,
+                explicit: &explicit,
+                data_root: &root,
+                catalog,
+                scanner: Path::new("unavailable-scanner"),
+                sonalloy: Path::new("unavailable-sonalloy"),
+                previous: Some(&session),
+            })
+            .expect("unchanged inputs must not probe");
+            session = build(
+                &mut next,
+                Some(&session),
+                &store,
+                &mut staged,
+                BuildMode::Stage,
+            )
+            .unwrap();
+            let mut without_note_changes = session.clone();
+            assert_eq!(
+                without_note_changes.arrangement.midi_clips.len(),
+                baseline.arrangement.midi_clips.len()
+            );
+            for (actual, expected) in without_note_changes
+                .arrangement
+                .midi_clips
+                .iter_mut()
+                .zip(&baseline.arrangement.midi_clips)
+            {
+                actual.notes = expected.notes.clone();
+            }
+            without_note_changes.arrangement.revision = baseline.arrangement.revision;
+            without_note_changes.score_source.as_mut().unwrap().yaml =
+                baseline.score_source.as_ref().unwrap().yaml.clone();
+            assert_eq!(without_note_changes, baseline);
+            if iteration > 0 {
+                assert_ne!(
+                    session.arrangement.midi_clips[0]
+                        .notes
+                        .iter()
+                        .map(|note| note.note)
+                        .collect::<Vec<_>>(),
+                    baseline.arrangement.midi_clips[0]
+                        .notes
+                        .iter()
+                        .map(|note| note.note)
+                        .collect::<Vec<_>>()
+                );
+            }
+        }
+
+        let changed = INPUT_REUSE.replace("\"Cutoff\":0.5", "\"Cutoff\":0.6");
+        std::fs::write(&score_path, &changed).unwrap();
+        let error = match read(ReadInput {
+            path: &score_path,
+            bindings: &bindings,
+            explicit: &explicit,
+            data_root: &root,
+            catalog,
+            scanner: Path::new("unavailable-scanner"),
+            sonalloy: Path::new("unavailable-sonalloy"),
+            previous: Some(&previous),
+        }) {
+            Ok(_) => panic!("changed params must probe the plugin"),
+            Err(error) => error,
+        };
+        assert!(
+            error.message.contains("scanner"),
+            "unexpected error: {}",
+            error.message
+        );
+        std::fs::write(&score_path, INPUT_REUSE).unwrap();
+        let mut updated_entry = entry.clone();
+        updated_entry.version = Some("2.0".into());
+        crate::plugins::catalog::save(
+            &root,
+            &ScanReport {
+                root: root.to_string_lossy().into_owned(),
+                started_at_ms: 1,
+                finished_at_ms: 1,
+                issues: Vec::new(),
+                plugins: vec![updated_entry],
+            },
+        )
+        .unwrap();
+        let error = match read(ReadInput {
+            path: &score_path,
+            bindings: &bindings,
+            explicit: &explicit,
+            data_root: &root,
+            catalog,
+            scanner: Path::new("unavailable-scanner"),
+            sonalloy: Path::new("unavailable-sonalloy"),
+            previous: Some(&session),
+        }) {
+            Ok(_) => panic!("an updated plugin must be probed"),
+            Err(error) => error,
+        };
+        assert!(
+            error.message.contains("scanner"),
+            "unexpected error: {}",
+            error.message
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn production_build_imports_audio_clips_and_reuses_unchanged_assets() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-score-audio-{}",
+            riffra_control::new_instance_id()
+        ));
+        let score_dir = root.join("music/song");
+        std::fs::create_dir_all(score_dir.join("audio")).unwrap();
+        std::fs::write(score_dir.join("audio/rain.wav"), one_sample_wav()).unwrap();
+        let mut thunder = one_sample_wav();
+        thunder.extend_from_slice(&[0, 0]);
+        let thunder_len = thunder.len() as u32;
+        thunder[40..44].copy_from_slice(&(thunder_len - 44).to_le_bytes());
+        thunder[4..8].copy_from_slice(&(thunder_len - 8).to_le_bytes());
+        std::fs::write(score_dir.join("audio/thunder.wav"), thunder).unwrap();
+        let score_path = score_dir.join("score.yaml");
+        let store = store(&root);
+        let yaml = with_audio_clip(PRODUCTION);
+        let mut document = production_document(&yaml);
+        document.path = score_path.clone();
+        validate_audio(&document.plan, &score_dir, &mut document.dependencies).unwrap();
+        let mut staged = StagedResources::new(&root);
+        let session =
+            build(&mut document, None, &store, &mut staged, BuildMode::Stage).expect("audio build");
+
+        assert_eq!(session.arrangement.audio_clips.len(), 2);
+        let rain = session
+            .arrangement
+            .audio_clips
+            .iter()
+            .find(|clip| clip.name == "rain")
+            .expect("rain clip");
+        let thunder = session
+            .arrangement
+            .audio_clips
+            .iter()
+            .find(|clip| clip.name == "thunder")
+            .expect("thunder clip");
+        let ambience = session
+            .arrangement
+            .tracks
+            .iter()
+            .find(|track| track.name == "ambience")
+            .expect("ambience track");
+        let ambience2 = session
+            .arrangement
+            .tracks
+            .iter()
+            .find(|track| track.name == "ambience2")
+            .expect("ambience2 track");
+        assert_eq!(rain.track_id, ambience.id);
+        assert_eq!(thunder.track_id, ambience2.id);
+        assert_eq!(rain.start_tick.0, 0);
+        assert_eq!(rain.source_sample_rate, 44_100);
+        assert_eq!(rain.source_range.start, 0);
+        assert_eq!(rain.source_range.end, 1);
+        assert_eq!(rain.timeline_duration.frames, 1);
+        assert_eq!(thunder.timeline_duration.frames, 2);
+        assert_eq!(staged.assets.len(), 2);
+        let rain_asset = rain.asset_id.clone();
+        let thunder_asset = thunder.asset_id.clone();
+        assert!(riffra_host::load(&root, &rain_asset).unwrap().is_some());
+        assert!(riffra_host::load(&root, &thunder_asset).unwrap().is_some());
+
+        let mut second = production_document(&yaml);
+        second.path = score_path.clone();
+        validate_audio(&second.plan, &score_dir, &mut second.dependencies).unwrap();
+        let mut unchanged = StagedResources::new(&root);
+        let rebuilt = build(
+            &mut second,
+            Some(&session),
+            &store,
+            &mut unchanged,
+            BuildMode::Stage,
+        )
+        .expect("audio rebuild");
+        assert!(unchanged.assets.is_empty());
+        let rebuilt_rain = rebuilt
+            .arrangement
+            .audio_clips
+            .iter()
+            .find(|clip| clip.name == "rain")
+            .expect("rain rebuild");
+        assert_eq!(rebuilt_rain.id, rain.id);
+        assert_eq!(rebuilt_rain.asset_id, rain_asset);
+        let rebuilt_thunder = rebuilt
+            .arrangement
+            .audio_clips
+            .iter()
+            .find(|clip| clip.name == "thunder")
+            .expect("thunder rebuild");
+        assert_eq!(rebuilt_thunder.asset_id, thunder_asset);
+
+        let renamed_yaml = yaml.replace("\"id\":\"rain\"", "\"id\":\"rain-renamed\"");
+        assert_ne!(renamed_yaml, yaml);
+        let mut renamed = production_document(&renamed_yaml);
+        renamed.path = score_path.clone();
+        validate_audio(&renamed.plan, &score_dir, &mut renamed.dependencies).unwrap();
+        let mut renamed_staged = StagedResources::new(&root);
+        let rebuilt = build(
+            &mut renamed,
+            Some(&rebuilt),
+            &store,
+            &mut renamed_staged,
+            BuildMode::Stage,
+        )
+        .expect("renamed clip rebuild");
+        assert!(
+            renamed_staged.assets.is_empty(),
+            "a renamed clip reuses the existing content asset"
+        );
+        let renamed_rain = rebuilt
+            .arrangement
+            .audio_clips
+            .iter()
+            .find(|clip| clip.name == "rain-renamed")
+            .expect("renamed rain");
+        assert_ne!(renamed_rain.id, rain.id);
+        assert_eq!(renamed_rain.asset_id, rain_asset);
+
+        let mut changed_wav = one_sample_wav();
+        changed_wav.extend_from_slice(&[1, 0]);
+        let changed_data = changed_wav.len() as u32 - 44;
+        changed_wav[40..44].copy_from_slice(&changed_data.to_le_bytes());
+        let riff_len = changed_wav.len() as u32 - 8;
+        changed_wav[4..8].copy_from_slice(&riff_len.to_le_bytes());
+        std::fs::write(score_dir.join("audio/rain.wav"), changed_wav).unwrap();
+        let mut third = production_document(&yaml);
+        third.path = score_path.clone();
+        validate_audio(&third.plan, &score_dir, &mut third.dependencies).unwrap();
+        let mut replaced = StagedResources::new(&root);
+        let rebuilt = build(
+            &mut third,
+            Some(&rebuilt),
+            &store,
+            &mut replaced,
+            BuildMode::Stage,
+        )
+        .expect("changed audio rebuild");
+        assert_eq!(replaced.assets.len(), 1);
+        let replaced_rain = rebuilt
+            .arrangement
+            .audio_clips
+            .iter()
+            .find(|clip| clip.name == "rain")
+            .expect("changed rain");
+        assert_eq!(replaced_rain.id, rain.id);
+        assert_ne!(replaced_rain.asset_id, rain_asset);
+        let replaced_thunder = rebuilt
+            .arrangement
+            .audio_clips
+            .iter()
+            .find(|clip| clip.name == "thunder")
+            .expect("unchanged thunder");
+        assert_eq!(replaced_thunder.asset_id, thunder_asset);
+        assert!(riffra_host::load(&root, &rain_asset).unwrap().is_some());
+
+        let mut validated = production_document(&yaml);
+        validated.path = score_path;
+        validate_audio(&validated.plan, &score_dir, &mut validated.dependencies).unwrap();
+        let mut dry = StagedResources::new(&root);
+        build(&mut validated, None, &store, &mut dry, BuildMode::Validate)
+            .expect("audio validation");
+        assert!(dry.assets.is_empty(), "validation stages no asset");
+
+        drop(replaced);
+        drop(unchanged);
+        drop(dry);
+        drop(staged);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    fn with_automation(score: &str) -> String {
+        score.replace(
+            r#""master":{"gain_db":-1,"effects":[{"id":"limiter","vst3":{"plugin":"Limiter"}}]}"#,
+            r#""master":{"gain_db":-1,"effects":[{"id":"limiter","vst3":{"plugin":"Limiter"}}]},
+            "automation":[
+                {"target":{"instrument":"bass","parameter":"volume"},"section":"verse","interpolation":"linear","points":[{"at":{"bar":1,"step":1},"value":-3},{"at":{"bar":1,"step":5},"value":-8}]},
+                {"target":{"bus":"rhythm","parameter":"gain"},"section":"verse","points":[{"at":{"bar":1,"step":1},"value":-2}]},
+                {"target":{"master":true,"parameter":"gain"},"section":"verse","points":[{"at":{"bar":1,"step":1},"value":-6}]},
+                {"target":{"send":{"instrument":"bass","bus":"room"}},"section":"verse","points":[{"at":{"bar":1,"step":1},"value":-20}]},
+                {"target":{"sidechain":{"from":"drums","to":{"instrument":"bass","effect":"duck"}}},"section":"verse","points":[{"at":{"bar":1,"step":1},"value":-4}]}
+            ]"#,
+        )
+    }
+
+    #[test]
+    fn production_build_generates_explicit_mix_automation() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-score-automation-{}",
+            riffra_control::new_instance_id()
+        ));
+        let store = store(&root);
+        let yaml = with_automation(PRODUCTION);
+        let mut document = production_document(&yaml);
+        let mut staged = StagedResources::new(&root);
+        let session = build(&mut document, None, &store, &mut staged, BuildMode::Stage)
+            .expect("automation build");
+
+        let bass_track = session
+            .arrangement
+            .tracks
+            .iter()
+            .find(|track| track.score_instrument.as_deref() == Some("bass"))
+            .expect("bass track");
+        let volume = session
+            .arrangement
+            .automation_lanes
+            .iter()
+            .filter(|lane| {
+                lane.target
+                    == AutomationTarget::TrackMix {
+                        track_id: bass_track.id.clone(),
+                        parameter: TrackMixParameter::Volume,
+                    }
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(volume.len(), 1);
+        assert_eq!(volume[0].interpolation, AutomationInterpolation::Linear);
+        assert_eq!(
+            volume[0]
+                .points
+                .iter()
+                .map(|point| (point.tick.0, point.value))
+                .collect::<Vec<_>>(),
+            [(0, -3.0), (u64::from(document.plan.ticks_per_beat), -8.0)]
+        );
+        assert!(session.arrangement.automation_lanes.iter().any(|lane| {
+            lane.target == AutomationTarget::MasterGain && lane.points[0].value == -6.0
+        }));
+        let rhythm = session
+            .arrangement
+            .mixer
+            .buses
+            .iter()
+            .find(|bus| bus.name == "rhythm")
+            .expect("rhythm bus");
+        assert!(session.arrangement.automation_lanes.iter().any(|lane| {
+            lane.target
+                == AutomationTarget::BusMix {
+                    bus_id: rhythm.id.clone(),
+                    parameter: BusMixParameter::Gain,
+                }
+        }));
+        assert!(session.arrangement.automation_lanes.iter().any(|lane| {
+            lane.target
+                == AutomationTarget::SendLevel {
+                    send_id: session.arrangement.mixer.sends[0].id.clone(),
+                }
+        }));
+        assert!(session.arrangement.automation_lanes.iter().any(|lane| {
+            lane.target
+                == AutomationTarget::SidechainSendLevel {
+                    sidechain_send_id: session.arrangement.mixer.sidechain_sends[0].id.clone(),
+                }
+        }));
+
+        let lane_id = volume[0].id.clone();
+        let point_ids = volume[0]
+            .points
+            .iter()
+            .map(|point| point.id.clone())
+            .collect::<Vec<_>>();
+        let mut second = production_document(&yaml.replace(
+            "[{\"at\":{\"bar\":1,\"step\":1},\"value\":-3}",
+            "[{\"at\":{\"bar\":1,\"step\":1},\"value\":-5}",
+        ));
+        let rebuilt = build(
+            &mut second,
+            Some(&session),
+            &store,
+            &mut staged,
+            BuildMode::Stage,
+        )
+        .expect("automation rebuild");
+        let changed = rebuilt
+            .arrangement
+            .automation_lanes
+            .iter()
+            .find(|lane| lane.id == lane_id)
+            .expect("automation lane identity");
+        assert_eq!(
+            changed
+                .points
+                .iter()
+                .map(|point| point.id.clone())
+                .collect::<Vec<_>>(),
+            point_ids
+        );
+        assert_eq!(changed.points[0].value, -5.0);
+        assert!(!session.score_performance_equals(&rebuilt));
+        let multi_lane = yaml.replace(
+            r#""main":{"instrument":"bass","melody":"theme"}"#,
+            r#""main":{"instrument":"bass","melody":"theme"},"second":{"instrument":"bass","melody":"theme","gain_db":-6}"#,
+        ).replace(
+            r#","effects":[{"id":"duck","vst3":{"plugin":"Compressor"}}]"#, ""
+        ).replace(
+            r#""sidechain":[{"from":"drums","to":{"instrument":"bass","effect":"duck"},"level_db":0,"position":"post"}],"#, ""
+        ).replace(
+            r#",
+                {"target":{"sidechain":{"from":"drums","to":{"instrument":"bass","effect":"duck"}}},"section":"verse","points":[{"at":{"bar":1,"step":1},"value":-4}]}"#, ""
+        );
+        let mut multi_document = production_document(&multi_lane);
+        let multi_session = build(
+            &mut multi_document,
+            None,
+            &store,
+            &mut staged,
+            BuildMode::Stage,
+        )
+        .expect("multi-lane send automation build");
+        let bass_ids = multi_session
+            .arrangement
+            .tracks
+            .iter()
+            .filter(|track| track.score_instrument.as_deref() == Some("bass"))
+            .map(|track| &track.id)
+            .collect::<Vec<_>>();
+        assert_eq!(bass_ids.len(), 2);
+        let sends = multi_session
+            .arrangement
+            .mixer
+            .sends
+            .iter()
+            .filter(|send| bass_ids.contains(&&send.track_id))
+            .collect::<Vec<_>>();
+        assert_eq!(sends.len(), 2);
+        for send in sends {
+            assert!(
+                multi_session
+                    .arrangement
+                    .automation_lanes
+                    .iter()
+                    .any(|lane| lane.target
+                        == AutomationTarget::SendLevel {
+                            send_id: send.id.clone()
+                        }
+                        && lane.points[0].value == -20.0)
+            );
+        }
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn device_automation_targets_the_canonical_instrument_and_effect() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-score-device-automation-{}",
+            riffra_control::new_instance_id()
+        ));
+        let store = store(&root);
+        let mut base = production_document(PRODUCTION);
+        let mut staged = StagedResources::new(&root);
+        let session =
+            build(&mut base, None, &store, &mut staged, BuildMode::Stage).expect("base build");
+        let yaml = PRODUCTION.replace(
+            r#""master":{"gain_db":-1,"effects":[{"id":"limiter","vst3":{"plugin":"Limiter"}}]}"#,
+            r#""master":{"gain_db":-1,"effects":[{"id":"limiter","vst3":{"plugin":"Limiter"}}]},
+            "automation":[
+                {"target":{"source":"bass","parameter":"Cutoff"},"section":"verse","points":[{"at":{"bar":1,"step":1},"value":0.1}]},
+                {"target":{"effect":{"instrument":"bass","id":"duck"},"parameter":"Mix"},"section":"verse","interpolation":"linear","points":[{"at":{"bar":1,"step":1},"value":0.2},{"at":{"bar":1,"step":5},"value":0.8}]}
+            ]"#,
+        );
+        let document = production_document(&yaml);
+        let mut instrument_tracks = BTreeMap::<String, Vec<String>>::new();
+        let mut kit_tracks = BTreeMap::<String, String>::new();
+        for track in &session.arrangement.tracks {
+            let Some(id) = track.score_instrument.as_deref() else {
+                continue;
+            };
+            if let Some(kit) = id
+                .strip_prefix("kit:")
+                .filter(|kit| document.plan.kits.contains_key(*kit))
+            {
+                kit_tracks.insert(kit.to_owned(), track.id.clone());
+            } else {
+                instrument_tracks
+                    .entry(id.to_owned())
+                    .or_default()
+                    .push(track.id.clone());
+            }
+        }
+        let bass_track = session
+            .arrangement
+            .tracks
+            .iter()
+            .find(|track| track.score_instrument.as_deref() == Some("bass"))
+            .expect("bass track");
+        let bass_device = bass_track
+            .instrument
+            .as_ref()
+            .expect("bass instrument")
+            .id
+            .clone();
+        let mut resolved = BTreeMap::new();
+        resolved.insert(
+            0,
+            ScoreAutomationResolution {
+                parameter_id: "bass-cutoff".into(),
+                values: vec![0.1],
+            },
+        );
+        resolved.insert(
+            1,
+            ScoreAutomationResolution {
+                parameter_id: "duck-mix".into(),
+                values: vec![0.2, 0.8],
+            },
+        );
+        let structure = AutomationStructure {
+            plan: &document.plan,
+            resolved: &resolved,
+            instrument_tracks: &instrument_tracks,
+            kit_tracks: &kit_tracks,
+            tracks: &session.arrangement.tracks,
+            mixer: &session.arrangement.mixer,
+        };
+        let lanes = build_automation(&structure, None, &[]).unwrap();
+        assert!(lanes.iter().any(|lane| {
+            lane.target
+                == AutomationTarget::DeviceParameter {
+                    device_id: bass_device.clone(),
+                    parameter_id: "bass-cutoff".into(),
+                }
+                && lane.points[0].value == 0.1
+        }));
+        assert!(lanes.iter().any(|lane| {
+            lane.target
+                == AutomationTarget::DeviceParameter {
+                    device_id: "score:effect:instrument:bass:duck".into(),
+                    parameter_id: "duck-mix".into(),
+                }
+                && lane
+                    .points
+                    .iter()
+                    .map(|point| point.value)
+                    .collect::<Vec<_>>()
+                    == [0.2, 0.8]
+        }));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     #[test]
     fn rebuilding_keeps_project_identity_work_state_and_device_ids() {
         let root = std::env::temp_dir().join(format!(
@@ -1368,8 +5745,9 @@ mod tests {
         ));
         let store = store(&root);
         let mut first = document(SCORE);
-        let mut staged = BTreeSet::new();
-        let mut session = build(&mut first, None, &store, &mut staged).expect("initial build");
+        let mut staged = StagedResources::new(&root);
+        let mut session =
+            build(&mut first, None, &store, &mut staged, BuildMode::Stage).expect("initial build");
         let session_id = session.session_id.clone();
         let track = session.arrangement.tracks[0].clone();
         let device = track.instrument.as_ref().expect("device").id.clone();
@@ -1389,7 +5767,14 @@ mod tests {
 
         let changed = SCORE.replace("3 - - -", "4 - - -");
         let mut second = document(&changed);
-        let rebuilt = build(&mut second, Some(&session), &store, &mut staged).expect("rebuild");
+        let rebuilt = build(
+            &mut second,
+            Some(&session),
+            &store,
+            &mut staged,
+            BuildMode::Stage,
+        )
+        .expect("rebuild");
 
         assert_eq!(rebuilt.session_id, session_id);
         assert_eq!(rebuilt.arrangement.tracks[0].id, track.id);
@@ -1428,15 +5813,22 @@ mod tests {
         ));
         let store = store(&root);
         let mut first = document(SCORE);
-        let mut staged = BTreeSet::new();
-        let session = build(&mut first, None, &store, &mut staged).expect("initial build");
+        let mut staged = StagedResources::new(&root);
+        let session =
+            build(&mut first, None, &store, &mut staged, BuildMode::Stage).expect("initial build");
 
         let mut second = document(&format!(
             "{SCORE}
 # Only the text changed."
         ));
-        let rebuilt =
-            build(&mut second, Some(&session), &store, &mut staged).expect("text-only rebuild");
+        let rebuilt = build(
+            &mut second,
+            Some(&session),
+            &store,
+            &mut staged,
+            BuildMode::Stage,
+        )
+        .expect("text-only rebuild");
 
         assert!(session.score_performance_equals(&rebuilt));
         assert_eq!(rebuilt.arrangement.regions, session.arrangement.regions);
@@ -1459,8 +5851,9 @@ mod tests {
             r#""instruments":{"lead":{"preset":"TEST/001-lead"},"pad":{"preset":"TEST/002-pad"}}"#,
         );
         let mut first = document(&yaml);
-        let mut staged = BTreeSet::new();
-        let session = build(&mut first, None, &store, &mut staged).expect("initial build");
+        let mut staged = StagedResources::new(&root);
+        let session =
+            build(&mut first, None, &store, &mut staged, BuildMode::Stage).expect("initial build");
         let lead = session
             .arrangement
             .tracks
@@ -1475,8 +5868,14 @@ mod tests {
             r#""instruments":{"lead""#,
             r#""instruments":{"bass":{"preset":"TEST/003-bass"},"lead""#,
         ));
-        let rebuilt = build(&mut inserted, Some(&session), &store, &mut staged)
-            .expect("lane insertion rebuild");
+        let rebuilt = build(
+            &mut inserted,
+            Some(&session),
+            &store,
+            &mut staged,
+            BuildMode::Stage,
+        )
+        .expect("lane insertion rebuild");
         let rebuilt_lead = rebuilt
             .arrangement
             .tracks
@@ -1495,8 +5894,14 @@ mod tests {
             r#"{"instrument":"lead","melody":"theme"}"#,
             r#"{"instrument":"lead","melody":"theme","gain_db":-6}"#,
         ));
-        let rebuilt =
-            build(&mut changed_gain, Some(&rebuilt), &store, &mut staged).expect("gain rebuild");
+        let rebuilt = build(
+            &mut changed_gain,
+            Some(&rebuilt),
+            &store,
+            &mut staged,
+            BuildMode::Stage,
+        )
+        .expect("gain rebuild");
         let rebuilt_lead = rebuilt
             .arrangement
             .tracks
@@ -1527,8 +5932,9 @@ mod tests {
         std::fs::write(snapshot.join("definition.json"), r#"{"name":"Lead"}"#).unwrap();
         let store = store(&root);
         let mut first = document(SCORE);
-        let mut staged = BTreeSet::new();
-        let mut session = build(&mut first, None, &store, &mut staged).expect("initial build");
+        let mut staged = StagedResources::new(&root);
+        let mut session =
+            build(&mut first, None, &store, &mut staged, BuildMode::Stage).expect("initial build");
         let snapshot_name = snapshot_id.clone();
         session.arrangement.tracks[0].instrument = Some(
             TrackInstrument::user_snapshot(
@@ -1557,8 +5963,14 @@ mod tests {
                 built_in: None,
             },
         );
-        let rebuilt = build(&mut second, Some(&session), &store, &mut staged)
-            .expect("a matching snapshot is reused");
+        let rebuilt = build(
+            &mut second,
+            Some(&session),
+            &store,
+            &mut staged,
+            BuildMode::Stage,
+        )
+        .expect("a matching snapshot is reused");
 
         assert!(staged.is_empty(), "no new snapshot is staged");
         assert_eq!(
@@ -1580,6 +5992,35 @@ mod tests {
     }
 
     #[test]
+    fn source_changes_are_detected_from_dependency_content() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-score-dependencies-{}",
+            riffra_control::new_instance_id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let library = root.join("state.json");
+        std::fs::write(&library, "one").unwrap();
+        let mut dependencies = Dependencies::new();
+        record_dependency(&mut dependencies, &library).unwrap();
+        let outcome = ScoreOutcome {
+            session: CreativeSession::new(1),
+            yaml_changed: false,
+            changed: false,
+            link_changed: false,
+            inputs_changed: false,
+            diagnostics: Vec::new(),
+            dependencies,
+            staged: StagedResources::new(&root),
+        };
+        assert!(!outcome.source_changed());
+        std::fs::write(&library, "two").unwrap();
+        assert!(outcome.source_changed());
+        std::fs::remove_file(&library).unwrap();
+        assert!(outcome.source_changed());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn rebuild_decisions_distinguish_performance_body_and_link_changes() {
         let mut session = CreativeSession::new(1);
         session.score_source = Some(ScoreSource {
@@ -1587,6 +6028,7 @@ mod tests {
             yaml: "meta: {}".into(),
             path: Some("/scores/song.yaml".into()),
             bindings: BTreeMap::from([("lead".into(), "/definitions/lead.json".into())]),
+            production_inputs: BTreeMap::new(),
         });
 
         // A rebuild that finds no change stores nothing.
@@ -1595,7 +6037,10 @@ mod tests {
             yaml_changed: false,
             changed: false,
             link_changed: false,
-            staged: BTreeSet::new(),
+            inputs_changed: false,
+            diagnostics: Vec::new(),
+            dependencies: Dependencies::new(),
+            staged: StagedResources::new(Path::new("")),
         };
         assert!(unchanged.candidate(&session).is_none());
 
@@ -1608,7 +6053,10 @@ mod tests {
             yaml_changed: false,
             changed: false,
             link_changed: true,
-            staged: BTreeSet::new(),
+            inputs_changed: false,
+            diagnostics: Vec::new(),
+            dependencies: Dependencies::new(),
+            staged: StagedResources::new(Path::new("")),
         };
         let candidate = outcome.candidate(&session).expect("a link change commits");
         assert_eq!(candidate.arrangement.revision, session.arrangement.revision);
@@ -1616,6 +6064,46 @@ mod tests {
             candidate.score_source.as_ref().unwrap().path.as_deref(),
             Some("/scores/moved.yaml")
         );
+
+        // A changed input fingerprint is recorded even when the performance is identical.
+        let mut inputs = session.clone();
+        inputs
+            .score_source
+            .as_mut()
+            .unwrap()
+            .production_inputs
+            .insert(
+                "instruments.lead.source".into(),
+                ScoreProductionInput {
+                    fingerprint: "new-input".into(),
+                    state_fingerprint: "new-state".into(),
+                    automation: Vec::new(),
+                },
+            );
+        let outcome = ScoreOutcome {
+            session: inputs,
+            yaml_changed: false,
+            changed: false,
+            link_changed: false,
+            inputs_changed: true,
+            diagnostics: Vec::new(),
+            dependencies: Dependencies::new(),
+            staged: StagedResources::new(Path::new("")),
+        };
+        let candidate = outcome
+            .candidate(&session)
+            .expect("a fingerprint change commits");
+        assert_eq!(
+            candidate
+                .score_source
+                .as_ref()
+                .unwrap()
+                .production_inputs
+                .get("instruments.lead.source")
+                .map(|input| input.fingerprint.as_str()),
+            Some("new-input")
+        );
+        assert_eq!(candidate.arrangement.revision, session.arrangement.revision);
         assert!(candidate.score_performance_equals(&session));
     }
 }

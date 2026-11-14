@@ -552,6 +552,16 @@ std::optional<float> PluginRack::parameterValueForText(const int index, const ju
     return std::nullopt;
 }
 
+std::optional<float> PluginRack::resolveParameterDisplay(const int index, const juce::String& text,
+                                                         juce::String& error) const {
+    const juce::SpinLock::ScopedLockType lock(pluginLock);
+    if (plugin == nullptr) {
+        error = "No VST3 plugin is loaded.";
+        return std::nullopt;
+    }
+    return parameterValueForText(index, text, error);
+}
+
 std::optional<juce::String> PluginRack::parameterDisplayValue(const int index, const float value,
                                                               juce::String& error) const {
     const juce::SpinLock::ScopedLockType lock(pluginLock);

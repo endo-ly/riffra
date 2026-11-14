@@ -69,6 +69,26 @@ pub struct ScoreSource {
     /// Definition path of each `external: true` instrument in the linked Score.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub bindings: std::collections::BTreeMap<String, String>,
+    /// Resolved inputs and automation values that produced Score devices.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub production_inputs: std::collections::BTreeMap<String, ScoreProductionInput>,
+}
+
+/// Resolved plugin inputs and final state fingerprint for one Score source or effect.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ScoreProductionInput {
+    pub fingerprint: String,
+    pub state_fingerprint: String,
+    pub automation: Vec<ScoreAutomationResolution>,
+}
+
+/// Resolved parameter and values for one Score automation declaration.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ScoreAutomationResolution {
+    pub parameter_id: String,
+    pub values: Vec<f64>,
 }
 
 impl Default for SessionSettings {
@@ -141,6 +161,7 @@ impl CreativeSession {
             && self.project_name == other.project_name
             && self.arrangement.timebase == other.arrangement.timebase
             && self.arrangement.mixer == other.arrangement.mixer
+            && self.settings.master_db == other.settings.master_db
             && self.settings.mixdown == other.settings.mixdown
             && self.arrangement.audio_clips == other.arrangement.audio_clips
             && self.arrangement.regions == other.arrangement.regions
@@ -335,6 +356,7 @@ mod tests {
             yaml: "meta: {}".into(),
             path: Some("/scores/song.yaml".into()),
             bindings: Default::default(),
+            production_inputs: Default::default(),
         });
         let mut lead = Track::instrument("track:lead".into(), "Lead".into());
         lead.score_instrument = Some("lead".into());
@@ -398,6 +420,11 @@ mod tests {
         let mut automated = work.clone();
         automated.arrangement.automation_lanes[0].points[0].value = 0.75;
         assert!(!session.score_owned_state_equals(&automated));
+
+        // Master gain is Score-owned and differs from temporary mix state.
+        let mut mastered = work.clone();
+        mastered.settings.master_db = -6.0;
+        assert!(!session.score_owned_state_equals(&mastered));
     }
 
     #[test]
