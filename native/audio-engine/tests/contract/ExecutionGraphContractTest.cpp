@@ -200,6 +200,11 @@ TEST(ExecutionGraphContractTest, RejectsValuesOutsideContractRanges) {
     setValue(invalidMidiPosition,
              {"graph", "tracks", "#1", "midiClips", "#0", "events", "#0", "tick"}, 960);
     expectTimelineSnapshotRejected(invalidMidiPosition);
+    auto terminalKeySwitch = cloneJson(full);
+    setValue(terminalKeySwitch,
+             {"graph", "tracks", "#2", "midiClips", "#0", "instrumentControlEvents", "#0", "tick"},
+             960);
+    expectTimelineSnapshotRejected(terminalKeySwitch);
 
     auto missingSidechainTarget = cloneJson(full);
     setValue(missingSidechainTarget, {"graph", "mixer", "sidechainSends", "#0", "targetDeviceId"},
