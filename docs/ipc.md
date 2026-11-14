@@ -352,7 +352,7 @@ riffra --attach --interactive
 }
 ```
 
-- AttachedではCLIがstdin各行をフレームへ変換して送る。Hostは1接続内を受信順に処理し、CLIは応答を1行ずつflushする。フレームは8 MiB以下のUTF-8 JSONとする
+- AttachedではCLIがstdin各行をフレームへ変換して送る。Hostは1接続内を受信順に処理し、CLIは応答を1行ずつflushする。フレームは256 MiB以下のUTF-8 JSONとする。正準Sessionは不透明なPlugin Stateを丸ごと含むため、上限は実在のProjectではなく壊れた長さ表記を弾くための値である。応答がこれを超えた場合、Hostは接続を閉じずに `commandFailed` を返し、`sequence` には命令の結果の正準シーケンスを残す
 
 ### 7.2 応答とエラー
 
