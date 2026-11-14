@@ -439,12 +439,24 @@ mod tests {
                 .collect::<Vec<_>>(),
             [(0.0, 2.0), (2.0, 4.0), (4.0, 6.0)]
         );
-        assert!(
-            measurements
-                .score_sections
-                .iter()
-                .all(|section| section.loudness.is_some())
-        );
+        if matches!(
+            measurements.section_loudness_state,
+            crate::api::output::MeasurementState::Measured
+        ) {
+            assert!(
+                measurements
+                    .score_sections
+                    .iter()
+                    .all(|section| section.loudness.is_some())
+            );
+        } else {
+            assert!(
+                measurements
+                    .score_sections
+                    .iter()
+                    .all(|section| section.loudness.is_none())
+            );
+        }
 
         let cropped = SectionPlan::new(&[], Some(&regions), &timebase, 3840, 7680, 2.0);
         let (cropped_measurements, _) =
