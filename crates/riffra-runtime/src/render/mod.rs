@@ -19,6 +19,7 @@ mod mastering;
 mod sections;
 mod worker;
 
+pub(crate) use history::resolve_levels_render;
 pub(crate) use history::{delete_render, export_render, list_renders, resolve_measurement_sources};
 pub(crate) use worker::RenderWorker;
 
@@ -2757,6 +2758,37 @@ pub(super) mod tests {
             assert_eq!(rendered.len(), mix_samples.len());
             assert!(rendered.iter().any(|sample| sample.abs() > 0.001));
         }
+        let levels = crate::analysis::levels::prepare(
+            &root,
+            crate::api::params::AnalysisLevelsParams {
+                render_id: capture.result.render_id.clone(),
+                grid: "1/16".parse().unwrap(),
+                start: None,
+                end: None,
+                source: None,
+            },
+        )
+        .unwrap();
+        let levels =
+            crate::analysis::levels::measure(levels, &AtomicBool::new(false), |_, _| {}).unwrap();
+        assert_eq!(levels.sources.len(), 4);
+        assert!(
+            levels
+                .sources
+                .iter()
+                .all(|source| source.windows.len() == 16)
+        );
+        assert!(
+            levels.sources.iter().all(
+                |source| source.windows[0].start_tick == 0 && source.windows[0].end_tick == 240
+            )
+        );
+        assert!(
+            levels
+                .sources
+                .iter()
+                .all(|source| source.windows[0].peak_dbfs.is_some())
+        );
         drop(capture);
         pending.output.commit();
         fs::remove_dir_all(root).unwrap();

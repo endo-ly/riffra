@@ -1,6 +1,6 @@
 use crate::api::output::{
-    AnalysisMeasureResult, BackgroundJobStatus, JobKind, JobState, RenderCaptureResult,
-    RenderResult, RenderStemsResult, ScanReport,
+    AnalysisLevelsResult, AnalysisMeasureResult, BackgroundJobStatus, JobKind, JobState,
+    RenderCaptureResult, RenderResult, RenderStemsResult, ScanReport,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -22,6 +22,7 @@ impl JobKind {
             Self::RenderStems => "render-stems",
             Self::RenderCapture => "render-capture",
             Self::AnalysisMeasure => "analysis-measure",
+            Self::AnalysisLevels => "analysis-levels",
         }
     }
 }
@@ -109,6 +110,16 @@ pub fn to_background_status(status: JobStatus) -> Result<BackgroundJobStatus, St
                     format!("analysis measure result could not be decoded: {error}")
                 })?,
         },
+        JobKind::AnalysisLevels => BackgroundJobStatus::AnalysisLevels {
+            id,
+            state,
+            progress,
+            message,
+            result: result
+                .map(serde_json::from_value::<AnalysisLevelsResult>)
+                .transpose()
+                .map_err(|error| format!("analysis levels result could not be decoded: {error}"))?,
+        },
     })
 }
 
@@ -140,6 +151,10 @@ impl JobRegistry {
 
     pub(crate) fn start_analysis_measure(&self, render_id: Option<String>) -> (String, JobStatus) {
         self.start_with_source(JobKind::AnalysisMeasure, render_id)
+    }
+
+    pub(crate) fn start_analysis_levels(&self, render_id: String) -> (String, JobStatus) {
+        self.start_with_source(JobKind::AnalysisLevels, Some(render_id))
     }
 
     fn start_with_source(
@@ -429,9 +444,16 @@ mod tests {
 
     #[test]
     fn render_sources_are_protected_until_the_worker_reaches_a_terminal_state() {
-        for terminal in [JobState::Completed, JobState::Failed, JobState::Cancelled] {
+        for (terminal, levels) in [JobState::Completed, JobState::Failed, JobState::Cancelled]
+            .into_iter()
+            .flat_map(|terminal| [(terminal, false), (terminal, true)])
+        {
             let jobs = JobRegistry::default();
-            let (id, _) = jobs.start_analysis_measure(Some("render-source".into()));
+            let (id, _) = if levels {
+                jobs.start_analysis_levels("render-source".into())
+            } else {
+                jobs.start_analysis_measure(Some("render-source".into()))
+            };
             jobs.start_analysis_measure(None);
             jobs.start_analysis_measure(Some("render-other".into()));
 

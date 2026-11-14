@@ -1,3 +1,7 @@
+export type { AnalysisLevelWindow } from './AnalysisLevelWindow';
+export type { AnalysisLevelsParams } from './AnalysisLevelsParams';
+export type { AnalysisLevelsResult } from './AnalysisLevelsResult';
+export type { AnalysisLevelsSource } from './AnalysisLevelsSource';
 export type { AnalysisMeasureParams } from './AnalysisMeasureParams';
 export type { AnalysisMeasureResult } from './AnalysisMeasureResult';
 export type { AnalysisMeasuredSource } from './AnalysisMeasuredSource';
@@ -160,6 +164,7 @@ export type { InstrumentTrackSource } from './InstrumentTrackSource';
 export type { InternalInstrumentResource } from './InternalInstrumentResource';
 export type { JobKind } from './JobKind';
 export type { JobState } from './JobState';
+export type { LevelSource } from './LevelSource';
 export type { LibraryAsset } from './LibraryAsset';
 export type { LibrarySearchParams } from './LibrarySearchParams';
 export type { LibraryTagParams } from './LibraryTagParams';

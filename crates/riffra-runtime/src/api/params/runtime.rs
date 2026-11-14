@@ -203,6 +203,43 @@ pub struct RenderCaptureParams {
     pub output_directory: Option<String>,
 }
 
+/// One audio stream stored in a managed Render.
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize, TS, schemars::JsonSchema)]
+#[serde(
+    deny_unknown_fields,
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+#[ts(rename_all_fields = "camelCase")]
+pub enum LevelSource {
+    Track {
+        #[schemars(length(min = 1))]
+        id: String,
+    },
+    Bus {
+        #[schemars(length(min = 1))]
+        id: String,
+    },
+    Master,
+    Mixdown {
+        rendered_track_id: Option<String>,
+    },
+}
+
+/// Measures RMS and sample peak on a saved Render's musical grid.
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[ts(optional_fields = nullable)]
+pub struct AnalysisLevelsParams {
+    #[schemars(length(min = 1))]
+    pub render_id: String,
+    pub grid: riffra_core::MusicalDuration,
+    pub start: Option<MusicalPosition>,
+    pub end: Option<MusicalPosition>,
+    pub source: Option<LevelSource>,
+}
+
 /// Copies a completed render to another path without creating a new render.
 #[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]

@@ -284,6 +284,7 @@ impl BackgroundJobStatusState for BackgroundJobStatus {
             | Self::Render { state, .. }
             | Self::RenderStems { state, .. }
             | Self::RenderCapture { state, .. }
+            | Self::AnalysisLevels { state, .. }
             | Self::AnalysisMeasure { state, .. } => *state,
         }
     }

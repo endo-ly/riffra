@@ -216,6 +216,7 @@ export type ControlCommandResults = {
   'job.get': OutputValue<'job'>;
   'job.cancel': OutputValue<'job'>;
   'analysis.measure': OutputValue<'job'>;
+  'analysis.levels': OutputValue<'job'>;
   'analysis.inspect': OutputValue<'analysis'>;
   'asset.search': OutputValue<'library'>;
   'asset.update': OutputValue<'libraryAsset'>;

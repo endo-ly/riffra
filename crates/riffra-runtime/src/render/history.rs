@@ -30,6 +30,16 @@ struct StoredCaptures {
     sample_rate: u32,
     frames: u64,
     captures: Vec<StoredCapture>,
+    #[serde(default)]
+    musical_range: Option<StoredMusicalRange>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StoredMusicalRange {
+    timebase: riffra_core::ProjectTimebase,
+    start_tick: u64,
+    end_tick: u64,
 }
 
 #[derive(serde::Deserialize)]
@@ -56,7 +66,11 @@ struct StoredTimeline {
     sample_rate: u32,
     duration_ms: u64,
     #[serde(default)]
+    frames: Option<u64>,
+    #[serde(default)]
     measurements: Option<serde_json::Value>,
+    #[serde(default)]
+    musical_range: Option<StoredMusicalRange>,
 }
 
 #[derive(serde::Deserialize)]
@@ -68,6 +82,8 @@ struct StoredStems {
     sample_rate: u32,
     frames: u64,
     stems: Vec<StoredStem>,
+    #[serde(default)]
+    musical_range: Option<StoredMusicalRange>,
 }
 
 #[derive(serde::Deserialize)]
@@ -234,6 +250,104 @@ pub(crate) fn resolve_measurement_sources(
             })
             .collect(),
     }
+}
+
+pub(crate) struct LevelsRender {
+    pub(crate) timebase: riffra_core::ProjectTimebase,
+    pub(crate) start_tick: u64,
+    pub(crate) end_tick: u64,
+    pub(crate) sample_rate: u32,
+    pub(crate) frames: u64,
+    pub(crate) sources: Vec<(crate::api::params::LevelSource, PathBuf)>,
+}
+
+pub(crate) fn resolve_levels_render(
+    data_root: &Path,
+    render_id: &str,
+) -> Result<LevelsRender, String> {
+    use crate::api::params::{CaptureTarget, LevelSource};
+    let directory = managed_render_directory(data_root, render_id)?;
+    let manifest = read_render_manifest(&directory.join("render.json"))?;
+    let (range, sample_rate, frames, sources) = match manifest {
+        StoredRender::Timeline(render) => (
+            render.musical_range,
+            render.sample_rate,
+            render.frames,
+            vec![(
+                LevelSource::Mixdown {
+                    rendered_track_id: render.track_id,
+                },
+                render.path,
+            )],
+        ),
+        StoredRender::Stems(render) => (
+            render.musical_range,
+            render.sample_rate,
+            Some(render.frames),
+            render
+                .stems
+                .into_iter()
+                .map(|stem| (LevelSource::Track { id: stem.track_id }, stem.path))
+                .collect(),
+        ),
+        StoredRender::Capture(render) => {
+            let sources = render
+                .captures
+                .into_iter()
+                .map(|capture| {
+                    let target: CaptureTarget = serde_json::from_value(capture.target)
+                        .map_err(|error| format!("capture target is invalid: {error}"))?;
+                    let source = match target {
+                        CaptureTarget::Track { id } => LevelSource::Track { id },
+                        CaptureTarget::Bus { id } => LevelSource::Bus { id },
+                        CaptureTarget::Master => LevelSource::Master,
+                    };
+                    Ok((source, capture.path))
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            (
+                render.musical_range,
+                render.sample_rate,
+                Some(render.frames),
+                sources,
+            )
+        }
+    };
+    let range =
+        range.ok_or("render has no saved timebase; musical coordinates cannot be reconstructed")?;
+    range
+        .timebase
+        .validate()
+        .map_err(|error| format!("render timebase is invalid: {error}"))?;
+    if range.end_tick <= range.start_tick || sample_rate == 0 || sources.is_empty() {
+        return Err("render musical range or audio metadata is invalid".into());
+    }
+    let frames = frames.ok_or("render has no saved frame count")?;
+    let mut identities = std::collections::HashSet::new();
+    if sources.iter().any(|(source, _)| {
+        let invalid = match source {
+            LevelSource::Track { id } | LevelSource::Bus { id } => id.trim().is_empty(),
+            LevelSource::Mixdown { rendered_track_id } => rendered_track_id
+                .as_ref()
+                .is_some_and(|id| id.trim().is_empty()),
+            LevelSource::Master => false,
+        };
+        invalid || !identities.insert(source)
+    }) {
+        return Err("render contains invalid or duplicate source identities".into());
+    }
+    let sources = sources
+        .into_iter()
+        .map(|(source, path)| Ok((source, managed_render_file(&directory, &path)?)))
+        .collect::<Result<Vec<_>, String>>()?;
+    Ok(LevelsRender {
+        timebase: range.timebase,
+        start_tick: range.start_tick,
+        end_tick: range.end_tick,
+        sample_rate,
+        frames,
+        sources,
+    })
 }
 
 pub(crate) fn list_renders(data_root: &Path) -> Result<Vec<RenderHistoryEntry>, String> {

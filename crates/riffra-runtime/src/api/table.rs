@@ -520,6 +520,7 @@ control_commands! {
         JobGet = "job.get" (IdParams) -> Job, host;
         JobCancel = "job.cancel" (IdParams) -> Job, host;
         AnalysisMeasure = "analysis.measure" (AnalysisMeasureParams) -> Job, host;
+        AnalysisLevels = "analysis.levels" (AnalysisLevelsParams) -> Job, host;
         AnalysisInspect = "analysis.inspect" (AnalysisParams) -> Analysis, host;
 
         LibrarySearch = "asset.search" (LibrarySearchParams) -> Library, host;
@@ -564,7 +565,7 @@ mod tests {
         let names = command_names();
 
         // Act / Assert
-        assert_eq!(names.len(), 226);
+        assert_eq!(names.len(), 227);
         let unique: std::collections::HashSet<_> = names.iter().copied().collect();
         assert_eq!(unique.len(), names.len());
         for name in names {
@@ -802,7 +803,7 @@ mod tests {
             .filter_map(|line| line.split_once('\'').map(|(name, _)| name))
             .collect();
         let unique: std::collections::HashSet<_> = names.iter().copied().collect();
-        assert_eq!(names.len(), 226);
+        assert_eq!(names.len(), 227);
         assert_eq!(unique.len(), names.len());
 
         for (name, params) in [

@@ -2439,6 +2439,30 @@ pub enum AnalysisCommand {
     Inspect(AnalysisInspectArgs),
     /// Measure existing WAVs asynchronously; returns a Job for job wait (--attach required).
     Measure(AnalysisMeasureArgs),
+    /// Measure RMS and sample peak on a saved Render's musical grid.
+    Levels(AnalysisLevelsArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct AnalysisLevelsArgs {
+    /// Managed Render ID returned by render capture, start or stems.
+    #[arg(long)]
+    pub render_id: String,
+    /// Grid as a fraction of a whole note, for example 1/16.
+    #[arg(long)]
+    pub grid: String,
+    /// Optional start position in bar:beat notation.
+    #[arg(long)]
+    pub start: Option<String>,
+    /// Optional exclusive end position in bar:beat notation.
+    #[arg(long)]
+    pub end: Option<String>,
+    /// Select master, mixdown, track:<id>, or bus:<id>; omit to measure every source.
+    #[arg(long)]
+    pub source: Option<String>,
+    /// Wait for the background Job to finish.
+    #[arg(long)]
+    pub wait: bool,
 }
 
 #[derive(Debug, Args)]
@@ -3877,6 +3901,39 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
             RecordCommand::Duplicates => Runtime::RecordDuplicates(empty).into(),
         },
         CliCommand::Analysis { command } => match command {
+            AnalysisCommand::Levels(args) => {
+                let source = args
+                    .source
+                    .map(|source| {
+                        if source == "master" {
+                            Ok(LevelSource::Master)
+                        } else if source == "mixdown" {
+                            Ok(LevelSource::Mixdown {
+                                rendered_track_id: None,
+                            })
+                        } else if let Some(id) =
+                            source.strip_prefix("track:").filter(|id| !id.is_empty())
+                        {
+                            Ok(LevelSource::Track { id: id.into() })
+                        } else if let Some(id) =
+                            source.strip_prefix("bus:").filter(|id| !id.is_empty())
+                        {
+                            Ok(LevelSource::Bus { id: id.into() })
+                        } else {
+                            Err("source must be master, mixdown, track:<id>, or bus:<id>"
+                                .to_string())
+                        }
+                    })
+                    .transpose()?;
+                Runtime::AnalysisLevels(AnalysisLevelsParams {
+                    render_id: args.render_id,
+                    grid: text("/grid", args.grid)?,
+                    start: args.start.map(|value| text("/start", value)).transpose()?,
+                    end: args.end.map(|value| text("/end", value)).transpose()?,
+                    source,
+                })
+                .into()
+            }
             AnalysisCommand::Measure(args) => {
                 let encoded = fs::read_to_string(&args.file).map_err(|error| {
                     format!("analysis measurement file could not be read: {error}")
@@ -4779,6 +4836,28 @@ mod tests {
                 .request()
                 .is_err()
         );
+        let levels = wire(
+            Cli::try_parse_from([
+                "riffra",
+                "analysis",
+                "levels",
+                "--render-id",
+                "render-example",
+                "--grid",
+                "1/16",
+                "--source",
+                "bus:bus:1",
+                "--start",
+                "9:1",
+                "--end",
+                "13:1",
+                "--wait",
+            ])
+            .unwrap(),
+        );
+        assert_eq!(levels.name, "analysis.levels");
+        assert_eq!(levels.params["source"], json!({"kind":"bus","id":"bus:1"}));
+        assert_eq!(levels.params["grid"], "1/16");
     }
 
     #[test]
@@ -4925,7 +5004,7 @@ mod tests {
         command.clone().debug_assert();
         assert_help(&command, "riffra");
         assert_eq!(command.get_subcommands().count(), 24);
-        assert_eq!(leaves(&command), 191);
+        assert_eq!(leaves(&command), 194);
     }
 
     #[test]

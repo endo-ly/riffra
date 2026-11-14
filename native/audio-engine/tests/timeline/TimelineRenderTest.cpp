@@ -477,6 +477,26 @@ TEST(TimelineEngineTest, TrackAutomationOverridesStaticMixPreview) {
     EXPECT_GT(rampLeft[490] + rampRight[490], (rampLeft[20] + rampRight[20]) * 4.0f);
 }
 
+TEST(TimelineEngineTest, PreparedAmplitudeAutomationHandlesOverlappingTransitions) {
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    auto snapshot = makeAudioTrackSnapshot(1, false, false);
+    snapshot.graph.automation.push_back(
+        {AutomationTargetKind::trackVolume,
+         snapshot.graph.tracks.front().id,
+         {},
+         AutomationInterpolationSpec::linearAmplitude,
+         {{0, 0.0}, {960, -6.020599913279624}, {1440, -12.041199826559248}},
+         0.5});
+    TimelineEngine engine(true);
+    juce::String error;
+    ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, 100.0, 64, error)) << error;
+    const auto* graph = TimelineEngineTestPeer::committedGraph(engine);
+    ASSERT_NE(graph, nullptr);
+    auto cursor = graph->tracks.front()->runtime->volumeAutomation.cursorAt(100);
+    EXPECT_NEAR(cursor.valueAt(100, 0.0f), -8.519375f, 0.0001f);
+}
+
 TEST(TimelineEngineTest, TrackMetersExcludeNonAudibleSoloTracks) {
     // Arrange
     juce::AudioFormatManager formats;
@@ -1661,6 +1681,29 @@ TEST(MixerRoutingTest, SidechainSendLevelFollowsAutomationInRealtimeAndOffline) 
     EXPECT_NEAR(rendered.getSample(0, 600), halved, 0.002f);
     EXPECT_NEAR(rendered.getSample(0, 599), output.getSample(0, 599), 0.00001f);
     EXPECT_NEAR(rendered.getSample(0, 600), output.getSample(0, 600), 0.00001f);
+
+    OfflineRenderRequestSpec captureRequest;
+    captureRequest.graph = snapshot.graph;
+    captureRequest.endTick = 48;
+    captureRequest.sampleRate = 48'000;
+    captureRequest.blockSize = 64;
+    captureRequest.captures = {
+        {{OfflineCaptureKind::track, "track:source"},
+         directory.get().getChildFile("sidechain-source.wav").getFullPathName()},
+        {{OfflineCaptureKind::track, "track:target"},
+         directory.get().getChildFile("sidechain-target.wav").getFullPathName()},
+        {{OfflineCaptureKind::master, {}},
+         directory.get().getChildFile("sidechain-master.wav").getFullPathName()}};
+    auto capture = OfflineRenderer::prepare(captureRequest, formats, error);
+    ASSERT_NE(capture, nullptr) << error;
+    ASSERT_TRUE(capture->render(formats, result, error)) << error;
+    auto capturedMaster = std::unique_ptr<juce::AudioFormatReader>(
+        formats.createReaderFor(juce::File(captureRequest.captures.back().destination)));
+    ASSERT_NE(capturedMaster, nullptr);
+    juce::AudioBuffer<float> captured(2, 601);
+    ASSERT_TRUE(capturedMaster->read(&captured, 0, captured.getNumSamples(), 0, true, true));
+    EXPECT_NEAR(captured.getSample(0, 599), rendered.getSample(0, 599), 0.00001f);
+    EXPECT_NEAR(captured.getSample(0, 600), rendered.getSample(0, 600), 0.00001f);
 
     // A stem isolates the target's main output by solo while preserving the
     // auxiliary source and its automation. The source's dry signal is absent.

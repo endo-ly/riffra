@@ -31,6 +31,8 @@ pub enum JobKind {
     RenderCapture,
     /// Measures existing WAV files without editing a Project.
     AnalysisMeasure,
+    /// Measures saved Render audio on a musical grid.
+    AnalysisLevels,
 }
 
 /// Typed view of a background job, produced from the job registry at the IPC
@@ -74,6 +76,48 @@ pub enum BackgroundJobStatus {
         message: String,
         result: Option<AnalysisMeasureResult>,
     },
+    AnalysisLevels {
+        id: String,
+        state: JobState,
+        progress: Option<f32>,
+        message: String,
+        result: Option<AnalysisLevelsResult>,
+    },
+}
+
+/// RMS and sample peak windows for every selected Render source.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalysisLevelsResult {
+    pub render_id: String,
+    pub grid: riffra_core::MusicalDuration,
+    pub sample_rate: u32,
+    pub start: riffra_core::MusicalPosition,
+    pub end: riffra_core::MusicalPosition,
+    pub start_tick: u64,
+    pub end_tick: u64,
+    pub sources: Vec<AnalysisLevelsSource>,
+}
+
+/// One Render source and its aligned measurement windows.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalysisLevelsSource {
+    pub source: crate::api::params::LevelSource,
+    pub windows: Vec<AnalysisLevelWindow>,
+}
+
+/// Measurements of one half-open musical window; silence is represented by null.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalysisLevelWindow {
+    pub start: riffra_core::MusicalPosition,
+    pub end: riffra_core::MusicalPosition,
+    pub start_tick: u64,
+    pub end_tick: u64,
+    pub frames: u64,
+    pub rms_dbfs: Option<f64>,
+    pub peak_dbfs: Option<f64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
