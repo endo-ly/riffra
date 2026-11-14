@@ -1796,7 +1796,9 @@ fn recommended_range_warnings(
     plan.instruments
         .iter()
         .filter(|(id, _)| {
-            !plan.kit_members.contains_key(*id) && !plan.audio_instruments.contains(*id)
+            !plan.kit_members.contains_key(*id)
+                && !plan.audio_instruments.contains(*id)
+                && !plan.production_sources.contains_key(*id)
         })
         .filter_map(|(id, spec)| {
             let preset = spec.get("preset").and_then(Value::as_str)?;
@@ -4448,12 +4450,14 @@ mod tests {
                 "sections":{"phrase":{
                     "placements":[
                         {"instrument":"bass","degree":"1,","at":{"bar":1,"step":1},"duration_steps":1},
-                        {"instrument":"bass","degree":"1''","at":{"bar":2,"step":1},"duration_steps":1}
+                        {"instrument":"bass","degree":"1''","at":{"bar":2,"step":1},"duration_steps":1},
+                        {"instrument":"vst","degree":"1,","at":{"bar":1,"step":9},"duration_steps":1}
                     ],
                     "events":[{"kind":"hit","instrument":"kick","at":{"bar":1,"step":1}}]
                 }},
                 "instruments":{
                     "bass":{"preset":"BASS/001-test"},
+                    "vst":{"preset":"BASS/001-test","source":{"vst3":{"plugin":"Synth"}}},
                     "kick":{"kit":"drums","trigger_note_midi":30}
                 },
                 "kits":{"drums":{"source":{"vst3":{"plugin":"Drums"}}}}
