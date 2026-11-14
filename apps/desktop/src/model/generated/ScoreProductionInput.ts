@@ -2,6 +2,6 @@
 import type { ScoreAutomationResolution } from "./ScoreAutomationResolution";
 
 /**
- * Resolved plugin inputs for one Score source or effect.
+ * Resolved plugin inputs and final state fingerprint for one Score source or effect.
  */
-export type ScoreProductionInput = { fingerprint: string, automation: Array<ScoreAutomationResolution>, };
+export type ScoreProductionInput = { fingerprint: string, stateFingerprint: string, automation: Array<ScoreAutomationResolution>, };

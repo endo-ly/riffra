@@ -74,11 +74,12 @@ pub struct ScoreSource {
     pub production_inputs: std::collections::BTreeMap<String, ScoreProductionInput>,
 }
 
-/// Resolved plugin inputs for one Score source or effect.
+/// Resolved plugin inputs and final state fingerprint for one Score source or effect.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ScoreProductionInput {
     pub fingerprint: String,
+    pub state_fingerprint: String,
     pub automation: Vec<ScoreAutomationResolution>,
 }
 

@@ -106,10 +106,10 @@ fn run(shared: &std::sync::Weak<HostState>, worker: &WatcherState) {
             ));
             continue;
         };
-        if yaml == accepted {
+        let current = state.score_sync_status();
+        if yaml == accepted && current.state == ScoreSyncState::Synced {
             pending = None;
             failed = None;
-            let current = state.score_sync_status();
             if let Some(updated) = accepted_sync_status(current, &canonical, &path) {
                 state.set_score_sync(updated);
             }
@@ -247,6 +247,103 @@ mod tests {
             updated_at_ms: Some(1),
             diagnostics,
         }
+    }
+
+    #[test]
+    fn restoring_accepted_yaml_after_failure_recomputes_warnings() {
+        use crate::api::output::{
+            PluginEntry, PluginFormat, PluginRole, PluginScanState, ScanReport,
+        };
+
+        let root = std::env::temp_dir().join(format!(
+            "riffra-score-watch-{}",
+            riffra_control::new_instance_id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let score_path = root.join("score.yaml");
+        let plugin_path = root.join("Bass.vst3");
+        std::fs::create_dir_all(&plugin_path).unwrap();
+        let yaml = r#"{
+            "meta":{"title":"Warnings","bpm":120,"meter":"4/4","tuning":"12edo","gate":1},
+            "form":[{"section":"verse","bars":1,"tonic":"C","scale":"ionian"}],
+            "instruments":{"bass":{"source":{"vst3":{"plugin":"Bass"}}}},
+            "sections":{"verse":{"lines":{"main":{"instrument":"bass","melody":"theme"},"second":{"instrument":"bass","melody":"theme","gain_db":-6}}}},
+            "melodies":{"theme":["1 - - - | 3 - - - | 5 - - - | 1' - - -"]}
+        }"#;
+        std::fs::write(&score_path, yaml).unwrap();
+        crate::plugins::catalog::save(
+            &root,
+            &ScanReport {
+                root: root.to_string_lossy().into_owned(),
+                started_at_ms: 0,
+                finished_at_ms: 0,
+                plugins: vec![PluginEntry {
+                    id: "bass".into(),
+                    name: "Bass".into(),
+                    vendor: None,
+                    version: None,
+                    identifier: Some("bass-class".into()),
+                    format: PluginFormat::Vst3,
+                    role: Some(PluginRole::Instrument),
+                    path: plugin_path.to_string_lossy().into_owned(),
+                    bundle: true,
+                    modified_at_ms: None,
+                    scan_state: PluginScanState::Validated,
+                }],
+                issues: Vec::new(),
+            },
+        )
+        .unwrap();
+        let imported = crate::score_yaml_import::import(
+            &crate::api::params::ProjectImportScoreParams {
+                path: score_path.clone(),
+                bindings: Default::default(),
+            },
+            &root,
+            crate::test_support::empty_built_in_catalog(),
+            Path::new("unused"),
+            Path::new("unused"),
+        )
+        .unwrap();
+        assert_eq!(imported.diagnostics.len(), 1);
+        let state = HostState::for_test(
+            &root,
+            imported.session.clone(),
+            crate::AudioSupervisor::offline("test"),
+            true,
+        );
+        let canonical = state.project.read().canonical.clone();
+        state.set_score_sync(super::super::state::synced_score_sync(
+            &canonical,
+            imported.diagnostics.clone(),
+        ));
+        let watcher = ScoreWatcher::start(&state).unwrap();
+        let wait_for = |expected| {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                let status = state.score_sync_status();
+                if status.state == expected {
+                    break status;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "unexpected score status: {status:?}"
+                );
+                std::thread::sleep(Duration::from_millis(25));
+            }
+        };
+        std::fs::write(&score_path, "not: [valid").unwrap();
+        let failed = wait_for(ScoreSyncState::Failed);
+        assert_eq!(
+            failed.diagnostics[0].severity,
+            crate::api::output::ScoreDiagnosticSeverity::Error
+        );
+        std::fs::write(&score_path, yaml).unwrap();
+        let restored = wait_for(ScoreSyncState::Synced);
+        assert_eq!(restored.diagnostics, imported.diagnostics);
+        watcher.shutdown();
+        drop(state);
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

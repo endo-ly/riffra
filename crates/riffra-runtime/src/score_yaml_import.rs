@@ -18,7 +18,7 @@ use crate::api::output::{
 };
 use crate::api::params::ProjectImportScoreParams;
 use crate::instrument::{BuiltInInstrumentCatalog, UserInstrumentStore};
-use crate::plugins::validation::DisplayRequest;
+use crate::plugins::validation::{DisplayRequest, ParameterDescription};
 use crate::score::{self, ScoreLane, ScorePlan, events::MusicalEvent, syntax};
 use riffra_core::*;
 use serde_json::{Value, json};
@@ -329,6 +329,11 @@ fn parameter_value_json(value: &score::production::ParameterValue) -> Value {
     }
 }
 
+fn plugin_state_fingerprint(plugin: &Vst3Plugin) -> String {
+    let digest = Sha256::digest(serde_json::to_vec(plugin).expect("plugin state serializes"));
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
 fn production_input_fingerprint(
     spec: &score::production::Vst3Spec,
     plugin: &Vst3Plugin,
@@ -371,13 +376,18 @@ struct PreviousUse {
     automation: BTreeMap<usize, ScoreAutomationResolution>,
 }
 
+struct ProductionResolutionInput<'a> {
+    plan: &'a ScorePlan,
+    base: &'a Path,
+    data_root: &'a Path,
+    scanner: &'a Path,
+    dependencies: &'a mut Dependencies,
+    previous: Option<&'a CreativeSession>,
+}
+
 fn resolve_production(
-    plan: &ScorePlan,
-    base: &Path,
-    data_root: &Path,
-    scanner: &Path,
-    dependencies: &mut Dependencies,
-    previous: Option<&CreativeSession>,
+    input: ProductionResolutionInput<'_>,
+    describe: &impl Fn(&Path, &Vst3Plugin, &[DisplayRequest]) -> Result<ParameterDescription, String>,
 ) -> Result<
     (
         ResolvedProductionMap,
@@ -386,6 +396,14 @@ fn resolve_production(
     ),
     ImportError,
 > {
+    let ProductionResolutionInput {
+        plan,
+        base,
+        data_root,
+        scanner,
+        dependencies,
+        previous,
+    } = input;
     let library = library::Library::new(base);
     let mut uses = BTreeMap::<String, PendingUse>::new();
     let mut insert_source = |field: String,
@@ -673,6 +691,9 @@ fn resolve_production(
             let Some(plugin) = &pending.previous_plugin else {
                 continue;
             };
+            if saved.state_fingerprint != plugin_state_fingerprint(plugin) {
+                continue;
+            }
             let indices = automations
                 .iter()
                 .filter(|(_, lane)| lane.use_key == *key)
@@ -723,11 +744,10 @@ fn resolve_production(
         }
         let base_plugin = uses[&keys[0]].base_plugin();
         let description =
-            crate::plugins::validation::describe_parameters(scanner, base_plugin, &displays)
-                .map_err(|message| ImportError {
-                    details: plan.source_detail(&keys[0], &message),
-                    message,
-                })?;
+            describe(scanner, base_plugin, &displays).map_err(|message| ImportError {
+                details: plan.source_detail(&keys[0], &message),
+                message,
+            })?;
         for key in &keys {
             let pending = &uses[key];
             let (start, len) = ranges[key];
@@ -843,6 +863,9 @@ fn resolve_production(
                 .collect();
             let saved = ScoreProductionInput {
                 fingerprint,
+                state_fingerprint: plugin_state_fingerprint(
+                    values.get(&key).unwrap_or_else(|| uses[&key].base_plugin()),
+                ),
                 automation,
             };
             (key, saved)
@@ -992,6 +1015,43 @@ pub(crate) fn rebuild(
     scanner: &Path,
     sonalloy: &Path,
 ) -> Result<ScoreOutcome, ImportError> {
+    rebuild_with_probe(
+        RebuildInput {
+            previous,
+            path,
+            bindings,
+            data_root,
+            catalog,
+            scanner,
+            sonalloy,
+        },
+        &crate::plugins::validation::describe_parameters,
+    )
+}
+
+struct RebuildInput<'a> {
+    previous: &'a CreativeSession,
+    path: Option<&'a Path>,
+    bindings: &'a BTreeMap<String, PathBuf>,
+    data_root: &'a Path,
+    catalog: &'a BuiltInInstrumentCatalog,
+    scanner: &'a Path,
+    sonalloy: &'a Path,
+}
+
+fn rebuild_with_probe(
+    input: RebuildInput<'_>,
+    describe: &impl Fn(&Path, &Vst3Plugin, &[DisplayRequest]) -> Result<ParameterDescription, String>,
+) -> Result<ScoreOutcome, ImportError> {
+    let RebuildInput {
+        previous,
+        path,
+        bindings,
+        data_root,
+        catalog,
+        scanner,
+        sonalloy,
+    } = input;
     let source = previous.score_source.as_ref().ok_or_else(|| {
         ImportError::from("the active Project is not linked to a Score".to_string())
     })?;
@@ -1009,16 +1069,19 @@ pub(crate) fn rebuild(
         .map(|(id, path)| (id.clone(), PathBuf::from(path)))
         .collect();
     effective.extend(bindings.iter().map(|(id, path)| (id.clone(), path.clone())));
-    let mut document = read(ReadInput {
-        path: &path,
-        bindings: &effective,
-        explicit: &bindings.keys().cloned().collect(),
-        data_root,
-        catalog,
-        scanner,
-        sonalloy,
-        previous: Some(previous),
-    })?;
+    let mut document = read_with_probe(
+        ReadInput {
+            path: &path,
+            bindings: &effective,
+            explicit: &bindings.keys().cloned().collect(),
+            data_root,
+            catalog,
+            scanner,
+            sonalloy,
+            previous: Some(previous),
+        },
+        describe,
+    )?;
     let store = UserInstrumentStore::new(data_root, sonalloy);
     let mut staged = StagedResources::new(data_root);
     let session = build(
@@ -1711,6 +1774,13 @@ struct ReadInput<'a> {
 }
 
 fn read(input: ReadInput<'_>) -> Result<ScoreDocument, ImportError> {
+    read_with_probe(input, &crate::plugins::validation::describe_parameters)
+}
+
+fn read_with_probe(
+    input: ReadInput<'_>,
+    describe: &impl Fn(&Path, &Vst3Plugin, &[DisplayRequest]) -> Result<ParameterDescription, String>,
+) -> Result<ScoreDocument, ImportError> {
     let ReadInput {
         path,
         bindings,
@@ -1729,8 +1799,17 @@ fn read(input: ReadInput<'_>) -> Result<ScoreDocument, ImportError> {
     let mut dependencies = Dependencies::new();
     record_dependency(&mut dependencies, &path).map_err(ImportError::from)?;
     validate_audio(&plan, base, &mut dependencies)?;
-    let (production, automation, production_inputs) =
-        resolve_production(&plan, base, data_root, scanner, &mut dependencies, previous)?;
+    let (production, automation, production_inputs) = resolve_production(
+        ProductionResolutionInput {
+            plan: &plan,
+            base,
+            data_root,
+            scanner,
+            dependencies: &mut dependencies,
+            previous,
+        },
+        describe,
+    )?;
     let missing: Vec<_> = plan
         .instruments
         .iter()
@@ -4653,6 +4732,175 @@ mod tests {
     }"#;
 
     #[test]
+    fn rebuild_restores_score_plugin_state_after_manual_edits() {
+        use crate::api::output::{
+            PluginEntry, PluginFormat, PluginRole, PluginScanState, ScanReport,
+        };
+
+        let root = std::env::temp_dir().join(format!(
+            "riffra-score-manual-edit-{}",
+            riffra_control::new_instance_id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let score_path = root.join("score.yaml");
+        let yaml = r#"{
+            "meta":{"title":"State","bpm":120,"meter":"4/4","tuning":"12edo","gate":1},
+            "form":[{"section":"verse","bars":1,"tonic":"C","scale":"ionian"}],
+            "instruments":{"bass":{"source":{"vst3":{"plugin":"Bass","params":{"Cutoff":0.5}}},"effects":[{"id":"filter","vst3":{"plugin":"Filter","state":"filter-state.json","params":{"Cutoff":0.5}}}]}},
+            "sections":{"verse":{"lines":{"main":{"instrument":"bass","melody":"theme"}}}},
+            "melodies":{"theme":["1 - - - | 3 - - - | 5 - - - | 1' - - -"]}
+        }"#;
+        std::fs::write(&score_path, yaml).unwrap();
+        std::fs::write(
+            root.join("filter-state.json"),
+            serde_json::to_vec(&json!({
+                "schemaVersion": 2,
+                "pluginIdentifier": "Filter-class",
+                "pluginPath": root.join("Filter.vst3").to_string_lossy(),
+                "parameterValues": [0.1],
+                "stateData": "c2NvcmU="
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let entries = [
+            ("Bass", PluginRole::Instrument),
+            ("Filter", PluginRole::Effect),
+        ]
+        .into_iter()
+        .map(|(name, role)| {
+            let path = root.join(format!("{name}.vst3"));
+            std::fs::create_dir_all(&path).unwrap();
+            PluginEntry {
+                id: name.into(),
+                name: name.into(),
+                vendor: None,
+                version: None,
+                identifier: Some(format!("{name}-class")),
+                format: PluginFormat::Vst3,
+                role: Some(role),
+                path: path.to_string_lossy().into_owned(),
+                bundle: true,
+                modified_at_ms: None,
+                scan_state: PluginScanState::Validated,
+            }
+        })
+        .collect();
+        crate::plugins::catalog::save(
+            &root,
+            &ScanReport {
+                root: root.to_string_lossy().into_owned(),
+                started_at_ms: 0,
+                finished_at_ms: 0,
+                plugins: entries,
+                issues: Vec::new(),
+            },
+        )
+        .unwrap();
+        let probes = std::cell::Cell::new(0);
+        let describe = |_: &Path, plugin: &Vst3Plugin, displays: &[DisplayRequest]| {
+            probes.set(probes.get() + 1);
+            assert!(displays.is_empty());
+            Ok(serde_json::from_value(json!({
+                "type": "pluginParameters", "path": plugin.path,
+                "parameters": [{"index": 0, "parameterId": "cutoff", "name": "Cutoff", "choices": []}],
+                "parameterValues": [0.0], "conversions": []
+            })).unwrap())
+        };
+        let bindings = BTreeMap::new();
+        let explicit = BTreeSet::new();
+        let catalog = crate::test_support::empty_built_in_catalog();
+        let store = store(&root);
+        let mut staged = StagedResources::new(&root);
+        let mut document = read_with_probe(
+            ReadInput {
+                path: &score_path,
+                bindings: &bindings,
+                explicit: &explicit,
+                data_root: &root,
+                catalog,
+                scanner: Path::new("unused"),
+                sonalloy: Path::new("unused"),
+                previous: None,
+            },
+            &describe,
+        )
+        .unwrap();
+        let session = build(&mut document, None, &store, &mut staged, BuildMode::Stage).unwrap();
+        assert_eq!(probes.get(), 2);
+
+        let unchanged = rebuild(
+            &session,
+            None,
+            &bindings,
+            &root,
+            catalog,
+            Path::new("unavailable-scanner"),
+            Path::new("unused"),
+        )
+        .unwrap();
+        assert!(unchanged.candidate(&session).is_none());
+        assert_eq!(probes.get(), 2);
+        let mut edited = session.clone();
+        edited.arrangement.tracks[0]
+            .instrument
+            .as_mut()
+            .unwrap()
+            .as_vst3_mut()
+            .unwrap()
+            .parameter_values[0] = 0.9;
+        edited.arrangement.tracks[0].effects[0].plugin.state_data = Some("bWFudWFs".into());
+
+        let outcome = rebuild_with_probe(
+            RebuildInput {
+                previous: &edited,
+                path: None,
+                bindings: &bindings,
+                data_root: &root,
+                catalog,
+                scanner: Path::new("unused"),
+                sonalloy: Path::new("unused"),
+            },
+            &describe,
+        )
+        .unwrap();
+        assert!(outcome.changed);
+        assert!(!outcome.yaml_changed);
+        let restored = outcome
+            .candidate(&edited)
+            .expect("manual edits must be replaced");
+        assert_eq!(probes.get(), 4);
+        let track = &restored.arrangement.tracks[0];
+        assert_eq!(
+            track
+                .instrument
+                .as_ref()
+                .unwrap()
+                .as_vst3()
+                .unwrap()
+                .parameter_values,
+            [0.5]
+        );
+        assert_eq!(track.effects[0].plugin.parameter_values, [0.5]);
+        assert_eq!(
+            track.effects[0].plugin.state_data.as_deref(),
+            Some("c2NvcmU=")
+        );
+        let unchanged = rebuild(
+            &restored,
+            None,
+            &bindings,
+            &root,
+            catalog,
+            Path::new("unavailable-scanner"),
+            Path::new("unused"),
+        )
+        .unwrap();
+        assert!(unchanged.candidate(&restored).is_none());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn unchanged_plugin_inputs_reuse_the_canonical_state_without_a_probe() {
         use crate::api::output::{
             PluginEntry, PluginFormat, PluginRole, PluginScanState, ScanReport,
@@ -4729,8 +4977,12 @@ mod tests {
                 .collect(),
             requests: vec![None; second_lane.points.len()],
         };
+        let input_fingerprint =
+            production_input_fingerprint(spec, &plugin, &entry, &[&pending, &second]);
+        plugin.parameter_values = vec![0.5];
         let fingerprint = ScoreProductionInput {
-            fingerprint: production_input_fingerprint(spec, &plugin, &entry, &[&pending, &second]),
+            fingerprint: input_fingerprint,
+            state_fingerprint: plugin_state_fingerprint(&plugin),
             automation: vec![
                 ScoreAutomationResolution {
                     parameter_id: "cutoff-id".into(),
@@ -4742,8 +4994,6 @@ mod tests {
                 },
             ],
         };
-        plugin.path = "C:/old-install/Bass.vst3".into();
-        plugin.parameter_values = vec![0.5];
         let mut previous = CreativeSession::new(1);
         let mut track = Track::instrument("score:track:1".into(), "bass".into());
         let mut instrument = TrackInstrument::vst3(
@@ -5732,6 +5982,7 @@ mod tests {
                 "instruments.lead.source".into(),
                 ScoreProductionInput {
                     fingerprint: "new-input".into(),
+                    state_fingerprint: "new-state".into(),
                     automation: Vec::new(),
                 },
             );
