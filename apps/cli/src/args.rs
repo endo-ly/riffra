@@ -3,6 +3,7 @@ use riffra_core::application::{SessionInspectionQuery, SessionSettingsPatch};
 use riffra_core::{
     AudioClipPatch, FrameRange, MidiClipPatch, PhrasePattern, PhrasePlacement, TimelineTick,
 };
+use riffra_runtime::api::client;
 use riffra_runtime::api::output::PluginStateValue;
 use riffra_runtime::api::params::*;
 use riffra_runtime::api::{
@@ -2869,7 +2870,7 @@ impl Cli {
             .command
             .ok_or_else(|| "a command is required unless --interactive is used".to_string())?;
         let mut command = command_request(command)?;
-        crate::paths::prepare_command(&mut command)?;
+        client::prepare_command(&mut command)?;
         Ok(command)
     }
 
@@ -3868,7 +3869,13 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
                     Canonical::PluginStateImport(PluginStateImportParams {
                         owner: args.owner.into_owner()?,
                         device_id: args.device_id,
-                        state: crate::paths::read_plugin_state(&args.file)?,
+                        state: serde_json::from_value(client::read_json_file(&args.file)?)
+                            .map_err(|error| {
+                                format!(
+                                    "plugin state file {} is invalid: {error}",
+                                    args.file.display()
+                                )
+                            })?,
                     })
                     .into()
                 }

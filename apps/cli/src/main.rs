@@ -3,7 +3,6 @@ mod attached;
 mod instrument;
 mod interactive;
 mod output;
-mod paths;
 mod resources;
 mod serve;
 
