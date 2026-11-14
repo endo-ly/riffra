@@ -396,10 +396,11 @@ TEST(MidiSchedulerTest, CompilesVst3KeyswitchesAndCcBeforeNormalNotes) {
     const auto& events = compiled.events;
     EXPECT_TRUE(events[0].message.isNoteOn() && events[0].message.getNoteNumber() == 24);
     EXPECT_TRUE(events[1].message.isNoteOn() && events[1].message.getNoteNumber() == 26);
-    EXPECT_TRUE(events[2].message.isNoteOff() && events[2].message.getNoteNumber() == 26);
-    EXPECT_TRUE(events[3].message.isController() && events[3].message.getControllerNumber() == 11 &&
-                events[3].message.getControllerValue() == 96);
-    EXPECT_TRUE(events[4].message.isNoteOn() && events[4].message.getNoteNumber() == 60);
+    EXPECT_TRUE(events[2].message.isController() && events[2].message.getControllerNumber() == 11 &&
+                events[2].message.getControllerValue() == 96);
+    EXPECT_TRUE(events[3].message.isNoteOn() && events[3].message.getNoteNumber() == 60);
+    EXPECT_TRUE(events[4].message.isNoteOff() && events[4].message.getNoteNumber() == 26);
+    EXPECT_EQ(events[4].sampleOffset, 1);
     EXPECT_TRUE(events[5].message.isNoteOff() && events[5].message.getNoteNumber() == 60);
 }
 
@@ -457,6 +458,52 @@ TEST(MidiSchedulerTest, RestoresVst3ControlStateAfterSeek) {
     juce::MidiBuffer resumed;
     MidiScheduler::schedule({compiled}, 5, 1, resumed, false);
     EXPECT_EQ(resumed.getNumEvents(), 0);
+}
+
+TEST(MidiSchedulerTest, RestoresLoopControlStateFromThePreviousIteration) {
+    MidiClipSpec source;
+    source.durationTicks = 4;
+    const auto control = [](const std::uint64_t tick, const char* id) {
+        InstrumentControlEventSpec event;
+        event.id = id;
+        event.tick = tick;
+        return event;
+    };
+    auto down = control(0, "down");
+    down.type = "keySwitch";
+    down.note = 24;
+    down.down = true;
+    source.instrumentControlEvents.push_back(down);
+    auto up = control(2, "up");
+    up.type = "keySwitch";
+    up.note = 24;
+    source.instrumentControlEvents.push_back(up);
+    auto first = control(1, "first");
+    first.type = "controlChange";
+    first.controllerNumber = 11;
+    first.controllerValue = 10;
+    source.instrumentControlEvents.push_back(first);
+    auto last = control(3, "last");
+    last.type = "controlChange";
+    last.controllerNumber = 11;
+    last.controllerValue = 20;
+    source.instrumentControlEvents.push_back(last);
+
+    CompiledMidiClip compiled;
+    juce::String error;
+    ASSERT_TRUE(MidiScheduler::compile(source, {.loop = true},
+                                       TimelineTimebase{10, {{0, 60.0}}, {{0, 4, 4}}}, 10.0,
+                                       compiled, error))
+        << error.toStdString();
+    juce::MidiBuffer buffer;
+    MidiScheduler::schedule({compiled}, 6, 1, buffer, true);
+    std::vector<juce::MidiMessage> messages;
+    for (const auto metadata : buffer) messages.push_back(metadata.getMessage());
+    ASSERT_EQ(messages.size(), 3u);
+    EXPECT_TRUE(messages[0].isNoteOn() && messages[0].getNoteNumber() == 24);
+    EXPECT_TRUE(messages[1].isController() && messages[1].getControllerNumber() == 11 &&
+                messages[1].getControllerValue() == 10);
+    EXPECT_TRUE(messages[2].isNoteOff() && messages[2].getNoteNumber() == 24);
 }
 
 }  // namespace
