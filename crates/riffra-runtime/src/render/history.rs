@@ -1,6 +1,6 @@
 use crate::api::output::{
-    RenderDeleteResult, RenderExportResult, RenderFileStatus, RenderHistoryEntry, RenderKind,
-    RenderResult, RenderStemsResult,
+    AudioMeasurements, RenderDeleteResult, RenderExportResult, RenderFileStatus,
+    RenderHistoryEntry, RenderKind,
 };
 use crate::asset;
 use riffra_core::{AssetId, CreativeSession};
@@ -10,11 +10,53 @@ use std::{
     path::{Path, PathBuf},
 };
 
-#[derive(serde::Deserialize)]
-#[serde(untagged)]
+/// The files a managed Render owns, read from its `render.json`.
+///
+/// Only the ownership facts are part of the stored contract. Measurements are
+/// kept as raw JSON because they follow the measurement schema of the Riffra
+/// that wrote them; a Render stays listable, exportable, and deletable when
+/// that schema has since changed.
 enum StoredRender {
-    Stems(RenderStemsResult),
-    Timeline(RenderResult),
+    Timeline(StoredTimeline),
+    Stems(StoredStems),
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StoredTimeline {
+    asset_id: AssetId,
+    path: String,
+    #[serde(default)]
+    project_id: Option<String>,
+    #[serde(default)]
+    created_at_ms: Option<u64>,
+    track_id: Option<String>,
+    sample_rate: u32,
+    duration_ms: u64,
+    #[serde(default)]
+    measurements: Option<serde_json::Value>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StoredStems {
+    project_id: String,
+    #[serde(default)]
+    created_at_ms: Option<u64>,
+    sample_rate: u32,
+    frames: u64,
+    stems: Vec<StoredStem>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StoredStem {
+    track_id: String,
+    track_name: String,
+    asset_id: AssetId,
+    path: String,
+    #[serde(default)]
+    measurements: Option<serde_json::Value>,
 }
 
 fn read_render_manifest(path: &Path) -> Result<StoredRender, String> {
@@ -25,7 +67,36 @@ fn read_render_manifest(path: &Path) -> Result<StoredRender, String> {
     }
     let bytes =
         fs::read(path).map_err(|error| format!("render manifest could not be read: {error}"))?;
-    serde_json::from_slice(&bytes).map_err(|error| format!("render manifest is invalid: {error}"))
+    let invalid = |error: serde_json::Error| format!("render manifest is invalid: {error}");
+    let manifest: serde_json::Value = serde_json::from_slice(&bytes).map_err(invalid)?;
+    if manifest.get("stems").is_some() {
+        serde_json::from_value(manifest)
+            .map(StoredRender::Stems)
+            .map_err(invalid)
+    } else {
+        serde_json::from_value(manifest)
+            .map(StoredRender::Timeline)
+            .map_err(invalid)
+    }
+}
+
+/// Decodes the measurements stored with each file of one Render.
+///
+/// # Errors
+/// Returns a diagnostic when any stored measurement is absent or does not
+/// match the current measurement schema.
+fn stored_measurements(
+    stored: Vec<Option<serde_json::Value>>,
+) -> Result<Vec<AudioMeasurements>, String> {
+    stored
+        .into_iter()
+        .map(|value| {
+            let value = value.ok_or("render was saved without measurements")?;
+            serde_json::from_value(value).map_err(|error| {
+                format!("render measurements do not match the current measurement format: {error}")
+            })
+        })
+        .collect()
 }
 
 /// Copies the completed WAV from a managed Render directory to a new location.
@@ -208,22 +279,19 @@ fn read_render_history_entry(
                     (u128::from(render.frames) * 1_000 / u128::from(render.sample_rate))
                         .min(u128::from(u64::MAX)) as u64
                 });
+                let (measurements, file_assets): (Vec<_>, Vec<_>) = render
+                    .stems
+                    .into_iter()
+                    .map(|stem| (stem.measurements, (stem.path, stem.asset_id)))
+                    .unzip();
                 (
                     RenderKind::Stems,
                     Some(render.project_id),
                     render.created_at_ms,
                     Some(render.sample_rate),
                     duration_ms,
-                    render
-                        .stems
-                        .iter()
-                        .map(|stem| stem.measurements.clone())
-                        .collect(),
-                    render
-                        .stems
-                        .into_iter()
-                        .map(|stem| (stem.path, stem.asset_id))
-                        .collect(),
+                    measurements,
+                    file_assets,
                 )
             }
         };
@@ -232,7 +300,10 @@ fn read_render_history_entry(
     entry.created_at_ms = created_at_ms.or(entry.created_at_ms);
     entry.sample_rate = sample_rate;
     entry.duration_ms = duration_ms;
-    entry.measurements = measurements;
+    match stored_measurements(measurements) {
+        Ok(measurements) => entry.measurements = measurements,
+        Err(diagnostic) => entry.diagnostics.push(diagnostic),
+    }
     for (stored_path, asset_id) in file_assets {
         entry.files.push(render_file_status(
             data_root,
@@ -1089,6 +1160,20 @@ mod tests {
         assert!(listed[0].files[0].file_exists);
         assert!(listed[0].files[0].asset_registered);
         assert!(listed[0].diagnostics.is_empty());
+        assert_eq!(listed[0].measurements.len(), 1);
+
+        let mut earlier_format: serde_json::Value = serde_json::from_slice(&original).unwrap();
+        earlier_format["measurements"]
+            .as_object_mut()
+            .unwrap()
+            .remove("sections");
+        fs::write(&manifest_path, serde_json::to_vec(&earlier_format).unwrap()).unwrap();
+        let listed = list_renders(&root).unwrap();
+        assert_eq!(listed[0].kind, RenderKind::Timeline);
+        assert!(listed[0].files[0].asset_registered);
+        assert!(listed[0].measurements.is_empty());
+        assert_eq!(listed[0].diagnostics.len(), 1);
+        assert!(listed[0].diagnostics[0].contains("measurement format"));
 
         let jobs = crate::jobs::JobRegistry::default();
         let (analysis_id, _) = jobs.start_analysis_measure(Some(render_id.clone()));
