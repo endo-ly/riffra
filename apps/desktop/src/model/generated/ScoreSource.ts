@@ -11,4 +11,8 @@ path?: string,
 /**
  * Definition path of each `external: true` instrument in the linked Score.
  */
-bindings?: { [key in string]: string }, };
+bindings?: { [key in string]: string }, 
+/**
+ * Fingerprints of the resolved plugin inputs that produced Score devices.
+ */
+productionInputs?: { [key in string]: string }, };

@@ -69,6 +69,9 @@ pub struct ScoreSource {
     /// Definition path of each `external: true` instrument in the linked Score.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub bindings: std::collections::BTreeMap<String, String>,
+    /// Fingerprints of the resolved plugin inputs that produced Score devices.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub production_inputs: std::collections::BTreeMap<String, String>,
 }
 
 impl Default for SessionSettings {
@@ -336,6 +339,7 @@ mod tests {
             yaml: "meta: {}".into(),
             path: Some("/scores/song.yaml".into()),
             bindings: Default::default(),
+            production_inputs: Default::default(),
         });
         let mut lead = Track::instrument("track:lead".into(), "Lead".into());
         lead.score_instrument = Some("lead".into());
@@ -370,6 +374,7 @@ mod tests {
                 tick: TimelineTick(0),
                 value: 0.5,
             }],
+            score_target: None,
         });
 
         // Work state remains editable.

@@ -814,6 +814,7 @@ mod tests {
                     value: 0.75,
                 },
             ],
+            score_target: None,
         }];
 
         let inspection = inspect_canonical_state(
@@ -925,6 +926,7 @@ mod tests {
                 tick: TimelineTick(0),
                 value: 0.5,
             }],
+            score_target: None,
         }];
 
         let inspection = inspect_canonical_state(

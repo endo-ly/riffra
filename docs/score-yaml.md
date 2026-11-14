@@ -110,7 +110,7 @@ instruments:
 `source` の有効フィールドは `use`、`vst3`、`velocity`。`vst3` は `plugin`（`use` がない場合は必須）、`identifier`、`state`、`patch`、`params` を持つ。
 
 - `plugin` は検証済み VST3 カタログ上の正確なプラグイン名。`identifier` は同じ VST3 クラスへ絞り込む
-- `state` は `PluginStateSnapshot` 形式の JSON。`schemaVersion`、`pluginPath`、`parameterValues`、`stateData` を持ち、読み込み時に現在のプラグイン実パスへ組み直す
+- `state` は `PluginStateSnapshot` 形式の JSON。`schemaVersion: 2`、`pluginIdentifier`、`pluginPath`、`parameterValues`、`stateData` を持つ。識別は `pluginIdentifier` で行い、`pluginPath` は取得時の実行パスとして扱う。現在のカタログで同じ識別子のプラグインを選び、その実行パスを使う
 - `patch` は `state` で得た状態文書への編集操作。`op: set | setTree | setXml`、`path`、`value` / `tree` / `values` を使う既存の `PluginStatePatchOperation` と同一の形式である。`state` がない `patch` はエラー
 - `params` の値は `0..=1` の数値、または `{display: <文字列>}`。数値文字列は display 値として扱わない。名前が重複するパラメーターは `<名前>#<0始まりの index>` で指定する
 - 適用順序は `state` → `patch` → `params`。`params` を指定した場合は State 復元後の全パラメーター配列を取得し、指定分だけを上書きする。指定のないパラメーターをゼロで埋めない
@@ -371,7 +371,7 @@ Definition 本体と実際に参照するアセットだけを収集し、保存
 
 VST3 の State は Score の `state` と `library/states` のファイルから読み込み、選択したプラグインの実パスへ組み直す。AudioClip の WAV は Data Root の Asset として不変に保存し、元ファイルを後から編集・削除しても再生に影響しない。
 
-再構築で音源・エフェクト・Asset を再利用するかは「同一性と再利用」の規則で決める。判断は既存の Track・Device・Asset の内容を比較して行い、別のキャッシュや索引は作らない。
+再構築で音源・エフェクト・Asset を再利用するかは「同一性と再利用」の規則で決める。プラグインの入力指紋を `ScoreSource.productionInputs` に保存し、前回の Device・AutomationLane と照合する。指紋はプローブ結果のキャッシュではなく、同じ入力から同じ解決を行ったかを判定するためだけに使う。新しいスキャナキャッシュやライブラリ索引は作らない。
 
 `.riffra` のエクスポート・インポートには、音源スナップショット・Audio Asset・ScoreSource も含まれる。
 パッケージに書き出す Session のコピーでは、リンクの `path` を消して楽器の対応を空にする。元 PC の絶対パスを有効なリンクとして持ち込まないためであり、エクスポート元の Project は変更しない。インポート後に必要なら `project rebuild-score --path ... --bind ...` でリンクし直す。

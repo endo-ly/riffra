@@ -394,6 +394,7 @@ mod tests {
             yaml: "meta: {title: Linked}".into(),
             path: Some("/music/score.yaml".into()),
             bindings: Default::default(),
+            production_inputs: Default::default(),
         });
         let mut track = Track::instrument("score:track:1".into(), "lead".into());
         track.instrument = Some(

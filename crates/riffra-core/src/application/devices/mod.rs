@@ -364,6 +364,7 @@ where
                     target,
                     interpolation,
                     points,
+                    score_target: None,
                 });
                 super::record_created(&mut created_entity_ids, "automationLanes", id);
             }

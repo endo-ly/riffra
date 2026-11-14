@@ -177,6 +177,10 @@ pub struct AutomationLane {
     pub target: AutomationTarget,
     pub interpolation: AutomationInterpolation,
     pub points: Vec<AutomationPoint>,
+    /// Stable Score target that produced this lane, when the lane is Score-owned.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub score_target: Option<String>,
 }
 
 impl AutomationLane {
@@ -262,6 +266,7 @@ mod tests {
                     value: -90.0,
                 },
             ],
+            score_target: None,
         });
 
         Arrangement::validate_and_normalize(&mut arrangement).unwrap();

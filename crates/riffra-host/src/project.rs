@@ -1005,6 +1005,7 @@ mod tests {
                 "lead".into(),
                 "C:/music/song/lead.json".into(),
             )]),
+            production_inputs: Default::default(),
         });
         let output = package_path(&root, "score.riffra");
 
