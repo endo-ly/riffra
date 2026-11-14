@@ -154,6 +154,7 @@ export type { InstrumentTrackSource } from './InstrumentTrackSource';
 export type { InternalInstrumentResource } from './InternalInstrumentResource';
 export type { JobKind } from './JobKind';
 export type { JobState } from './JobState';
+export type { KeySwitchMode } from './KeySwitchMode';
 export type { LibraryAsset } from './LibraryAsset';
 export type { LibrarySearchParams } from './LibrarySearchParams';
 export type { LibraryTagParams } from './LibraryTagParams';
