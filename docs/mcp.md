@@ -42,7 +42,7 @@ cargo run -p riffra-mcp -- --host <instance-id>
 
 ## ツールの呼び方
 
-MCPツールは操作対象ごとにグループ化され、複数のControl Commandを持つツールは `action` で命令を選ぶ。`params` はControl CommandのcamelCase JSONと一致する。ツールの入力スキーマは各actionの `params` 型から生成され、未知のaction、未知のフィールド、必須値の欠落はHostへ送る前に拒否される。
+MCPツールは操作対象ごとにグループ化され、複数のControl Commandを持つツールは `action` で命令を選ぶ。`params` はControl CommandのcamelCase JSONと一致する。ツールの入力スキーマは、`action` の候補を列挙し、各actionが受け取る `params` 型を `action` の説明に示す（トップレベルの `oneOf` はクライアントが最初の分岐しか見せないことがあるため使わない）。呼び出しは選ばれたactionの `params` 型で検証され、未知のaction、未知のフィールド、必須値の欠落はHostへ送る前に拒否される。
 
 ```json
 {
