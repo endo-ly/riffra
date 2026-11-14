@@ -10,34 +10,62 @@ pub(super) struct ResolvedPlugin {
     pub(super) plugin: Vst3Plugin,
 }
 
+#[derive(Debug)]
+pub(super) struct ResolveError {
+    pub(super) field: &'static str,
+    pub(super) message: String,
+}
+
+impl ResolveError {
+    fn new(field: &'static str, message: impl ToString) -> Self {
+        Self {
+            field,
+            message: message.to_string(),
+        }
+    }
+}
+
 pub(super) fn resolve_plugin(
     data_root: &Path,
     base: &Path,
     vst3: &Vst3Spec,
     role: PluginRole,
     dependencies: &mut super::Dependencies,
-) -> Result<ResolvedPlugin, String> {
+) -> Result<ResolvedPlugin, ResolveError> {
     let name = &vst3.plugin;
     let entry = crate::plugins::catalog::selected_named_plugin(
         data_root,
         name,
         vst3.identifier.as_deref(),
         role,
-    )?;
+    )
+    .map_err(|error| ResolveError::new("plugin", error))?;
     let mut plugin = Vst3Plugin::new(entry.path.clone());
     if let Some(path) = &vst3.state {
-        let path = super::local_input_path(base, path)?;
-        super::record_dependency(dependencies, &path)?;
-        let bytes = std::fs::read(&path)
-            .map_err(|error| format!("could not read plugin state {}: {error}", path.display()))?;
-        let snapshot: PluginStateSnapshot = serde_json::from_slice(&bytes)
-            .map_err(|error| format!("invalid plugin state {}: {error}", path.display()))?;
+        let path = super::local_input_path(base, path)
+            .map_err(|error| ResolveError::new("state", error))?;
+        super::record_dependency(dependencies, &path)
+            .map_err(|error| ResolveError::new("state", error))?;
+        let bytes = std::fs::read(&path).map_err(|error| {
+            ResolveError::new(
+                "state",
+                format!("could not read plugin state {}: {error}", path.display()),
+            )
+        })?;
+        let snapshot: PluginStateSnapshot = serde_json::from_slice(&bytes).map_err(|error| {
+            ResolveError::new(
+                "state",
+                format!("invalid plugin state {}: {error}", path.display()),
+            )
+        })?;
         crate::plugins::validate_plugin_state(&snapshot, &entry)
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| ResolveError::new("state", error))?;
         if let Some(data) = &snapshot.state_data {
             base64::engine::general_purpose::STANDARD
                 .decode(data)
-                .map_err(|error| format!("invalid plugin state base64: {error}"))?;
+                .map_err(|error| {
+                    ResolveError::new("state", format!("invalid plugin state base64: {error}"))
+                })?;
         }
         plugin.parameter_values = snapshot.parameter_values;
         plugin.state_data = snapshot.state_data;
@@ -45,7 +73,7 @@ pub(super) fn resolve_plugin(
     if !vst3.patch.is_empty() {
         plugin.state_data = Some(
             crate::plugins::state_document::patch(plugin.state_data.as_deref(), &vst3.patch)
-                .map_err(|error| error.to_string())?,
+                .map_err(|error| ResolveError::new("patch", error))?,
         );
     }
     Ok(ResolvedPlugin { entry, plugin })
@@ -131,6 +159,7 @@ mod tests {
             )
             .err()
             .unwrap()
+            .message
             .contains("relative")
         );
         outside.state = Some(state_path.to_string_lossy().into_owned());
@@ -144,6 +173,7 @@ mod tests {
             )
             .err()
             .unwrap()
+            .message
             .contains("relative")
         );
 
@@ -176,6 +206,7 @@ mod tests {
             )
             .err()
             .unwrap()
+            .message
             .contains("different VST3")
         );
 
@@ -192,6 +223,7 @@ mod tests {
             )
             .err()
             .unwrap()
+            .message
             .contains("base64")
         );
         std::fs::remove_dir_all(root).unwrap();

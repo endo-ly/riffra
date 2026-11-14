@@ -434,7 +434,7 @@ fn resolve_production(
                              source: &score::production::SourceSpec,
                              score_key: String|
      -> Result<(), ImportError> {
-        let mut resolve = || -> Result<SourceResolution, String> {
+        let mut resolve = || -> Result<SourceResolution, plugin_source::ResolveError> {
             let vst3 = source.vst3.clone();
             let plugin = plugin_source::resolve_plugin(
                 data_root,
@@ -445,9 +445,9 @@ fn resolve_production(
             )?;
             Ok((plugin, vst3, source.velocity.clone()))
         };
-        let (plugin, spec, velocity) = resolve().map_err(|message| ImportError {
-            details: plan.source_detail(&field, &message),
-            message,
+        let (plugin, spec, velocity) = resolve().map_err(|error| ImportError {
+            details: plan.source_detail(&format!("{field}.vst3.{}", error.field), &error.message),
+            message: error.message,
         })?;
         let displays =
             parameters::display_requests(&spec.params).map_err(|message| ImportError {
@@ -485,7 +485,7 @@ fn resolve_production(
      -> Result<(), ImportError> {
         for (index, effect) in effects.iter().enumerate() {
             let path = format!("{field}[{index}]");
-            let mut resolve = || -> Result<EffectResolution, String> {
+            let mut resolve = || -> Result<EffectResolution, plugin_source::ResolveError> {
                 let vst3 = effect.vst3.clone();
                 let plugin = plugin_source::resolve_plugin(
                     data_root,
@@ -496,9 +496,10 @@ fn resolve_production(
                 )?;
                 Ok((plugin, vst3, effect.bypassed.unwrap_or(false)))
             };
-            let (plugin, spec, bypassed) = resolve().map_err(|message| ImportError {
-                details: plan.source_detail(&path, &message),
-                message,
+            let (plugin, spec, bypassed) = resolve().map_err(|error| ImportError {
+                details: plan
+                    .source_detail(&format!("{path}.vst3.{}", error.field), &error.message),
+                message: error.message,
             })?;
             uses.insert(
                 path.clone(),
@@ -4270,6 +4271,111 @@ mod tests {
         assert!(!inspection.automation.is_empty());
         assert!(!root.join("assets").exists());
         assert!(!root.join("instruments").exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn production_diagnostics_identify_plugin_state_and_patch_fields() {
+        use crate::api::output::{
+            PluginEntry, PluginFormat, PluginRole, PluginScanState, ScanReport,
+        };
+        let root =
+            std::env::temp_dir().join(format!("riffra-score-diagnostics-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(&root).unwrap();
+        let entries = [
+            ("Bass", PluginRole::Instrument),
+            ("Drums", PluginRole::Instrument),
+            ("Compressor", PluginRole::Effect),
+            ("EQ", PluginRole::Effect),
+            ("Reverb", PluginRole::Effect),
+        ];
+        let plugins = entries
+            .into_iter()
+            .map(|(name, role)| {
+                let path = root.join(format!("{name}.vst3"));
+                std::fs::create_dir_all(&path).unwrap();
+                PluginEntry {
+                    id: name.into(),
+                    name: name.into(),
+                    vendor: None,
+                    version: None,
+                    identifier: Some(format!("{name}-class")),
+                    format: PluginFormat::Vst3,
+                    role: Some(role),
+                    path: path.to_string_lossy().into_owned(),
+                    bundle: true,
+                    modified_at_ms: None,
+                    scan_state: PluginScanState::Validated,
+                }
+            })
+            .collect();
+        crate::plugins::catalog::save(
+            &root,
+            &ScanReport {
+                root: root.to_string_lossy().into_owned(),
+                started_at_ms: 0,
+                finished_at_ms: 0,
+                plugins,
+                issues: vec![],
+            },
+        )
+        .unwrap();
+        let path = root.join("score.yaml");
+        for (owner, expected) in [
+            ("plugin", "instruments.bass.source.vst3.plugin"),
+            ("source", "instruments.bass.source.vst3.state"),
+            ("invalid", "instruments.bass.source.vst3.state"),
+            ("mismatch", "instruments.bass.source.vst3.state"),
+            ("kit", "kits.drums.source.vst3.state"),
+            ("effect", "instruments.bass.effects[0].vst3.state"),
+            ("patch", "instruments.bass.source.vst3.patch"),
+        ] {
+            let mut score: Value = serde_json::from_str(PRODUCTION).unwrap();
+            match owner {
+                "plugin" => {
+                    score["instruments"]["bass"]["source"]["vst3"]["plugin"] = json!("Missing")
+                }
+                "source" => {
+                    score["instruments"]["bass"]["source"]["vst3"]["state"] = json!("missing.json")
+                }
+                "invalid" | "mismatch" => {
+                    let contents = if owner == "invalid" {
+                        "{".to_owned()
+                    } else {
+                        json!({"schemaVersion":2,"pluginIdentifier":"other-class","pluginPath":"old", "parameterValues":[], "stateData":null}).to_string()
+                    };
+                    std::fs::write(root.join("invalid.json"), contents).unwrap();
+                    score["instruments"]["bass"]["source"]["vst3"]["state"] = json!("invalid.json");
+                }
+                "kit" => score["kits"]["drums"]["source"]["vst3"]["state"] = json!("missing.json"),
+                "effect" => {
+                    score["instruments"]["bass"]["effects"][0]["vst3"]["state"] =
+                        json!("missing.json")
+                }
+                "patch" => {
+                    std::fs::write(root.join("state.json"), json!({"schemaVersion":2,"pluginIdentifier":"Bass-class","pluginPath":"old", "parameterValues":[], "stateData":null}).to_string()).unwrap();
+                    let vst3 = &mut score["instruments"]["bass"]["source"]["vst3"];
+                    vst3["state"] = json!("state.json");
+                    vst3["patch"] = json!([{"op":"set", "path":"Plugin/Mode", "value":"Warm"}]);
+                }
+                _ => unreachable!(),
+            }
+            std::fs::write(&path, score.to_string()).unwrap();
+            let result = validate(
+                &path,
+                &BTreeMap::new(),
+                &root,
+                crate::test_support::empty_built_in_catalog(),
+                Path::new("unused-scanner"),
+                Path::new("unavailable-sonalloy"),
+            );
+            assert!(!result.valid, "{owner}");
+            assert_eq!(result.diagnostics[0].path, expected, "{owner}");
+            assert!(
+                result.diagnostics[0].line > 0 && result.diagnostics[0].column > 0,
+                "{owner}"
+            );
+        }
         std::fs::remove_dir_all(root).unwrap();
     }
 
