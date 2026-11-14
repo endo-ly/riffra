@@ -261,6 +261,7 @@ pub struct AudioMeasurements {
     /// Per-marker sections; empty when the session has no marker.
     pub sections: Vec<SectionMeasurement>,
     /// Per-Score section occurrences; empty when the Project is not linked to a Score.
+    #[serde(default)]
     pub score_sections: Vec<ScoreSectionMeasurement>,
 }
 
