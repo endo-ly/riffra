@@ -2697,7 +2697,7 @@ pub enum RenderCommand {
     /// is the sequence precondition for the project state being rendered. Success returns a Job;
     /// use --wait to return its terminal state, or `job wait` to follow it later. `job wait`
     /// without --timeout-ms waits until a terminal state.
-    /// --out copies the completed WAV to an absolute path without replacing an existing file.
+    /// --output-path copies the completed WAV to an absolute path without replacing an existing file.
     Start(RenderStartArgs),
     /// Render several Tracks to aligned WAV stems under one job and directory.
     ///
@@ -2735,7 +2735,7 @@ pub struct RenderStartArgs {
     pub track_id: Option<String>,
     /// Copy the completed WAV to this path without replacing an existing file.
     #[arg(long)]
-    pub out: Option<PathBuf>,
+    pub output_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -2760,24 +2760,24 @@ pub struct RenderStemsArgs {
     pub end: Option<String>,
     /// Copy completed stem WAVs to this existing directory without replacing files.
     #[arg(long)]
-    pub out: Option<PathBuf>,
+    pub output_directory: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
 pub struct RenderExportArgs {
     /// Render directory name returned by render list.
     #[arg(long)]
-    pub id: String,
+    pub render_id: String,
     /// Absolute or working-directory-relative WAV path, or an existing directory for stems.
     #[arg(long)]
-    pub out: PathBuf,
+    pub output_path: PathBuf,
 }
 
 #[derive(Debug, Args)]
 pub struct RenderDeleteArgs {
     /// Render directory name returned by render list.
     #[arg(long)]
-    pub id: String,
+    pub render_id: String,
 }
 
 #[derive(Debug, Subcommand)]
@@ -3919,8 +3919,8 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
             RenderCommand::Start(args) => render_start(args)?,
             RenderCommand::Stems(args) => render_stems(args)?,
             RenderCommand::Export(args) => Runtime::RenderExport(RenderExportParams {
-                render_id: args.id,
-                output_path: args.out.to_string_lossy().into_owned(),
+                render_id: args.render_id,
+                output_path: args.output_path.to_string_lossy().into_owned(),
             })
             .into(),
             RenderCommand::Settings { command } => match command {
@@ -3931,9 +3931,10 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
                 .into(),
             },
             RenderCommand::List => Runtime::RenderList(EmptyParams {}).into(),
-            RenderCommand::Delete(args) => {
-                Runtime::RenderDelete(RenderDeleteParams { render_id: args.id }).into()
-            }
+            RenderCommand::Delete(args) => Runtime::RenderDelete(RenderDeleteParams {
+                render_id: args.render_id,
+            })
+            .into(),
         },
         CliCommand::Job { command } => match command {
             JobCommand::Get(args) => Runtime::JobGet(IdParams { id: args.into_id() }).into(),
@@ -4030,7 +4031,9 @@ fn render_start(args: RenderStartArgs) -> Result<ControlCommand, RequestError> {
             range,
             normalize: args.normalize.unwrap_or(false),
             track_id: args.track_id,
-            output_path: args.out.map(|path| path.to_string_lossy().into_owned()),
+            output_path: args
+                .output_path
+                .map(|path| path.to_string_lossy().into_owned()),
         }),
     })
     .into())
@@ -4044,7 +4047,9 @@ fn render_stems(args: RenderStemsArgs) -> Result<ControlCommand, RequestError> {
         all_tracks: args.all_tracks,
         track_ids: args.track_ids,
         range: render_range(args.range, args.start, args.end, "/range")?,
-        output_directory: args.out.map(|path| path.to_string_lossy().into_owned()),
+        output_directory: args
+            .output_directory
+            .map(|path| path.to_string_lossy().into_owned()),
     })
     .into())
 }
@@ -4625,7 +4630,14 @@ mod tests {
     #[test]
     fn render_output_paths_are_absolute_and_export_is_a_runtime_command() {
         let render = wire(
-            Cli::try_parse_from(["riffra", "render", "start", "--out", "exports/mix.wav"]).unwrap(),
+            Cli::try_parse_from([
+                "riffra",
+                "render",
+                "start",
+                "--output-path",
+                "exports/mix.wav",
+            ])
+            .unwrap(),
         );
         assert_eq!(render.name, "render.start");
         assert!(
@@ -4645,9 +4657,9 @@ mod tests {
                 "riffra",
                 "render",
                 "export",
-                "--id",
+                "--render-id",
                 "render-123-abcd",
-                "--out",
+                "--output-path",
                 "exports/copy.wav",
             ])
             .unwrap(),
@@ -4661,7 +4673,14 @@ mod tests {
             "render.list"
         );
         let clean = wire(
-            Cli::try_parse_from(["riffra", "render", "delete", "--id", "render-123-abcd"]).unwrap(),
+            Cli::try_parse_from([
+                "riffra",
+                "render",
+                "delete",
+                "--render-id",
+                "render-123-abcd",
+            ])
+            .unwrap(),
         );
         assert_eq!(clean.name, "render.delete");
         assert_eq!(clean.params["renderId"], "render-123-abcd");
