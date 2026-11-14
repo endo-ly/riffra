@@ -153,6 +153,7 @@ mod tests {
             index,
             parameter_id: Some(format!("id-{index}")),
             name: name.into(),
+            default_value: 0.0,
             automatable: true,
             discrete: false,
             choices: choices

@@ -130,6 +130,8 @@ pub(crate) struct ParameterInfo {
     pub(crate) parameter_id: Option<String>,
     pub(crate) name: String,
     #[serde(default)]
+    pub(crate) default_value: f32,
+    #[serde(default)]
     pub(crate) automatable: bool,
     #[serde(default)]
     pub(crate) discrete: bool,
@@ -221,6 +223,8 @@ pub(crate) fn describe_parameters(
             || usize::try_from(parameter.index)
                 .ok()
                 .is_none_or(|index| index >= description.parameter_values.len())
+            || !parameter.default_value.is_finite()
+            || !(0.0..=1.0).contains(&parameter.default_value)
             || parameter
                 .choices
                 .iter()
