@@ -1,5 +1,6 @@
 //! The fixed MCP tool surface and its action-to-Control-Command mapping.
 
+use riffra_runtime::api::client;
 use riffra_runtime::api::{
     batchable_command_names, command_params_allow_omitted, command_params_subschema,
 };
@@ -41,9 +42,13 @@ pub(crate) fn resolve_action<'a>(
     arguments: &JsonObject,
 ) -> Result<&'a ActionDef, String> {
     match arguments.get("action") {
-        Some(Value::String(name)) => tool
-            .action(name)
-            .ok_or_else(|| format!("unknown action for {}: {name}", tool.name)),
+        Some(Value::String(name)) => tool.action(name).ok_or_else(|| {
+            format!(
+                "unknown action for {}: {name}; expected one of {}",
+                tool.name,
+                action_names(tool).join(", ")
+            )
+        }),
         Some(_) => Err(format!("action must be a string for {}", tool.name)),
         None => tool
             .actions
@@ -51,6 +56,13 @@ pub(crate) fn resolve_action<'a>(
             .find(|action| action.action.is_none())
             .ok_or_else(|| format!("action is required for {}", tool.name)),
     }
+}
+
+fn action_names(tool: &ToolDef) -> Vec<&'static str> {
+    tool.actions
+        .iter()
+        .filter_map(|action| action.action)
+        .collect()
 }
 
 const fn action(action: &'static str, command: &'static str) -> ActionDef {
@@ -794,6 +806,7 @@ fn tool_input_schema(definition: &'static ToolDef) -> Result<ToolSchema, String>
         }
         action_schemas.push(action);
     }
+    advertise_field_files(&mut definitions, &actions);
     let mut root = Map::new();
     root.insert("type".into(), json!("object"));
     if definition.actions.len() == 1 && definition.actions[0].action.is_none() {
@@ -806,7 +819,7 @@ fn tool_input_schema(definition: &'static ToolDef) -> Result<ToolSchema, String>
         };
         root.extend(branch);
     } else {
-        root.insert("oneOf".into(), Value::Array(actions));
+        root.extend(action_selector(definition, &actions)?);
     }
     if !definitions.is_empty() {
         root.insert("$defs".into(), Value::Object(definitions));
@@ -815,6 +828,154 @@ fn tool_input_schema(definition: &'static ToolDef) -> Result<ToolSchema, String>
         root: Value::Object(root),
         actions: action_schemas,
     })
+}
+
+/// Describes a multi-action tool as one flat object.
+///
+/// MCP clients do not reliably present a top-level `oneOf`, so the published
+/// schema names every action in an enum and lists each action's params type.
+/// The per-action schemas still validate every call exactly.
+fn action_selector(
+    definition: &'static ToolDef,
+    actions: &[Value],
+) -> Result<Map<String, Value>, String> {
+    let mut params_by_action = Vec::with_capacity(actions.len());
+    let mut params_schemas: Vec<Value> = Vec::new();
+    for (action, branch) in definition.actions.iter().zip(actions) {
+        let name = action
+            .action
+            .ok_or_else(|| format!("{} mixes direct and named actions", definition.name))?;
+        let params = branch
+            .pointer("/properties/params")
+            .ok_or_else(|| format!("{}.{name} schema has no params", definition.name))?;
+        let type_name = params
+            .get("$ref")
+            .and_then(Value::as_str)
+            .and_then(|reference| reference.strip_prefix("#/$defs/"))
+            .ok_or_else(|| {
+                format!(
+                    "{}.{name} params must reference a schema definition",
+                    definition.name
+                )
+            })?;
+        let optional = if params_optional(action) {
+            " (optional)"
+        } else {
+            ""
+        };
+        params_by_action.push(format!("{name} -> {type_name}{optional}"));
+        if !params_schemas.contains(params) {
+            params_schemas.push(params.clone());
+        }
+    }
+    let names = action_names(definition);
+    let mut properties = Map::new();
+    properties.insert(
+        "action".into(),
+        json!({
+            "type": "string",
+            "enum": names,
+            "description": format!("Params type by action: {}.", params_by_action.join(", "))
+        }),
+    );
+    properties.insert("params".into(), json!({ "anyOf": params_schemas }));
+    properties.extend(expectation_properties());
+    let mut selector = Map::new();
+    selector.insert("properties".into(), Value::Object(properties));
+    selector.insert("required".into(), json!(["action"]));
+    selector.insert("additionalProperties".into(), json!(false));
+    Ok(selector)
+}
+
+fn expectation_properties() -> Map<String, Value> {
+    let mut properties = Map::new();
+    properties.insert(
+        "expectedProjectId".into(),
+        json!({
+            "type": "string",
+            "description": "Require the command to run against this Project."
+        }),
+    );
+    properties.insert(
+        "expectedSequence".into(),
+        json!({
+            "type": "integer",
+            "minimum": 0,
+            "description": "Require the Project to be at this canonical sequence."
+        }),
+    );
+    properties
+}
+
+/// Publishes the `<field>File` alternative of every JSON-valued top-level param.
+///
+/// Field files are read by the MCP server before validation, so only the published
+/// schema names them; the per-action validators see the loaded values.
+fn advertise_field_files(definitions: &mut Map<String, Value>, actions: &[Value]) {
+    let params_types = actions
+        .iter()
+        .filter_map(|action| action.pointer("/properties/params/$ref"))
+        .filter_map(Value::as_str)
+        .filter_map(|reference| reference.strip_prefix("#/$defs/"))
+        .map(str::to_owned)
+        .collect::<std::collections::BTreeSet<_>>();
+    for params_type in params_types {
+        let json_valued = definitions
+            .get(&params_type)
+            .and_then(|params| params.get("properties"))
+            .and_then(Value::as_object)
+            .map(|properties| {
+                properties
+                    .iter()
+                    .filter(|(_, schema)| is_json_valued(schema, definitions))
+                    .map(|(name, _)| name.clone())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let Some(Value::Object(params)) = definitions.get_mut(&params_type) else {
+            continue;
+        };
+        for field in json_valued {
+            if let Some(Value::Object(properties)) = params.get_mut("properties") {
+                properties.insert(
+                    format!("{field}{}", client::FIELD_FILE_SUFFIX),
+                    json!({
+                        "type": "string",
+                        "description": format!(
+                            "Path to a JSON file holding `{field}`; use instead of `{field}` for large input. Relative paths resolve against the MCP server's working directory."
+                        )
+                    }),
+                );
+            }
+            if let Some(Value::Array(required)) = params.get_mut("required") {
+                required.retain(|name| name != &Value::String(field.clone()));
+            }
+        }
+    }
+}
+
+fn is_json_valued(schema: &Value, definitions: &Map<String, Value>) -> bool {
+    if let Some(reference) = schema.get("$ref").and_then(Value::as_str) {
+        return reference
+            .strip_prefix("#/$defs/")
+            .and_then(|name| definitions.get(name))
+            .is_some_and(|definition| is_json_valued(definition, definitions));
+    }
+    if let Some(variants) = schema
+        .get("anyOf")
+        .or_else(|| schema.get("oneOf"))
+        .and_then(Value::as_array)
+    {
+        return variants
+            .iter()
+            .any(|variant| is_json_valued(variant, definitions));
+    }
+    let structured = |kind: &Value| matches!(kind.as_str(), Some("array" | "object"));
+    match schema.get("type") {
+        Some(Value::Array(kinds)) => kinds.iter().any(structured),
+        Some(kind) => structured(kind),
+        None => schema.get("properties").is_some(),
+    }
 }
 
 fn constrain_batch_commands(definitions: &mut Map<String, Value>) -> Result<(), String> {
@@ -864,7 +1025,9 @@ fn action_branch(
         properties.insert(
             "params".into(),
             if tool.name == "job" && action_name == "wait" {
-                json!({
+                generator.definitions_mut().insert(
+                    "JobWaitParams".into(),
+                    json!({
                     "type": "object",
                     "description": "Job reference and optional wait budget.",
                     "properties": {
@@ -877,7 +1040,9 @@ fn action_branch(
                     },
                     "required": ["id"],
                     "additionalProperties": false
-                })
+                    }),
+                );
+                json!({ "$ref": "#/$defs/JobWaitParams" })
             } else {
                 command_params_subschema(action.command, generator)
                     .ok_or_else(|| {
@@ -910,21 +1075,7 @@ fn action_branch(
             properties.insert("params".into(), params);
         }
     }
-    properties.insert(
-        "expectedProjectId".into(),
-        json!({
-            "type": "string",
-            "description": "Require the command to run against this Project."
-        }),
-    );
-    properties.insert(
-        "expectedSequence".into(),
-        json!({
-            "type": "integer",
-            "minimum": 0,
-            "description": "Require the Project to be at this canonical sequence."
-        }),
-    );
+    properties.extend(expectation_properties());
     let mut required = Vec::new();
     if action.action.is_some() {
         required.push(json!("action"));
@@ -1189,6 +1340,45 @@ mod tests {
     }
 
     #[test]
+    fn json_valued_params_publish_a_field_file_alternative() {
+        // Arrange
+        let tools = build_tools().unwrap();
+        let music_note = tools
+            .iter()
+            .find(|tool| tool.tool.name == "music_note")
+            .unwrap();
+        let insert = music_note.tool.input_schema["$defs"]["MusicalNoteInsertParams"].clone();
+        let validator = music_note.action_validator(Some("insert")).unwrap();
+        let notes_file =
+            std::env::temp_dir().join(format!("riffra-mcp-notes-{}.json", std::process::id()));
+        std::fs::write(
+            &notes_file,
+            r#"[{"pitch":"C4","position":"1:1","duration":"1/4"}]"#,
+        )
+        .unwrap();
+        let mut input = json!({
+            "action": "insert",
+            "params": {"clipId": "midi-clip:1", "notesFile": notes_file}
+        });
+
+        // Act
+        let resolved = client::resolve_field_files("music.note.insert", &mut input["params"]);
+        std::fs::remove_file(&notes_file).unwrap();
+
+        // Assert
+        assert!(insert["properties"]["notesFile"].is_object());
+        assert!(insert["properties"]["clipIdFile"].is_null());
+        assert!(
+            !insert["required"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("notes"))
+        );
+        resolved.unwrap();
+        assert!(validator.is_valid(&input), "{input}");
+    }
+
+    #[test]
     fn session_apply_schema_lists_batchable_commands() {
         // Arrange
         let definition = TOOLS
@@ -1238,42 +1428,107 @@ mod tests {
     }
 
     #[test]
+    fn published_schemas_name_every_action_without_a_top_level_choice() {
+        // Arrange
+        let tools = build_tools().unwrap();
+
+        // Act / Assert
+        for tool in &tools {
+            let schema = &tool.tool.input_schema;
+            assert!(!schema.contains_key("oneOf"), "{}", tool.tool.name);
+            let names = action_names(tool.definition);
+            if names.is_empty() {
+                continue;
+            }
+            let listed = schema["properties"]["action"]["enum"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|name| name.as_str().unwrap())
+                .collect::<Vec<_>>();
+            assert_eq!(listed, names, "{}", tool.tool.name);
+        }
+        let device = tools
+            .iter()
+            .find(|tool| tool.tool.name == "device")
+            .unwrap();
+        assert!(
+            device.tool.input_schema["properties"]["action"]["description"]
+                .as_str()
+                .unwrap()
+                .contains("parameter_set -> DeviceParameterSetParams")
+        );
+        assert!(device.validator.is_valid(&json!({
+            "action": "parameter_set",
+            "params": {"owner": {"kind": "master"}, "deviceId": "d", "parameterIndex": 0, "value": 0.5}
+        })));
+        assert!(
+            !device
+                .validator
+                .is_valid(&json!({"action": "setParameter"}))
+        );
+    }
+
+    #[test]
+    fn unknown_actions_name_the_valid_ones() {
+        // Arrange
+        let device = TOOLS.iter().find(|tool| tool.name == "device").unwrap();
+        let arguments = json!({"action": "set"}).as_object().unwrap().clone();
+
+        // Act
+        let error = resolve_action(device, &arguments).err().unwrap();
+
+        // Assert
+        assert!(error.contains("expected one of inspect"), "{error}");
+        assert!(error.contains("parameter_set"), "{error}");
+    }
+
+    #[test]
     fn schemas_enforce_action_and_params_structure() {
         // Arrange
         let tools = build_tools().unwrap();
-        let tool = |name: &str| tools.iter().find(|tool| tool.tool.name == name).unwrap();
+        let tool = |name: &str| {
+            let tool = tools.iter().find(|tool| tool.tool.name == name).unwrap();
+            move |input: Value| {
+                let arguments = input.as_object().unwrap();
+                resolve_action(tool.definition, arguments)
+                    .ok()
+                    .and_then(|action| tool.action_validator(action.action))
+                    .is_some_and(|validator| validator.is_valid(&input))
+            }
+        };
 
         // Act / Assert
-        assert!(tool("clip_audio").validator.is_valid(&json!({
+        assert!(tool("clip_audio")(json!({
             "action": "list"
         })));
-        assert!(tool("clip_audio").validator.is_valid(&json!({
+        assert!(tool("clip_audio")(json!({
             "action": "update",
             "params": {"clipId": "clip:1", "patch": {"muted": true}}
         })));
-        assert!(!tool("clip_audio").validator.is_valid(&json!({
+        assert!(!tool("clip_audio")(json!({
             "action": "update"
         })));
-        assert!(!tool("clip_audio").validator.is_valid(&json!({
+        assert!(!tool("clip_audio")(json!({
             "action": "unknown"
         })));
-        assert!(!tool("clip_audio").validator.is_valid(&json!({
+        assert!(!tool("clip_audio")(json!({
             "action": "list",
             "unexpected": true
         })));
-        assert!(tool("host_shutdown").validator.is_valid(&json!({})));
-        assert!(!tool("host_shutdown").validator.is_valid(&json!({
+        assert!(tool("host_shutdown")(json!({})));
+        assert!(!tool("host_shutdown")(json!({
             "params": {}
         })));
-        assert!(tool("project_restore").validator.is_valid(&json!({
+        assert!(tool("project_restore")(json!({
             "params": {"fileName": "generation.riffra"}
         })));
-        assert!(!tool("project_restore").validator.is_valid(&json!({})));
-        assert!(tool("job").validator.is_valid(&json!({
+        assert!(!tool("project_restore")(json!({})));
+        assert!(tool("job")(json!({
             "action": "wait",
             "params": {"id": "job:1", "timeoutMs": 1000}
         })));
-        assert!(!tool("job").validator.is_valid(&json!({
+        assert!(!tool("job")(json!({
             "action": "wait",
             "params": {"id": "job:1", "timeoutMs": -1}
         })));

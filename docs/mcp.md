@@ -42,7 +42,7 @@ cargo run -p riffra-mcp -- --host <instance-id>
 
 ## ツールの呼び方
 
-MCPツールは操作対象ごとにグループ化され、複数のControl Commandを持つツールは `action` で命令を選ぶ。`params` はControl CommandのcamelCase JSONと一致する。ツールの入力スキーマは各actionの `params` 型から生成され、未知のaction、未知のフィールド、必須値の欠落はHostへ送る前に拒否される。
+MCPツールは操作対象ごとにグループ化され、複数のControl Commandを持つツールは `action` で命令を選ぶ。`params` はControl CommandのcamelCase JSONと一致する。ツールの入力スキーマは、`action` の候補を列挙し、各actionが受け取る `params` 型を `action` の説明に示す（トップレベルの `oneOf` はクライアントが最初の分岐しか見せないことがあるため使わない）。呼び出しは選ばれたactionの `params` 型で検証され、未知のaction、未知のフィールド、必須値の欠落はHostへ送る前に拒否される。
 
 ```json
 {
@@ -55,6 +55,8 @@ MCPツールは操作対象ごとにグループ化され、複数のControl Com
   "expectedSequence": 42
 }
 ```
+
+JSON値を持つフィールド `<field>` は、`<field>File`（例: `notesFile`）へJSONファイルのパスを渡すこともできる。MCPサーバーは検証の前にファイルを読み、値を `<field>` として展開するため、大きな値を要求本文へ埋め込まずに済む。`<field>` と `<field>File` は同時に指定できず、相対パスはMCPサーバーの作業ディレクトリを基準に解決する。`session_edit` の `apply` では、各operationの `params` にも同じ規則が適用される。
 
 `expectedProjectId` と `expectedSequence` は要求の事前条件であり、`params` には含めない。Projectに属する命令で `expectedProjectId` を省略すると、Hostの現在のactive Projectがその要求だけに適用される。複数の操作で同じProjectを編集する場合は、応答のsequenceを次の `expectedSequence` へ渡し、必要ならProject IDも引き回す。競合が返った場合は自動再送しない。
 

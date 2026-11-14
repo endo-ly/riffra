@@ -352,7 +352,7 @@ riffra --attach --interactive
 }
 ```
 
-- AttachedではCLIがstdin各行をフレームへ変換して送る。Hostは1接続内を受信順に処理し、CLIは応答を1行ずつflushする。フレームは8 MiB以下のUTF-8 JSONとする
+- AttachedではCLIがstdin各行をフレームへ変換して送る。Hostは1接続内を受信順に処理し、CLIは応答を1行ずつflushする。フレームは256 MiB以下のUTF-8 JSONとする。正準Sessionは不透明なPlugin Stateを丸ごと含むため、上限は実在のProjectではなく壊れた長さ表記を弾くための値である。応答がこれを超えた場合、Hostは接続を閉じずに `commandFailed` を返し、`sequence` には命令の結果の正準シーケンスを残す
 
 ### 7.2 応答とエラー
 
@@ -439,7 +439,7 @@ DesktopのTauri command境界とLive HostのControl Serverの機能分担は次�
 - `render.stems` は `allTracks` または `trackIds` のいずれか一方と共有 `range` を受け取り、接続先Hostの `RenderWorker` で1つの `renderStems` ジョブを開始する。結果には共通の開始・終了Tick、Sample Rate、フレーム数と各TrackのAsset ID・パスを含み、同じ内容を出力ディレクトリの `render.json` に保存する。明示IDが不正な要求はジョブ開始前に拒否する
 - `render.start` と `render.stems` は任意の出力先を指定でき、既存ファイルを上書きしない。`render.export` は完了済みRenderを指定先へコピーする
 - `analysis.measure` は保存済みWAVの区間測定を非同期Jobとして実行し、進捗・中止は既存Job契約を用いる。解析は楽曲や保存済みの測定値を変更しない。`analysis.inspect` は波形・RMS等の解析結果を同期的に返す
-- `render.list` は管理対象Renderを一覧表示する。`render.delete` はほかから参照されていない管理対象Renderを削除し、外部へExportしたファイルは削除しない
+- `render.list` は管理対象Renderを一覧表示する。`render.json` のうち所有ファイル(Asset ID・パス)と基本情報だけを一覧・Export・削除の根拠とし、現在の測定形式と合わない `measurements` は空にして `diagnostics` で知らせる。`render.delete` はほかから参照されていない管理対象Renderを削除し、外部へExportしたファイルは削除しない
 - `instrument.midi.get` はTrack InstrumentのMIDI設定と現在のClip Noteに対する警告を返す。`instrument.midi.set` は設定を保存し、Batch・Undo・Redoで扱える。演奏可能音域外でもMIDI範囲内のNoteは再生し、0〜127を超えるNoteは送信しない
 - 結果は全Stemの生成後にだけジョブへ設定される。キャンセルまたは失敗が先に確定した場合、作成済みのファイルとAsset登録を破棄する
 - `expectedSequence` は `render.start`、`render.stems`、`history.undo`、`history.redo` にも適用する。Conflict時は再Inspectしてやり直す。Revision tokenは同一 `AppCore` の有効期間内でのみ有効である

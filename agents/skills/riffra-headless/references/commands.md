@@ -266,6 +266,8 @@ riffra --data-root ./riffra-data serve --safe-mode
 
 `render start` の `--expected-sequence` はRender対象のCanonical snapshotを固定する。ConflictならWAVを作成せず、最新状態をInspectしてからRenderし直す。ワンショットでは `render start --wait` または `render stems --wait` で完了結果を待てる。非同期の応答は `type: "job"` のジョブIDを返し、ワンショットは `job wait JOB_ID`、interactiveは `job get` の繰り返しで追跡する。待機のタイムアウトは `job wait --timeout-ms` で指定でき、無指定なら終了まで待つ。停止には `job cancel` を使う。出力はDataRootの `renders/` 配下へ書き出される。`plugin scan --background` と `analysis measure` も同じ非同期ジョブである。`ok: true` は状態取得の成功を表し、Job自体の成功は `state: "completed"` で判断する。
 
+完成WAVをDataRootの外へ複製するときは、Mixが `render start --output-path`、Stemが `render stems --output-directory` で出力先を指定する。保存済みRenderの取り出しは `render export --render-id --output-path`、削除は `render delete --render-id` で行う。
+
 Stem Render(`render stems`)は一度の要求で複数Trackを同じ時間基準のWAVへ書き出す。全WAVで開始Tick、終了Tick、Sample Rate、フレーム数を揃え、個別の正規化とMasteringは行わない。共有する非線形Effectでは、Stemの合計と全体Mixが一致しない場合がある。StemとMasteringの設計上の扱いは[音声エンジンの設計](../../../../docs/audio-engine.md)を参照。
 
 Job結果と`render.json`の`measurements`には完成WAVのSample Peakとラウドネス測定を含む。通常Renderで測定器(FFmpeg)を利用できない場合は成功結果のラウドネス測定に`unavailable`と理由を返し、Masteringを要求したJobでの測定失敗はJob失敗になる。区間ごとの音量や帯域バランスの判断には`measurements.sections`を使う。

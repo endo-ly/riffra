@@ -5,6 +5,7 @@
 //! of the Standalone dispatcher and the live Host.
 
 pub mod agent_response;
+pub mod client;
 mod decode;
 pub mod output;
 pub mod params;

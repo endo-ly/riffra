@@ -7,6 +7,7 @@ use crate::tools::{ToolDef, ToolSpec, build_tools};
 use clap::Parser;
 use riffra_control::ErrorCode;
 use riffra_control::ProtocolError;
+use riffra_runtime::api::client;
 use rmcp::model::{
     CacheScope, CallToolRequestParams, CallToolResponse, Implementation, ListToolsResult,
     PaginatedRequestParams, ServerCapabilities, ServerConfig, Tool,
@@ -78,7 +79,7 @@ impl ServerHandler for RiffraMcp {
         let tool = self.tool(&request.name).ok_or_else(|| {
             rmcp::ErrorData::invalid_params(format!("unknown tool: {}", request.name), None)
         })?;
-        let arguments = request.arguments.unwrap_or_default();
+        let mut arguments = request.arguments.unwrap_or_default();
         let action = match tools::resolve_action(tool.definition, &arguments) {
             Ok(action) => action,
             Err(message) => {
@@ -89,6 +90,15 @@ impl ServerHandler for RiffraMcp {
                 .into());
             }
         };
+        if let Some(params) = arguments.get_mut("params")
+            && let Err(message) = client::resolve_field_files(action.command, params)
+        {
+            return Ok(dispatch::tool_error(
+                ProtocolError::new(ErrorCode::InvalidRequest, message)
+                    .with_details(serde_json::json!({ "path": "/params" })),
+            )
+            .into());
+        }
         let Some(validator) = tool.action_validator(action.action) else {
             return Ok(dispatch::tool_error(ProtocolError::new(
                 ErrorCode::CommandFailed,
