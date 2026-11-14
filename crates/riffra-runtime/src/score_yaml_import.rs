@@ -4625,6 +4625,151 @@ mod tests {
     }
 
     #[test]
+    fn production_build_attaches_performance_controls_to_every_lane_and_kit() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-score-performance-controls-{}",
+            riffra_control::new_instance_id()
+        ));
+        let store = store(&root);
+        let score = r#"{
+            "meta":{"title":"Controls","bpm":120,"meter":"4/4","tuning":"12edo","gate":1},
+            "form":[{"section":"verse","bars":1,"tonic":"C","scale":"ionian"}],
+            "instruments":{
+                "bass":{"source":{
+                    "vst3":{"plugin":"Bass"},
+                    "articulations":{
+                        "default":{"keyswitch":24,"mode":"latch"},
+                        "mute":{"keyswitch":26,"mode":"latch"},
+                        "open":{"keyswitch":27,"mode":"hold"},
+                        "expression":{"cc":{"number":11,"value":96,"reset":64}}
+                    }
+                }},
+                "kick":{"kit":"drums","trigger_note_midi":36}
+            },
+            "kits":{"drums":{
+                "source":{
+                    "vst3":{"plugin":"Drums"},
+                    "articulations":{
+                        "default":{"keyswitch":24,"mode":"latch"},
+                        "mute":{"keyswitch":26,"mode":"latch"}
+                    }
+                }
+            }},
+            "sections":{"verse":{
+                "lines":{"main":{"instrument":"bass","melody":"theme"}},
+                "placements":[{"instrument":"bass","degree":"1","at":{"bar":1,"step":1},"duration_steps":1,"gain_db":-3}],
+                "events":[
+                    {"kind":"articulation","instrument":"bass","name":"mute","at":{"bar":1,"step":1},"duration_quarters":2},
+                    {"kind":"articulation","instrument":"bass","name":"expression","at":{"bar":1,"step":9},"duration_quarters":1},
+                    {"kind":"articulation","instrument":"bass","name":"open","at":{"bar":1,"step":13},"duration_quarters":1},
+                    {"kind":"cc","instrument":"bass","number":1,"value":100,"at":{"bar":1,"step":15}},
+                    {"kind":"articulation","instrument":"drums","name":"mute","at":{"bar":1,"step":1},"duration_quarters":2},
+                    {"kind":"hit","instrument":"kick","at":{"bar":1,"step":1}}
+                ]
+            }},
+            "melodies":{"theme":["1 - - - | 3 - - - | 5 - - - | 1' - - -"]}
+        }"#;
+        let mut document = production_document(score);
+        let mut staged = StagedResources::new(&root);
+        let session = build(&mut document, None, &store, &mut staged, BuildMode::Stage)
+            .expect("production build");
+
+        let bass_tracks = session
+            .arrangement
+            .tracks
+            .iter()
+            .filter(|track| track.score_instrument.as_deref() == Some("bass"))
+            .collect::<Vec<_>>();
+        assert_eq!(bass_tracks.len(), 2);
+        for track in &bass_tracks {
+            let clip = session
+                .arrangement
+                .midi_clips
+                .iter()
+                .find(|clip| clip.track_id == track.id)
+                .expect("bass clip");
+            assert!(clip.instrument_control_events.iter().any(|event| matches!(
+                event.kind,
+                InstrumentControlEventKind::KeySwitch {
+                    note: 26,
+                    mode: KeySwitchMode::Latch,
+                    down: true
+                }
+            )));
+            assert!(clip.instrument_control_events.iter().any(|event| matches!(
+                event.kind,
+                InstrumentControlEventKind::KeySwitch {
+                    note: 27,
+                    mode: KeySwitchMode::Hold,
+                    down: true
+                }
+            )));
+            assert!(clip.instrument_control_events.iter().any(|event| matches!(
+                event.kind,
+                InstrumentControlEventKind::ControlChange {
+                    number: 11,
+                    value: 96
+                }
+            )));
+            assert!(clip.instrument_control_events.iter().any(|event| matches!(
+                event.kind,
+                InstrumentControlEventKind::ControlChange {
+                    number: 1,
+                    value: 100
+                }
+            )));
+        }
+        let kit = session
+            .arrangement
+            .tracks
+            .iter()
+            .find(|track| track.score_instrument.as_deref() == Some("kit:drums"))
+            .expect("kit track");
+        let kit_clip = session
+            .arrangement
+            .midi_clips
+            .iter()
+            .find(|clip| clip.track_id == kit.id)
+            .expect("kit clip");
+        assert!(kit_clip.instrument_control_events.iter().any(|event| matches!(
+            event.kind,
+            InstrumentControlEventKind::KeySwitch {
+                note: 26,
+                mode: KeySwitchMode::Latch,
+                down: true
+            }
+        )));
+        assert_eq!(session.arrangement.tracks.len(), 3);
+
+        let device_ids = session
+            .arrangement
+            .tracks
+            .iter()
+            .map(|track| track.instrument.as_ref().map(|instrument| instrument.id.clone()))
+            .collect::<Vec<_>>();
+        let mut again = production_document(score);
+        let rebuilt = build(
+            &mut again,
+            Some(&session),
+            &store,
+            &mut staged,
+            BuildMode::Stage,
+        )
+        .expect("performance control rebuild");
+        assert_eq!(
+            rebuilt
+                .arrangement
+                .tracks
+                .iter()
+                .map(|track| track.instrument.as_ref().map(|instrument| instrument.id.clone()))
+                .collect::<Vec<_>>(),
+            device_ids
+        );
+        assert!(session.score_performance_equals(&rebuilt));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn production_build_aggregates_kits_applies_velocity_and_builds_the_mixer() {
         let root = std::env::temp_dir().join(format!(
             "riffra-score-production-build-{}",
