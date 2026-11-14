@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <limits>
+#include <map>
 #include <numeric>
+#include <set>
 #include <tuple>
 
 namespace riffra {
@@ -270,7 +272,7 @@ bool MidiScheduler::compile(const MidiClipSpec& source, const MidiCompileOptions
                         juce::MidiMessage::noteOn(channel(note.channel), *outputNote,
                                                   static_cast<juce::uint8>(juce::jlimit(
                                                       1, 127, static_cast<int>(note.velocity)))),
-                        noteStart, 1);
+                        noteStart, 2);
             appendEvent(destination, juce::MidiMessage::noteOff(channel(note.channel), *outputNote),
                         noteEnd, 0);
         }
@@ -303,11 +305,52 @@ bool MidiScheduler::compile(const MidiClipSpec& source, const MidiCompileOptions
                         juce::MidiMessage::channelPressureChange(eventChannel, event.data1), offset,
                         2);
     }
-    if (!source.instrumentControlEvents.empty() && !options.directInstrumentEvents) {
-        error = "Instrument controls require a Sonalloy instrument.";
-        return false;
-    }
     for (const auto& control : source.instrumentControlEvents) {
+        const auto offset = timebase.tickToSample(options.startTick + control.tick, sampleRate) -
+                            destination.startSample;
+        if (!options.directInstrumentEvents) {
+            const auto appendControl = [&](const juce::MidiMessage& message, const int ordering,
+                                           const MidiControlKind kind, const std::uint8_t number,
+                                           const std::uint8_t value) {
+                if (offset < 0 || offset > destination.lengthSamples) return;
+                destination.events.push_back({offset,
+                                              ordering,
+                                              message,
+                                              control.tick,
+                                              control.sourceOrder,
+                                              std::nullopt,
+                                              {},
+                                              kind,
+                                              number,
+                                              value});
+            };
+            if (control.type == "keySwitch") {
+                if (control.latch) {
+                    appendControl(
+                        juce::MidiMessage::noteOn(1, control.note, static_cast<juce::uint8>(127)),
+                        1, MidiControlKind::keyswitchLatch, control.note, 0);
+                    appendControl(juce::MidiMessage::noteOff(1, control.note), 1,
+                                  MidiControlKind::keyswitchLatch, control.note, 0);
+                } else if (control.down) {
+                    appendControl(
+                        juce::MidiMessage::noteOn(1, control.note, static_cast<juce::uint8>(127)),
+                        1, MidiControlKind::keyswitchHold, control.note, 0);
+                } else {
+                    appendControl(juce::MidiMessage::noteOff(1, control.note), 0,
+                                  MidiControlKind::keyswitchHold, control.note, 0);
+                }
+                continue;
+            }
+            if (control.type == "controlChange") {
+                appendControl(juce::MidiMessage::controllerEvent(1, control.controllerNumber,
+                                                                 control.controllerValue),
+                              1, MidiControlKind::controlChange, control.controllerNumber,
+                              control.controllerValue);
+                continue;
+            }
+            error = "Instrument controls require a Sonalloy instrument.";
+            return false;
+        }
         SonalloyEvent event{};
         int priority = 0;
         event.value = control.value;
@@ -344,8 +387,6 @@ bool MidiScheduler::compile(const MidiClipSpec& source, const MidiCompileOptions
             error = "Unknown instrument control event.";
             return false;
         }
-        const auto offset = timebase.tickToSample(options.startTick + control.tick, sampleRate) -
-                            destination.startSample;
         destination.events.push_back(
             {offset, priority, {}, control.tick, control.sourceOrder, event, control.parameter});
     }
@@ -364,8 +405,46 @@ bool MidiScheduler::compile(const MidiClipSpec& source, const MidiCompileOptions
 
 void MidiScheduler::schedule(const std::vector<CompiledMidiClip>& clips,
                              const std::int64_t rangeStart, const int sampleCount,
-                             juce::MidiBuffer& destination) noexcept {
+                             juce::MidiBuffer& destination, const bool restoreControls) noexcept {
     if (sampleCount <= 0) return;
+    if (restoreControls) {
+        std::set<int> held;
+        std::map<int, int> controllers;
+        int latch = -1;
+        for (const auto& clip : clips) {
+            if (clip.muted || clip.lengthSamples <= 0 || rangeStart <= clip.startSample) continue;
+            const auto lastIteration =
+                clip.loop ? (rangeStart - clip.startSample) / clip.lengthSamples : 0;
+            for (std::int64_t iteration = 0; iteration <= lastIteration; ++iteration) {
+                const auto start = clip.startSample + iteration * clip.lengthSamples;
+                for (const auto& event : clip.events) {
+                    if (start + event.sampleOffset >= rangeStart) break;
+                    if (event.controlKind == MidiControlKind::keyswitchHold) {
+                        const auto note = static_cast<int>(event.controlNumber);
+                        if (event.message.isNoteOn())
+                            held.insert(note);
+                        else
+                            held.erase(note);
+                    } else if (event.controlKind == MidiControlKind::keyswitchLatch) {
+                        if (event.message.isNoteOn()) latch = static_cast<int>(event.controlNumber);
+                    } else if (event.controlKind == MidiControlKind::controlChange) {
+                        controllers[static_cast<int>(event.controlNumber)] =
+                            static_cast<int>(event.controlValue);
+                    }
+                }
+            }
+        }
+        for (const auto note : held)
+            destination.addEvent(juce::MidiMessage::noteOn(1, note, static_cast<juce::uint8>(127)),
+                                 0);
+        if (latch >= 0) {
+            destination.addEvent(juce::MidiMessage::noteOn(1, latch, static_cast<juce::uint8>(127)),
+                                 0);
+            destination.addEvent(juce::MidiMessage::noteOff(1, latch), 0);
+        }
+        for (const auto& [number, value] : controllers)
+            destination.addEvent(juce::MidiMessage::controllerEvent(1, number, value), 0);
+    }
     const auto rangeEnd = rangeStart + sampleCount;
     for (const auto& clip : clips) {
         if (clip.muted || clip.lengthSamples <= 0) continue;

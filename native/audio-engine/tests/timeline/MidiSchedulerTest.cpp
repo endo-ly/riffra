@@ -360,5 +360,104 @@ TEST(MidiSchedulerTest, RestoresLatestParameterAcrossClipsByTimePriorityAndSourc
     EXPECT_FLOAT_EQ(events[0].value, 0.6f);
 }
 
+TEST(MidiSchedulerTest, CompilesVst3KeyswitchesAndCcBeforeNormalNotes) {
+    MidiClipSpec source;
+    source.durationTicks = 4;
+    source.notes.push_back({0, 4, 60, 100, 1});
+    InstrumentControlEventSpec hold;
+    hold.id = "hold";
+    hold.tick = 0;
+    hold.type = "keySwitch";
+    hold.note = 24;
+    hold.down = true;
+    source.instrumentControlEvents.push_back(hold);
+    InstrumentControlEventSpec latch;
+    latch.id = "latch";
+    latch.tick = 0;
+    latch.type = "keySwitch";
+    latch.note = 26;
+    latch.latch = true;
+    latch.down = true;
+    source.instrumentControlEvents.push_back(latch);
+    InstrumentControlEventSpec cc;
+    cc.id = "cc";
+    cc.tick = 0;
+    cc.type = "controlChange";
+    cc.controllerNumber = 11;
+    cc.controllerValue = 96;
+    source.instrumentControlEvents.push_back(cc);
+
+    CompiledMidiClip compiled;
+    juce::String error;
+    ASSERT_TRUE(MidiScheduler::compile(source, {}, TimelineTimebase{10, {{0, 60.0}}, {{0, 4, 4}}},
+                                       10.0, compiled, error))
+        << error.toStdString();
+    ASSERT_EQ(compiled.events.size(), 6u);
+    const auto& events = compiled.events;
+    EXPECT_TRUE(events[0].message.isNoteOn() && events[0].message.getNoteNumber() == 24);
+    EXPECT_TRUE(events[1].message.isNoteOn() && events[1].message.getNoteNumber() == 26);
+    EXPECT_TRUE(events[2].message.isNoteOff() && events[2].message.getNoteNumber() == 26);
+    EXPECT_TRUE(events[3].message.isController() && events[3].message.getControllerNumber() == 11 &&
+                events[3].message.getControllerValue() == 96);
+    EXPECT_TRUE(events[4].message.isNoteOn() && events[4].message.getNoteNumber() == 60);
+    EXPECT_TRUE(events[5].message.isNoteOff() && events[5].message.getNoteNumber() == 60);
+}
+
+TEST(MidiSchedulerTest, RestoresVst3ControlStateAfterSeek) {
+    MidiClipSpec source;
+    source.durationTicks = 8;
+    const auto control = [](const std::uint64_t tick, const char* id) {
+        InstrumentControlEventSpec event;
+        event.id = id;
+        event.tick = tick;
+        return event;
+    };
+    auto hold = control(0, "hold");
+    hold.type = "keySwitch";
+    hold.note = 24;
+    hold.down = true;
+    source.instrumentControlEvents.push_back(hold);
+    auto release = control(8, "release");
+    release.type = "keySwitch";
+    release.note = 24;
+    source.instrumentControlEvents.push_back(release);
+    auto latch = control(1, "latch");
+    latch.type = "keySwitch";
+    latch.note = 26;
+    latch.latch = true;
+    latch.down = true;
+    source.instrumentControlEvents.push_back(latch);
+    auto first = control(2, "first");
+    first.type = "controlChange";
+    first.controllerNumber = 11;
+    first.controllerValue = 96;
+    source.instrumentControlEvents.push_back(first);
+    auto second = control(4, "second");
+    second.type = "controlChange";
+    second.controllerNumber = 11;
+    second.controllerValue = 40;
+    source.instrumentControlEvents.push_back(second);
+
+    CompiledMidiClip compiled;
+    juce::String error;
+    ASSERT_TRUE(MidiScheduler::compile(source, {}, TimelineTimebase{10, {{0, 60.0}}, {{0, 4, 4}}},
+                                       10.0, compiled, error))
+        << error.toStdString();
+    juce::MidiBuffer buffer;
+    MidiScheduler::schedule({compiled}, 5, 1, buffer, true);
+    std::vector<juce::MidiMessage> messages;
+    for (const auto metadata : buffer) messages.push_back(metadata.getMessage());
+    ASSERT_EQ(messages.size(), 4u);
+    EXPECT_TRUE(messages[0].isNoteOn() && messages[0].getNoteNumber() == 24);
+    EXPECT_TRUE(messages[1].isNoteOn() && messages[1].getNoteNumber() == 26);
+    EXPECT_TRUE(messages[2].isNoteOff() && messages[2].getNoteNumber() == 26);
+    EXPECT_TRUE(messages[3].isController() && messages[3].getControllerNumber() == 11 &&
+                messages[3].getControllerValue() == 40);
+
+    juce::MidiBuffer resumed;
+    MidiScheduler::schedule({compiled}, 5, 1, resumed, false);
+    EXPECT_EQ(resumed.getNumEvents(), 0);
+}
+
 }  // namespace
 }  // namespace riffra

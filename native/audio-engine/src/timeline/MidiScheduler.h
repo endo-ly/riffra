@@ -21,6 +21,13 @@ struct MidiCompileOptions final {
     std::uint64_t noteIdBase = 0;
 };
 
+enum class MidiControlKind : std::uint8_t {
+    none,
+    keyswitchHold,
+    keyswitchLatch,
+    controlChange,
+};
+
 struct CompiledMidiEvent final {
     std::int64_t sampleOffset = 0;
     int ordering = 0;
@@ -29,6 +36,9 @@ struct CompiledMidiEvent final {
     std::uint32_t sourceOrder = 0;
     std::optional<SonalloyEvent> instrumentEvent;
     juce::String parameter;
+    MidiControlKind controlKind = MidiControlKind::none;
+    std::uint8_t controlNumber = 0;
+    std::uint8_t controlValue = 0;
 };
 
 struct CompiledMidiClip final {
@@ -74,7 +84,8 @@ public:
                                       const MidiNoteTransform* transform = nullptr);
 
     static void schedule(const std::vector<CompiledMidiClip>& clips, std::int64_t rangeStart,
-                         int sampleCount, juce::MidiBuffer& destination) noexcept;
+                         int sampleCount, juce::MidiBuffer& destination,
+                         bool restoreControls = false) noexcept;
     static std::size_t scheduleInstrumentEvents(const std::vector<CompiledMidiClip>& clips,
                                                 std::int64_t rangeStart, int sampleCount,
                                                 SonalloyEvent* destination,

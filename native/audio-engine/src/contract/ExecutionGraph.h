@@ -241,6 +241,10 @@ struct InstrumentControlEventSpec final {
     juce::String parameter;
     float endValue = 0.0f;
     std::uint64_t durationTicks = 0;
+    std::uint8_t note = 0;
+    bool latch = false;
+    std::uint8_t controllerNumber = 0;
+    std::uint8_t controllerValue = 0;
     bool operator==(const InstrumentControlEventSpec&) const = default;
 };
 

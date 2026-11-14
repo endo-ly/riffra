@@ -458,6 +458,9 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
                     event.instrumentEvent->event_type != SONALLOY_EVENT_NOTE_OFF)
                     ++controlCapacity;
         track->runtime->midiEventCapacity += controlCapacity;
+        for (const auto& clip : track->runtime->midiClips)
+            for (const auto& event : clip.events)
+                if (event.controlKind != MidiControlKind::none) ++track->runtime->midiEventCapacity;
         track->runtime->instrumentEvents.resize(track->runtime->midiEventCapacity);
         track->runtime->instrumentEventOrdering.resize(track->runtime->midiEventCapacity);
         if (!MidiScheduler::prepareBuffer(track->runtime->midiBuffer,
