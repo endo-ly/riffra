@@ -354,6 +354,7 @@ export type { ScoreLaneInspection } from './ScoreLaneInspection';
 export type { ScoreProductionInput } from './ScoreProductionInput';
 export type { ScoreRebuild } from './ScoreRebuild';
 export type { ScoreSectionInspection } from './ScoreSectionInspection';
+export type { ScoreSectionMeasurement } from './ScoreSectionMeasurement';
 export type { ScoreSendInspection } from './ScoreSendInspection';
 export type { ScoreSidechainInspection } from './ScoreSidechainInspection';
 export type { ScoreSource } from './ScoreSource';

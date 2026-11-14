@@ -120,15 +120,23 @@ pub(super) fn measure_output(
     section_plan: &SectionPlan<'_>,
     cancelled: Option<&AtomicBool>,
 ) -> Result<(AudioMeasurements, Vec<String>), String> {
-    let ranges = section_plan
-        .ranges
-        .iter()
-        .map(|s| crate::api::params::MeasurementRange {
-            name: s.name.clone(),
-            start_seconds: s.start_seconds,
-            end_seconds: s.end_seconds,
-        })
-        .collect::<Vec<_>>();
+    let ranges =
+        section_plan
+            .ranges
+            .iter()
+            .map(|s| crate::api::params::MeasurementRange {
+                name: s.name.clone(),
+                start_seconds: s.start_seconds,
+                end_seconds: s.end_seconds,
+            })
+            .chain(section_plan.score_sections.iter().map(|s| {
+                crate::api::params::MeasurementRange {
+                    name: Some(s.name.clone()),
+                    start_seconds: s.start_seconds,
+                    end_seconds: s.end_seconds,
+                }
+            }))
+            .collect::<Vec<_>>();
     let measured = crate::analysis::measurement::measure(input, &ranges, cancelled)?;
     if measured.sample_rate != sample_rate {
         return Err("completed wav sample rate differs from render plan".into());
@@ -150,8 +158,31 @@ pub(super) fn measure_output(
     let origin = section_plan
         .timebase
         .ticks_to_seconds(section_plan.start_tick);
+    let mut measured = measured_sections.into_iter();
     let mut sections = section_plan.ranges.clone();
-    for (section, measured) in sections.iter_mut().zip(measured_sections) {
+    for section in &mut sections {
+        let Some(measured) = measured.next() else {
+            break;
+        };
+        section.bands = measured.bands;
+        section.loudness = measured
+            .loudness
+            .map(|l| crate::api::output::SectionLoudness {
+                integrated_lufs: l.integrated_lufs,
+                true_peak: l.true_peak.map(|p| crate::api::output::SectionPeak {
+                    db: p.db,
+                    seconds: p.seconds,
+                    position: section_plan.timebase.tick_to_musical_position(
+                        section_plan.timebase.seconds_to_ticks(origin + p.seconds),
+                    ),
+                }),
+            });
+    }
+    let mut score_sections = section_plan.score_sections.clone();
+    for section in &mut score_sections {
+        let Some(measured) = measured.next() else {
+            break;
+        };
         section.bands = measured.bands;
         section.loudness = measured
             .loudness
@@ -197,6 +228,7 @@ pub(super) fn measure_output(
             section_loudness_state,
             loudness,
             sections,
+            score_sections,
         },
         warnings,
     ))
@@ -269,7 +301,7 @@ mod tests {
         let path = root.join("output.wav");
         let sample_rate = 48_000_u32;
         let timebase = riffra_core::ProjectTimebase::default();
-        let sections = SectionPlan::new(&[], &timebase, 0, 7680, 4.0);
+        let sections = SectionPlan::new(&[], None, &timebase, 0, 7680, 4.0);
         let frames = sample_rate * 4;
         let mut samples = Vec::new();
         for frame in 0..frames {
@@ -350,6 +382,83 @@ mod tests {
     }
 
     #[test]
+    fn measures_score_section_occurrences_without_marker_regression() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-mastering-score-sections-{}",
+            riffra_control::new_instance_id()
+        ));
+        fs::create_dir(&root).unwrap();
+        let path = root.join("output.wav");
+        let sample_rate = 48_000_u32;
+        let timebase = riffra_core::ProjectTimebase::default();
+        let marker = [riffra_core::Marker {
+            id: "marker".into(),
+            name: "Marker".into(),
+            tick: 0,
+        }];
+        let regions = [
+            riffra_core::TimelineRegion {
+                id: "walk-1".into(),
+                name: "walk".into(),
+                start_tick: riffra_core::TimelineTick(0),
+                end_tick: riffra_core::TimelineTick(3840),
+            },
+            riffra_core::TimelineRegion {
+                id: "walk-2".into(),
+                name: "walk".into(),
+                start_tick: riffra_core::TimelineTick(3840),
+                end_tick: riffra_core::TimelineTick(7680),
+            },
+            riffra_core::TimelineRegion {
+                id: "verse".into(),
+                name: "verse".into(),
+                start_tick: riffra_core::TimelineTick(7680),
+                end_tick: riffra_core::TimelineTick(11520),
+            },
+        ];
+        write_float_wav(&path, sample_rate, &vec![0.25; sample_rate as usize * 6]);
+
+        let sections = SectionPlan::new(&marker, Some(&regions), &timebase, 0, 11520, 6.0);
+        let (measurements, _) =
+            measure_output(&path, sample_rate, None, None, &sections, None).unwrap();
+
+        assert_eq!(measurements.sections.len(), 1);
+        assert_eq!(
+            measurements
+                .score_sections
+                .iter()
+                .map(|section| (section.name.as_str(), section.occurrence, section.complete))
+                .collect::<Vec<_>>(),
+            [("walk", 1, true), ("walk", 2, true), ("verse", 1, true)]
+        );
+        assert_eq!(
+            measurements
+                .score_sections
+                .iter()
+                .map(|section| (section.start_seconds, section.end_seconds))
+                .collect::<Vec<_>>(),
+            [(0.0, 2.0), (2.0, 4.0), (4.0, 6.0)]
+        );
+        assert!(
+            measurements
+                .score_sections
+                .iter()
+                .all(|section| section.loudness.is_some())
+        );
+
+        let cropped = SectionPlan::new(&[], Some(&regions), &timebase, 3840, 7680, 2.0);
+        let (cropped_measurements, _) =
+            measure_output(&path, sample_rate, None, None, &cropped, None).unwrap();
+        assert!(cropped_measurements.sections.is_empty());
+        assert_eq!(cropped_measurements.score_sections.len(), 1);
+        let section = &cropped_measurements.score_sections[0];
+        assert_eq!((section.name.as_str(), section.occurrence), ("walk", 2));
+        assert_eq!((section.start_seconds, section.end_seconds), (0.0, 2.0));
+        assert!(section.complete);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn measures_relative_segment_levels_and_overlapping_analysis_ranges() {
         let root = std::env::temp_dir().join(format!(
             "riffra-mastering-ratio-{}",
@@ -371,7 +480,7 @@ mod tests {
                 tick: 3840,
             },
         ];
-        let sections = SectionPlan::new(&markers, &timebase, 0, 7680, 4.0);
+        let sections = SectionPlan::new(&markers, None, &timebase, 0, 7680, 4.0);
         let mut samples = Vec::new();
         for amplitude in [0.25_f32, 0.05_f32] {
             for frame in 0..sample_rate as usize * 2 {

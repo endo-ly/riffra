@@ -2727,6 +2727,12 @@ pub struct RenderStartArgs {
     /// Time-selection end as an arrangement-absolute musical position in bar:beat or bar:beat+fraction notation; must be provided together with --start.
     #[arg(long)]
     pub end: Option<String>,
+    /// Score section name to render; requires --occurrence and cannot be combined with --start, --end, or --range loop-range.
+    #[arg(long)]
+    pub section: Option<String>,
+    /// One-based occurrence of --section among Score regions with the same name.
+    #[arg(long)]
+    pub occurrence: Option<u32>,
     /// Apply peak normalization to the rendered audio; defaults to false when omitted.
     #[arg(long)]
     pub normalize: Option<bool>,
@@ -2758,6 +2764,12 @@ pub struct RenderStemsArgs {
     /// Time-selection end as an arrangement-absolute musical position; must be provided together with --start.
     #[arg(long)]
     pub end: Option<String>,
+    /// Score section name to render; requires --occurrence and cannot be combined with --start, --end, or --range loop-range.
+    #[arg(long)]
+    pub section: Option<String>,
+    /// One-based occurrence of --section among Score regions with the same name.
+    #[arg(long)]
+    pub occurrence: Option<u32>,
     /// Copy completed stem WAVs to this existing directory without replacing files.
     #[arg(long)]
     pub output_directory: Option<PathBuf>,
@@ -4025,7 +4037,14 @@ fn range(args: RangeArgs) -> Result<RangeParams, CommandDecodeError> {
 }
 
 fn render_start(args: RenderStartArgs) -> Result<ControlCommand, RequestError> {
-    let range = render_range(args.range, args.start, args.end, "/options/range")?;
+    let range = render_range(
+        args.range,
+        args.start,
+        args.end,
+        args.section,
+        args.occurrence,
+        "/options/range",
+    )?;
     Ok(Runtime::RenderStart(RenderStartParams {
         options: Some(RenderOptions {
             range,
@@ -4046,7 +4065,14 @@ fn render_stems(args: RenderStemsArgs) -> Result<ControlCommand, RequestError> {
     Ok(Runtime::RenderStems(RenderStemsParams {
         all_tracks: args.all_tracks,
         track_ids: args.track_ids,
-        range: render_range(args.range, args.start, args.end, "/range")?,
+        range: render_range(
+            args.range,
+            args.start,
+            args.end,
+            args.section,
+            args.occurrence,
+            "/range",
+        )?,
         output_directory: args
             .output_directory
             .map(|path| path.to_string_lossy().into_owned()),
@@ -4058,12 +4084,35 @@ fn render_range(
     range: String,
     start: Option<String>,
     end: Option<String>,
+    section: Option<String>,
+    occurrence: Option<u32>,
     pointer: &str,
 ) -> Result<RenderRange, RequestError> {
     let has_start = start.is_some();
     let has_end = end.is_some();
     if has_start != has_end {
         return Err("--start and --end must be provided together".into());
+    }
+    if section.is_some() != occurrence.is_some() {
+        return Err("--section and --occurrence must be provided together".into());
+    }
+    if let (Some(section), Some(occurrence)) = (section, occurrence) {
+        if range == "loop-range" {
+            return Err("--range loop-range cannot be combined with --section".into());
+        }
+        if has_start || has_end {
+            return Err("--section cannot be combined with --start or --end".into());
+        }
+        if section.is_empty() {
+            return Err("--section must not be empty".into());
+        }
+        if occurrence == 0 {
+            return Err("--occurrence must be positive".into());
+        }
+        return Ok(RenderRange::Section {
+            name: section,
+            occurrence,
+        });
     }
     Ok(match (range.as_str(), start, end) {
         ("entire-arrangement", None, None) => RenderRange::EntireArrangement,

@@ -72,7 +72,7 @@ pub fn to_background_status(status: JobStatus) -> Result<BackgroundJobStatus, St
             progress,
             message,
             result: result
-                .map(serde_json::from_value::<RenderResult>)
+                .map(|result| serde_json::from_value::<RenderResult>(result).map(Box::new))
                 .transpose()
                 .map_err(|error| format!("render result could not be decoded: {error}"))?,
         },
@@ -498,6 +498,8 @@ mod tests {
             frames: 1_024,
             stems: Vec::new(),
             skipped_track_ids: Vec::new(),
+            section_name: None,
+            section_occurrence: None,
         };
 
         assert!(registry.complete_if_not_cancelled(

@@ -19,4 +19,12 @@ path: string,
 /**
  * External WAV copy requested for this job, when present.
  */
-exportedPath: string | null, sampleRate: number, frames: number, durationMs: number, clipCount: number, rangeStartMs: number, rangeEndMs: number, normalized: boolean, trackId: string | null, state: string, message: string, };
+exportedPath: string | null, sampleRate: number, frames: number, durationMs: number, clipCount: number, rangeStartMs: number, rangeEndMs: number, normalized: boolean, trackId: string | null, 
+/**
+ * Score section name for a section render.
+ */
+sectionName: string | null, 
+/**
+ * One-based Score section occurrence for a section render.
+ */
+sectionOccurrence: number | null, state: string, message: string, };

@@ -48,7 +48,7 @@ pub enum BackgroundJobStatus {
         state: JobState,
         progress: Option<f32>,
         message: String,
-        result: Option<RenderResult>,
+        result: Option<Box<RenderResult>>,
     },
     /// One job that produces a set of aligned Track stems.
     RenderStems {
@@ -93,6 +93,12 @@ pub struct RenderResult {
     pub range_end_ms: u64,
     pub normalized: bool,
     pub track_id: Option<String>,
+    /// Score section name for a section render.
+    #[serde(default)]
+    pub section_name: Option<String>,
+    /// One-based Score section occurrence for a section render.
+    #[serde(default)]
+    pub section_occurrence: Option<u32>,
     pub state: String,
     pub message: String,
 }
@@ -125,6 +131,12 @@ pub struct RenderStemsResult {
     pub stems: Vec<RenderStem>,
     /// Tracks skipped by an all-Tracks request because they had no unmuted Clips.
     pub skipped_track_ids: Vec<String>,
+    /// Score section name for a section render.
+    #[serde(default)]
+    pub section_name: Option<String>,
+    /// One-based Score section occurrence for a section render.
+    #[serde(default)]
+    pub section_occurrence: Option<u32>,
 }
 
 /// Result of copying an existing Render without changing its internal files.
@@ -238,6 +250,30 @@ pub struct AudioMeasurements {
     pub section_loudness_state: MeasurementState,
     /// Per-marker sections; empty when the session has no marker.
     pub sections: Vec<SectionMeasurement>,
+    /// Per-Score section occurrences; empty when the Project is not linked to a Score.
+    pub score_sections: Vec<ScoreSectionMeasurement>,
+}
+
+/// Measurements of one Score section occurrence inside the rendered WAV.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ScoreSectionMeasurement {
+    pub name: String,
+    /// One-based occurrence among Score regions with the same name.
+    pub occurrence: u32,
+    #[ts(type = "number")]
+    pub start_tick: u64,
+    #[ts(type = "number")]
+    pub end_tick: u64,
+    /// Seconds from the start of the WAV.
+    pub start_seconds: f64,
+    /// Seconds from the start of the WAV, excluding the render tail.
+    pub end_seconds: f64,
+    /// Whether the whole Score region was inside the rendered range.
+    pub complete: bool,
+    /// `None` when section loudness measurement is unavailable.
+    pub loudness: Option<SectionLoudness>,
+    pub bands: BandLevels,
 }
 
 /// FFmpeg loudness measurements, or the reason they could not be obtained.

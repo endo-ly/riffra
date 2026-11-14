@@ -75,6 +75,7 @@ it.each(['measured', 'unavailable'] as const)(
           : null,
       measurements: {
         sections: [],
+        scoreSections: [],
         sectionLoudnessState:
           state === 'measured'
             ? { state: 'measured' }
@@ -102,6 +103,8 @@ it.each(['measured', 'unavailable'] as const)(
       rangeEndMs: 4000,
       normalized: false,
       trackId: null,
+      sectionName: null,
+      sectionOccurrence: null,
       state: 'completed',
       message: 'completed',
     };

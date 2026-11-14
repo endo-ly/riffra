@@ -267,6 +267,10 @@ fn render_timeline_pending(
     let (_, rendered_frames) = riffra_host::read_wav_metadata(&plan.output_path)?;
     let section_plan = sections::SectionPlan::new(
         &session.arrangement.markers,
+        session
+            .score_source
+            .as_ref()
+            .map(|_| session.arrangement.regions.as_slice()),
         &session.arrangement.timebase,
         plan.start_tick,
         plan.end_tick,
@@ -292,8 +296,10 @@ fn render_timeline_pending(
         RenderRange::EntireArrangement => "entireArrangement",
         RenderRange::LoopRange => "loopRange",
         RenderRange::TimeSelection { .. } => "timeSelection",
+        RenderRange::Section { .. } => "section",
     };
-    let provenance_parameters = serde_json::Map::from_iter([
+    let (section_name, section_occurrence) = section_identity(&options.range);
+    let mut provenance_parameters = serde_json::Map::from_iter([
         (
             "normalize".into(),
             serde_json::Value::Bool(options.normalize),
@@ -302,6 +308,15 @@ fn render_timeline_pending(
         ("startTick".into(), serde_json::Value::from(plan.start_tick)),
         ("endTick".into(), serde_json::Value::from(plan.end_tick)),
     ]);
+    if let Some(name) = &section_name {
+        provenance_parameters.insert("sectionName".into(), serde_json::Value::from(name.clone()));
+    }
+    if let Some(occurrence) = section_occurrence {
+        provenance_parameters.insert(
+            "sectionOccurrence".into(),
+            serde_json::Value::from(occurrence),
+        );
+    }
     let rendered_asset_id = if plan.source_ids.is_empty() {
         // Piano-roll MIDI may be canonical session data without a backing Asset.
         // Register the WAV without inventing a false source relationship.
@@ -342,6 +357,8 @@ fn render_timeline_pending(
         range_end_ms,
         normalized: options.normalize && session.settings.mixdown.mastering.is_none(),
         track_id: options.track_id,
+        section_name,
+        section_occurrence,
         state: "completed".into(),
         message: "Timeline rendered through the same Arrangement Graph used for playback.".into(),
     };
@@ -680,6 +697,10 @@ fn render_stems_pending(
         let section_plan = section_plan.get_or_insert_with(|| {
             sections::SectionPlan::new(
                 &session.arrangement.markers,
+                session
+                    .score_source
+                    .as_ref()
+                    .map(|_| session.arrangement.regions.as_slice()),
                 &session.arrangement.timebase,
                 conditions.start_tick,
                 conditions.end_tick,
@@ -727,13 +748,15 @@ fn render_stems_pending(
         RenderRange::EntireArrangement => "entireArrangement",
         RenderRange::LoopRange => "loopRange",
         RenderRange::TimeSelection { .. } => "timeSelection",
+        RenderRange::Section { .. } => "section",
     };
+    let (section_name, section_occurrence) = section_identity(&range);
     let mut stems = Vec::with_capacity(completed.len());
     for (track, source_ids, output_path, measurements, warnings) in completed {
         if cancelled.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire)) {
             return Err("Timeline render was cancelled.".into());
         }
-        let parameters = serde_json::Map::from_iter([
+        let mut parameters = serde_json::Map::from_iter([
             ("rangeKind".into(), serde_json::Value::from(kind)),
             (
                 "startTick".into(),
@@ -745,6 +768,15 @@ fn render_stems_pending(
             ),
             ("trackId".into(), serde_json::Value::from(track.id.clone())),
         ]);
+        if let Some(name) = &section_name {
+            parameters.insert("sectionName".into(), serde_json::Value::from(name.clone()));
+        }
+        if let Some(occurrence) = section_occurrence {
+            parameters.insert(
+                "sectionOccurrence".into(),
+                serde_json::Value::from(occurrence),
+            );
+        }
         let asset_id = if source_ids.is_empty() {
             asset::register(
                 data_root,
@@ -788,6 +820,8 @@ fn render_stems_pending(
         frames,
         stems,
         skipped_track_ids: selection.skipped_track_ids,
+        section_name,
+        section_occurrence,
     };
     if cancelled.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire)) {
         return Err("Timeline render was cancelled.".into());
@@ -1110,6 +1144,41 @@ fn resolve_range(session: &CreativeSession, range: &RenderRange) -> Result<(u64,
             }
             Ok((start_tick, end_tick))
         }
+        RenderRange::Section { name, occurrence } => {
+            if session.score_source.is_none() {
+                return Err("Section render requires a Project created from a Score.".into());
+            }
+            if name.is_empty() {
+                return Err("Section name must not be empty.".into());
+            }
+            if *occurrence == 0 {
+                return Err("Section occurrence must be positive.".into());
+            }
+            let index = usize::try_from(*occurrence - 1)
+                .map_err(|_| "Section occurrence is out of range.".to_string())?;
+            let region = session
+                .arrangement
+                .regions
+                .iter()
+                .filter(|region| region.name == *name)
+                .nth(index)
+                .ok_or_else(|| {
+                    format!("Score section '{name}' occurrence {occurrence} does not exist.")
+                })?;
+            if region.end_tick.0 <= region.start_tick.0 {
+                return Err(format!(
+                    "Score section '{name}' occurrence {occurrence} has no positive duration."
+                ));
+            }
+            Ok((region.start_tick.0, region.end_tick.0))
+        }
+    }
+}
+
+fn section_identity(range: &RenderRange) -> (Option<String>, Option<u32>) {
+    match range {
+        RenderRange::Section { name, occurrence } => (Some(name.clone()), Some(*occurrence)),
+        _ => (None, None),
     }
 }
 
@@ -2403,6 +2472,69 @@ pub(super) mod tests {
                     start: "1:1".parse().unwrap(),
                     end: "1:1".parse().unwrap(),
                 },
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn section_range_resolves_score_regions_by_occurrence() {
+        let mut session = session_with_clips();
+        let range = RenderRange::Section {
+            name: "walk".into(),
+            occurrence: 2,
+        };
+        assert!(resolve_range(&session, &range).is_err());
+        session.score_source = Some(riffra_core::ScoreSource {
+            file_name: "score.yaml".into(),
+            yaml: String::new(),
+            path: None,
+            bindings: Default::default(),
+            production_inputs: Default::default(),
+        });
+        session.arrangement.regions = vec![
+            riffra_core::TimelineRegion {
+                id: "walk-1".into(),
+                name: "walk".into(),
+                start_tick: TimelineTick(0),
+                end_tick: TimelineTick(960),
+            },
+            riffra_core::TimelineRegion {
+                id: "walk-2".into(),
+                name: "walk".into(),
+                start_tick: TimelineTick(960),
+                end_tick: TimelineTick(1_920),
+            },
+        ];
+
+        assert_eq!(resolve_range(&session, &range).unwrap(), (960, 1_920));
+        assert!(
+            resolve_range(
+                &session,
+                &RenderRange::Section {
+                    name: "walk".into(),
+                    occurrence: 3,
+                }
+            )
+            .is_err()
+        );
+        assert!(
+            resolve_range(
+                &session,
+                &RenderRange::Section {
+                    name: "missing".into(),
+                    occurrence: 1,
+                }
+            )
+            .is_err()
+        );
+        assert!(
+            resolve_range(
+                &session,
+                &RenderRange::Section {
+                    name: "walk".into(),
+                    occurrence: 0,
+                }
             )
             .is_err()
         );
