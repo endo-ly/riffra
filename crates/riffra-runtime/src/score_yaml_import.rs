@@ -631,9 +631,7 @@ fn resolve_production(
             let previous_capability = previous
                 .and_then(|session| previous_effect_plugin(session, &target_device))
                 .is_some_and(|prior| {
-                    prior.path == plugin.plugin.path
-                        && prior.state_data == plugin.plugin.state_data
-                        && prior.parameter_values == plugin.plugin.parameter_values
+                    prior.path == plugin.plugin.path && prior.state_data == plugin.plugin.state_data
                 });
             if previous_capability
                 && previous.is_some_and(|session| {
