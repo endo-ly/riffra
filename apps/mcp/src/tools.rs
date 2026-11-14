@@ -1,5 +1,6 @@
 //! The fixed MCP tool surface and its action-to-Control-Command mapping.
 
+use riffra_runtime::api::client;
 use riffra_runtime::api::{
     batchable_command_names, command_params_allow_omitted, command_params_subschema,
 };
@@ -805,6 +806,7 @@ fn tool_input_schema(definition: &'static ToolDef) -> Result<ToolSchema, String>
         }
         action_schemas.push(action);
     }
+    advertise_field_files(&mut definitions, &actions);
     let mut root = Map::new();
     root.insert("type".into(), json!("object"));
     if definition.actions.len() == 1 && definition.actions[0].action.is_none() {
@@ -903,6 +905,77 @@ fn expectation_properties() -> Map<String, Value> {
         }),
     );
     properties
+}
+
+/// Publishes the `<field>File` alternative of every JSON-valued top-level param.
+///
+/// Field files are read by the MCP server before validation, so only the published
+/// schema names them; the per-action validators see the loaded values.
+fn advertise_field_files(definitions: &mut Map<String, Value>, actions: &[Value]) {
+    let params_types = actions
+        .iter()
+        .filter_map(|action| action.pointer("/properties/params/$ref"))
+        .filter_map(Value::as_str)
+        .filter_map(|reference| reference.strip_prefix("#/$defs/"))
+        .map(str::to_owned)
+        .collect::<std::collections::BTreeSet<_>>();
+    for params_type in params_types {
+        let json_valued = definitions
+            .get(&params_type)
+            .and_then(|params| params.get("properties"))
+            .and_then(Value::as_object)
+            .map(|properties| {
+                properties
+                    .iter()
+                    .filter(|(_, schema)| is_json_valued(schema, definitions))
+                    .map(|(name, _)| name.clone())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let Some(Value::Object(params)) = definitions.get_mut(&params_type) else {
+            continue;
+        };
+        for field in json_valued {
+            if let Some(Value::Object(properties)) = params.get_mut("properties") {
+                properties.insert(
+                    format!("{field}{}", client::FIELD_FILE_SUFFIX),
+                    json!({
+                        "type": "string",
+                        "description": format!(
+                            "Path to a JSON file holding `{field}`; use instead of `{field}` for large input. Relative paths resolve against the MCP server's working directory."
+                        )
+                    }),
+                );
+            }
+            if let Some(Value::Array(required)) = params.get_mut("required") {
+                required.retain(|name| name != &Value::String(field.clone()));
+            }
+        }
+    }
+}
+
+fn is_json_valued(schema: &Value, definitions: &Map<String, Value>) -> bool {
+    if let Some(reference) = schema.get("$ref").and_then(Value::as_str) {
+        return reference
+            .strip_prefix("#/$defs/")
+            .and_then(|name| definitions.get(name))
+            .is_some_and(|definition| is_json_valued(definition, definitions));
+    }
+    if let Some(variants) = schema
+        .get("anyOf")
+        .or_else(|| schema.get("oneOf"))
+        .and_then(Value::as_array)
+    {
+        return variants
+            .iter()
+            .any(|variant| is_json_valued(variant, definitions));
+    }
+    let structured = |kind: &Value| matches!(kind.as_str(), Some("array" | "object"));
+    match schema.get("type") {
+        Some(Value::Array(kinds)) => kinds.iter().any(structured),
+        Some(kind) => structured(kind),
+        None => schema.get("properties").is_some(),
+    }
 }
 
 fn constrain_batch_commands(definitions: &mut Map<String, Value>) -> Result<(), String> {
@@ -1264,6 +1337,45 @@ mod tests {
 
         // Assert
         assert_eq!(error.instance_path().to_string(), "/params/patch/muted");
+    }
+
+    #[test]
+    fn json_valued_params_publish_a_field_file_alternative() {
+        // Arrange
+        let tools = build_tools().unwrap();
+        let music_note = tools
+            .iter()
+            .find(|tool| tool.tool.name == "music_note")
+            .unwrap();
+        let insert = music_note.tool.input_schema["$defs"]["MusicalNoteInsertParams"].clone();
+        let validator = music_note.action_validator(Some("insert")).unwrap();
+        let notes_file =
+            std::env::temp_dir().join(format!("riffra-mcp-notes-{}.json", std::process::id()));
+        std::fs::write(
+            &notes_file,
+            r#"[{"pitch":"C4","position":"1:1","duration":"1/4"}]"#,
+        )
+        .unwrap();
+        let mut input = json!({
+            "action": "insert",
+            "params": {"clipId": "midi-clip:1", "notesFile": notes_file}
+        });
+
+        // Act
+        let resolved = client::resolve_field_files("music.note.insert", &mut input["params"]);
+        std::fs::remove_file(&notes_file).unwrap();
+
+        // Assert
+        assert!(insert["properties"]["notesFile"].is_object());
+        assert!(insert["properties"]["clipIdFile"].is_null());
+        assert!(
+            !insert["required"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("notes"))
+        );
+        resolved.unwrap();
+        assert!(validator.is_valid(&input), "{input}");
     }
 
     #[test]

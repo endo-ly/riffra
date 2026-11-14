@@ -6,7 +6,7 @@ use riffra_control::{ControlResponse, ErrorCode, ProtocolError};
 use riffra_runtime::api::decode_params;
 use riffra_runtime::api::output::{BackgroundJobStatus, ControlOutput, JobState};
 use riffra_runtime::api::params::IdParams;
-use riffra_runtime::api::{ControlCommand, RuntimeCommand, compact_agent_response};
+use riffra_runtime::api::{RuntimeCommand, compact_agent_response};
 use rmcp::model::{CallToolResult, ContentBlock, JsonObject};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
@@ -61,9 +61,9 @@ pub(crate) async fn execute(
         return wait_for_job(bridge, params, cancellation).await;
     }
 
-    let command = match ControlCommand::decode(action.command, params) {
+    let command = match riffra_runtime::api::client::decode_client_command(action.command, params) {
         Ok(command) => command,
-        Err(error) => return tool_error(error.into()),
+        Err(error) => return tool_error(error),
     };
     let command_name = command.name().to_owned();
     let response = tokio::task::spawn_blocking(move || {
