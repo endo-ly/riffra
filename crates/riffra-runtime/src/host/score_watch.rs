@@ -109,14 +109,10 @@ fn run(shared: &std::sync::Weak<HostState>, worker: &WatcherState) {
         if yaml == accepted {
             pending = None;
             failed = None;
-            state.set_score_sync(ScoreSyncStatus {
-                state: ScoreSyncState::Synced,
-                project_id: Some(canonical.project_id),
-                path: Some(path.to_string_lossy().into_owned()),
-                sequence: Some(canonical.sequence),
-                updated_at_ms: Some(canonical.session.updated_at_ms),
-                diagnostics: Vec::new(),
-            });
+            let current = state.score_sync_status();
+            if !accepted_sync_matches(&current, &canonical.project_id, &path, canonical.sequence) {
+                state.set_score_sync(super::state::synced_score_sync(&canonical, Vec::new()));
+            }
             continue;
         }
         if failed
@@ -185,6 +181,18 @@ fn run(shared: &std::sync::Weak<HostState>, worker: &WatcherState) {
     }
 }
 
+fn accepted_sync_matches(
+    current: &ScoreSyncStatus,
+    project_id: &str,
+    path: &Path,
+    sequence: u64,
+) -> bool {
+    current.state == ScoreSyncState::Synced
+        && current.project_id.as_deref() == Some(project_id)
+        && current.path.as_deref() == path.to_str()
+        && current.sequence == Some(sequence)
+}
+
 fn linked_score(state: &HostState) -> Option<(riffra_core::CanonicalState, PathBuf, String)> {
     let canonical = state.project.read().canonical.clone();
     let source = canonical.session.score_source.as_ref()?;
@@ -217,4 +225,58 @@ fn diagnostics(error: &ProtocolError) -> Vec<ScoreDiagnostic> {
         column: detail["column"].as_u64().unwrap_or(0) as usize,
         detail: Some(detail),
     }]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn synced(diagnostics: Vec<ScoreDiagnostic>) -> ScoreSyncStatus {
+        ScoreSyncStatus {
+            state: ScoreSyncState::Synced,
+            project_id: Some("project".into()),
+            path: Some("score.yaml".into()),
+            sequence: Some(7),
+            updated_at_ms: Some(1),
+            diagnostics,
+        }
+    }
+
+    #[test]
+    fn an_unchanged_accepted_score_keeps_its_diagnostics() {
+        let warning = ScoreDiagnostic {
+            severity: crate::api::output::ScoreDiagnosticSeverity::Warning,
+            path: "mix.tracks.drums".into(),
+            message: "additional gain lane".into(),
+            line: 1,
+            column: 2,
+            detail: None,
+        };
+        let current = synced(vec![warning.clone()]);
+
+        assert!(accepted_sync_matches(
+            &current,
+            "project",
+            Path::new("score.yaml"),
+            7
+        ));
+        assert!(!accepted_sync_matches(
+            &current,
+            "other-project",
+            Path::new("score.yaml"),
+            7
+        ));
+        assert!(!accepted_sync_matches(
+            &current,
+            "project",
+            Path::new("other.yaml"),
+            7
+        ));
+        assert!(!accepted_sync_matches(
+            &current,
+            "project",
+            Path::new("score.yaml"),
+            8
+        ));
+    }
 }
