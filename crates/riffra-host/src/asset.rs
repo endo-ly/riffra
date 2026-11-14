@@ -824,8 +824,10 @@ pub fn stage_audio_import(
     name: &str,
 ) -> Result<(AssetId, String), String> {
     let destination = unique_import_destination(data_root, name, source)?;
-    fs::copy(source, &destination)
-        .map_err(|error| format!("audio file could not be imported: {error}"))?;
+    if let Err(error) = fs::copy(source, &destination) {
+        let _ = fs::remove_file(&destination);
+        return Err(format!("audio file could not be imported: {error}"));
+    }
     let location = destination.to_string_lossy().into_owned();
     match register(
         data_root,
