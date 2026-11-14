@@ -240,7 +240,7 @@ mod tests {
     #[test]
     fn batch_state_files_are_read_locally_and_frozen_in_the_request() {
         let state_file = PathBuf::from(format!(".riffra-test-state-{}.json", std::process::id()));
-        let state = json!({"schemaVersion":1,"pluginPath":"plugins/Drums.vst3","parameterValues":[0.25],"stateData":"a2l0"});
+        let state = json!({"schemaVersion":2,"pluginIdentifier":"drums-class","pluginPath":"plugins/Drums.vst3","parameterValues":[0.25],"stateData":"a2l0"});
         std::fs::write(&state_file, state.to_string()).unwrap();
         let params = json!({"replace":true,"operations":[
             {"command":"track.add","params":{"name":"Drums","kind":"instrument"}},

@@ -664,7 +664,7 @@ mod tests {
             json!({
                 "owner": {"kind": "track", "id": "track:1"},
                 "deviceId": "device:1",
-                "state": {"schemaVersion": 1, "pluginPath": "Reverb.vst3", "parameterValues": [0.5]}
+                "state": {"schemaVersion": 2, "pluginIdentifier": "reverb-class", "pluginPath": "Reverb.vst3", "parameterValues": [0.5]}
             }),
             true,
         );

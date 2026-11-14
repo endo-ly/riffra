@@ -208,6 +208,37 @@ fn validated_entry(entry: &PluginEntry, expected_role: PluginRole) -> Result<Pat
     Ok(path)
 }
 
+/// Resolves the one validated catalog entry installed at a path.
+///
+/// A VST3 bundle can expose several classes. A path alone cannot identify one,
+/// so this returns an error when the catalog contains more than one validated
+/// class at the same location.
+fn same_plugin_path(first: &str, second: &str) -> bool {
+    first == second
+        || Path::new(first)
+            .canonicalize()
+            .ok()
+            .zip(Path::new(second).canonicalize().ok())
+            .is_some_and(|(first, second)| first == second)
+}
+
+pub(crate) fn validated_entry_at_path(data_root: &Path, path: &str) -> Result<PluginEntry, String> {
+    let entries =
+        load(data_root).map_err(|error| format!("could not read plugin catalog: {error}"))?;
+    let mut matching = entries.into_iter().filter(|entry| {
+        entry.scan_state == PluginScanState::Validated && same_plugin_path(&entry.path, path)
+    });
+    let entry = matching
+        .next()
+        .ok_or_else(|| format!("plugin is not validated in the current catalog: {path}"))?;
+    if matching.next().is_some() {
+        return Err(format!(
+            "multiple plugin classes share {path}; the catalog cannot select one for a state snapshot"
+        ));
+    }
+    Ok(entry)
+}
+
 pub(crate) fn selected_named_plugin(
     data_root: &Path,
     name: &str,

@@ -44,10 +44,9 @@ pub(super) fn resolve_plugin(
         super::record_dependency(dependencies, Path::new(path))?;
         let bytes = std::fs::read(path)
             .map_err(|error| format!("could not read plugin state {path}: {error}"))?;
-        let mut snapshot: PluginStateSnapshot = serde_json::from_slice(&bytes)
+        let snapshot: PluginStateSnapshot = serde_json::from_slice(&bytes)
             .map_err(|error| format!("invalid plugin state {path}: {error}"))?;
-        snapshot.plugin_path.clone_from(&entry.path);
-        crate::plugins::validate_plugin_state(&snapshot, &entry.path)
+        crate::plugins::validate_plugin_state(&snapshot, &entry)
             .map_err(|error| error.to_string())?;
         if let Some(data) = &snapshot.state_data {
             base64::engine::general_purpose::STANDARD
@@ -308,7 +307,8 @@ mod tests {
         )
         .unwrap();
         let snapshot = PluginStateSnapshot {
-            schema_version: 1,
+            schema_version: 2,
+            plugin_identifier: "synth-class".into(),
             plugin_path: "old-machine/Synth.vst3".into(),
             parameter_values: vec![0.75],
             state_data: Some("c3RhdGU=".into()),
@@ -336,6 +336,16 @@ mod tests {
         }];
         assert!(
             resolve_plugin(&root, &patched, PluginRole::Instrument, &mut dependencies).is_err()
+        );
+
+        let mut different = snapshot.clone();
+        different.plugin_identifier = "other-class".into();
+        std::fs::write(&state_path, serde_json::to_vec(&different).unwrap()).unwrap();
+        assert!(
+            resolve_plugin(&root, &spec, PluginRole::Instrument, &mut dependencies)
+                .err()
+                .unwrap()
+                .contains("different VST3")
         );
 
         let mut invalid = snapshot;
