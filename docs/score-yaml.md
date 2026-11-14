@@ -554,7 +554,7 @@ instruments:
       velocity: [[1, 18], [64, 68], [127, 120]]
 ```
 
-`source` の有効フィールドは `vst3` と `velocity`。`vst3` は必須の `plugin` と、任意の `identifier`、`state`、`patch`、`params` を持つ。
+`source` の有効フィールドは `vst3`、`velocity`、`articulations`。`vst3` は必須の `plugin` と、任意の `identifier`、`state`、`patch`、`params` を持つ。
 
 - `plugin` は検証済み VST3 カタログ上の正確なプラグイン名。`identifier` は同じ VST3 クラスへ絞り込む
 - `state` は `PluginStateSnapshot` 形式の JSON。`schemaVersion: 2`、`pluginIdentifier`、`pluginPath`、`parameterValues`、`stateData` を持つ。識別は `pluginIdentifier` で行い、`pluginPath` は取得時の実行パスとして扱う。現在のカタログで同じ識別子のプラグインを選び、その実行パスを使う
@@ -589,7 +589,7 @@ kits:
 
 ### 奏法制御
 
-本番音源の`source.articulations`は、Score上の奏法名を1つのVST3制御へ対応付ける。製品名や固定の奏法語彙へ依存せず、曲ごとに定義する。
+本番音源の`source.articulations`は、Score上の奏法名を1つのVST3制御へ対応付ける。製品名や固定の奏法語彙へ依存せず、曲ごとに定義する。`instruments.<id>.articulations`の`^`・`!`・`_`による音価・Velocity調整とは別の指定である。
 
 ```yaml
 instruments:
@@ -625,6 +625,7 @@ sections:
 - 複数のゲインレーンを持つ楽器は、すべての既存レーンへ同じ制御を送る。制御のためだけの追加TrackやVST3は作らない
 - キットは1つのVST3インスタンスを共有するため、制御イベントの`instrument`にはキットIDを指定する。部品IDを指定した制御はエラー
 - 音声トラック、内蔵音源だけの楽器、キット部品への`articulation`・`cc`・`control: "cc:N"`はエラー
+- `latch`を使う音源は、曲頭で別のキースイッチ奏法が始まらない限り`default`を選択してから始める
 - 曲末に終端が一致する場合は、復帰のためだけに曲やMIDIクリップの長さを延ばさない。後続演奏のない曲末の`default`パルスは省略し、次回の再生は既定状態から始める
 - 途中からの再生・シークでは、押下中の`hold`、最後に選択した`latch`、最後のCC値をPrepared MIDIから再構成して1回だけ送る
 
