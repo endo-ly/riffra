@@ -628,14 +628,23 @@ fn resolve_production(
                 });
             };
             let target_device = effect_device_id_for(&route.to);
-            if previous.is_some_and(|session| {
-                session
-                    .arrangement
-                    .mixer
-                    .sidechain_sends
-                    .iter()
-                    .any(|send| send.target_device_id == target_device)
-            }) {
+            let previous_capability = previous
+                .and_then(|session| previous_effect_plugin(session, &target_device))
+                .is_some_and(|prior| {
+                    prior.path == plugin.plugin.path
+                        && prior.state_data == plugin.plugin.state_data
+                        && prior.parameter_values == plugin.plugin.parameter_values
+                });
+            if previous_capability
+                && previous.is_some_and(|session| {
+                    session
+                        .arrangement
+                        .mixer
+                        .sidechain_sends
+                        .iter()
+                        .any(|send| send.target_device_id == target_device)
+                })
+            {
                 continue;
             }
             let plugin_path = plugin.plugin.path.clone();
@@ -846,7 +855,8 @@ fn resolve_production(
             }
         }
     }
-    for (key, previous) in reused {
+    for (key, mut previous) in reused {
+        previous.plugin.path = uses[&key].production.plugin().plugin.path.clone();
         values.insert(key, previous.plugin);
         resolved_automation.extend(previous.automation);
     }
@@ -4725,6 +4735,7 @@ mod tests {
             requests: vec![None],
         };
         let fingerprint = production_input_fingerprint(spec, &plugin, &[&pending]);
+        plugin.path = "C:/old-install/Bass.vst3".into();
         let mut previous = CreativeSession::new(1);
         let mut track = Track::instrument("score:track:1".into(), "bass".into());
         let mut instrument = TrackInstrument::vst3(
@@ -4779,6 +4790,13 @@ mod tests {
         assert_eq!(
             document.production_inputs.get("instruments.bass.source"),
             Some(&fingerprint)
+        );
+        assert_eq!(
+            document.production["instruments.bass.source"]
+                .plugin()
+                .plugin
+                .path,
+            plugin_path.to_string_lossy()
         );
         assert_eq!(document.automation[&0].parameter_id, "cutoff-id");
         assert_eq!(document.automation[&0].values, [0.2]);
