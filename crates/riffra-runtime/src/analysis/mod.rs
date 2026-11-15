@@ -1,4 +1,5 @@
 pub(crate) mod ffmpeg;
+pub(crate) mod levels;
 pub(crate) mod measurement;
 
 use crate::api::output::AudioAnalysis;

@@ -56,6 +56,7 @@ pub enum ControlOutput {
     ArrangementMutation(ArrangementMutationResult),
     BatchMutation(BatchMutationResult),
     AutomationLanes(Vec<AutomationLane>),
+    AutomationEvaluation(AutomationEvaluation),
     Tracks(Vec<TrackSummary>),
     AudioClips(Vec<AudioClip>),
     MidiClips(Vec<MidiClip>),

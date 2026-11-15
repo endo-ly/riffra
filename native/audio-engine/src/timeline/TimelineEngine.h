@@ -245,9 +245,11 @@ public:
     /// output, so plugins that finish preparing while processing can do so before playback.
     void warmUpPluginDevices(int sampleCount) noexcept;
 
-    /// Prepares aligned post-fader track capture for an offline render.
-    bool prepareStemCapture(const std::vector<juce::String>& trackIds, juce::String& error);
-    [[nodiscard]] const juce::AudioBuffer<float>& stemBuffer(std::size_t index) const noexcept;
+    /// Returns a previously prepared offline output capture buffer.
+    [[nodiscard]] const juce::AudioBuffer<float>& captureBuffer(std::size_t index) const noexcept;
+    /// Prepares aligned Track and Bus observation buffers for offline rendering.
+    bool prepareOutputCapture(const std::vector<OfflineCaptureTarget>& targets,
+                              juce::String& error);
 
 private:
     friend class TimelineEngineTestPeer;
@@ -411,13 +413,14 @@ private:
     juce::TimeSliceThread readAheadThread{"Riffra timeline read-ahead"};
     SonalloyInstrumentRuntime::CompiledCache instrumentCache;
     bool offlineMode = false;
-    struct StemCapture final {
+    struct OutputCapture final {
         TrackRuntime* track = nullptr;
+        MixerChannel* bus = nullptr;
         MixRouteDelay delay;
         juce::AudioBuffer<float> scratch;
         juce::AudioBuffer<float> output;
     };
-    std::vector<std::unique_ptr<StemCapture>> stemCaptures;
+    std::vector<std::unique_ptr<OutputCapture>> outputCaptures;
     std::unique_ptr<TrackProcessingPool> pool;
     ControlGraphRegistry graphRegistry;
     ControlGraphRegistry::Retired retiredGraphs;

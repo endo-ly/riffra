@@ -345,6 +345,7 @@ control_commands! {
         PunchRangeSet = "record.punch.set" (RangeParams) -> ArrangementMutation, mutation(batch), project;
         AutomationList = "automation.list" (AutomationListParams) -> AutomationLanes, read, project;
         AutomationGet = "automation.get" (AutomationGetParams) -> AutomationLanes, read, project;
+        AutomationEvaluate = "automation.evaluate" (AutomationEvaluateParams) -> AutomationEvaluation, read, project;
         AutomationSet = "automation.set" (AutomationSetParams) -> ArrangementMutation, mutation(batch), project;
         AutomationClear = "automation.clear" (AutomationClearParams) -> ArrangementMutation, mutation(batch), project;
 
@@ -512,12 +513,14 @@ control_commands! {
 
         RenderStart = "render.start" (RenderStartParams) -> Job, project;
         RenderStems = "render.stems" (RenderStemsParams) -> Job, project;
+        RenderCapture = "render.capture" (RenderCaptureParams) -> Job, project(long);
         RenderExport = "render.export" (RenderExportParams) -> RenderExport, host;
         RenderList = "render.list" (EmptyParams) -> RenderList, host;
         RenderDelete = "render.delete" (RenderDeleteParams) -> RenderDelete, project;
         JobGet = "job.get" (IdParams) -> Job, host;
         JobCancel = "job.cancel" (IdParams) -> Job, host;
         AnalysisMeasure = "analysis.measure" (AnalysisMeasureParams) -> Job, host;
+        AnalysisLevels = "analysis.levels" (AnalysisLevelsParams) -> Job, host;
         AnalysisInspect = "analysis.inspect" (AnalysisParams) -> Analysis, host;
 
         LibrarySearch = "asset.search" (LibrarySearchParams) -> Library, host;
@@ -562,7 +565,7 @@ mod tests {
         let names = command_names();
 
         // Act / Assert
-        assert_eq!(names.len(), 224);
+        assert_eq!(names.len(), 227);
         let unique: std::collections::HashSet<_> = names.iter().copied().collect();
         assert_eq!(unique.len(), names.len());
         for name in names {
@@ -800,7 +803,7 @@ mod tests {
             .filter_map(|line| line.split_once('\'').map(|(name, _)| name))
             .collect();
         let unique: std::collections::HashSet<_> = names.iter().copied().collect();
-        assert_eq!(names.len(), 224);
+        assert_eq!(names.len(), 227);
         assert_eq!(unique.len(), names.len());
 
         for (name, params) in [

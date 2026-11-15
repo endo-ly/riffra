@@ -278,12 +278,20 @@ pub(crate) struct OfflineRenderRequest {
 pub(crate) enum OfflineRenderOutput {
     Mixdown { destination: String },
     Stems { outputs: Vec<OfflineStemOutput> },
+    Capture { outputs: Vec<OfflineCaptureOutput> },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct OfflineStemOutput {
     pub(crate) track_id: String,
+    pub(crate) destination: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct OfflineCaptureOutput {
+    pub(crate) target: crate::api::params::CaptureTarget,
     pub(crate) destination: String,
 }
 
@@ -663,7 +671,7 @@ mod tests {
                 serde_json::to_string_pretty(&OfflineRenderRequest {
                     include_end_events: false,
                     tail_seconds: 0.0,
-                    graph,
+                    graph: graph.clone(),
                     output: OfflineRenderOutput::Mixdown {
                         destination: "renders/song.wav".into(),
                     },
@@ -672,6 +680,40 @@ mod tests {
                     sample_rate: 48_000,
                     block_size: 512,
                     normalize: true,
+                })
+                .unwrap(),
+            ),
+            (
+                "offline-capture-request.json",
+                serde_json::to_string_pretty(&OfflineRenderRequest {
+                    include_end_events: false,
+                    tail_seconds: 0.0,
+                    graph,
+                    output: OfflineRenderOutput::Capture {
+                        outputs: vec![
+                            OfflineCaptureOutput {
+                                target: crate::api::params::CaptureTarget::Track {
+                                    id: "track-audio".into(),
+                                },
+                                destination: "renders/track.wav".into(),
+                            },
+                            OfflineCaptureOutput {
+                                target: crate::api::params::CaptureTarget::Bus {
+                                    id: "bus:group".into(),
+                                },
+                                destination: "renders/bus.wav".into(),
+                            },
+                            OfflineCaptureOutput {
+                                target: crate::api::params::CaptureTarget::Master,
+                                destination: "renders/master.wav".into(),
+                            },
+                        ],
+                    },
+                    start_tick: 0,
+                    end_tick: 7_680,
+                    sample_rate: 48_000,
+                    block_size: 512,
+                    normalize: false,
                 })
                 .unwrap(),
             ),

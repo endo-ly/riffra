@@ -16,6 +16,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+mod automation;
 mod canonical;
 mod clips;
 mod device;

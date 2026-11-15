@@ -101,39 +101,53 @@ bool TimelineEngine::loadSnapshot(const TimelineSnapshotSpec& snapshot,
     return commitPreparedSnapshot(error) == RealtimeRequest::accepted;
 }
 
-bool TimelineEngine::prepareStemCapture(const std::vector<juce::String>& trackIds,
-                                        juce::String& error) {
+bool TimelineEngine::prepareOutputCapture(const std::vector<OfflineCaptureTarget>& targets,
+                                          juce::String& error) {
     auto* graph = realtime.graph;
-    if (!offlineMode || graph == nullptr || !stemCaptures.empty()) {
-        error = "Stem capture requires a prepared offline graph.";
+    if (!offlineMode || graph == nullptr || !outputCaptures.empty()) {
+        error = "Output capture requires a prepared offline graph.";
         return false;
     }
-    std::vector<std::unique_ptr<StemCapture>> captures;
-    for (const auto& id : trackIds) {
-        auto* track = graph->findTrack(id);
-        if (track == nullptr) {
-            error = "Stem capture track is missing: " + id;
-            return false;
+    std::vector<std::unique_ptr<OutputCapture>> captures;
+    for (const auto& target : targets) {
+        auto capture = std::make_unique<OutputCapture>();
+        std::int64_t latency = static_cast<std::int64_t>(graph->summary.maximumLatencySamples);
+        if (target.kind == OfflineCaptureKind::track) {
+            auto* track = graph->findTrack(target.id);
+            if (track == nullptr) {
+                error = "Capture track is missing: " + target.id;
+                return false;
+            }
+            capture->track = track->runtime.get();
+            latency = capture->track->routeLatencySamples;
+        } else if (target.kind == OfflineCaptureKind::bus) {
+            const auto found = std::find_if(graph->mixer.buses.begin(), graph->mixer.buses.end(),
+                                            [&](const auto& bus) { return bus->id == target.id; });
+            if (found == graph->mixer.buses.end()) {
+                error = "Capture bus is missing: " + target.id;
+                return false;
+            }
+            capture->bus = found->get();
+            latency = capture->bus->outputLatency;
         }
-        const auto delay = static_cast<std::int64_t>(graph->summary.maximumLatencySamples) -
-                           track->runtime->routeLatencySamples;
+        const auto delay =
+            static_cast<std::int64_t>(graph->summary.maximumLatencySamples) - latency;
         if (delay < 0 || delay >= std::numeric_limits<int>::max()) {
-            error = "Stem capture latency is invalid: " + id;
+            error = "Capture latency is invalid: " + target.id;
             return false;
         }
-        auto capture = std::make_unique<StemCapture>();
-        capture->track = track->runtime.get();
         capture->delay.prepare(static_cast<int>(delay));
         capture->scratch.setSize(2, graph->preparedBlockSize);
         capture->output.setSize(2, graph->preparedBlockSize);
         captures.push_back(std::move(capture));
     }
-    stemCaptures = std::move(captures);
+    outputCaptures = std::move(captures);
     return true;
 }
 
-const juce::AudioBuffer<float>& TimelineEngine::stemBuffer(const std::size_t index) const noexcept {
-    return stemCaptures[index]->output;
+const juce::AudioBuffer<float>& TimelineEngine::captureBuffer(
+    const std::size_t index) const noexcept {
+    return outputCaptures[index]->output;
 }
 
 RealtimeRequest TimelineEngine::commitPreparedSnapshot(juce::String& error) {

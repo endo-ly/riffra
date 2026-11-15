@@ -1591,12 +1591,32 @@ pub struct RangeArgs {
 pub enum AutomationCommand {
     /// Read the lane for one canonical target.
     Get(AutomationTargetArgs),
+    /// Evaluate scheduled values at bar-aligned musical grid positions.
+    Evaluate(AutomationEvaluateArgs),
     /// Discover lanes across the project or a channel owner.
     List(AutomationListArgs),
     /// Replace a lane with absolute-tick points; values before/after points hold the endpoint.
     Set(AutomationSetArgs),
     /// Delete a target's lane and use its static value.
     Clear(AutomationTargetArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct AutomationEvaluateArgs {
+    #[command(flatten)]
+    pub target: AutomationTargetArgs,
+    /// Start position as bar:beat, with an optional beat-relative fraction.
+    #[arg(long)]
+    pub start: String,
+    /// Exclusive end position as bar:beat, with an optional beat-relative fraction.
+    #[arg(long)]
+    pub end: String,
+    /// Grid as a fraction of a whole note, for example 1/16.
+    #[arg(long)]
+    pub grid: String,
+    /// Sample rate used by the execution graph.
+    #[arg(long)]
+    pub sample_rate: u32,
 }
 
 #[derive(Debug, Args)]
@@ -2419,6 +2439,30 @@ pub enum AnalysisCommand {
     Inspect(AnalysisInspectArgs),
     /// Measure existing WAVs asynchronously; returns a Job for job wait (--attach required).
     Measure(AnalysisMeasureArgs),
+    /// Measure RMS and sample peak on a saved Render's musical grid.
+    Levels(AnalysisLevelsArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct AnalysisLevelsArgs {
+    /// Managed Render ID returned by render capture, start or stems.
+    #[arg(long)]
+    pub render_id: String,
+    /// Grid as a fraction of a whole note, for example 1/16.
+    #[arg(long)]
+    pub grid: String,
+    /// Optional start position in bar:beat notation.
+    #[arg(long)]
+    pub start: Option<String>,
+    /// Optional exclusive end position in bar:beat notation.
+    #[arg(long)]
+    pub end: Option<String>,
+    /// Select master, mixdown, track:<id>, or bus:<id>; omit to measure every source.
+    #[arg(long)]
+    pub source: Option<String>,
+    /// Wait for the background Job to finish.
+    #[arg(long)]
+    pub wait: bool,
 }
 
 #[derive(Debug, Args)]
@@ -2705,6 +2749,8 @@ pub enum RenderCommand {
     /// skips Tracks without unmuted Clips; explicit IDs must be unique and
     /// refer to Tracks with renderable Clips. Range options match render start.
     Stems(RenderStemsArgs),
+    /// Capture selected Track, Bus and Master outputs together without changing routing.
+    Capture(RenderCaptureArgs),
     /// Copy a completed Render to a WAV path, or copy all stems to an existing directory.
     Export(RenderExportArgs),
     /// List Renders stored in the managed Render history.
@@ -2771,6 +2817,34 @@ pub struct RenderStemsArgs {
     #[arg(long)]
     pub occurrence: Option<u32>,
     /// Copy completed stem WAVs to this existing directory without replacing files.
+    #[arg(long)]
+    pub output_directory: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub struct RenderCaptureArgs {
+    /// Wait for the background Job to finish.
+    #[arg(long)]
+    pub wait: bool,
+    /// Track output to capture; may be repeated.
+    #[arg(long)]
+    pub track_id: Vec<String>,
+    /// Group or Return output to capture; may be repeated.
+    #[arg(long)]
+    pub bus_id: Vec<String>,
+    /// Include the final Master output.
+    #[arg(long)]
+    pub master: bool,
+    /// Render the entire arrangement or the enabled loop range.
+    #[arg(long, default_value = "entire-arrangement", value_parser = ["entire-arrangement", "loop-range"])]
+    pub range: String,
+    /// Inclusive time-selection start in bar:beat notation; requires --end.
+    #[arg(long)]
+    pub start: Option<String>,
+    /// Exclusive time-selection end in bar:beat notation; requires --start.
+    #[arg(long)]
+    pub end: Option<String>,
+    /// Copy completed WAVs to this existing directory without replacing files.
     #[arg(long)]
     pub output_directory: Option<PathBuf>,
 }
@@ -3513,6 +3587,25 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
                 target: args.into_target()?,
             })
             .into(),
+            AutomationCommand::Evaluate(args) => {
+                Canonical::AutomationEvaluate(AutomationEvaluateParams {
+                    target: args.target.into_target()?,
+                    start: args
+                        .start
+                        .parse()
+                        .map_err(|error: riffra_core::DomainError| error.to_string())?,
+                    end: args
+                        .end
+                        .parse()
+                        .map_err(|error: riffra_core::DomainError| error.to_string())?,
+                    grid: args
+                        .grid
+                        .parse()
+                        .map_err(|error: riffra_core::DomainError| error.to_string())?,
+                    sample_rate: args.sample_rate,
+                })
+                .into()
+            }
             AutomationCommand::List(args) => {
                 let owner = match (args.track_id, args.bus_id, args.master) {
                     (Some(id), None, false) => Some(riffra_core::EffectOwner::Track { id }),
@@ -3820,6 +3913,39 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
             RecordCommand::Duplicates => Runtime::RecordDuplicates(empty).into(),
         },
         CliCommand::Analysis { command } => match command {
+            AnalysisCommand::Levels(args) => {
+                let source = args
+                    .source
+                    .map(|source| {
+                        if source == "master" {
+                            Ok(LevelSource::Master)
+                        } else if source == "mixdown" {
+                            Ok(LevelSource::Mixdown {
+                                rendered_track_id: None,
+                            })
+                        } else if let Some(id) =
+                            source.strip_prefix("track:").filter(|id| !id.is_empty())
+                        {
+                            Ok(LevelSource::Track { id: id.into() })
+                        } else if let Some(id) =
+                            source.strip_prefix("bus:").filter(|id| !id.is_empty())
+                        {
+                            Ok(LevelSource::Bus { id: id.into() })
+                        } else {
+                            Err("source must be master, mixdown, track:<id>, or bus:<id>"
+                                .to_string())
+                        }
+                    })
+                    .transpose()?;
+                Runtime::AnalysisLevels(AnalysisLevelsParams {
+                    render_id: args.render_id,
+                    grid: text("/grid", args.grid)?,
+                    start: args.start.map(|value| text("/start", value)).transpose()?,
+                    end: args.end.map(|value| text("/end", value)).transpose()?,
+                    source,
+                })
+                .into()
+            }
             AnalysisCommand::Measure(args) => {
                 let encoded = fs::read_to_string(&args.file).map_err(|error| {
                     format!("analysis measurement file could not be read: {error}")
@@ -3930,6 +4056,28 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
         CliCommand::Render { command } => match command {
             RenderCommand::Start(args) => render_start(args)?,
             RenderCommand::Stems(args) => render_stems(args)?,
+            RenderCommand::Capture(args) => {
+                let mut targets = args
+                    .track_id
+                    .into_iter()
+                    .map(|id| CaptureTarget::Track { id })
+                    .chain(args.bus_id.into_iter().map(|id| CaptureTarget::Bus { id }))
+                    .collect::<Vec<_>>();
+                if args.master {
+                    targets.push(CaptureTarget::Master);
+                }
+                if !(1..=16).contains(&targets.len()) {
+                    return Err("capture requires 1 to 16 targets".into());
+                }
+                Runtime::RenderCapture(RenderCaptureParams {
+                    targets,
+                    range: render_range(args.range, args.start, args.end, None, None, "/range")?,
+                    output_directory: args
+                        .output_directory
+                        .map(|path| path.to_string_lossy().into_owned()),
+                })
+                .into()
+            }
             RenderCommand::Export(args) => Runtime::RenderExport(RenderExportParams {
                 render_id: args.render_id,
                 output_path: args.output_path.to_string_lossy().into_owned(),
@@ -4469,6 +4617,26 @@ mod tests {
             .unwrap(),
         );
         let list = wire(Cli::try_parse_from(["riffra", "automation", "list"]).unwrap());
+        let evaluation = wire(
+            Cli::try_parse_from([
+                "riffra",
+                "automation",
+                "evaluate",
+                "--bus-id",
+                "bus:1",
+                "--parameter",
+                "gain",
+                "--start",
+                "20:1",
+                "--end",
+                "22:1",
+                "--grid",
+                "1/32",
+                "--sample-rate",
+                "48000",
+            ])
+            .unwrap(),
+        );
         let sidechain = wire(
             Cli::try_parse_from([
                 "riffra",
@@ -4502,6 +4670,11 @@ mod tests {
             json!({"kind":"sidechainSendLevel","sidechainSendId":"sidechain:1"})
         );
         assert_eq!(list.name, "automation.list");
+        assert_eq!(evaluation.name, "automation.evaluate");
+        assert_eq!(
+            evaluation.params,
+            json!({"target":{"kind":"busMix","busId":"bus:1","parameter":"gain"},"start":"20:1","end":"22:1","grid":"1/32","sampleRate":48000})
+        );
         assert!(
             Cli::try_parse_from([
                 "riffra",
@@ -4674,6 +4847,66 @@ mod tests {
         .request();
         assert!(missing_selection.is_err());
         assert!(conflicting_selection.is_err());
+
+        let capture = wire(
+            Cli::try_parse_from([
+                "riffra",
+                "render",
+                "capture",
+                "--track-id",
+                "track:1",
+                "--track-id",
+                "track:2",
+                "--bus-id",
+                "bus:1",
+                "--master",
+                "--start",
+                "9:1",
+                "--end",
+                "13:1",
+            ])
+            .unwrap(),
+        );
+        assert_eq!(capture.name, "render.capture");
+        assert_eq!(
+            capture.params["targets"],
+            json!([
+                {"kind":"track","id":"track:1"}, {"kind":"track","id":"track:2"},
+                {"kind":"bus","id":"bus:1"}, {"kind":"master"}
+            ])
+        );
+        assert_eq!(
+            capture.params["range"],
+            json!({"kind":"timeSelection","start":"9:1","end":"13:1"})
+        );
+        assert!(
+            Cli::try_parse_from(["riffra", "render", "capture"])
+                .unwrap()
+                .request()
+                .is_err()
+        );
+        let levels = wire(
+            Cli::try_parse_from([
+                "riffra",
+                "analysis",
+                "levels",
+                "--render-id",
+                "render-example",
+                "--grid",
+                "1/16",
+                "--source",
+                "bus:bus:1",
+                "--start",
+                "9:1",
+                "--end",
+                "13:1",
+                "--wait",
+            ])
+            .unwrap(),
+        );
+        assert_eq!(levels.name, "analysis.levels");
+        assert_eq!(levels.params["source"], json!({"kind":"bus","id":"bus:1"}));
+        assert_eq!(levels.params["grid"], "1/16");
     }
 
     #[test]
@@ -4820,7 +5053,7 @@ mod tests {
         command.clone().debug_assert();
         assert_help(&command, "riffra");
         assert_eq!(command.get_subcommands().count(), 24);
-        assert_eq!(leaves(&command), 191);
+        assert_eq!(leaves(&command), 194);
     }
 
     #[test]

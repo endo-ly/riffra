@@ -55,6 +55,7 @@ export type ControlCommandResults = {
   'record.punch.set': OutputValue<'arrangementMutation'>;
   'automation.list': OutputValue<'automationLanes'>;
   'automation.get': OutputValue<'automationLanes'>;
+  'automation.evaluate': OutputValue<'automationEvaluation'>;
   'automation.set': OutputValue<'arrangementMutation'>;
   'automation.clear': OutputValue<'arrangementMutation'>;
   'clip.audio.list': OutputValue<'audioClips'>;
@@ -208,12 +209,14 @@ export type ControlCommandResults = {
   'project.restore-generation': OutputValue<'arrangementMutation'>;
   'render.start': OutputValue<'job'>;
   'render.stems': OutputValue<'job'>;
+  'render.capture': OutputValue<'job'>;
   'render.export': OutputValue<'renderExport'>;
   'render.list': OutputValue<'renderList'>;
   'render.delete': OutputValue<'renderDelete'>;
   'job.get': OutputValue<'job'>;
   'job.cancel': OutputValue<'job'>;
   'analysis.measure': OutputValue<'job'>;
+  'analysis.levels': OutputValue<'job'>;
   'analysis.inspect': OutputValue<'analysis'>;
   'asset.search': OutputValue<'library'>;
   'asset.update': OutputValue<'libraryAsset'>;

@@ -117,6 +117,10 @@ std::unique_ptr<OfflineRenderer> OfflineRenderer::prepare(const OfflineRenderReq
         error = "Offline Render request is invalid.";
         return nullptr;
     }
+    if (!request.captures.empty() && (request.normalize || !request.stems.empty())) {
+        error = "Capture requires an unnormalized capture-only output.";
+        return nullptr;
+    }
     TimelineTimebase timelineTimebase;
     timelineTimebase.ppq = request.graph.timebase.ppq;
     timelineTimebase.tempoChanges = request.graph.timebase.tempoChanges;
@@ -153,7 +157,8 @@ std::unique_ptr<OfflineRenderer> OfflineRenderer::prepare(const OfflineRenderReq
         error = "Offline Render range has no samples.";
         return nullptr;
     }
-    if (request.stems.empty() && !destination.getParentDirectory().createDirectory()) {
+    if (request.stems.empty() && request.captures.empty() &&
+        !destination.getParentDirectory().createDirectory()) {
         error = "Offline Render output directory could not be created.";
         return nullptr;
     }
@@ -167,15 +172,26 @@ std::unique_ptr<OfflineRenderer> OfflineRenderer::prepare(const OfflineRenderReq
     if (!timelineEngine->loadSnapshot(renderSnapshot, formats, sampleRate, blockSize, error))
         return nullptr;
     if (!request.stems.empty()) {
-        std::vector<juce::String> ids;
+        std::vector<OfflineCaptureTarget> targets;
         for (const auto& stem : request.stems) {
             if (!juce::File(stem.destination).getParentDirectory().createDirectory()) {
                 error = "Stem output directory could not be created: " + stem.destination;
                 return nullptr;
             }
-            ids.push_back(stem.trackId);
+            targets.push_back({OfflineCaptureKind::track, stem.trackId});
         }
-        if (!timelineEngine->prepareStemCapture(ids, error)) return nullptr;
+        if (!timelineEngine->prepareOutputCapture(targets, error)) return nullptr;
+    }
+    if (!request.captures.empty()) {
+        std::vector<OfflineCaptureTarget> targets;
+        for (const auto& capture : request.captures) {
+            if (!juce::File(capture.destination).getParentDirectory().createDirectory()) {
+                error = "Capture output directory could not be created: " + capture.destination;
+                return nullptr;
+            }
+            targets.push_back(capture.target);
+        }
+        if (!timelineEngine->prepareOutputCapture(targets, error)) return nullptr;
     }
     const auto status = timelineEngine->status();
     const auto latencySamples = status.graph.has_value()
@@ -193,6 +209,7 @@ std::unique_ptr<OfflineRenderer> OfflineRenderer::prepare(const OfflineRenderReq
         status.graph ? status.graph->automationWarnings : std::vector<juce::String>{};
     Plan renderPlan{destination,
                     request.stems,
+                    request.captures,
                     sampleRate,
                     blockSize,
                     startSample,
@@ -243,8 +260,8 @@ bool OfflineRenderer::render(juce::AudioFormatManager& formats, Result& result,
         }
     } outputs;
     auto addOutput = [&](const juce::File& destination) {
-        if (!plan.stems.empty() && destination.exists()) {
-            error = "Stem output already exists: " + destination.getFullPathName();
+        if ((!plan.stems.empty() || !plan.captures.empty()) && destination.exists()) {
+            error = "Render output already exists: " + destination.getFullPathName();
             return false;
         }
         outputs.files.emplace_back();
@@ -259,7 +276,10 @@ bool OfflineRenderer::render(juce::AudioFormatManager& formats, Result& result,
         if (output.writer == nullptr) return false;
         return true;
     };
-    if (plan.stems.empty()) {
+    if (!plan.captures.empty()) {
+        for (const auto& capture : plan.captures)
+            if (!addOutput(juce::File(capture.destination))) return false;
+    } else if (plan.stems.empty()) {
         if (!addOutput(plan.destination)) return false;
     } else {
         for (const auto& stem : plan.stems)
@@ -287,7 +307,11 @@ bool OfflineRenderer::render(juce::AudioFormatManager& formats, Result& result,
             const auto writeCount = static_cast<int>(stop - from);
             for (std::size_t i = 0; i < outputs.files.size(); ++i) {
                 auto& output = outputs.files[i];
-                const auto& source = plan.stems.empty() ? buffer : engine->stemBuffer(i);
+                const auto master = !plan.captures.empty() &&
+                                    plan.captures[i].target.kind == OfflineCaptureKind::master;
+                const auto& source = master || (plan.stems.empty() && plan.captures.empty())
+                                         ? buffer
+                                         : engine->captureBuffer(i);
                 for (int channel = 0; channel < 2; ++channel)
                     output.peak = std::max(output.peak,
                                            source.getMagnitude(channel, offsetInBlock, writeCount));

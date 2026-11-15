@@ -95,6 +95,9 @@ impl HostDispatcher<'_> {
             CanonicalCommand::AutomationGet(params) => Ok(ControlOutput::AutomationLanes(
                 automation_lane(session, params.target)?,
             )),
+            CanonicalCommand::AutomationEvaluate(params) => Ok(
+                ControlOutput::AutomationEvaluation(super::automation::evaluate(session, params)?),
+            ),
             CanonicalCommand::AutomationList(params) => Ok(ControlOutput::AutomationLanes(
                 automation_lanes(session, params.owner)?,
             )),

@@ -120,6 +120,8 @@ Group・Return・Send・Sidechainの正準設定は `mixer get` でまとめて�
 
 `automation set` は指定対象のLane全体を置き換える。Pointは `id`、`tick`、`value` を持ち、Tickは楽曲全体の絶対位置であり、音楽座標からの変換には `session inspect` の `project.ppq` と拍子を使う。値の単位、値域、一意性と上限は[データモデル](../../../../docs/data-model.md)に従う。Deviceの `value` は正規化数値、またはPluginの表示文字列(例:`"250 ms"`)を指定できる。文字列の変換にはLive Hostが必要で、変換できない場合は保存しない。
 
+`automation evaluate` は指定したSample Rateと音楽グリッド上で補間後の予定制御値を返す。静的なミキサー値も評価できる。Plugin内部の量子化やGain Reductionの測定値ではないため、実際の音量はCaptureとLevelsで確認する。
+
 更新はLane IDを維持し、新規LaneのIDは `createdEntityIds.automationLanes` へ返る。空のPoint配列と `clear` はLaneを削除する。
 
 `session apply` へ `automation.set` を含める場合は、対象をCLI引数ではなく `target` オブジェクトで指定する。Pointは `tick` または `position` の一方だけを持ち、`position` はそのoperationの時点のテンポ・拍子からTickへ変換する。
@@ -277,6 +279,8 @@ riffra --attach render stems --all-tracks --section walk --occurrence 2 --wait
 
 Stem Render(`render stems`)は一度の要求で複数Trackを同じ時間基準のWAVへ書き出す。全WAVで開始Tick、終了Tick、Sample Rate、フレーム数を揃え、個別の正規化とMasteringは行わない。共有する非線形Effectでは、Stemの合計と全体Mixが一致しない場合がある。StemとMasteringの設計上の扱いは[音声エンジンの設計](../../../../docs/audio-engine.md)を参照。
 
+`render capture` は現在のミックス経路を変えず、選んだTrack・Group・Return・Masterを同時に取得する。結果の `renderId` を `analysis levels` に渡すと、各出力のRMSとSample Peakを同じ音楽座標で比較できる。`--wait` は両方のJobで利用できる。Captureの外部コピーは `--output-directory`、保存済みCaptureの一括取り出しは `render export` を使う。
+
 Job結果と`render.json`の`measurements`には完成WAVのSample Peakとラウドネス測定を含む。通常Renderで測定器(FFmpeg)を利用できない場合は成功結果のラウドネス測定に`unavailable`と理由を返し、Masteringを要求したJobでの測定失敗はJob失敗になる。Marker区間の判断には`measurements.sections`、Scoreのセクション出現の判断には`measurements.scoreSections`を使う。`scoreSections`はScoreにリンクしたProjectだけで返り、`name`・`occurrence`・RegionのTick範囲・WAV先頭からの秒数・`complete`を持つ。Render範囲と交差する部分だけを測り、全曲用のテールは最終セクションへ含めない。Render結果の`sectionName`と`sectionOccurrence`、Render履歴の`rangeKind: "section"`でも指定したセクションを追跡できる。
 
 | 項目                               | 読み方                                                                              |
@@ -312,6 +316,8 @@ riffra --attach job wait --id job:analysis-measure:0 --timeout-ms 120000
 ```
 
 待機には開始応答のJob IDを使い、結果の `sources` のパス・Track情報を比較対象と照合する。区間True Peakの位置はWAV先頭からの秒数なので、プロジェクト上の位置と混同しない。帯域値・測定状態の読み方はRenderと共通である。
+
+音符ごとの音量変化を比べるときは `analysis levels` を使う。グリッド `1/16` は全音符の16分の1で、4/4の `20:1` の次は `20:1+1/4` となる。範囲の先頭と末尾は指定位置で切り詰められ、無音のRMSとPeakは `null` である。TimebaseはRender時点のものを使い、Tailは含めない。
 
 ### Library・解析・Preview
 
