@@ -18,6 +18,18 @@ void appendEvent(CompiledMidiClip& destination, const juce::MidiMessage& message
     destination.events.push_back({offset, ordering, message});
 }
 
+// Playback and seek restoration share this order. Clip start tick and the prepared
+// sample offset break ties without depending on the order of the clip array.
+using MidiOrderKey =
+    std::tuple<std::int64_t, int, std::uint32_t, std::uint64_t, std::uint64_t, std::int64_t>;
+
+MidiOrderKey midiOrderKey(const CompiledMidiEvent& event, const std::int64_t absoluteSample,
+                          const std::uint64_t absoluteTick,
+                          const std::uint64_t clipStartTick) noexcept {
+    return {absoluteSample, event.ordering, event.sourceOrder,
+            absoluteTick,   clipStartTick,  event.sampleOffset};
+}
+
 std::size_t saturatingAdd(const std::size_t left, const std::size_t right) noexcept {
     if (right > std::numeric_limits<std::size_t>::max() - left)
         return std::numeric_limits<std::size_t>::max();
@@ -420,18 +432,16 @@ void MidiScheduler::schedule(const std::vector<CompiledMidiClip>& clips,
     if (restoreControls) {
         struct ControlState final {
             bool has = false;
-            InstrumentEventOrder order{};
+            MidiOrderKey order{};
             bool down = false;
             int value = -1;
         };
         std::array<ControlState, 128> holds;
         std::array<ControlState, 128> latches;
         std::array<ControlState, 128> controllers;
-        const auto orderKey = [](const InstrumentEventOrder& order) noexcept {
-            return std::tuple(order.absoluteSample, order.priority, order.sourceOrder, order.tick);
-        };
         const auto consider = [&](const CompiledMidiEvent& event, const std::uint64_t absoluteTick,
-                                  const std::int64_t absoluteSample) {
+                                  const std::int64_t absoluteSample,
+                                  const std::uint64_t clipStartTick) {
             ControlState* state = nullptr;
             bool down = false;
             int value = -1;
@@ -448,9 +458,8 @@ void MidiScheduler::schedule(const std::vector<CompiledMidiClip>& clips,
             } else {
                 return;
             }
-            const InstrumentEventOrder order{absoluteTick, event.ordering, event.sourceOrder,
-                                             absoluteSample};
-            if (state->has && orderKey(order) < orderKey(state->order)) return;
+            const auto order = midiOrderKey(event, absoluteSample, absoluteTick, clipStartTick);
+            if (state->has && order < state->order) return;
             state->has = true;
             state->order = order;
             state->down = down;
@@ -471,7 +480,7 @@ void MidiScheduler::schedule(const std::vector<CompiledMidiClip>& clips,
                         clip.startTick +
                         static_cast<std::uint64_t>(currentIteration) * clip.durationTicks +
                         event.originalTick;
-                    consider(event, absoluteTick, absoluteSample);
+                    consider(event, absoluteTick, absoluteSample, clip.startTick);
                 }
             };
             if (clip.loop) {
@@ -489,10 +498,10 @@ void MidiScheduler::schedule(const std::vector<CompiledMidiClip>& clips,
                                                                static_cast<juce::uint8>(127)),
                                      0);
         auto latch = -1;
-        InstrumentEventOrder latchOrder{};
+        MidiOrderKey latchOrder{};
         for (std::size_t note = 0; note < latches.size(); ++note) {
             if (!latches[note].has) continue;
-            if (latch < 0 || orderKey(latchOrder) < orderKey(latches[note].order)) {
+            if (latch < 0 || latchOrder < latches[note].order) {
                 latch = static_cast<int>(note);
                 latchOrder = latches[note].order;
             }
@@ -543,24 +552,22 @@ void MidiScheduler::schedule(const std::vector<CompiledMidiClip>& clips,
                     (event->sampleOffset == clip.lengthSamples && localEnd == clip.lengthSamples);
                 if (!inRange) break;
                 const auto absoluteSample = iterationStart + event->sampleOffset;
+                const auto absoluteTick =
+                    clip.startTick + static_cast<std::uint64_t>(iteration) * clip.durationTicks +
+                    event->originalTick;
                 const auto offset = static_cast<int>(absoluteSample - rangeStart);
                 if (!event->instrumentEvent && offset >= 0 && offset < sampleCount)
-                    eventRefs.push_back({&*event, absoluteSample});
+                    eventRefs.push_back({&*event, absoluteSample, absoluteTick, clip.startTick});
             }
             if (!clip.loop) break;
         }
     }
     std::sort(eventRefs.begin(), eventRefs.end(),
               [](const MidiEventRef& left, const MidiEventRef& right) {
-                  if (left.absoluteSample != right.absoluteSample)
-                      return left.absoluteSample < right.absoluteSample;
-                  const auto& leftEvent = *left.event;
-                  const auto& rightEvent = *right.event;
-                  if (leftEvent.ordering != rightEvent.ordering)
-                      return leftEvent.ordering < rightEvent.ordering;
-                  if (leftEvent.sourceOrder != rightEvent.sourceOrder)
-                      return leftEvent.sourceOrder < rightEvent.sourceOrder;
-                  return leftEvent.originalTick < rightEvent.originalTick;
+                  return midiOrderKey(*left.event, left.absoluteSample, left.absoluteTick,
+                                      left.clipStartTick) <
+                         midiOrderKey(*right.event, right.absoluteSample, right.absoluteTick,
+                                      right.clipStartTick);
               });
     for (const auto& ref : eventRefs)
         (void)destination.addEvent(ref.event->message,

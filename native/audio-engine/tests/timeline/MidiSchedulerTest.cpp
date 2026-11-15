@@ -660,6 +660,41 @@ TEST(MidiSchedulerTest, OrdersMidiControlsAcrossOverlappingClipsByAbsoluteTime) 
     EXPECT_FALSE(std::any_of(
         restoredMessages.begin(), restoredMessages.end(),
         [](const auto& message) { return message.isNoteOff() && message.getNoteNumber() == 24; }));
+
+    MidiClipSpec firstEqualOrder;
+    auto firstValue = control(20, "first-equal", 0);
+    firstValue.type = "controlChange";
+    firstValue.controllerNumber = 68;
+    firstValue.controllerValue = 12;
+    firstEqualOrder.instrumentControlEvents.push_back(firstValue);
+
+    MidiClipSpec secondEqualOrder;
+    auto secondValue = control(10, "second-equal", 0);
+    secondValue.type = "controlChange";
+    secondValue.controllerNumber = 68;
+    secondValue.controllerValue = 34;
+    secondEqualOrder.instrumentControlEvents.push_back(secondValue);
+
+    const auto firstEqualClip = compile(90, 30, firstEqualOrder);
+    const auto secondEqualClip = compile(100, 20, secondEqualOrder);
+    const auto forwardEqual = messagesFor({firstEqualClip, secondEqualClip});
+    const auto reversedEqual = messagesFor({secondEqualClip, firstEqualClip});
+    ASSERT_EQ(forwardEqual.size(), 2u);
+    ASSERT_EQ(reversedEqual.size(), forwardEqual.size());
+    for (std::size_t index = 0; index < forwardEqual.size(); ++index)
+        EXPECT_EQ(forwardEqual[index].getDescription(), reversedEqual[index].getDescription());
+    EXPECT_EQ(forwardEqual[0].getControllerValue(), 12);
+    EXPECT_EQ(forwardEqual[1].getControllerValue(), 34);
+
+    juce::MidiBuffer restoredEqual;
+    schedule({secondEqualClip, firstEqualClip}, 111, 1, restoredEqual, true);
+    std::vector<juce::MidiMessage> restoredEqualMessages;
+    for (const auto metadata : restoredEqual)
+        restoredEqualMessages.push_back(metadata.getMessage());
+    ASSERT_EQ(restoredEqualMessages.size(), 1u);
+    EXPECT_TRUE(restoredEqualMessages[0].isController());
+    EXPECT_EQ(restoredEqualMessages[0].getControllerNumber(), 68);
+    EXPECT_EQ(restoredEqualMessages[0].getControllerValue(), 34);
 }
 
 TEST(MidiSchedulerTest, RestoresLoopControlStateFromThePreviousIteration) {
