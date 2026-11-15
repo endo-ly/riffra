@@ -466,6 +466,7 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
         track->runtime->midiEventCapacity += restorationCapacity;
         track->runtime->instrumentEvents.resize(track->runtime->midiEventCapacity);
         track->runtime->instrumentEventOrdering.resize(track->runtime->midiEventCapacity);
+        track->runtime->midiScheduleRefs.reserve(track->runtime->midiEventCapacity);
         if (!MidiScheduler::prepareBuffer(track->runtime->midiBuffer,
                                           track->runtime->midiEventCapacity)) {
             error = "Timeline MIDI requires an audio buffer larger than the native runtime allows.";

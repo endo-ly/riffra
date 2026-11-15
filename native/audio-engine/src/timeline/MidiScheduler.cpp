@@ -413,7 +413,9 @@ bool MidiScheduler::compile(const MidiClipSpec& source, const MidiCompileOptions
 
 void MidiScheduler::schedule(const std::vector<CompiledMidiClip>& clips,
                              const std::int64_t rangeStart, const int sampleCount,
-                             juce::MidiBuffer& destination, const bool restoreControls) noexcept {
+                             juce::MidiBuffer& destination, std::vector<MidiEventRef>& eventRefs,
+                             const bool restoreControls) noexcept {
+    eventRefs.clear();
     if (sampleCount <= 0) return;
     if (restoreControls) {
         struct ControlState final {
@@ -543,11 +545,26 @@ void MidiScheduler::schedule(const std::vector<CompiledMidiClip>& clips,
                 const auto absoluteSample = iterationStart + event->sampleOffset;
                 const auto offset = static_cast<int>(absoluteSample - rangeStart);
                 if (!event->instrumentEvent && offset >= 0 && offset < sampleCount)
-                    (void)destination.addEvent(event->message, offset);
+                    eventRefs.push_back({&*event, absoluteSample});
             }
             if (!clip.loop) break;
         }
     }
+    std::sort(eventRefs.begin(), eventRefs.end(),
+              [](const MidiEventRef& left, const MidiEventRef& right) {
+                  if (left.absoluteSample != right.absoluteSample)
+                      return left.absoluteSample < right.absoluteSample;
+                  const auto& leftEvent = *left.event;
+                  const auto& rightEvent = *right.event;
+                  if (leftEvent.ordering != rightEvent.ordering)
+                      return leftEvent.ordering < rightEvent.ordering;
+                  if (leftEvent.sourceOrder != rightEvent.sourceOrder)
+                      return leftEvent.sourceOrder < rightEvent.sourceOrder;
+                  return leftEvent.originalTick < rightEvent.originalTick;
+              });
+    for (const auto& ref : eventRefs)
+        (void)destination.addEvent(ref.event->message,
+                                   static_cast<int>(ref.absoluteSample - rangeStart));
 }
 
 std::size_t MidiScheduler::scheduleInstrumentEvents(

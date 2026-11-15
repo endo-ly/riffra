@@ -59,6 +59,12 @@ struct InstrumentEventOrder final {
     std::int64_t absoluteSample = 0;
 };
 
+/// A prepared event reference used to order overlapping clips without realtime allocation.
+struct MidiEventRef final {
+    const CompiledMidiEvent* event = nullptr;
+    std::int64_t absoluteSample = 0;
+};
+
 /// Compiles timeline MIDI once during graph preparation and schedules only the
 /// event range intersecting the current audio block.
 class MidiScheduler final {
@@ -85,6 +91,7 @@ public:
 
     static void schedule(const std::vector<CompiledMidiClip>& clips, std::int64_t rangeStart,
                          int sampleCount, juce::MidiBuffer& destination,
+                         std::vector<MidiEventRef>& eventRefs,
                          bool restoreControls = false) noexcept;
     static std::size_t scheduleInstrumentEvents(const std::vector<CompiledMidiClip>& clips,
                                                 std::int64_t rangeStart, int sampleCount,

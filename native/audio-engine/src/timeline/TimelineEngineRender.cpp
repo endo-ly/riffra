@@ -215,7 +215,7 @@ void TimelineEngine::scheduleMidi(const PreparedTimeline& prepared, Track& track
     const auto pdcDelay = runtime.lowLatencyPdcBypassActive() ? runtime.timelinePdcDelaySamples : 0;
     const auto midiRangeStart = rangeStart - pdcDelay;
     MidiScheduler::schedule(runtime.midiClips, midiRangeStart, sampleCount, runtime.midiBuffer,
-                            runtime.restoreInstrumentControls);
+                            runtime.midiScheduleRefs, runtime.restoreInstrumentControls);
     runtime.instrumentEventCount = MidiScheduler::scheduleInstrumentEvents(
         runtime.midiClips, midiRangeStart, sampleCount, runtime.instrumentEvents.data(),
         runtime.instrumentEventOrdering.data(), runtime.instrumentEvents.size(),
