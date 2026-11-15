@@ -416,54 +416,95 @@ void MidiScheduler::schedule(const std::vector<CompiledMidiClip>& clips,
                              juce::MidiBuffer& destination, const bool restoreControls) noexcept {
     if (sampleCount <= 0) return;
     if (restoreControls) {
-        std::array<bool, 128> held{};
-        std::array<int, 128> controllers;
-        controllers.fill(-1);
-        int latch = -1;
-        const auto applyEvent = [&](const CompiledMidiEvent& event) {
+        struct ControlState final {
+            bool has = false;
+            InstrumentEventOrder order{};
+            bool down = false;
+            int value = -1;
+        };
+        std::array<ControlState, 128> holds;
+        std::array<ControlState, 128> latches;
+        std::array<ControlState, 128> controllers;
+        const auto orderKey = [](const InstrumentEventOrder& order) noexcept {
+            return std::tuple(order.absoluteSample, order.priority, order.sourceOrder, order.tick);
+        };
+        const auto consider = [&](const CompiledMidiEvent& event, const std::uint64_t absoluteTick,
+                                  const std::int64_t absoluteSample) {
+            ControlState* state = nullptr;
+            bool down = false;
+            int value = -1;
             if (event.controlKind == MidiControlKind::keyswitchHold) {
-                const auto note = static_cast<int>(event.controlNumber);
-                held[static_cast<std::size_t>(note)] = event.message.isNoteOn();
+                state = &holds[static_cast<std::size_t>(event.controlNumber)];
+                down = event.message.isNoteOn();
             } else if (event.controlKind == MidiControlKind::keyswitchLatch) {
-                if (event.message.isNoteOn()) latch = static_cast<int>(event.controlNumber);
+                if (!event.message.isNoteOn()) return;
+                state = &latches[static_cast<std::size_t>(event.controlNumber)];
+                down = true;
             } else if (event.controlKind == MidiControlKind::controlChange) {
-                controllers[static_cast<std::size_t>(event.controlNumber)] =
-                    static_cast<int>(event.controlValue);
+                state = &controllers[static_cast<std::size_t>(event.controlNumber)];
+                value = static_cast<int>(event.controlValue);
+            } else {
+                return;
+            }
+            const InstrumentEventOrder order{absoluteTick, event.ordering, event.sourceOrder,
+                                             absoluteSample};
+            if (state->has && orderKey(order) < orderKey(state->order)) return;
+            state->has = true;
+            state->order = order;
+            state->down = down;
+            state->value = value;
+        };
+        const auto considerClip = [&](const CompiledMidiClip& clip) {
+            if (clip.muted || clip.lengthSamples <= 0 || rangeStart <= clip.startSample) return;
+            const auto elapsed = rangeStart - clip.startSample;
+            const auto iteration = elapsed / clip.lengthSamples;
+            const auto phase = elapsed % clip.lengthSamples;
+            const auto seek = [&](const std::int64_t currentIteration, const bool prefix) {
+                const auto start = clip.startSample + currentIteration * clip.lengthSamples;
+                for (const auto& event : clip.events) {
+                    if (prefix && event.sampleOffset >= phase) break;
+                    if (!prefix && phase == 0 && event.sampleOffset == clip.lengthSamples) break;
+                    const auto absoluteSample = start + event.sampleOffset;
+                    if (absoluteSample >= rangeStart) break;
+                    const auto absoluteTick =
+                        clip.startTick +
+                        static_cast<std::uint64_t>(currentIteration) * clip.durationTicks +
+                        event.originalTick;
+                    consider(event, absoluteTick, absoluteSample);
+                }
+            };
+            if (clip.loop) {
+                if (iteration > 0) seek(iteration - 1, false);
+                if (phase > 0) seek(iteration, true);
+            } else {
+                seek(0, false);
             }
         };
-        for (const auto& clip : clips) {
-            if (clip.muted || clip.lengthSamples <= 0 || rangeStart <= clip.startSample) continue;
-            if (!clip.loop) {
-                for (const auto& event : clip.events) {
-                    if (clip.startSample + event.sampleOffset >= rangeStart) break;
-                    applyEvent(event);
-                }
-                continue;
-            }
-            const auto phase = (rangeStart - clip.startSample) % clip.lengthSamples;
-            for (const auto& event : clip.events) {
-                if (phase == 0 && event.sampleOffset == clip.lengthSamples) break;
-                applyEvent(event);
-            }
-            for (const auto& event : clip.events) {
-                if (event.sampleOffset >= phase) break;
-                applyEvent(event);
-            }
-        }
-        for (std::size_t note = 0; note < held.size(); ++note)
-            if (held[note])
+        for (const auto& clip : clips) considerClip(clip);
+
+        for (std::size_t note = 0; note < holds.size(); ++note)
+            if (holds[note].has && holds[note].down)
                 destination.addEvent(juce::MidiMessage::noteOn(1, static_cast<int>(note),
                                                                static_cast<juce::uint8>(127)),
                                      0);
+        auto latch = -1;
+        InstrumentEventOrder latchOrder{};
+        for (std::size_t note = 0; note < latches.size(); ++note) {
+            if (!latches[note].has) continue;
+            if (latch < 0 || orderKey(latchOrder) < orderKey(latches[note].order)) {
+                latch = static_cast<int>(note);
+                latchOrder = latches[note].order;
+            }
+        }
         if (latch >= 0) {
             destination.addEvent(juce::MidiMessage::noteOn(1, latch, static_cast<juce::uint8>(127)),
                                  0);
             destination.addEvent(juce::MidiMessage::noteOff(1, latch), sampleCount > 1 ? 1 : 0);
         }
         for (std::size_t number = 0; number < controllers.size(); ++number)
-            if (controllers[number] >= 0)
+            if (controllers[number].has)
                 destination.addEvent(juce::MidiMessage::controllerEvent(1, static_cast<int>(number),
-                                                                        controllers[number]),
+                                                                        controllers[number].value),
                                      0);
     }
     const auto rangeEnd = rangeStart + sampleCount;
