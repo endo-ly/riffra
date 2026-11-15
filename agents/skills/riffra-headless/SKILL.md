@@ -181,7 +181,7 @@ Score YAML から Project を作ると、Project はそのファイルへリン�
 
 - `project import-score <path>`: YAML を新しい Project として読み込み、リンクする。`--bind ID=DEFINITION` で外部楽器の Definition を結び付ける
 - `project rebuild-score [--path PATH] [--bind ID=DEFINITION]`: アクティブな Project をリンク先の YAML で更新する。`--path` を省略するとリンク先を読む
-- `project export-score <path> [--link]`: アクティブな Project を Score の曲フォルダとして書き出す。`--link` を付けると書き出した YAML を Project の正本にする。表現できない内容は書き出さずに `omissions` として返す
+- `project export-score <path> [--link]`: アクティブな Project を Score の曲フォルダとして書き出す。`--link` を付けると書き出した YAML を Project の正本にする。リンク済みの Project と、表現できない内容が1件でもある Project はリンクしない。表現できない内容は書き出さずに `omissions` として返す
 - `score validate <path>`: Project を作らずに文法・参照・音源・ミックス・オートメーション・音声を診断する。`--bind` を受け取る
 - `score inspect <path>`: Project を作らずに展開結果(トラック・キット・エフェクト・ルーティング・オートメーション・音声クリップ)を来源位置つきで確認する。`--bind` を受け取る
 
