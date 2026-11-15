@@ -9,6 +9,7 @@ mod time;
 use std::collections::BTreeMap;
 
 use num_traits::ToPrimitive;
+use riffra_core::KeySwitchMode;
 use serde::Serialize;
 use serde_json::Value;
 
@@ -308,7 +309,7 @@ pub(crate) struct PerformanceControl {
 pub(crate) enum PerformanceControlKind {
     KeySwitch {
         note: u8,
-        mode: production::KeySwitchMode,
+        mode: KeySwitchMode,
         down: bool,
     },
     ControlChange {
@@ -2199,7 +2200,7 @@ mod tests {
             PerformanceControlKind::KeySwitch {
                 note: 26,
                 down: true,
-                mode: production::KeySwitchMode::Latch
+                mode: KeySwitchMode::Latch
             }
         ));
         assert_eq!(controls[0].tick, 0);
@@ -2208,7 +2209,7 @@ mod tests {
             PerformanceControlKind::KeySwitch {
                 note: 27,
                 down: true,
-                mode: production::KeySwitchMode::Hold
+                mode: KeySwitchMode::Hold
             }
         ));
         assert_eq!(controls[1].at_quarters, "1");
@@ -2284,12 +2285,12 @@ mod tests {
             [
                 PerformanceControlKind::KeySwitch {
                     note: 27,
-                    mode: production::KeySwitchMode::Hold,
+                    mode: KeySwitchMode::Hold,
                     down: true
                 },
                 PerformanceControlKind::KeySwitch {
                     note: 27,
-                    mode: production::KeySwitchMode::Hold,
+                    mode: KeySwitchMode::Hold,
                     down: false
                 }
             ]
@@ -2551,6 +2552,37 @@ mod tests {
                 (2 * second_beat, 28, false)
             ],
             "a gap of one thirty-second keeps the normal anticipation"
+        );
+
+        let mut forward_doc = doc.clone();
+        forward_doc["sections"]["phrase"]["events"] = json!([
+            {"kind":"articulation","instrument":"part","name":"open","at":{"bar":1,"offset_quarters":1},"duration_quarters":1},
+            {"kind":"articulation","instrument":"part","name":"mute","at":{"bar":1,"step":1},"duration_quarters":"63/64"}
+        ]);
+        let forward = compile_document(&forward_doc);
+        let forward_beat = u64::from(forward.ticks_per_beat);
+        let transition_tick = forward_beat * 63 / 64;
+        assert_eq!(
+            key_switches(&forward),
+            [
+                (0, 26, true),
+                (transition_tick, 24, true),
+                (transition_tick, 27, true),
+                (2 * forward_beat, 27, false)
+            ],
+            "a latch default is restored before the following selection at the same tick"
+        );
+
+        let mut reverse_doc = doc.clone();
+        reverse_doc["sections"]["phrase"]["events"] = json!([
+            {"kind":"articulation","instrument":"part","name":"mute","at":{"bar":1,"step":1},"duration_quarters":"63/64"},
+            {"kind":"articulation","instrument":"part","name":"open","at":{"bar":1,"offset_quarters":1},"duration_quarters":1}
+        ]);
+        let reverse = compile_document(&reverse_doc);
+        assert_eq!(
+            key_switches(&reverse),
+            key_switches(&forward),
+            "YAML event order does not decide the control order"
         );
     }
 

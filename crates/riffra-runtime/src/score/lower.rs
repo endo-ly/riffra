@@ -2,7 +2,9 @@ use num_traits::ToPrimitive;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::production::{ArticulationControl, KeySwitchMode};
+use riffra_core::KeySwitchMode;
+
+use super::production::ArticulationControl;
 use super::syntax::{note_spans, spans};
 use super::time::{Quarter, ppq, rational, tick};
 use super::{
@@ -14,8 +16,7 @@ use super::{resolve, syntax};
 
 /// Articulation definitions and kit relationships needed by performance controls.
 pub(crate) struct ControlSources {
-    pub(crate) articulations:
-        BTreeMap<String, BTreeMap<String, super::production::ArticulationSpec>>,
+    pub(crate) articulations: BTreeMap<String, BTreeMap<String, ArticulationControl>>,
     pub(crate) articulation_paths: BTreeMap<String, String>,
     pub(crate) kits: BTreeSet<String>,
     pub(crate) members: BTreeMap<String, String>,
@@ -630,7 +631,7 @@ impl Builder<'_> {
             .articulations
             .get(source)
             .and_then(|articulations| articulations.get(name))
-            .map(|articulation| articulation.control)
+            .copied()
             .ok_or_else(|| Error::new(path, format!("undefined articulation `{name}`")))
     }
     #[allow(clippy::too_many_arguments)]
@@ -2406,9 +2407,7 @@ impl Builder<'_> {
             let Some(ArticulationControl::KeySwitch {
                 note,
                 mode: KeySwitchMode::Latch,
-            }) = self.controls.articulations[&source]
-                .get("default")
-                .map(|articulation| articulation.control)
+            }) = self.controls.articulations[&source].get("default").copied()
             else {
                 return Err(Error::new(
                     &definition_path,
@@ -2428,22 +2427,15 @@ impl Builder<'_> {
                 3,
             )?;
         }
-        let mut preceding_by_source = Vec::with_capacity(intervals.len());
-        let mut latest_by_source = BTreeMap::<&str, usize>::new();
-        for (index, interval) in intervals.iter().enumerate() {
-            preceding_by_source.push(latest_by_source.get(interval.source.as_str()).copied());
-            latest_by_source.insert(interval.source.as_str(), index);
-        }
         for (index, interval) in intervals.iter().enumerate() {
             let control =
                 self.articulation_control(&interval.source, &interval.name, &interval.path)?;
-            let preceding = preceding_by_source[index].map(|index| intervals[index]);
-            let previous = index
+            // The preceding interval bounds the send tick; only exact adjacency continues it.
+            let preceding = index
                 .checked_sub(1)
                 .and_then(|index| intervals.get(index))
-                .filter(|previous| {
-                    previous.source == interval.source && previous.end == interval.start
-                });
+                .filter(|preceding| preceding.source == interval.source);
+            let previous = preceding.filter(|previous| previous.end == interval.start);
             let next = intervals
                 .get(index + 1)
                 .filter(|next| next.source == interval.source && next.start == interval.end);
@@ -2452,7 +2444,7 @@ impl Builder<'_> {
                     .articulations
                     .get(&interval.source)
                     .and_then(|articulations| articulations.get(&interval.name))
-                    .map(|articulation| articulation.control)
+                    .copied()
             };
             let previous_control = previous.copied().and_then(control_of);
             let next_control = next.copied().and_then(control_of);
@@ -2540,7 +2532,7 @@ impl Builder<'_> {
                     if !next_is_key_switch && interval.end < *end {
                         let default = self.controls.articulations[&interval.source]
                             .get("default")
-                            .map(|articulation| articulation.control);
+                            .copied();
                         let Some(ArticulationControl::KeySwitch {
                             note,
                             mode: KeySwitchMode::Latch,
@@ -2551,6 +2543,7 @@ impl Builder<'_> {
                                 "latch articulation requires a default key switch",
                             ));
                         };
+                        // Restore the latch default before a new selection at the same tick.
                         push(
                             &interval.source,
                             interval.end.clone(),
@@ -2561,7 +2554,7 @@ impl Builder<'_> {
                             },
                             &interval.path,
                             &interval.position,
-                            3,
+                            2,
                         )?;
                     }
                 }

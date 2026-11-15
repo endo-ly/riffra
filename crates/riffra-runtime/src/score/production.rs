@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use riffra_core::KeySwitchMode;
 use serde_json::Value;
 
 use super::{Error, Result, array, fields, integer, number, object, string};
@@ -11,26 +12,13 @@ pub(crate) mod mix;
 pub(crate) struct SourceSpec {
     pub(crate) vst3: Vst3Spec,
     pub(crate) velocity: Option<Vec<(u8, u8)>>,
-    pub(crate) articulations: BTreeMap<String, ArticulationSpec>,
-}
-
-/// One named articulation and the VST3 control that selects it.
-#[derive(Debug, Clone)]
-pub(crate) struct ArticulationSpec {
-    pub(crate) control: ArticulationControl,
+    pub(crate) articulations: BTreeMap<String, ArticulationControl>,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum ArticulationControl {
     KeySwitch { note: u8, mode: KeySwitchMode },
     Controller { number: u8, value: u8, reset: u8 },
-}
-
-/// How a key switch remains selected for its articulation interval.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum KeySwitchMode {
-    Hold,
-    Latch,
 }
 
 #[derive(Debug, Clone)]
@@ -310,7 +298,7 @@ pub(super) fn parse_source(value: &Value, path: &str) -> Result<SourceSpec> {
     })
 }
 
-fn parse_articulations(value: &Value, path: &str) -> Result<BTreeMap<String, ArticulationSpec>> {
+fn parse_articulations(value: &Value, path: &str) -> Result<BTreeMap<String, ArticulationControl>> {
     let mut articulations = BTreeMap::new();
     for (name, definition) in object(value, path)? {
         let definition_path = format!("{path}.{name}");
@@ -398,12 +386,12 @@ fn parse_articulations(value: &Value, path: &str) -> Result<BTreeMap<String, Art
                 "default must be a latch key switch",
             ));
         }
-        articulations.insert(name.clone(), ArticulationSpec { control });
+        articulations.insert(name.clone(), control);
     }
     let default = articulations.get("default");
-    if articulations.values().any(|articulation| {
+    if articulations.values().any(|control| {
         matches!(
-            articulation.control,
+            control,
             ArticulationControl::KeySwitch {
                 mode: KeySwitchMode::Latch,
                 ..
@@ -529,7 +517,7 @@ mod tests {
         let source = parse_source(&value, "instruments.bass.source").unwrap();
         assert_eq!(source.velocity.unwrap()[1], (64, 68));
         assert!(matches!(
-            source.articulations["harmonic"].control,
+            source.articulations["harmonic"],
             ArticulationControl::Controller {
                 number: 68,
                 value: 127,

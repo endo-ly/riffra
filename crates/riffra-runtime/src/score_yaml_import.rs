@@ -1572,8 +1572,8 @@ pub(crate) fn inspect(
                                 "type": "keySwitch",
                                 "note": note,
                                 "mode": match mode {
-                                    score::production::KeySwitchMode::Hold => "hold",
-                                    score::production::KeySwitchMode::Latch => "latch",
+                                    KeySwitchMode::Hold => "hold",
+                                    KeySwitchMode::Latch => "latch",
                                 },
                                 "down": down,
                             }),
@@ -3287,14 +3287,7 @@ fn performance_control_events<'a>(
                     .map_err(|_| "too many score performance controls".to_string())?,
                 kind: match control.kind {
                     score::PerformanceControlKind::KeySwitch { note, mode, down } => {
-                        InstrumentControlEventKind::KeySwitch {
-                            note,
-                            mode: match mode {
-                                score::production::KeySwitchMode::Hold => KeySwitchMode::Hold,
-                                score::production::KeySwitchMode::Latch => KeySwitchMode::Latch,
-                            },
-                            down,
-                        }
+                        InstrumentControlEventKind::KeySwitch { note, mode, down }
                     }
                     score::PerformanceControlKind::ControlChange { number, value } => {
                         InstrumentControlEventKind::ControlChange { number, value }
@@ -4670,7 +4663,8 @@ mod tests {
                 "lines":{"main":{"instrument":"bass","melody":"theme"}},
                 "placements":[{"instrument":"bass","degree":"1","at":{"bar":1,"step":1},"duration_steps":1,"gain_db":-3}],
                 "events":[
-                    {"kind":"articulation","instrument":"bass","name":"mute","at":{"bar":1,"step":1},"duration_quarters":2},
+                    {"kind":"articulation","instrument":"bass","name":"open","at":{"bar":1,"offset_quarters":1},"duration_quarters":1},
+                    {"kind":"articulation","instrument":"bass","name":"mute","at":{"bar":1,"step":1},"duration_quarters":"63/64"},
                     {"kind":"articulation","instrument":"bass","name":"expression","at":{"bar":1,"step":9},"duration_quarters":1},
                     {"kind":"articulation","instrument":"bass","name":"open","at":{"bar":1,"step":13},"duration_quarters":1},
                     {"kind":"cc","instrument":"bass","number":1,"value":100,"at":{"bar":1,"step":15}},
@@ -4730,6 +4724,39 @@ mod tests {
                     value: 100
                 }
             )));
+            let default_index = clip
+                .instrument_control_events
+                .iter()
+                .position(|event| {
+                    matches!(
+                        event.kind,
+                        InstrumentControlEventKind::KeySwitch {
+                            note: 24,
+                            down: true,
+                            ..
+                        }
+                    )
+                })
+                .expect("default key switch");
+            let open_index = clip
+                .instrument_control_events
+                .iter()
+                .position(|event| {
+                    matches!(
+                        event.kind,
+                        InstrumentControlEventKind::KeySwitch {
+                            note: 27,
+                            down: true,
+                            ..
+                        }
+                    )
+                })
+                .expect("open key switch");
+            assert!(default_index < open_index);
+            assert!(
+                clip.instrument_control_events[default_index].source_order
+                    < clip.instrument_control_events[open_index].source_order
+            );
         }
         let kit = session
             .arrangement
