@@ -75,6 +75,7 @@ struct StoredTimeline {
     section_name: Option<String>,
     #[serde(default)]
     section_occurrence: Option<u32>,
+    #[serde(default)]
     musical_range: Option<StoredMusicalRange>,
 }
 
