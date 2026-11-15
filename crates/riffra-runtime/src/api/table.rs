@@ -433,6 +433,7 @@ control_commands! {
         ProjectRebuildScore = "project.rebuild-score" (ProjectRebuildScoreParams) -> ScoreRebuild, project;
         MusicExportMidi = "music.export-midi" (MidiExportParams) -> MidiExport, project;
         ProjectExport = "project.export" (ProjectExportParams) -> ProjectExport, project;
+        ProjectExportScore = "project.export-score" (ProjectExportScoreParams) -> ScoreExport, project;
     }
     runtime {
         HostStatus = "host.status" (EmptyParams) -> HostStatus, host;
@@ -565,7 +566,7 @@ mod tests {
         let names = command_names();
 
         // Act / Assert
-        assert_eq!(names.len(), 227);
+        assert_eq!(names.len(), 228);
         let unique: std::collections::HashSet<_> = names.iter().copied().collect();
         assert_eq!(unique.len(), names.len());
         for name in names {
@@ -803,7 +804,7 @@ mod tests {
             .filter_map(|line| line.split_once('\'').map(|(name, _)| name))
             .collect();
         let unique: std::collections::HashSet<_> = names.iter().copied().collect();
-        assert_eq!(names.len(), 227);
+        assert_eq!(names.len(), 228);
         assert_eq!(unique.len(), names.len());
 
         for (name, params) in [

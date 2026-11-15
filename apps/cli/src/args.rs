@@ -1797,6 +1797,8 @@ pub enum ProjectCommand {
     Rename(ProjectRenameArgs),
     /// Export the active project to an output path.
     Export(ProjectExportArgs),
+    /// Write the active project as a Score YAML song folder.
+    ExportScore(ProjectExportScoreArgs),
     /// Import a project file from disk and make it active.
     Import(ProjectImportArgs),
     /// Create and activate an editable project from Score YAML.
@@ -1891,6 +1893,15 @@ pub struct ProjectExportArgs {
     /// Output path for the exported project file.
     #[arg(long)]
     pub output: PathBuf,
+}
+
+#[derive(Debug, Args)]
+pub struct ProjectExportScoreArgs {
+    /// Song folder to create; it must not exist.
+    pub path: PathBuf,
+    /// Link the project to the exported Score so the YAML becomes its source of truth.
+    #[arg(long)]
+    pub link: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -3697,6 +3708,13 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
                 output: args.output,
             })
             .into(),
+            ProjectCommand::ExportScore(args) => {
+                Project::ProjectExportScore(ProjectExportScoreParams {
+                    path: args.path,
+                    link: args.link,
+                })
+                .into()
+            }
             ProjectCommand::ImportScore(args) => {
                 let mut bindings = std::collections::BTreeMap::new();
                 for (id, path) in args.bindings {
@@ -5053,7 +5071,7 @@ mod tests {
         command.clone().debug_assert();
         assert_help(&command, "riffra");
         assert_eq!(command.get_subcommands().count(), 24);
-        assert_eq!(leaves(&command), 194);
+        assert_eq!(leaves(&command), 195);
     }
 
     #[test]
