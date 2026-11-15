@@ -294,6 +294,7 @@ pub(crate) struct PerformanceControl {
     pub(crate) tick: u64,
     pub(crate) at_quarters: String,
     pub(crate) kind: PerformanceControlKind,
+    pub(crate) sort_order: u8,
     pub(crate) path: String,
     pub(crate) section: String,
     pub(crate) occurrence: usize,
@@ -652,14 +653,6 @@ pub(crate) fn compile(text: &str) -> Result<ScorePlan> {
                 }
             }
             for control in &mut plan.performance_controls {
-                if let Some((section, occurrence, bar, step)) =
-                    tick_position(control.tick, &plan.sections, plan.ticks_per_beat)
-                {
-                    control.section = section;
-                    control.occurrence = occurrence;
-                    control.bar = bar;
-                    control.step = step;
-                }
                 (control.line, control.column) = source_line(&control.path, &source);
             }
             plan.source = source;
@@ -2337,9 +2330,12 @@ mod tests {
             {"kind": "mod_wheel", "instrument": "part", "value": 0.5, "at": {"bar": 1, "step": 1}},
             {"kind": "automation", "instrument": "part", "control": "cc:1", "from_value": 0, "to_value": 127, "at": {"bar": 1, "step": 1}, "duration_quarters": 1}
         ]);
-        assert_eq!(
-            compile(&to_yaml(&doc).unwrap()).unwrap_err().path,
-            "sections.phrase.events[0]"
+        let error = compile(&to_yaml(&doc).unwrap()).unwrap_err();
+        assert_eq!(error.path, "sections.phrase.events[0]");
+        assert!(
+            error
+                .message
+                .contains("VST3 instruments support only note, articulation, and cc")
         );
 
         doc["sections"]["phrase"]["events"] = json!([
@@ -2350,6 +2346,23 @@ mod tests {
             compile(&to_yaml(&doc).unwrap()).unwrap_err().path,
             "sections.phrase.events[1]"
         );
+
+        doc["sections"]["phrase"]["events"] = json!([
+            {"kind": "articulation", "instrument": "part", "name": "harmonic", "at": {"bar": 1, "step": 1}, "duration_quarters": 1},
+            {"kind": "cc", "instrument": "part", "number": 68, "value": 64, "at": {"bar": 1, "step": 5}}
+        ]);
+        let boundary = compile(&to_yaml(&doc).unwrap()).unwrap();
+        let boundary_tick = u64::from(boundary.ticks_per_beat);
+        let values = boundary
+            .performance_controls
+            .iter()
+            .filter(|control| control.tick == boundary_tick)
+            .filter_map(|control| match control.kind {
+                PerformanceControlKind::ControlChange { number: 68, value } => Some(value),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(values, [0, 64]);
 
         doc["sections"]["phrase"]["events"] = json!([
             {"kind": "articulation", "instrument": "part", "name": "missing", "at": {"bar": 1, "step": 1}, "duration_quarters": 1}
@@ -2366,6 +2379,43 @@ mod tests {
             compile(&to_yaml(&doc).unwrap()).unwrap_err().path,
             "sections.phrase.events[0].name"
         );
+    }
+
+    #[test]
+    fn performance_control_provenance_uses_the_declaration_not_the_lead_tick() {
+        let mut doc = document();
+        doc["form"] = json!([
+            {"section":"phrase","bars":1,"tonic":"C","scale":"ionian"},
+            {"section":"phrase","bars":1,"tonic":"C","scale":"ionian"}
+        ]);
+        doc["instruments"]["part"] = json!({
+            "source": {
+                "vst3": {"plugin": "Synth"},
+                "articulations": {"open": {"keyswitch": 27, "mode": "hold"}}
+            }
+        });
+        doc["sections"]["phrase"]["events"] = json!([
+            {"kind":"articulation","instrument":"part","name":"open","at":{"bar":1,"step":1},"duration_quarters":1}
+        ]);
+        let plan = compile(&to_yaml(&doc).unwrap()).unwrap();
+        let starts: Vec<_> = plan
+            .performance_controls
+            .iter()
+            .filter(|control| {
+                matches!(
+                    control.kind,
+                    PerformanceControlKind::KeySwitch { down: true, .. }
+                )
+            })
+            .collect();
+        assert_eq!(starts.len(), 2);
+        for (index, control) in starts.iter().enumerate() {
+            assert_eq!(control.section, "phrase");
+            assert_eq!(control.occurrence, index + 1);
+            assert_eq!(control.bar, 1);
+            assert_eq!(control.step, "1");
+        }
+        assert!(starts[1].tick < plan.sections[1].start_tick);
     }
 
     #[test]

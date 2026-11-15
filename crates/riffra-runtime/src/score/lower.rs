@@ -60,12 +60,33 @@ struct Event {
     velocity: i64,
 }
 
+#[derive(Clone, Default)]
+struct ControlPosition {
+    section: String,
+    occurrence: usize,
+    bar: usize,
+    step: String,
+}
+
+impl ControlPosition {
+    fn at(section: &Section, at: &Quarter) -> Self {
+        let (bar, step) = section_bar_step(section, &(at - &section.start));
+        Self {
+            section: section.name.clone(),
+            occurrence: section.occurrence,
+            bar,
+            step,
+        }
+    }
+}
+
 struct ArticulationInterval {
     source: String,
     name: String,
     start: Quarter,
     end: Quarter,
     path: String,
+    position: ControlPosition,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -81,6 +102,7 @@ struct MidiControllerEvent {
     at: Quarter,
     path: String,
     kind: MidiControllerKind,
+    position: ControlPosition,
 }
 
 struct MidiControllerRamp {
@@ -187,6 +209,7 @@ pub(super) fn lower(
     builder.apply_dynamics()?;
     builder.validate_control_ramps()?;
     builder.offset_timing(&start)?;
+    builder.validate_control_targets()?;
     builder.validate_controls()?;
     let timeline = compile_timeline(
         meta,
@@ -512,6 +535,21 @@ impl Builder<'_> {
         }
         Ok(())
     }
+    fn validate_control_targets(&self) -> Result<()> {
+        for event in &self.events {
+            if matches!(event.kind, MusicalEvent::Note { .. }) {
+                continue;
+            }
+            if self.controls.articulations.contains_key(&event.id) {
+                return Err(Error::new(
+                    &event.source,
+                    "VST3 instruments support only note, articulation, and cc performance events",
+                ));
+            }
+        }
+        Ok(())
+    }
+
     fn validate_controls(&self) -> Result<()> {
         let mut controls: std::collections::BTreeMap<(&str, u64, String), Vec<&Event>> =
             std::collections::BTreeMap::new();
@@ -1673,9 +1711,10 @@ impl Builder<'_> {
             self.articulation_intervals.push(ArticulationInterval {
                 source,
                 name: name.to_owned(),
-                start: at,
+                start: at.clone(),
                 end,
                 path: path.to_owned(),
+                position: ControlPosition::at(s, &at),
             });
             return Ok(());
         }
@@ -1691,9 +1730,10 @@ impl Builder<'_> {
                 source,
                 number: u8::try_from(number).expect("range checked"),
                 value: u8::try_from(value).expect("range checked"),
-                at,
+                at: at.clone(),
                 path: path.to_owned(),
                 kind: MidiControllerKind::Single,
+                position: ControlPosition::at(s, &at),
             });
             return Ok(());
         }
@@ -1743,6 +1783,7 @@ impl Builder<'_> {
                 end: end.clone(),
                 path: path.to_owned(),
             });
+            let position = ControlPosition::at(s, &at);
             let mut cursor = at.clone();
             let mut previous = None;
             loop {
@@ -1771,6 +1812,7 @@ impl Builder<'_> {
                         at: cursor.clone(),
                         path: path.to_owned(),
                         kind: MidiControllerKind::Automation,
+                        position: position.clone(),
                     });
                     previous = Some(value);
                 }
@@ -2178,7 +2220,7 @@ impl Builder<'_> {
                 if event.source == interval.source
                     && event.number == number
                     && event.at >= interval.start
-                    && event.at <= interval.end
+                    && event.at < interval.end
                 {
                     return Err(Error::new(
                         &event.path,
@@ -2189,8 +2231,8 @@ impl Builder<'_> {
             for ramp in &self.midi_ramps {
                 if ramp.source == interval.source
                     && ramp.number == number
-                    && ramp.start <= interval.end
-                    && interval.start <= ramp.end
+                    && ramp.start < interval.end
+                    && interval.start < ramp.end
                 {
                     return Err(Error::new(
                         &ramp.path,
@@ -2202,7 +2244,7 @@ impl Builder<'_> {
                 if source == &interval.source
                     && *existing_number == number
                     && at >= &interval.start
-                    && at <= &interval.end
+                    && at < &interval.end
                 {
                     return Err(Error::new(
                         *path,
@@ -2213,8 +2255,8 @@ impl Builder<'_> {
             for (source, existing_number, start, end, path) in &existing_ramps {
                 if source == &interval.source
                     && *existing_number == number
-                    && *start <= &interval.end
-                    && &interval.start <= *end
+                    && *start < &interval.end
+                    && &interval.start < *end
                 {
                     return Err(Error::new(
                         *path,
@@ -2307,27 +2349,33 @@ impl Builder<'_> {
         }
 
         let mut controls = Vec::new();
-        let mut push =
-            |source: &str, at: Quarter, kind: PerformanceControlKind, path: &str| -> Result<()> {
-                let tick = tick(&at, timeline.ticks_per_beat)?;
-                if tick > timeline.length_ticks {
-                    return Err(Error::new(path, "performance control exceeds score"));
-                }
-                controls.push(PerformanceControl {
-                    source: source.to_owned(),
-                    tick,
-                    at_quarters: at.to_string(),
-                    kind,
-                    path: path.to_owned(),
-                    section: String::new(),
-                    occurrence: 0,
-                    bar: 0,
-                    step: String::new(),
-                    line: 0,
-                    column: 0,
-                });
-                Ok(())
-            };
+        let mut push = |source: &str,
+                        at: Quarter,
+                        kind: PerformanceControlKind,
+                        path: &str,
+                        position: &ControlPosition,
+                        sort_order: u8|
+         -> Result<()> {
+            let tick = tick(&at, timeline.ticks_per_beat)?;
+            if tick > timeline.length_ticks {
+                return Err(Error::new(path, "performance control exceeds score"));
+            }
+            controls.push(PerformanceControl {
+                source: source.to_owned(),
+                tick,
+                at_quarters: at.to_string(),
+                kind,
+                sort_order,
+                path: path.to_owned(),
+                section: position.section.clone(),
+                occurrence: position.occurrence,
+                bar: position.bar,
+                step: position.step.clone(),
+                line: 0,
+                column: 0,
+            });
+            Ok(())
+        };
         let mut baselines = BTreeSet::<String>::new();
         for interval in &intervals {
             let control =
@@ -2374,6 +2422,8 @@ impl Builder<'_> {
                     down: true,
                 },
                 &definition_path,
+                &ControlPosition::default(),
+                3,
             )?;
         }
         for (index, interval) in intervals.iter().enumerate() {
@@ -2426,6 +2476,8 @@ impl Builder<'_> {
                                 down: true,
                             },
                             &interval.path,
+                            &interval.position,
+                            3,
                         )?;
                     }
                     if !same_hold(next_control) {
@@ -2438,6 +2490,8 @@ impl Builder<'_> {
                                 down: false,
                             },
                             &interval.path,
+                            &interval.position,
+                            0,
                         )?;
                     }
                 }
@@ -2459,6 +2513,8 @@ impl Builder<'_> {
                             down: true,
                         },
                         &interval.path,
+                        &interval.position,
+                        3,
                     )?;
                     if next.is_none() && interval.end < *end {
                         let default = self.controls.articulations[&interval.source]
@@ -2483,6 +2539,8 @@ impl Builder<'_> {
                                 down: true,
                             },
                             &interval.path,
+                            &interval.position,
+                            3,
                         )?;
                     }
                 }
@@ -2496,6 +2554,8 @@ impl Builder<'_> {
                         interval.start.clone(),
                         PerformanceControlKind::ControlChange { number, value },
                         &interval.path,
+                        &interval.position,
+                        2,
                     )?;
                     let adjacent_same = matches!(
                         next_control,
@@ -2513,6 +2573,8 @@ impl Builder<'_> {
                                 value: reset,
                             },
                             &interval.path,
+                            &interval.position,
+                            1,
                         )?;
                     }
                 }
@@ -2527,23 +2589,20 @@ impl Builder<'_> {
                     value: event.value,
                 },
                 &event.path,
+                &event.position,
+                2,
             )?;
         }
         controls.sort_by(|left, right| {
-            let rank = |control: &PerformanceControl| match control.kind {
-                PerformanceControlKind::KeySwitch { down: false, .. } => 0,
-                PerformanceControlKind::ControlChange { .. } => 1,
-                PerformanceControlKind::KeySwitch { down: true, .. } => 2,
-            };
             (
                 left.tick,
-                rank(left),
+                left.sort_order,
                 left.source.as_str(),
                 left.path.as_str(),
             )
                 .cmp(&(
                     right.tick,
-                    rank(right),
+                    right.sort_order,
                     right.source.as_str(),
                     right.path.as_str(),
                 ))

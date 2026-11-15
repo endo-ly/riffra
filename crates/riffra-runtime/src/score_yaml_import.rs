@@ -2207,12 +2207,15 @@ fn build(
             &events,
             velocity,
         )?;
-        clip.instrument_control_events = performance_control_events(
-            &clip.id,
-            plan.performance_controls
-                .iter()
-                .filter(|control| control.source == lane.id),
-        )?;
+        let order_base = clip.instrument_control_events.len();
+        clip.instrument_control_events
+            .extend(performance_control_events(
+                &clip.id,
+                plan.performance_controls
+                    .iter()
+                    .filter(|control| control.source == lane.id),
+                order_base,
+            )?);
         instrument_tracks
             .entry(lane.id.clone())
             .or_default()
@@ -2292,12 +2295,15 @@ fn build(
             &events,
             velocity.as_deref(),
         )?;
-        clip.instrument_control_events = performance_control_events(
-            &clip.id,
-            plan.performance_controls
-                .iter()
-                .filter(|control| control.source == *kit_id),
-        )?;
+        let order_base = clip.instrument_control_events.len();
+        clip.instrument_control_events
+            .extend(performance_control_events(
+                &clip.id,
+                plan.performance_controls
+                    .iter()
+                    .filter(|control| control.source == *kit_id),
+                order_base,
+            )?);
         kit_tracks.insert(kit_id.clone(), track.id.clone());
         tracks.push(track);
         clips.push(clip);
@@ -3269,6 +3275,7 @@ fn midi_clip(
 fn performance_control_events<'a>(
     clip_id: &str,
     controls: impl Iterator<Item = &'a score::PerformanceControl>,
+    order_base: usize,
 ) -> Result<Vec<InstrumentControlEvent>, ImportError> {
     controls
         .enumerate()
@@ -3276,7 +3283,7 @@ fn performance_control_events<'a>(
             Ok(InstrumentControlEvent {
                 id: format!("{clip_id}:control:{order}"),
                 tick: TimelineTick(control.tick),
-                source_order: u32::try_from(order)
+                source_order: u32::try_from(order_base + order)
                     .map_err(|_| "too many score performance controls".to_string())?,
                 kind: match control.kind {
                     score::PerformanceControlKind::KeySwitch { note, mode, down } => {
@@ -4783,6 +4790,41 @@ mod tests {
             device_ids
         );
         assert!(session.score_performance_equals(&rebuilt));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn built_in_control_events_survive_performance_control_import() {
+        let mut score: Value = serde_json::from_str(SCORE).unwrap();
+        score["sections"]["verse"]["events"] = serde_json::json!([
+            {"kind":"mod_wheel","instrument":"lead","value":0.5,"at":{"bar":1,"step":1}},
+            {"kind":"sustain_pedal","instrument":"lead","down":true,"at":{"bar":1,"step":2}},
+            {"kind":"pitch_bend","instrument":"lead","value":-0.25,"at":{"bar":1,"step":3}}
+        ]);
+        let root = std::env::temp_dir().join(format!(
+            "riffra-score-controls-{}",
+            riffra_control::new_instance_id()
+        ));
+        let store = store(&root);
+        let mut document = document(&score.to_string());
+        let mut staged = StagedResources::new(&root);
+        let session = build(&mut document, None, &store, &mut staged, BuildMode::Stage)
+            .expect("built-in build");
+        let clip = &session.arrangement.midi_clips[0];
+        assert!(
+            clip.instrument_control_events
+                .iter()
+                .any(|event| matches!(event.kind, InstrumentControlEventKind::ModWheel { .. }))
+        );
+        assert!(clip.instrument_control_events.iter().any(|event| matches!(
+            event.kind,
+            InstrumentControlEventKind::SustainPedal { down: true }
+        )));
+        assert!(
+            clip.instrument_control_events
+                .iter()
+                .any(|event| matches!(event.kind, InstrumentControlEventKind::PitchBend { .. }))
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 

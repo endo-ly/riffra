@@ -527,6 +527,7 @@ form:
 
 - MIDI Noteは0～127、Velocityは1～127。内蔵音源は Generator の Key / Velocity Trigger と照合し、発音可能な Layer がなければエラーにする。VST3 はプラグイン自体が発音範囲を決める。シンセによっては音程と無関係の Trigger Note が必要になる。
 - 内蔵音源に対する `parameter_change` / `automation` の Parameter ID はその音源定義に存在し、Native 値は範囲内の有限数とする。Mod Wheelなどのレンダラー標準演奏操作と、音源固有Parameterの対象は区別する。
+- `sustain_pedal`、`pitch_bend`、`mod_wheel`、`aftertouch`、`parameter_change`、および`control`が`mod_wheel`・`aftertouch`・`pitch_bend`の`automation`は内蔵音源の演奏制御である。VST3音源・キットではこれらを実行せず、Score検証時にエラーにする。VST3には`articulation`、`cc`、`automation.control: "cc:N"`だけを送る。
 
 ## 制作の記述
 
@@ -843,7 +844,7 @@ Score の解析と展開は Runtime の `score/` が行い、`score_yaml_import.
 | テンポ・拍子の変更                                         | ProjectTimebase の変更点として保持し、表示・スナップ・サンプル位置の変換で共有する                                                            |
 | メロディ・ドラム・コード・反復                             | Score の展開結果を MidiNote に変換する。音高・開始位置・長さ・ベロシティを保持する                                                            |
 | 複数レーン                                                 | レーンごとに Instrument Track と楽曲全体を覆う MIDI クリップを生成する。同じ楽器のレーンも独立した音源インスタンスで演奏する                  |
-| サステイン・ピッチベンド・モジュレーション・アフタータッチ | InstrumentControlEvent として精度を保ち、同 Tick の優先順位とソース順で実行する                                                               |
+| サステイン・ピッチベンド・モジュレーション・アフタータッチ | 内蔵音源のInstrumentControlEventとして精度を保ち、同 Tick の優先順位とソース順で実行する                                                      |
 | 奏法・MIDI CC                                              | InstrumentControlEvent として保持し、VST3 へキースイッチのNote On/OffとControl Changeを送る。通常の音符の移調・音域・Velocity補正には混ぜない |
 | ParameterChange・ParameterRamp                             | 内蔵音源では音源のパラメータ定義で検証する。VST3 の音源では使用せず、音色変化は `mix.automation` で指定する                                   |
 | PartWindow                                                 | 内蔵音源の展開済み音符範囲を保持し、区間境界に演奏制御のリセットを追加する                                                                    |
