@@ -175,10 +175,13 @@ paramsキーはCLIフラグ名と対応する(`--notes-json` → `notes`、`--fi
 
 ### Score YAML を正本にする
 
+Score にリンクしていない Project の中身を読むときは、まず `project export-score` で曲フォルダへ書き出す。そのまま YAML で作業を続けるなら `--link` を付けて、書き出した YAML を正本にする。
+
 Score YAML から Project を作ると、Project はそのファイルへリンクされ、YAML が曲の編集正本になる。YAML を直したら `project rebuild-score` で同じ Project を更新する。Live Host では保存を検知して自動で更新される。
 
 - `project import-score <path>`: YAML を新しい Project として読み込み、リンクする。`--bind ID=DEFINITION` で外部楽器の Definition を結び付ける
 - `project rebuild-score [--path PATH] [--bind ID=DEFINITION]`: アクティブな Project をリンク先の YAML で更新する。`--path` を省略するとリンク先を読む
+- `project export-score <path> [--link]`: アクティブな Project を Score の曲フォルダとして書き出す。`--link` を付けると書き出した YAML を Project の正本にする。表現できない内容は書き出さずに `omissions` として返す
 - `score validate <path>`: Project を作らずに文法・参照・音源・ミックス・オートメーション・音声を診断する。`--bind` を受け取る
 - `score inspect <path>`: Project を作らずに展開結果(トラック・キット・エフェクト・ルーティング・オートメーション・音声クリップ)を来源位置つきで確認する。`--bind` を受け取る
 
@@ -186,7 +189,7 @@ Score は内蔵音源だけでなく、VST3 の `source`、キット、エフェ
 
 リンクされた Project では、YAML が所有する部分(時間軸・Score 由来の構成・演奏・和声・ミックス構造など)は編集対象外で、作業状態(ループ・パンチ・ミュート・ソロ・armed・monitoring など)だけを変更できる。YAML に未実装の拡張を書いた場合は、項目パスと行・列を持つ `notImplemented` 診断で拒否される。書式と未実装の一覧は [docs/score-yaml.md](../../../docs/score-yaml.md) を参照する。
 
-`.riffra` へ書き出すとリンクは無効になり、持ち出し先では `project rebuild-score --path ... --bind ...` で結び直す。失敗した同期は直前の状態を維持する。
+`.riffra` へ書き出すとリンクは無効になり、持ち出し先では `project rebuild-score --path ... --bind ...` で結び直す。失敗した同期は直前の状態を維持する。Score にリンクしていない Project は `project export-score` で曲フォルダへ書き出せる。
 
 ### Track・Clip・Region
 
