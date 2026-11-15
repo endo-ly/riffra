@@ -14,7 +14,7 @@ use crate::ports::SessionStorage;
 use serde::{Deserialize, Serialize};
 
 /// Input for one harmony event, using either a chord symbol or explicit tones.
-#[derive(Clone, Debug, Deserialize, Serialize, ts_rs::TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, ts_rs::TS, schemars::JsonSchema)]
 #[ts(optional_fields = nullable)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct HarmonyEventInput {
@@ -413,7 +413,8 @@ where
                 )
                 .into());
             }
-            let ids = insert_resolved_midi_notes_in_arrangement(arrangement, clip_id, notes)?;
+            let ids =
+                insert_resolved_midi_notes_in_arrangement(arrangement, clip_id, false, notes)?;
             for id in ids {
                 super::record_created(&mut created_entity_ids, "midiNotes", id);
             }

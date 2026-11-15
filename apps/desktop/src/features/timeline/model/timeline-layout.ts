@@ -1,4 +1,5 @@
 import type { Arrangement, AudioClip, MidiClip, ProjectTimebase } from '@/model/generated';
+import type { TrackClips } from '@/model/session-read-model';
 import { timelineObjectEndTick } from '@/model/clip-time';
 import { ticksPerBeat, ticksPerBar } from '@/model/timebase';
 
@@ -73,40 +74,39 @@ function layoutClipLanes(clips: readonly { id: string; startTick: number; endTic
   return { lanes, count: Math.max(1, laneEnds.length) };
 }
 
-export function buildTrackTimeline(
-  trackId: string,
-  audioClips: readonly AudioClip[],
-  midiClips: readonly MidiClip[],
+/** Lays out overlaps within each indexed track. */
+export function buildTrackTimelines(
+  clipsByTrack: ReadonlyMap<string, TrackClips>,
   timebase: ProjectTimebase,
-): TrackTimeline {
-  const items: TimelineItem[] = [
-    ...audioClips
-      .filter((clip) => clip.trackId === trackId)
-      .map((clip) => ({
-        kind: 'audio' as const,
-        key: `audio:${clip.id}`,
-        clip,
-        startTick: clip.startTick,
-        endTick: timelineObjectEndTick(clip, timebase),
-      })),
-    ...midiClips
-      .filter((clip) => clip.trackId === trackId)
-      .map((clip) => ({
-        kind: 'midi' as const,
-        key: `midi:${clip.id}`,
-        clip,
-        startTick: clip.startTick,
-        endTick: timelineObjectEndTick(clip, timebase),
-      })),
-  ];
-  const layout = layoutClipLanes(
-    items.map((item) => ({
-      id: item.key,
-      startTick: item.startTick,
-      endTick: item.endTick,
-    })),
+): ReadonlyMap<string, TrackTimeline> {
+  return new Map(
+    [...clipsByTrack].map(([trackId, clips]) => {
+      const items: TimelineItem[] = [
+        ...clips.audio.map((clip): TimelineAudioItem => ({
+          kind: 'audio',
+          key: `audio:${clip.id}`,
+          clip,
+          startTick: clip.startTick,
+          endTick: timelineObjectEndTick(clip, timebase),
+        })),
+        ...clips.midi.map((clip): TimelineMidiItem => ({
+          kind: 'midi',
+          key: `midi:${clip.id}`,
+          clip,
+          startTick: clip.startTick,
+          endTick: timelineObjectEndTick(clip, timebase),
+        })),
+      ];
+      const layout = layoutClipLanes(
+        items.map((item) => ({
+          id: item.key,
+          startTick: item.startTick,
+          endTick: item.endTick,
+        })),
+      );
+      return [trackId, { items, lanes: layout.lanes, laneCount: layout.count }];
+    }),
   );
-  return { items, lanes: layout.lanes, laneCount: layout.count };
 }
 
 export function trackLaneHeight(size: TrackSize) {
@@ -116,18 +116,19 @@ export function trackLaneHeight(size: TrackSize) {
 /** Timeline width in ticks: the content extent padded by two bars, at least sixteen bars. */
 export function timelineLengthTicks(arrangement: Arrangement, timebase: ProjectTimebase) {
   const barTicks = ticksPerBar(timebase);
-  const contentEnd = Math.max(
-    ...arrangement.audioClips.map((clip) => timelineObjectEndTick(clip, timebase)),
-    ...arrangement.midiClips.map((clip) => timelineObjectEndTick(clip, timebase)),
-    ...arrangement.automationLanes.flatMap((lane) => lane.points.map((point) => point.tick)),
-    ...arrangement.markers.map((marker) => marker.tick),
-    arrangement.loopRange.startTick,
-    arrangement.loopRange.endTick,
-    ...(arrangement.punchRange
-      ? [arrangement.punchRange.startTick, arrangement.punchRange.endTick]
-      : []),
-    0,
-  );
+  let contentEnd = Math.max(arrangement.loopRange.startTick, arrangement.loopRange.endTick);
+  const include = (tick: number) => {
+    contentEnd = Math.max(contentEnd, tick);
+  };
+  for (const clip of arrangement.audioClips) include(timelineObjectEndTick(clip, timebase));
+  for (const clip of arrangement.midiClips) include(timelineObjectEndTick(clip, timebase));
+  for (const lane of arrangement.automationLanes)
+    for (const point of lane.points) include(point.tick);
+  for (const marker of arrangement.markers) include(marker.tick);
+  if (arrangement.punchRange) {
+    include(arrangement.punchRange.startTick);
+    include(arrangement.punchRange.endTick);
+  }
   return Math.max(barTicks * 16, contentEnd + barTicks * 2);
 }
 
@@ -167,18 +168,6 @@ export function clipExtentTicks(arrangement: Arrangement, timebase: ProjectTimeb
   ];
   if (!edges.length) return null;
   return { startTick: Math.min(...edges), endTick: Math.max(...edges) };
-}
-
-/** Number of clips on each track. */
-export function trackClipCounts(arrangement: Pick<Arrangement, 'audioClips' | 'midiClips'>) {
-  const counts = new Map<string, number>();
-  for (const clip of arrangement.audioClips) {
-    counts.set(clip.trackId, (counts.get(clip.trackId) ?? 0) + 1);
-  }
-  for (const clip of arrangement.midiClips) {
-    counts.set(clip.trackId, (counts.get(clip.trackId) ?? 0) + 1);
-  }
-  return counts;
 }
 
 /** Index a dragged track lands on when it is dropped on the row at `targetIndex`. */

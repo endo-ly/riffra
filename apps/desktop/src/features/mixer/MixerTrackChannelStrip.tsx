@@ -109,7 +109,7 @@ export function MixerTrackChannelStrip(props: MixerTrackChannelStripProps) {
       </label>
 
       <div className={styles.mixControl}>
-        <MixerMeter trackId={track.id} />
+        <MixerMeter owner={{ kind: 'track', id: track.id }} />
 
         <label className={styles.faderControl}>
           <span className={styles.faderLabel}>

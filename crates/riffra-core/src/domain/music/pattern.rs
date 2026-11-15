@@ -6,7 +6,7 @@ use crate::DomainError;
 use serde::{Deserialize, Serialize};
 
 /// A repeated set of rhythm steps expressed in whole-note coordinates.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ts_rs::TS)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ts_rs::TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct RhythmPattern {
     pub length: MusicalDuration,
@@ -14,7 +14,7 @@ pub struct RhythmPattern {
 }
 
 /// One onset and duration inside a [`RhythmPattern`].
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ts_rs::TS)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ts_rs::TS, schemars::JsonSchema)]
 #[ts(optional_fields = nullable)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct RhythmStep {
@@ -75,7 +75,7 @@ impl RhythmPattern {
 }
 
 /// A note relative to the anchor of a phrase placement.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ts_rs::TS)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ts_rs::TS, schemars::JsonSchema)]
 #[ts(optional_fields = nullable)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct PhraseNote {
@@ -86,7 +86,7 @@ pub struct PhraseNote {
 }
 
 /// A reusable relative-pitch phrase.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ts_rs::TS)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ts_rs::TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct PhrasePattern {
     pub length: MusicalDuration,
@@ -138,7 +138,7 @@ impl PhrasePattern {
 }
 
 /// A phrase placement and its absolute anchor pitch.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ts_rs::TS)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ts_rs::TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct PhrasePlacement {
     pub position: MusicalPosition,

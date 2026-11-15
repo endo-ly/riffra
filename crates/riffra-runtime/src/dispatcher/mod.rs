@@ -16,6 +16,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+mod automation;
 mod canonical;
 mod clips;
 mod device;
@@ -574,6 +575,29 @@ mod tests {
     }
 
     #[test]
+    fn standalone_rejects_an_unlinked_score_rebuild_and_reports_canonical_sequence() {
+        // Arrange
+        let (dispatcher, root) = open("score-rebuild");
+        let before = dispatcher
+            .dispatch(command("session.get", json!({})), None)
+            .unwrap();
+
+        // Act
+        let error = dispatcher
+            .dispatch(command("project.rebuild-score", json!({})), None)
+            .expect_err("an unlinked Project cannot rebuild a Score");
+
+        // Assert
+        assert!(error.to_string().contains("not linked to a Score"));
+        let after = dispatcher
+            .dispatch(command("session.get", json!({})), None)
+            .unwrap();
+        assert_eq!(after.sequence, before.sequence);
+        assert!(!root.join("projects").read_dir().unwrap().next().is_none());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn midi_import_is_a_read_command_that_still_requires_project_serialization() {
         let ControlCommand::Canonical(import) =
             ControlCommand::decode("asset.import-midi", json!({"path":"song.mid"})).unwrap()
@@ -602,8 +626,8 @@ mod tests {
             ("host.info", json!({})),
             ("host.bootstrap", json!({})),
             ("host.shutdown", json!({})),
-            ("runtime.projection.get", json!({})),
-            ("runtime.projection.retry", json!({})),
+            ("audio.projection.get", json!({})),
+            ("audio.projection.retry", json!({})),
             ("transport.play", json!({})),
             ("transport.stop", json!({})),
             ("transport.go-to-start", json!({})),
@@ -617,11 +641,11 @@ mod tests {
             ("audio.diagnostics", json!({})),
             ("audio.probe", json!({})),
             (
-                "audio.channels.probe",
+                "audio.probe-channels",
                 json!({"driver": "d", "inputDevice": "i", "outputDevice": "o"}),
             ),
             ("audio.recover", json!({})),
-            ("audio.startup.retry", json!({})),
+            ("audio.startup-retry", json!({})),
             ("audio.driver.get", json!({})),
             (
                 "audio.driver.set",
@@ -630,7 +654,7 @@ mod tests {
             ("audio.emergency-mute", json!({"muted": true})),
             ("audio.feedback-protection.reset", json!({})),
             ("asset.preview", json!({"assetId": "asset:1"})),
-            ("asset.preview.stop", json!({})),
+            ("asset.stop-preview", json!({})),
             ("instrument.preview", json!({"instrumentId": "builtin:1"})),
             ("instrument.preview.stop", json!({})),
             ("midi.listening.enable", json!({})),
@@ -660,7 +684,16 @@ mod tests {
             ("plugin.state.get", device.clone()),
             (
                 "plugin.state.set",
-                json!({"owner":{"kind":"track","id":"track:1"}, "deviceId": "device:1", "state": {"schemaVersion": 1, "pluginPath": "p.vst3", "parameterValues": []}}),
+                json!({"owner":{"kind":"track","id":"track:1"}, "deviceId": "device:1", "state": {"schemaVersion": 2, "pluginIdentifier": "plugin-class", "pluginPath": "p.vst3", "parameterValues": []}}),
+            ),
+            ("plugin.state.inspect", device.clone()),
+            (
+                "plugin.state.read",
+                json!({"owner":{"kind":"track","id":"track:1"}, "deviceId": "device:1", "path": "Plugin"}),
+            ),
+            (
+                "plugin.state.patch",
+                json!({"owner":{"kind":"track","id":"track:1"}, "deviceId": "device:1", "operations": [{"op": "set", "path": "Gain", "value": 0.5}]}),
             ),
             ("missing.list", json!({})),
             ("record.start", json!({})),
@@ -682,7 +715,7 @@ mod tests {
             ),
             ("take.place-separate-clip", json!({"takeId": "take"})),
             (
-                "audio-clip.take-variant.set",
+                "clip.audio.take-variant.set",
                 json!({"clipId": "clip", "variant": "raw"}),
             ),
             ("take.comparison.start", json!({"takeId": "take"})),
@@ -695,13 +728,13 @@ mod tests {
             ("render.start", json!({})),
             ("job.get", json!({"id": "job"})),
             ("job.cancel", json!({"id": "job"})),
-            ("analysis.start", json!({"path": "take.wav"})),
-            ("library.search", json!({"query": "kick"})),
+            ("analysis.inspect", json!({"path": "take.wav"})),
+            ("asset.search", json!({"query": "kick"})),
             (
-                "library.asset.update",
+                "asset.update",
                 json!({"id": "asset", "tag": null, "note": null}),
             ),
-            ("library.related", json!({"id": "asset"})),
+            ("asset.related", json!({"id": "asset"})),
             ("library.instrument.list", json!({})),
             (
                 "library.instrument.favorite.set",
@@ -781,7 +814,7 @@ mod tests {
         dispatcher
             .dispatch(
                 command(
-                    "midi-clip.create",
+                    "clip.midi.create",
                     json!({"trackId":track_id,"startTick":0,"durationTicks":3840}),
                 ),
                 None,
@@ -866,6 +899,7 @@ mod tests {
                     name: "Synth".into(),
                     vendor: None,
                     version: None,
+                    identifier: None,
                     format: crate::api::output::PluginFormat::Vst3,
                     role: Some(crate::api::output::PluginRole::Instrument),
                     path: plugin_path.to_string_lossy().into_owned(),

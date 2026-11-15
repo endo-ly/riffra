@@ -28,11 +28,11 @@ async function exportRender(renderId: string, outputPath: string) {
 }
 
 async function cleanRender(renderId: string) {
-  return dispatchControl({ command: 'render.clean', params: { renderId } });
+  return dispatchControl({ command: 'render.delete', params: { renderId } });
 }
 
 function setMixdown(settings: MixdownSettings) {
-  return dispatchControl({ command: 'mixdown.set', params: settings });
+  return dispatchControl({ command: 'render.settings.set', params: settings });
 }
 
 async function startRenderJob(options: RenderOptions) {

@@ -13,7 +13,8 @@ class Vst3InstrumentRuntime final : public InstrumentRuntime {
 public:
     [[nodiscard]] static std::unique_ptr<Vst3InstrumentRuntime> create(
         const juce::String& path, double sampleRate, int blockSize, PluginProcessingMode mode,
-        const PluginStateSpec& persistedState, juce::String& error);
+        const PluginStateSpec& persistedState, juce::String& error,
+        const PluginLoadObserver& observer = {});
 
     /// Installs an already prepared rack for native integration tests.
     [[nodiscard]] static std::unique_ptr<Vst3InstrumentRuntime> fromRack(

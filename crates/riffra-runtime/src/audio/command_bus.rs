@@ -1,7 +1,8 @@
+use crate::api::output::RuntimeLoadStep;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use super::error::{NativeAudioError, NativeAudioResult};
 use super::wire::{ExpectedResponse, SidecarCommand, SidecarResponse, encode_command};
@@ -11,6 +12,8 @@ use super::{AudioSupervisor, SIDECAR_READY_TIMEOUT};
 struct PendingRequest {
     expected: ExpectedResponse,
     result: Option<NativeAudioResult<SidecarResponse>>,
+    tracks_load: bool,
+    progress: Option<RuntimeLoadStep>,
 }
 
 #[derive(Default)]
@@ -19,6 +22,11 @@ pub(crate) struct PendingRequests {
 }
 
 pub(crate) type SharedPendingRequests = Arc<(Mutex<PendingRequests>, Condvar)>;
+
+enum ResponseWait<'a> {
+    Bounded(Duration),
+    Load(&'a dyn Fn(RuntimeLoadStep)),
+}
 
 /// Owns request ids and response waiters for the sidecar command bus.
 /// Process lifecycle and recovery state intentionally live outside this type.
@@ -47,7 +55,7 @@ impl AudioSupervisor {
         command: SidecarCommand,
         timeout: Duration,
     ) -> NativeAudioResult<SidecarResponse> {
-        self.request_inner(command, timeout, false)
+        self.request_inner(command, ResponseWait::Bounded(timeout), false)
     }
 
     pub(super) fn request_during_shutdown(
@@ -55,13 +63,21 @@ impl AudioSupervisor {
         command: SidecarCommand,
         timeout: Duration,
     ) -> NativeAudioResult<SidecarResponse> {
-        self.request_inner(command, timeout, true)
+        self.request_inner(command, ResponseWait::Bounded(timeout), true)
+    }
+
+    pub(super) fn request_load(
+        &self,
+        command: SidecarCommand,
+        on_progress: &dyn Fn(RuntimeLoadStep),
+    ) -> NativeAudioResult<SidecarResponse> {
+        self.request_inner(command, ResponseWait::Load(on_progress), false)
     }
 
     fn request_inner(
         &self,
         command: SidecarCommand,
-        timeout: Duration,
+        wait: ResponseWait<'_>,
         shutting_down: bool,
     ) -> NativeAudioResult<SidecarResponse> {
         let request_id = self.command_bus.next_request_id();
@@ -103,6 +119,8 @@ impl AudioSupervisor {
                     PendingRequest {
                         expected: command.expected_response(),
                         result: None,
+                        tracks_load: matches!(&wait, ResponseWait::Load(_)),
+                        progress: None,
                     },
                 );
             let write_result = {
@@ -142,6 +160,12 @@ impl AudioSupervisor {
             });
         }
 
+        let timeout = match wait {
+            ResponseWait::Load(on_progress) => {
+                return wait_for_load(&self.command_bus.pending, request_id, on_progress);
+            }
+            ResponseWait::Bounded(timeout) => timeout,
+        };
         let pending = pending_lock
             .lock()
             .map_err(|_| NativeAudioError::LockPoisoned {
@@ -169,6 +193,79 @@ impl AudioSupervisor {
                 ),
             }),
         }
+    }
+}
+
+/// Retains receipt, progress and completion under one request identity. A load has
+/// no elapsed-time deadline; shutdown and transport loss wake this waiter.
+fn wait_for_load(
+    pending: &SharedPendingRequests,
+    id: u64,
+    on_progress: &dyn Fn(RuntimeLoadStep),
+) -> NativeAudioResult<SidecarResponse> {
+    let started = Instant::now();
+    let mut last_publish = started;
+    let mut stage = RuntimeLoadStep {
+        phase: crate::api::output::RuntimeLoadPhase::Dispatching,
+        owner_id: String::new(),
+        device_id: String::new(),
+        plugin_path: String::new(),
+        completed_devices: 0,
+        total_devices: 0,
+    };
+    let mut first = true;
+    loop {
+        let mut state = pending
+            .0
+            .lock()
+            .map_err(|_| NativeAudioError::LockPoisoned {
+                resource: "Audio response",
+            })?;
+        let request = state
+            .requests
+            .get_mut(&id)
+            .ok_or_else(|| NativeAudioError::transport_lost("load request was removed"))?;
+        if let Some(result) = request.result.take() {
+            state.requests.remove(&id);
+            return result;
+        }
+        let mut changed = first;
+        first = false;
+        if let Some(progress) = request.progress.take()
+            && stage != progress
+        {
+            stage = progress;
+            changed = true;
+        }
+        let now = Instant::now();
+        if changed || now.duration_since(last_publish) >= Duration::from_secs(1) {
+            let progress = stage.clone();
+            drop(state);
+            on_progress(progress);
+            last_publish = now;
+            continue;
+        }
+        let _guard = pending
+            .1
+            .wait_timeout(state, Duration::from_millis(100))
+            .map_err(|_| NativeAudioError::LockPoisoned {
+                resource: "Audio response",
+            })?;
+    }
+}
+
+pub(super) fn report_load_progress(
+    pending: &SharedPendingRequests,
+    id: u64,
+    progress: RuntimeLoadStep,
+) {
+    if let Ok(mut state) = pending.0.lock()
+        && let Some(request) = state.requests.get_mut(&id)
+        && request.tracks_load
+        && request.result.is_none()
+    {
+        request.progress = Some(progress);
+        pending.1.notify_all();
     }
 }
 
@@ -248,10 +345,57 @@ mod tests {
                     PendingRequest {
                         expected: *expected,
                         result: None,
+                        tracks_load: false,
+                        progress: None,
                     },
                 )
             }));
         pending
+    }
+
+    fn stage() -> RuntimeLoadStep {
+        RuntimeLoadStep {
+            phase: crate::api::output::RuntimeLoadPhase::Restoring,
+            owner_id: "track-1".into(),
+            device_id: "device-1".into(),
+            plugin_path: "test.vst3".into(),
+            completed_devices: 1,
+            total_devices: 26,
+        }
+    }
+
+    #[test]
+    fn load_wait_delivers_receipt_progress_and_completion() {
+        let pending = pending_with(&[(1, ExpectedResponse::TimelineAck)]);
+        pending
+            .0
+            .lock()
+            .unwrap()
+            .requests
+            .get_mut(&1)
+            .unwrap()
+            .tracks_load = true;
+        let sender = pending.clone();
+        let (observed, next) = std::sync::mpsc::channel();
+        let producer = std::thread::spawn(move || {
+            next.recv().unwrap();
+            report_load_progress(&sender, 1, stage());
+            next.recv().unwrap();
+            complete_request(&sender, 1, Ok(SidecarResponse::TimelineAck {}));
+        });
+        let updates = Mutex::new(Vec::new());
+        let result = wait_for_load(&pending, 1, &|p| {
+            updates.lock().unwrap().push(p);
+            observed.send(()).unwrap();
+        });
+        assert!(matches!(result, Ok(SidecarResponse::TimelineAck {})));
+        producer.join().unwrap();
+        let updates = updates.into_inner().unwrap();
+        assert_eq!(
+            updates[0].phase,
+            crate::api::output::RuntimeLoadPhase::Dispatching
+        );
+        assert!(updates.iter().any(|p| p.completed_devices == 1));
     }
 
     fn result(pending: &SharedPendingRequests, id: u64) -> NativeAudioResult<ExpectedResponse> {
@@ -327,6 +471,8 @@ mod tests {
                 PendingRequest {
                     expected: ExpectedResponse::TimelineAck,
                     result: None,
+                    tracks_load: false,
+                    progress: None,
                 },
             );
         let response = std::fs::read(

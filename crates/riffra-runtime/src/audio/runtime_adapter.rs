@@ -48,9 +48,9 @@ impl ProjectionDriver for AudioSupervisor {
     fn prepare_timeline_snapshot(
         &self,
         snapshot: &TimelineSnapshot,
-        timeout: Duration,
+        progress: &dyn Fn(crate::api::output::RuntimeLoadStep),
     ) -> Result<(), RuntimeError> {
-        AudioSupervisor::prepare_timeline_snapshot(self, snapshot, timeout)
+        AudioSupervisor::prepare_timeline_snapshot(self, snapshot, progress)
             .map_err(RuntimeError::from)
     }
 

@@ -181,6 +181,108 @@ TEST(PluginRackTest, RejectsParametersBeyondThePreparedChangeQueue) {
     EXPECT_FLOAT_EQ(state->parameterValues[0], 0.5f);
 }
 
+TEST(PluginRackTest, RestoresParameterValuesWithoutGeneratingDisplayText) {
+    ProcessorTrace trace;
+    auto processor = std::make_unique<TestProcessor>(trace);
+    int displayCalls = 0;
+    const auto attributes = juce::AudioParameterFloatAttributes().withStringFromValueFunction(
+        [&displayCalls](float value, int) {
+            ++displayCalls;
+            return juce::String(value);
+        });
+    processor->addParameter(new juce::AudioParameterFloat(
+        juce::ParameterID{"restore", 1}, "Restore", juce::NormalisableRange<float>{0.0f, 1.0f},
+        0.5f, attributes));
+    juce::String error;
+    auto rack = PluginRackTestPeer::install(std::move(processor), kSampleRate, kBlockSize, error);
+    ASSERT_NE(rack, nullptr) << error;
+    PluginStateSpec state;
+    state.parameterValues = {0.75f};
+
+    ASSERT_TRUE(rack->applyPersistedState(state, error)) << error;
+
+    EXPECT_EQ(displayCalls, 0);
+    const auto saved = rack->persistedState(error);
+    ASSERT_TRUE(saved.has_value()) << error;
+    EXPECT_FLOAT_EQ(saved->parameterValues[0], 0.75f);
+}
+
+TEST(PluginRackTest, ApproximatesOnlyStableMonotonicNumericDisplays) {
+    ProcessorTrace trace;
+    auto processor = std::make_unique<TestProcessor>(trace);
+    const auto makeParameter = [](const char* id, int precision, bool descending,
+                                  bool nonmonotonic) {
+        const auto attributes =
+            juce::AudioParameterFloatAttributes()
+                .withLabel("dB")
+                .withStringFromValueFunction([=](float value, int) {
+                    const auto shown =
+                        nonmonotonic ? std::abs(value) : (descending ? -value : value);
+                    return juce::String(shown, precision) + " dB";
+                })
+                .withValueFromStringFunction([](const juce::String&) { return 0.0f; });
+        return new juce::AudioParameterFloat(juce::ParameterID{id, 1}, id,
+                                             juce::NormalisableRange<float>{-10.0f, 10.0f}, 0.0f,
+                                             attributes);
+    };
+    processor->addParameter(makeParameter("one-decimal", 1, false, false));
+    processor->addParameter(makeParameter("two-decimal", 2, true, false));
+    processor->addParameter(makeParameter("nonmonotonic", 2, false, true));
+    processor->addParameter(
+        new juce::AudioParameterChoice(juce::ParameterID{"discrete", 1}, "Discrete",
+                                       juce::StringArray{"-10.00 dB", "-4.12 dB", "0.00 dB"}, 0));
+    processor->addParameter(new juce::AudioParameterChoice(juce::ParameterID{"choice", 1}, "Choice",
+                                                           juce::StringArray{"Cold", "Warm"}, 0));
+    const auto counter = std::make_shared<int>(0);
+    const auto unstable =
+        juce::AudioParameterFloatAttributes()
+            .withStringFromValueFunction([counter](float value, int) {
+                return juce::String(value + static_cast<float>((*counter)++ % 2), 2) + " dB";
+            })
+            .withValueFromStringFunction([](const juce::String&) { return 0.0f; });
+    processor->addParameter(
+        new juce::AudioParameterFloat(juce::ParameterID{"unstable", 1}, "Unstable",
+                                      juce::NormalisableRange<float>{0.0f, 10.0f}, 0.0f, unstable));
+    const auto gain =
+        juce::AudioParameterFloatAttributes()
+            .withStringFromValueFunction([](float value, int) {
+                return value <= -10.0f ? juce::String("-inf") : juce::String(value, 2) + " dB";
+            })
+            .withValueFromStringFunction([](const juce::String&) { return 0.0f; });
+    processor->addParameter(
+        new juce::AudioParameterFloat(juce::ParameterID{"gain", 1}, "Gain",
+                                      juce::NormalisableRange<float>{-10.0f, 10.0f}, 0.0f, gain));
+    juce::String error;
+    auto rack = PluginRackTestPeer::install(std::move(processor), kSampleRate, kBlockSize, error);
+    ASSERT_NE(rack, nullptr) << error;
+    const auto convert = [&](int index, const juce::String& value, bool nearest) {
+        error.clear();
+        return PluginRackTestPeer::parameterValueForText(*rack, index, value, nearest, error);
+    };
+
+    EXPECT_FALSE(convert(0, "-4.06 dB", false).has_value());
+    const auto rounded = convert(0, "-4.06 dB", true);
+    ASSERT_TRUE(rounded.has_value()) << error;
+    EXPECT_EQ(PluginRackTestPeer::parameterDisplayValue(*rack, 0, *rounded, error), "-4.1 dB");
+    const auto decreasing = convert(1, "-4.006 dB", true);
+    ASSERT_TRUE(decreasing.has_value()) << error;
+    EXPECT_EQ(PluginRackTestPeer::parameterDisplayValue(*rack, 1, *decreasing, error), "-4.01 dB");
+    const auto discrete = convert(3, "-4.00 dB", true);
+    ASSERT_TRUE(discrete.has_value()) << error;
+    EXPECT_FLOAT_EQ(*discrete, 0.5f);
+    EXPECT_FALSE(convert(2, "4.51 dB", true).has_value());
+    EXPECT_TRUE(error.contains("not monotonic"));
+    EXPECT_FALSE(convert(0, "-4.06 Hz", true).has_value());
+    EXPECT_FALSE(convert(0, "-11 dB", true).has_value());
+    EXPECT_FALSE(convert(4, "Warm", true).has_value());
+    EXPECT_TRUE(convert(4, "Warm", false).has_value());
+    EXPECT_FALSE(convert(5, "4.56 dB", true).has_value());
+    EXPECT_TRUE(error.contains("unstable"));
+    const auto gainResult = convert(6, "-4.006 dB", true);
+    ASSERT_TRUE(gainResult.has_value()) << error;
+    EXPECT_EQ(PluginRackTestPeer::parameterDisplayValue(*rack, 6, *gainResult, error), "-4.01 dB");
+}
+
 TEST(PluginRackTest, RestoresPersistedPluginState) {
     juce::String error;
     auto rack = PluginRackTestPeer::install(std::make_unique<StateTestProcessor>(), kSampleRate,
@@ -201,8 +303,10 @@ TEST(PluginRackTest, RestoresPersistedPluginState) {
     // The saved snapshot and its opaque VST3 state alone each restore the plugin itself.
     for (const auto& state : {*saved, opaqueState}) {
         ASSERT_TRUE(rack->setParameter(0, 0.25f, error)) << error;
-        process();
         ASSERT_TRUE(rack->applyPersistedState(state, error)) << error;
+        const auto captured = rack->persistedState(error);
+        ASSERT_TRUE(captured.has_value()) << error;
+        EXPECT_NEAR(captured->parameterValues[0], 0.75f, 0.0001f);
         process();
         const auto restored = rack->parameters();
         ASSERT_FALSE(restored.empty());
@@ -462,6 +566,75 @@ TEST(PluginRackTest, BindsStableParameterIdsAndAppliesAutomationBeforeRealVstPro
                     .has_value());
 }
 
+TEST(PluginRackTest, PersistedStateCapturesUnreadPluginAndCachesUntilChanged) {
+    // Arrange: a freshly inserted device has no persisted state to restore.
+    ProcessorTrace trace;
+    trace.opaqueState = 7;
+    juce::String error;
+    auto rack = PluginRackTestPeer::install(std::make_unique<TestProcessor>(trace, true),
+                                            kSampleRate, kBlockSize, error);
+    ASSERT_NE(rack, nullptr) << error;
+    ASSERT_TRUE(rack->applyPersistedState({}, error)) << error;
+
+    // Act
+    const auto captured = rack->persistedState(error);
+    const auto cached = rack->persistedState(error);
+
+    // Assert
+    ASSERT_TRUE(captured.has_value()) << error;
+    EXPECT_TRUE(captured->stateData.has_value());
+    EXPECT_EQ(cached, captured);
+    EXPECT_EQ(trace.stateCaptureCount, 1);
+
+    ASSERT_TRUE(rack->setParameter(0, 0.9f, error)) << error;
+    ASSERT_TRUE(rack->persistedState(error).has_value()) << error;
+    EXPECT_EQ(trace.stateCaptureCount, 2);
+
+    // A plugin reporting no state is a valid capture, not a reason to ask again.
+    trace.opaqueState = 0;
+    ASSERT_TRUE(rack->applyPersistedState({}, error)) << error;
+    const auto empty = rack->persistedState(error);
+    const auto emptyAgain = rack->persistedState(error);
+    ASSERT_TRUE(empty.has_value()) << error;
+    EXPECT_FALSE(empty->stateData.has_value());
+    EXPECT_EQ(emptyAgain, empty);
+    EXPECT_EQ(trace.stateCaptureCount, 3);
+
+    // A plugin's serializer need not reproduce all inputs needed for restoration.
+    PluginStateSpec restored;
+    restored.stateData = "c3RhdGU=";
+    ASSERT_TRUE(rack->applyPersistedState(restored, error)) << error;
+    const auto accepted = rack->persistedState(error);
+    ASSERT_TRUE(accepted.has_value()) << error;
+    EXPECT_EQ(accepted->stateData, restored.stateData);
+    ASSERT_EQ(accepted->parameterValues.size(), 1u);
+    EXPECT_FLOAT_EQ(accepted->parameterValues[0], 0.5f);
+    EXPECT_EQ(trace.stateCaptureCount, 3);
+
+    // Host bypass and rejected edits must not rewrite the plugin's opaque data.
+    for (const auto bypass : {true, false}) {
+        rack->setBypassed(bypass);
+        const auto bypassed = rack->persistedState(error);
+        ASSERT_TRUE(bypassed.has_value()) << error;
+        EXPECT_EQ(bypassed->stateData, restored.stateData);
+        EXPECT_EQ(bypassed->bypassed, bypass);
+    }
+    EXPECT_FALSE(rack->setProgram(99, error));
+    auto invalid = restored;
+    invalid.stateData = "invalid!";
+    EXPECT_FALSE(rack->applyPersistedState(invalid, error));
+    EXPECT_EQ(rack->persistedState(error), accepted);
+    EXPECT_EQ(trace.stateCaptureCount, 3);
+
+    // Editing the restored device still captures its new state.
+    ASSERT_TRUE(rack->setParameter(0, 0.25f, error)) << error;
+    const auto edited = rack->persistedState(error);
+    ASSERT_TRUE(edited.has_value()) << error;
+    EXPECT_NE(edited->stateData, restored.stateData);
+    EXPECT_FLOAT_EQ(edited->parameterValues[0], 0.25f);
+    EXPECT_EQ(trace.stateCaptureCount, 4);
+}
+
 TEST(PluginRackTest, AutomationBindingUsesProjectedStateWithoutCapturingPluginState) {
     // Arrange
     ProcessorTrace trace;
@@ -475,10 +648,6 @@ TEST(PluginRackTest, AutomationBindingUsesProjectedStateWithoutCapturingPluginSt
     PluginStateSpec projected;
     projected.parameterValues = {0.4f};
     ASSERT_TRUE(rack->applyPersistedState(projected, error)) << error;
-    const auto retained = rack->persistedState(error);
-    ASSERT_TRUE(retained.has_value()) << error;
-    EXPECT_FLOAT_EQ(retained->parameterValues[0], projected.parameterValues[0]);
-    EXPECT_EQ(trace.stateCaptureCount, 0);
     AutomationRuntime lane;
     lane.setPoints({{0, 0.25f}, {32, 0.75f}}, true);
 

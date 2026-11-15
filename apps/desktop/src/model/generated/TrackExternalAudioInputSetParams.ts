@@ -3,4 +3,4 @@
 /**
  * Connects one instrument Track to the aligned sum of source Tracks.
  */
-export type TrackExternalAudioInputSetParams = { trackId: string; sourceTrackIds: Array<string> };
+export type TrackExternalAudioInputSetParams = { trackId: string, sourceTrackIds: Array<string>, };

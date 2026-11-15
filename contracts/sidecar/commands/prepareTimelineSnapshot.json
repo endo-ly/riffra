@@ -1,51 +1,51 @@
 {
+  "requestId": 1,
   "command": {
+    "type": "prepareTimelineSnapshot",
     "snapshot": {
+      "projectId": "project-1",
+      "revision": 3,
       "graph": {
-        "automation": [],
-        "loopRange": {
-          "enabled": false,
-          "endTick": 0,
-          "startTick": 0
-        },
-        "masterGainDb": 0.0,
-        "metronomeEnabled": false,
-        "metronomeSound": "beep",
         "mixdown": {
-          "fadeOutSeconds": 0.0,
           "musicalEndTick": 0,
-          "pluginWarmUpSeconds": 2.0,
-          "tailSeconds": 0.0
+          "tailSeconds": 0.0,
+          "fadeOutSeconds": 0.0,
+          "pluginWarmUpSeconds": 2.0
         },
-        "mixer": {
-          "buses": [],
-          "masterEffects": [],
-          "sends": [],
-          "sidechainSends": []
-        },
-        "punchRange": null,
         "timebase": {
           "ppq": 960,
           "tempoChanges": [
             {
-              "bpm": 120.0,
-              "tick": 0
+              "tick": 0,
+              "bpm": 120.0
             }
           ],
           "timeSignatureChanges": [
             {
-              "denominator": 4,
+              "tick": 0,
               "numerator": 4,
-              "tick": 0
+              "denominator": 4
             }
           ]
         },
-        "tracks": []
-      },
-      "projectId": "project-1",
-      "revision": 3
-    },
-    "type": "prepareTimelineSnapshot"
-  },
-  "requestId": 1
+        "loopRange": {
+          "enabled": false,
+          "startTick": 0,
+          "endTick": 0
+        },
+        "punchRange": null,
+        "metronomeEnabled": false,
+        "metronomeSound": "beep",
+        "masterGainDb": 0.0,
+        "tracks": [],
+        "mixer": {
+          "masterEffects": [],
+          "buses": [],
+          "sends": [],
+          "sidechainSends": []
+        },
+        "automation": []
+      }
+    }
+  }
 }

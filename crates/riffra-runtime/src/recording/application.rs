@@ -135,9 +135,6 @@ fn start_recording_in_session(
             sequence: projection.sequence,
             session_revision: session.arrangement.revision,
         },
-        // One deadline covers the initial prepare, Sidecar replacement plus
-        // control-state restoration, the retry, and the publish boundary.
-        std::time::Duration::from_secs(60),
     )?;
     let status = context
         .audio

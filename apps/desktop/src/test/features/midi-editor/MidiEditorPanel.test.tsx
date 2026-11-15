@@ -8,9 +8,21 @@ import { TRACK_COLOR_PALETTE } from '@/model/track-color';
 import type { MidiClip } from '@/model/generated';
 import { canonicalState, defaultSession } from '@/native/browser-defaults';
 import { MidiEditorPanel } from '@/features/midi-editor/MidiEditorPanel';
+import type { NoteLane } from '@/features/midi-editor/NoteLane';
 import { createFakeNativeApi, type FakeNativeApi } from '@/test/support/fake-native-api';
 import { renderWithSession } from '@/test/support/session-provider';
 import { renderWorkspace } from '@/test/support/workspace';
+
+const noteLaneRenders = vi.hoisted(() => ({ count: 0 }));
+vi.mock('@/features/midi-editor/NoteLane', async (importOriginal) => {
+  const original = await importOriginal<{ NoteLane: typeof NoteLane }>();
+  return {
+    NoteLane: (props: Parameters<typeof original.NoteLane>[0]) => {
+      noteLaneRenders.count += 1;
+      return original.NoteLane(props);
+    },
+  };
+});
 
 afterEach(cleanup);
 
@@ -64,12 +76,16 @@ function setup(startTick: number, lyric?: string) {
   api.updateMidiNote = updateMidiNote;
   api.updateMidiNotes = updateMidiNotes;
   api.insertMidiNotes = insertMidiNotes;
-  const { store } = renderWithSession(<MidiEditorPanel clip={clip} trackColor={null} />, { api });
+  const { store, rerender } = renderWithSession(<MidiEditorPanel clip={clip} trackColor={null} />, {
+    api,
+  });
   const lane = document.querySelector<HTMLElement>('[data-midi-lane]')!;
   Object.defineProperty(lane, 'getBoundingClientRect', {
     value: () => ({ left: 0, top: 0, width: 691.2, height: 1536 }),
   });
   return {
+    clip,
+    rerender,
     lane,
     addMidiNote,
     updateMidiNote,
@@ -86,6 +102,22 @@ function positions(root: Element, selector: string) {
 }
 
 describe('MidiEditorPanel', () => {
+  it('cancels a velocity drag when the edited clip changes', async () => {
+    const { clip, rerender, updateMidiNotes } = setup(0);
+    const velocityLane = document.querySelector<HTMLElement>('[data-velocity-lane]')!;
+    vi.spyOn(velocityLane, 'getBoundingClientRect').mockReturnValue({ height: 88 } as DOMRect);
+    const bar = velocityLane.querySelector<HTMLElement>('[data-velocity-note-id]')!;
+    fireEvent.pointerDown(bar, { pointerId: 1, clientY: 40 });
+    fireEvent.pointerMove(window, { pointerId: 1, clientY: 32 });
+
+    rerender(<MidiEditorPanel clip={{ ...clip, id: 'clip:other' }} trackColor={null} />);
+    fireEvent.pointerUp(window, { pointerId: 1, clientY: 32 });
+    await act(async () => undefined);
+
+    expect(updateMidiNotes).not.toHaveBeenCalled();
+    expect(screen.getByLabelText('C4 velocity 96')).toBeInTheDocument();
+  });
+
   it.each([1920, 2160])(
     'aligns all grid layers to Arrangement boundaries at clip tick %i',
     (startTick) => {
@@ -149,6 +181,8 @@ describe('MidiEditorPanel', () => {
     fireEvent.pointerDown(lane, { clientX: 70, clientY: 804, pointerId: 1 });
     fireEvent.pointerUp(window, { clientX: 320, clientY: 804, pointerId: 1 });
     expect(addMidiNote).toHaveBeenLastCalledWith('clip:1', 720, 60, 960, 96, 1);
+    fireEvent.doubleClick(lane, { clientX: 320, clientY: 804 });
+    expect(addMidiNote).toHaveBeenCalledTimes(2);
 
     fireEvent.click(screen.getByRole('button', { name: 'Pointer' }));
     fireEvent.pointerDown(note, { clientX: 100, clientY: 804, pointerId: 2 });
@@ -263,7 +297,9 @@ describe('MidiEditorPanel', () => {
 
     // Act: hold the key, then move the playhead so the panel renders again.
     fireEvent.pointerDown(key, { pointerId: 1 });
-    act(() => store.getState().transport.seekLocally(480));
+    act(() => {
+      store.getState().transport.seekLocally(480);
+    });
 
     // Assert: the held note is neither released nor panicked by the re-render.
     expect(sendMidi).toHaveBeenCalledTimes(1);
@@ -337,11 +373,13 @@ describe('MidiEditorPanel', () => {
         await vi.advanceTimersByTimeAsync(0);
       });
       expect(viewport.scrollLeft).toBe(0);
+      const before = noteLaneRenders.count;
 
       await act(async () => {
         await vi.advanceTimersByTimeAsync(500);
       });
       expect(viewport.scrollLeft).toBeGreaterThan(0);
+      expect(noteLaneRenders.count).toBe(before);
     } finally {
       vi.useRealTimers();
     }
@@ -742,7 +780,7 @@ describe('MidiEditorPanel', () => {
         id: 'clip:melody',
         name: 'Melody Clip',
         trackId: 'track:melody',
-        startTick: 0,
+        startTick: 600,
         durationTicks: 1_920,
         notes: [],
         events: [],
@@ -777,6 +815,9 @@ describe('MidiEditorPanel', () => {
     const editor = await screen.findByLabelText('MIDI Editor');
 
     expect(editor.querySelector('[data-note-id]')).toBeNull();
+    const ghost = editor.querySelector<HTMLElement>('[data-ghost-note-id]')!;
+    expect(Number.parseFloat(ghost.style.left)).toBe(0);
+    expect(Number.parseFloat(ghost.style.width)).toBeCloseTo(120 * 0.18);
     expect(editor.querySelector('[data-ghost-note-id]')?.getAttribute('style')).toContain(
       `--ghost-color: ${TRACK_COLOR_PALETTE[1]}`,
     );

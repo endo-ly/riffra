@@ -4,6 +4,7 @@ import {
   selectHostReady,
   selectRuntimeReady,
   selectTrackInstrumentPlayable,
+  selectTrack,
 } from '@/shared/session/selectors';
 import { isEditableTypingTarget } from '@/shared/input';
 import { midiNoteName } from '@/shared/midi';
@@ -14,13 +15,11 @@ import { WorkspaceLowerArea } from './WorkspaceLowerArea';
 import styles from './EditorWorkspace.module.css';
 
 export function EditorWorkspace() {
-  const session = useSession((state) => state.project.boot!.canonical.session);
   const workspace = useSession((state) => state.workspace);
   const hostReady = useSession(selectHostReady);
   const runtimeReady = useSession(selectRuntimeReady);
   const togglePlayback = useSession((state) => state.transport.togglePlayback);
-  const track =
-    session.arrangement.tracks.find((item) => item.id === workspace.focusedTrackId) ?? null;
+  const track = useSession((state) => selectTrack(state, workspace.focusedTrackId));
   const playable = useSession((state) =>
     selectTrackInstrumentPlayable(state, workspace.focusedTrackId),
   );

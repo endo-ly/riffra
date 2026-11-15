@@ -10,6 +10,7 @@ use crate::api::{
 };
 use crate::execution::GraphPluginState;
 use crate::instrument::{BuiltInInstrumentCatalog, UserInstrumentStore};
+use crate::plugins::state_document;
 
 impl HostState {
     fn failure(request_id: String, error: ProtocolError) -> ControlResponse {
@@ -271,6 +272,7 @@ impl HostState {
                     params.parameter_index,
                     params.value,
                     params.display,
+                    params.nearest,
                 )
                 .map_err(|error| error.protocol_error())?;
                 let sequence = result.mutation.canonical.sequence;
@@ -336,19 +338,20 @@ impl HostState {
             | CanonicalCommand::AudioClipTrim(_)
             | CanonicalCommand::AudioClipSplit(_)
             | CanonicalCommand::AudioClipDuplicate(_)
+            | CanonicalCommand::AudioClipMerge(_)
             | CanonicalCommand::AudioClipCrossfade(_)
             | CanonicalCommand::MidiClipCreate(_)
             | CanonicalCommand::MidiClipAddAsset(_)
             | CanonicalCommand::MidiClipUpdate(_)
             | CanonicalCommand::MidiClipMove(_)
             | CanonicalCommand::MidiClipTrim(_)
+            | CanonicalCommand::MidiClipMerge(_)
             | CanonicalCommand::MidiClipSplit(_)
             | CanonicalCommand::MidiClipDuplicate(_)
             | CanonicalCommand::MidiNoteAdd(_)
             | CanonicalCommand::MidiNoteInsert(_)
             | CanonicalCommand::MidiNoteUpdate(_)
             | CanonicalCommand::MidiNoteUpdateMany(_)
-            | CanonicalCommand::MidiNoteRemove(_)
             | CanonicalCommand::MidiNoteRemoveMany(_)
             | CanonicalCommand::MidiNoteClear(_)
             | CanonicalCommand::MidiNoteQuantize(_)
@@ -370,6 +373,7 @@ impl HostState {
             | CanonicalCommand::MusicRegionAdd(_)
             | CanonicalCommand::MusicRegionUpdate(_)
             | CanonicalCommand::MusicRegionRemove(_)
+            | CanonicalCommand::InstrumentTrackCreate(_)
             | CanonicalCommand::InstrumentApply(_)
             | CanonicalCommand::PluginStateImport(_)) => {
                 return self.dispatch_shared_canonical(command, access, current, &mut context);
@@ -444,6 +448,59 @@ impl HostState {
             .execute_read_canonical(command, current)
             .map_err(|error| error.protocol_error())?;
         Ok((result.output, result.sequence))
+    }
+
+    /// Returns the state the live plugin reports and whether the device is bypassed.
+    fn live_plugin_state(
+        &self,
+        current: &CanonicalState,
+        owner: &riffra_core::EffectOwner,
+        device_id: &str,
+    ) -> Result<(PluginStateSnapshot, bool), ProtocolError> {
+        let (plugin_path, bypassed) = canonical_plugin_device(current, owner, device_id)?;
+        self.wait_for_device_projection(current)?;
+        let state = self
+            .audio
+            .get_plugin_state(owner, device_id)
+            .map_err(audio_error)?;
+        Ok((
+            plugin_state_snapshot(&self.data_root, &plugin_path, state)?,
+            bypassed,
+        ))
+    }
+
+    /// Applies `next` to the live plugin and persists it, restoring `previous` if persisting fails.
+    fn replace_plugin_state(
+        &self,
+        context: &mut SessionContext<'_>,
+        (owner, device_id): (&riffra_core::EffectOwner, &str),
+        previous: GraphPluginState,
+        next: GraphPluginState,
+    ) -> Result<(ControlOutput, u64), ProtocolError> {
+        self.audio
+            .set_plugin_state(owner, device_id, next)
+            .map_err(audio_error)?;
+        let persisted = match self.audio.get_plugin_state(owner, device_id) {
+            Ok(state) => state,
+            Err(error) => {
+                let _ = self.audio.set_plugin_state(owner, device_id, previous);
+                return Err(audio_error(error));
+            }
+        };
+        let commit = context.commit(|mut app| {
+            app.persist_plugin_state(
+                owner,
+                device_id,
+                persisted.parameter_values.clone(),
+                persisted.state_data.clone(),
+                persisted.bypassed,
+            )
+        });
+        if let Err(error) = commit {
+            let _ = self.audio.set_plugin_state(owner, device_id, previous);
+            return Err(error.protocol_error());
+        }
+        adapter_mutation(commit.map(|(mutation, _)| mutation))
     }
 
     fn dispatch_runtime(
@@ -921,13 +978,14 @@ impl HostState {
                     .audio
                     .set_plugin_program(&params.owner, &params.device_id, program_index)
                     .map_err(audio_error)?;
-                let state_snapshot = match plugin_state_snapshot(&plugin_path, state) {
-                    Ok(snapshot) => snapshot,
-                    Err(error) => {
-                        rollback();
-                        return Err(error);
-                    }
-                };
+                let state_snapshot =
+                    match plugin_state_snapshot(&self.data_root, &plugin_path, state) {
+                        Ok(snapshot) => snapshot,
+                        Err(error) => {
+                            rollback();
+                            return Err(error);
+                        }
+                    };
                 let commit = context.commit(|mut app| {
                     app.persist_plugin_state(
                         &params.owner,
@@ -944,47 +1002,61 @@ impl HostState {
                 return adapter_mutation(commit.map(|(mutation, _)| mutation));
             }
             RuntimeCommand::PluginStateGet(params) => {
-                let (plugin_path, _) =
-                    canonical_plugin_device(&current, &params.owner, &params.device_id)?;
-                self.wait_for_device_projection(&current)?;
-                let state = self
-                    .audio
-                    .get_plugin_state(&params.owner, &params.device_id)
-                    .map_err(audio_error)?;
-                ControlOutput::PluginState(plugin_state_snapshot(&plugin_path, state)?)
+                let (state, _) =
+                    self.live_plugin_state(&current, &params.owner, &params.device_id)?;
+                ControlOutput::PluginState(state)
             }
             RuntimeCommand::PluginStateSet(params) => {
                 let (plugin_path, bypassed) =
                     canonical_plugin_device(&current, &params.owner, &params.device_id)?;
-                crate::plugins::validate_plugin_state(&params.state, &plugin_path)?;
+                let plugin = crate::plugins::validated_entry_at_path(&self.data_root, &plugin_path)
+                    .map_err(command_error)?;
+                crate::plugins::validate_plugin_state(&params.state, &plugin)?;
                 self.wait_for_device_projection(&current)?;
                 let previous_state = self
                     .audio
                     .get_plugin_state(&params.owner, &params.device_id)
                     .map_err(audio_error)?;
-                let native_state = plugin_state_value(&params.state, bypassed);
                 let mut context = self.session_context(writer.take(), current.clone(), &publish)?;
-                self.audio
-                    .set_plugin_state(&params.owner, &params.device_id, native_state)
-                    .map_err(audio_error)?;
-                let commit = context.commit(|mut app| {
-                    app.persist_plugin_state(
-                        &params.owner,
-                        &params.device_id,
-                        params.state.parameter_values.clone(),
-                        params.state.state_data.clone(),
-                        bypassed,
-                    )
-                });
-                if let Err(error) = commit {
-                    let _ = self.audio.set_plugin_state(
-                        &params.owner,
-                        &params.device_id,
-                        previous_state,
-                    );
-                    return Err(error.protocol_error());
-                }
-                return adapter_mutation(commit.map(|(mutation, _)| mutation));
+                return self.replace_plugin_state(
+                    &mut context,
+                    (&params.owner, &params.device_id),
+                    previous_state,
+                    plugin_state_value(&params.state, bypassed),
+                );
+            }
+            RuntimeCommand::PluginStateInspect(params) => {
+                let (state, _) =
+                    self.live_plugin_state(&current, &params.owner, &params.device_id)?;
+                ControlOutput::PluginStateInspection(state_document::inspect(
+                    state.state_data.as_deref(),
+                )?)
+            }
+            RuntimeCommand::PluginStateRead(params) => {
+                let (state, _) =
+                    self.live_plugin_state(&current, &params.owner, &params.device_id)?;
+                ControlOutput::PluginStateRead(state_document::read(
+                    state.state_data.as_deref(),
+                    params.path.as_deref().unwrap_or_default(),
+                    params.xml_path.as_deref(),
+                )?)
+            }
+            RuntimeCommand::PluginStatePatch(params) => {
+                let (mut state, bypassed) =
+                    self.live_plugin_state(&current, &params.owner, &params.device_id)?;
+                let previous_state = plugin_state_value(&state, bypassed);
+                state.parameter_values.clear();
+                state.state_data = Some(state_document::patch(
+                    state.state_data.as_deref(),
+                    &params.operations,
+                )?);
+                let mut context = self.session_context(writer.take(), current.clone(), &publish)?;
+                return self.replace_plugin_state(
+                    &mut context,
+                    (&params.owner, &params.device_id),
+                    previous_state,
+                    plugin_state_value(&state, bypassed),
+                );
             }
 
             RuntimeCommand::MissingList(_) => ControlOutput::Missing(
@@ -1127,6 +1199,9 @@ impl HostState {
             RuntimeCommand::RenderStems(params) => {
                 ControlOutput::Job(Some(self.start_render_stems(current, params)?))
             }
+            RuntimeCommand::RenderCapture(params) => {
+                ControlOutput::Job(Some(self.start_render_capture(current, params)?))
+            }
             RuntimeCommand::RenderExport(params) => ControlOutput::RenderExport(
                 render::export_render(&self.data_root, &params.render_id, &params.output_path)
                     .map_err(command_error)?,
@@ -1134,7 +1209,7 @@ impl HostState {
             RuntimeCommand::RenderList(_) => ControlOutput::RenderList(
                 render::list_renders(&self.data_root).map_err(command_error)?,
             ),
-            RuntimeCommand::RenderClean(params) => ControlOutput::RenderDelete({
+            RuntimeCommand::RenderDelete(params) => ControlOutput::RenderDelete({
                 let history_sessions = writer
                     .as_ref()
                     .ok_or_else(|| {
@@ -1171,7 +1246,10 @@ impl HostState {
             RuntimeCommand::AnalysisMeasure(params) => {
                 ControlOutput::Job(Some(self.start_analysis_measure(params)?))
             }
-            RuntimeCommand::AnalysisStart(params) => {
+            RuntimeCommand::AnalysisLevels(params) => {
+                ControlOutput::Job(Some(self.start_analysis_levels(params)?))
+            }
+            RuntimeCommand::AnalysisInspect(params) => {
                 let path = if let Some(asset_id) = params.asset_id {
                     let id = riffra_core::AssetId::from_normalized(&asset_id).map_err(|error| {
                         ProtocolError::new(ErrorCode::InvalidRequest, error.to_string())
@@ -1373,14 +1451,59 @@ impl HostState {
                 },
                 cancelled.as_ref(),
             ) {
-                Ok(result) => match serde_json::to_value(result) {
-                    Ok(value) => worker_jobs.complete(&job_id, value, "Offline render completed."),
+                Ok(pending) => match serde_json::to_value(&pending.result) {
+                    Ok(value) => {
+                        let mut output = pending.output;
+                        worker_jobs.complete_if_not_cancelled(
+                            &job_id,
+                            value,
+                            "Offline render completed.",
+                            move || output.commit(),
+                        );
+                    }
                     Err(error) => jobs::fail(&worker_jobs, &data_root, &job_id, error.to_string()),
                 },
                 Err(error) => jobs::fail(&worker_jobs, &data_root, &job_id, error),
             }
         })
-        .map_err(|error| command_error(format!("render job could not start: {error}")))?;
+        .map_err(|error| {
+            jobs.fail(&id, error.clone());
+            command_error(format!("render job could not start: {error}"))
+        })?;
+        jobs::to_background_status(status).map_err(command_error)
+    }
+
+    fn start_analysis_levels(
+        &self,
+        params: crate::api::params::AnalysisLevelsParams,
+    ) -> Result<BackgroundJobStatus, ProtocolError> {
+        let jobs = self.jobs.clone();
+        let render_access = jobs.lock_render_access().map_err(command_error)?;
+        let render_id = params.render_id.clone();
+        let plan = analysis::levels::prepare(&self.data_root, params)
+            .map_err(|error| ProtocolError::new(ErrorCode::InvalidRequest, error))?;
+        let (id, status) = jobs.start_analysis_levels(render_id);
+        drop(render_access);
+        let cancelled = jobs
+            .cancellation_flag(&id)
+            .ok_or_else(|| command_error("analysis job could not be registered"))?;
+        let job_id = id.clone();
+        let worker_jobs = jobs.clone();
+        let data_root = self.data_root.clone();
+        if let Err(error) = jobs.spawn_worker(&id, "riffra-analysis-levels-job", move || {
+            worker_jobs.set_running(&job_id, "Measuring saved Render levels.");
+            match analysis::levels::measure(plan, &cancelled, |p, m| {
+                worker_jobs.set_progress(&job_id, p, m)
+            })
+            .and_then(|result| jobs::serialize_result(&result))
+            {
+                Ok(value) => worker_jobs.complete(&job_id, value, "Render levels measured."),
+                Err(error) => jobs::fail(&worker_jobs, &data_root, &job_id, error),
+            }
+        }) {
+            jobs.fail(&id, error.clone());
+            return Err(command_error(error));
+        }
         jobs::to_background_status(status).map_err(command_error)
     }
 
@@ -1419,6 +1542,61 @@ impl HostState {
             jobs.fail(&id, error.clone());
             return Err(command_error(error));
         }
+        jobs::to_background_status(status).map_err(command_error)
+    }
+
+    fn start_render_capture(
+        &self,
+        current: CanonicalState,
+        params: crate::api::params::RenderCaptureParams,
+    ) -> Result<BackgroundJobStatus, ProtocolError> {
+        render::validate_capture_params(&current.session, &params)
+            .map_err(|error| ProtocolError::new(ErrorCode::InvalidRequest, error))?;
+        let data_root = self.data_root.clone();
+        let built_in_instruments = Arc::clone(&self.built_in_instruments);
+        let worker = self.render_worker.clone();
+        let jobs = self.jobs.clone();
+        let (id, status) = jobs.start(JobKind::RenderCapture);
+        let Some(cancelled) = jobs.cancellation_flag(&id) else {
+            return Err(command_error("capture job could not be registered"));
+        };
+        let job_id = id.clone();
+        let worker_jobs = jobs.clone();
+        jobs.spawn_worker(&id, "riffra-render-capture-job", move || {
+            worker_jobs.set_running(&job_id, "Capturing canonical arrangement outputs.");
+            match render::render_capture_with_cancellation(
+                &worker,
+                render::CaptureRenderContext {
+                    data_root: &data_root,
+                    built_in_instruments: built_in_instruments.as_ref(),
+                    session: &current.session,
+                    project_id: &current.project_id,
+                    source_sequence: current.sequence,
+                    created_at_ms: riffra_host::now_ms(),
+                    params,
+                },
+                cancelled.as_ref(),
+                |p, m| worker_jobs.set_progress(&job_id, p, m),
+            ) {
+                Ok(pending) => match jobs::serialize_result(&pending.result) {
+                    Ok(value) => {
+                        let mut output = pending.output;
+                        worker_jobs.complete_if_not_cancelled(
+                            &job_id,
+                            value,
+                            "Offline capture completed.",
+                            move || output.commit(),
+                        );
+                    }
+                    Err(error) => jobs::fail(&worker_jobs, &data_root, &job_id, error),
+                },
+                Err(error) => jobs::fail(&worker_jobs, &data_root, &job_id, error),
+            }
+        })
+        .map_err(|error| {
+            jobs.fail(&id, error.clone());
+            command_error(format!("capture job could not start: {error}"))
+        })?;
         jobs::to_background_status(status).map_err(command_error)
     }
 
@@ -1476,7 +1654,10 @@ impl HostState {
                 Err(error) => jobs::fail(&worker_jobs, &data_root, &job_id, error),
             }
         })
-        .map_err(|error| command_error(format!("render stems job could not start: {error}")))?;
+        .map_err(|error| {
+            jobs.fail(&id, error.clone());
+            command_error(format!("render stems job could not start: {error}"))
+        })?;
         jobs::to_background_status(status).map_err(command_error)
     }
 
@@ -1675,11 +1856,20 @@ fn canonical_built_in_instrument_inspection(
 }
 
 fn plugin_state_snapshot(
+    data_root: &std::path::Path,
     plugin_path: &str,
     state: GraphPluginState,
 ) -> Result<PluginStateSnapshot, ProtocolError> {
+    let plugin =
+        crate::plugins::validated_entry_at_path(data_root, plugin_path).map_err(command_error)?;
+    let plugin_identifier = plugin.identifier.ok_or_else(|| {
+        command_error(format!(
+            "plugin catalog entry has no stable identifier: {plugin_path}"
+        ))
+    })?;
     let snapshot = PluginStateSnapshot {
-        schema_version: 1,
+        schema_version: 2,
+        plugin_identifier,
         plugin_path: plugin_path.into(),
         parameter_values: state.parameter_values,
         state_data: state.state_data,
@@ -2163,7 +2353,7 @@ mod tests {
         assert_eq!(mutation.sequence, Some(1));
 
         let undo = host.dispatch_control(
-            ControlRequest::new("stale-undo", "undo", serde_json::json!({}), Some(0))
+            ControlRequest::new("stale-undo", "history.undo", serde_json::json!({}), Some(0))
                 .with_expected_project_id(expected_project_id.clone()),
         );
         assert!(!undo.ok);
@@ -2442,7 +2632,7 @@ mod tests {
         let marker = host.dispatch_control(
             ControlRequest::new(
                 "marker-add",
-                "marker.add",
+                "music.marker.add",
                 serde_json::json!({"name": "Verse", "position": "1:1"}),
                 Some(1),
             )

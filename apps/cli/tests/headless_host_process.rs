@@ -4,7 +4,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 struct TestDataRoot {
     path: PathBuf,
@@ -12,13 +12,9 @@ struct TestDataRoot {
 
 impl TestDataRoot {
     fn new() -> Self {
-        let suffix = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock is before the Unix epoch")
-            .as_nanos();
         let path = std::env::temp_dir().join(format!(
-            "riffra-headless-host-{}-{suffix}",
-            std::process::id()
+            "riffra-headless-host-{}",
+            riffra_control::new_instance_id()
         ));
         fs::create_dir(&path).expect("temporary data root should be created");
         Self { path }
@@ -372,7 +368,10 @@ fn headless_host_process_covers_lifecycle_and_mode_contracts() {
     assert!(track["result"]["value"].get("canonical").is_none());
 
     let undo = success_json(
-        attached(instance_id, &["--expected-sequence", "1", "undo"]),
+        attached(
+            instance_id,
+            &["--expected-sequence", "1", "history", "undo"],
+        ),
         "undo",
     );
     assert_eq!(undo["result"]["type"], "mutation");
@@ -492,14 +491,32 @@ fn assert_measurement_jobs(host: &mut RunningHost, instance_id: &str) {
     );
     let id = started["result"]["value"]["id"].as_str().unwrap();
 
+    let lookup = success_json(
+        attached(instance_id, &["job", "get", id]),
+        "positional job get",
+    );
+    assert_eq!(lookup["result"]["value"]["id"], id);
+    let lookup_by_flag = success_json(
+        attached(instance_id, &["job", "get", "--id", id]),
+        "job get by flag",
+    );
+    assert_eq!(lookup_by_flag["result"]["value"]["id"], id);
+    assert!(
+        !attached(instance_id, &["job", "get", id, "--id", id])
+            .status
+            .success()
+    );
+
     let completed = success_json(
-        attached(
-            instance_id,
-            &["job", "wait", "--id", id, "--timeout-ms", "30000"],
-        ),
+        attached(instance_id, &["job", "wait", id, "--timeout-ms", "30000"]),
         "completed job wait",
     );
     assert_eq!(completed["result"]["value"]["state"], "completed");
+    assert!(
+        !attached(instance_id, &["job", "wait", id, "--id", id])
+            .status
+            .success()
+    );
     assert_eq!(completed["result"]["value"]["kind"], "analysisMeasure");
     let sources = &completed["result"]["value"]["result"]["sources"];
     assert_eq!(sources[0]["path"], second.to_string_lossy().as_ref());
@@ -533,6 +550,11 @@ fn assert_measurement_jobs(host: &mut RunningHost, instance_id: &str) {
             .unwrap()
             .is_empty()
     );
+    let waited_render = structured_failure_json(
+        attached(instance_id, &["render", "start", "--wait"]),
+        "failed render with wait",
+    );
+    assert_eq!(waited_render["result"]["value"]["state"], "failed");
 
     write_wav(&second, 120);
     fs::write(

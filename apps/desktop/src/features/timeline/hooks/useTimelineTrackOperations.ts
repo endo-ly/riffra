@@ -1,11 +1,12 @@
+import { useSessionCommand } from '@/shared/session/useSessionCommand';
 import { useMemo, useState } from 'react';
 import type { TrackKind } from '@/model/generated';
 import { ticksPerBar } from '@/model/timebase';
-import { useSession, useSessionContext } from '@/shared/session/session-context';
+import { useSession, useSessionContext, useSessionStore } from '@/shared/session/session-context';
 import { errorText } from '@/shared/errors';
 import { HostConnectionChangedError } from '@/native/invoke';
 import { showToast } from '@/shared/toasts';
-import { reorderTargetIndex, trackClipCounts } from '@/features/timeline/model/timeline-layout';
+import { reorderTargetIndex } from '@/features/timeline/model/timeline-layout';
 
 /** Track edit that needs the user's confirmation before it runs. */
 export interface WorkspaceConfirmRequest {
@@ -24,20 +25,18 @@ interface TrackOperationOptions {
 
 /** Track creation, deletion and reordering for the timeline. */
 export function useTimelineTrackOperations(options: TrackOperationOptions) {
-  const { api, commit } = useSessionContext();
+  const { api } = useSessionContext();
+  const store = useSessionStore();
+  const commit = useSessionCommand();
   const arrangement = useSession((state) => state.project.boot!.canonical.session.arrangement);
-  const selection = useSession((state) => state.workspace.selection);
   const focusedTrackId = useSession((state) => state.workspace.focusedTrackId);
-  const lowerView = useSession((state) => state.workspace.lower.view);
-  const setSelection = useSession((state) => state.workspace.setSelection);
-  const focusTrack = useSession((state) => state.workspace.focusTrack);
   const openMidiEditor = useSession((state) => state.workspace.openMidiEditor);
-  const closeLower = useSession((state) => state.workspace.closeLower);
   const [confirmRequest, setConfirmRequest] = useState<WorkspaceConfirmRequest | null>(null);
-  const { audioClips, midiClips } = arrangement;
+  const clipsByTrack = useSession((state) => state.readModel!.clipsByTrack);
   const clipCounts = useMemo(
-    () => trackClipCounts({ audioClips, midiClips }),
-    [audioClips, midiClips],
+    () =>
+      new Map([...clipsByTrack].map(([id, clips]) => [id, clips.audio.length + clips.midi.length])),
+    [clipsByTrack],
   );
   const barTicks = ticksPerBar(arrangement.timebase);
 
@@ -70,6 +69,7 @@ export function useTimelineTrackOperations(options: TrackOperationOptions) {
   };
 
   const performDeleteTrack = async (trackId: string) => {
+    const origin = store.getState().scope;
     const deletedTrack = arrangement.tracks.find((track) => track.id === trackId);
     if (
       focusedTrackId === trackId &&
@@ -83,21 +83,8 @@ export function useTimelineTrackOperations(options: TrackOperationOptions) {
         showToast('timeline', errorText(error), { kind: 'error' });
       }
     }
-    const next = await commit(api.removeTrack(trackId));
-    if (!next) return;
-    if (selection.kind === 'track' && selection.trackId === trackId && lowerView === 'devices') {
-      closeLower();
-    }
-    if (focusedTrackId === trackId) focusTrack(null);
-    const remaining = new Set([
-      ...next.canonical.session.arrangement.audioClips.map((clip) => clip.id),
-      ...next.canonical.session.arrangement.midiClips.map((clip) => clip.id),
-    ]);
-    const selectedClipIds = selection.kind === 'clips' ? selection.clipIds : [];
-    const clipIds = selectedClipIds.filter((id) => remaining.has(id));
-    if (selection.kind !== 'track' || selection.trackId === trackId) {
-      setSelection(clipIds.length ? { kind: 'clips', clipIds } : { kind: 'none' });
-    }
+    if (store.getState().scope !== origin) return;
+    await commit(api.removeTrack(trackId));
   };
 
   const deleteTrack = (trackId: string, name: string, clipCount: number) => {

@@ -1,8 +1,15 @@
-import { useSyncExternalStore } from 'react';
-import type { AudioMeterFrame } from '@/model/generated';
+import { useCallback, useSyncExternalStore } from 'react';
+import type { AudioMeterFrame, EffectOwner } from '@/model/generated';
 
 export interface AudioMeters extends AudioMeterFrame {
   available: boolean;
+}
+
+interface ChannelAudioMeter {
+  peakLeft: number;
+  peakRight: number;
+  rmsLeft?: number;
+  rmsRight?: number;
 }
 
 const initialMeters: AudioMeters = {
@@ -22,10 +29,26 @@ const initialMeters: AudioMeters = {
 };
 
 let currentMeters = initialMeters;
+let trackMeters = new Map<string, ChannelAudioMeter>();
+let busMeters = new Map<string, ChannelAudioMeter>();
+let masterMeter: ChannelAudioMeter | null = null;
 const listeners = new Set<() => void>();
 const safetyListeners = new Set<() => void>();
 let currentFeedbackSuspected = initialMeters.feedbackSuspected;
 let meterNotificationTimer: ReturnType<typeof setTimeout> | null = null;
+
+function sameChannelLevels(left: ChannelAudioMeter, right: ChannelAudioMeter): boolean {
+  return (
+    left.peakLeft === right.peakLeft &&
+    left.peakRight === right.peakRight &&
+    left.rmsLeft === right.rmsLeft &&
+    left.rmsRight === right.rmsRight
+  );
+}
+
+function retainChannel(previous: ChannelAudioMeter | undefined | null, next: ChannelAudioMeter) {
+  return previous && sameChannelLevels(previous, next) ? previous : next;
+}
 
 function sameMeters(left: AudioMeters, right: AudioMeters): boolean {
   if (
@@ -45,13 +68,7 @@ function sameMeters(left: AudioMeters, right: AudioMeters): boolean {
       left.busMeters.length !== right.busMeters.length ||
       !left.busMeters.every((meter, index) => {
         const other = right.busMeters[index];
-        return (
-          meter.busId === other?.busId &&
-          meter.peakLeft === other.peakLeft &&
-          meter.peakRight === other.peakRight &&
-          meter.rmsLeft === other.rmsLeft &&
-          meter.rmsRight === other.rmsRight
-        );
+        return meter.busId === other?.busId && sameChannelLevels(meter, other);
       })
     )
       return false;
@@ -59,13 +76,7 @@ function sameMeters(left: AudioMeters, right: AudioMeters): boolean {
     if (left.trackMeters.length !== right.trackMeters.length) return false;
     return left.trackMeters.every((meter, index) => {
       const other = right.trackMeters[index];
-      return (
-        meter.trackId === other?.trackId &&
-        meter.peakLeft === other.peakLeft &&
-        meter.peakRight === other.peakRight &&
-        meter.rmsLeft === other.rmsLeft &&
-        meter.rmsRight === other.rmsRight
-      );
+      return meter.trackId === other?.trackId && sameChannelLevels(meter, other);
     });
   }
   return false;
@@ -74,6 +85,21 @@ function sameMeters(left: AudioMeters, right: AudioMeters): boolean {
 function publishAudioMeterSnapshot(next: AudioMeters): void {
   if (sameMeters(currentMeters, next)) return;
   const feedbackChanged = currentFeedbackSuspected !== next.feedbackSuspected;
+  trackMeters = new Map(
+    next.trackMeters.map((meter) => [
+      meter.trackId,
+      retainChannel(trackMeters.get(meter.trackId), meter),
+    ]),
+  );
+  busMeters = new Map(
+    next.busMeters.map((meter) => [meter.busId, retainChannel(busMeters.get(meter.busId), meter)]),
+  );
+  masterMeter = next.available
+    ? retainChannel(masterMeter, {
+        peakLeft: next.outputPeakLeft,
+        peakRight: next.outputPeakRight,
+      })
+    : null;
   currentMeters = next;
   currentFeedbackSuspected = next.feedbackSuspected;
   if (feedbackChanged) {
@@ -122,6 +148,18 @@ function getSnapshot(): AudioMeters {
 /** React hook for the small set of components that actually draw live meters. */
 export function useAudioMeters(): AudioMeters {
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+}
+
+/** Subscribes to one channel; changes to other channels retain its snapshot. */
+export function useAudioChannelMeter(owner: EffectOwner): ChannelAudioMeter | null {
+  const kind = owner.kind;
+  const id = 'id' in owner ? owner.id : null;
+  const getChannel = useCallback(() => {
+    if (!currentMeters.available) return null;
+    if (kind === 'master') return masterMeter;
+    return (kind === 'track' ? trackMeters : busMeters).get(id!) ?? null;
+  }, [kind, id]);
+  return useSyncExternalStore(subscribe, getChannel, getChannel);
 }
 
 function subscribeSafety(listener: () => void): () => void {

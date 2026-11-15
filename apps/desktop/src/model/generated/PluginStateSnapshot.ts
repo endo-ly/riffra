@@ -3,4 +3,13 @@
 /**
  * Opaque plugin state transported between the Host and the CLI.
  */
-export type PluginStateSnapshot = { schemaVersion: number, pluginPath: string, parameterValues: Array<number>, stateData?: string, };
+export type PluginStateSnapshot = { schemaVersion: number, 
+/**
+ * Stable VST3 class identifier reported by the scanner.
+ */
+pluginIdentifier: string, 
+/**
+ * Path of the plugin when the snapshot was taken. Informational only;
+ * validation uses [`Self::plugin_identifier`].
+ */
+pluginPath: string, parameterValues: Array<number>, stateData?: string, };

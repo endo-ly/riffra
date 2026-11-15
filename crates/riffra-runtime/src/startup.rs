@@ -20,7 +20,6 @@ const STARTUP_SAFETY_TIMEOUT: Duration = Duration::from_secs(45);
 const STARTUP_CONTROL_RETRY_LIMIT: usize = 3;
 const STARTUP_RUNTIME_GENERATION_RETRY_LIMIT: usize = 3;
 const STARTUP_RUNTIME_TARGET_RETRY_LIMIT: usize = 3;
-const STARTUP_RUNTIME_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Debug)]
 enum StartupError {
@@ -383,7 +382,6 @@ fn restore_startup_runtime(
                 sequence: target.canonical.sequence,
                 session_revision: target.canonical.session.arrangement.revision,
             },
-            STARTUP_RUNTIME_TIMEOUT,
         )
         .map_err(|error| {
             StartupRuntimeError::Feature(format!("arrangement runtime restoration failed: {error}"))

@@ -3,19 +3,12 @@
 /**
  * A raw MIDI Note with Clip-relative timing.
  */
-export type RawMidiNoteView = {
-  lyric?: string;
-  id: string | null;
-  pitch: number;
-  /**
-   * Arrangement-absolute timeline position.
-   */
-  absoluteTick: number;
-  /**
-   * Position relative to the containing MIDI Clip.
-   */
-  startTick: number;
-  durationTicks: number;
-  velocity: number;
-  channel: number;
-};
+export type RawMidiNoteView = { lyric?: string, id: string | null, pitch: number, 
+/**
+ * Arrangement-absolute timeline position.
+ */
+absoluteTick: number, 
+/**
+ * Position relative to the containing MIDI Clip.
+ */
+startTick: number, durationTicks: number, velocity: number, channel: number, };

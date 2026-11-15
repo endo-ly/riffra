@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 /// A single MIDI note inside a [`MidiClip`].
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MidiNote {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -25,7 +25,7 @@ pub struct MidiNote {
 /// Note events are represented by [`MidiNote`] so their duration remains
 /// editable. The other event kinds are retained verbatim and are scheduled by
 /// the native timeline runtime at their musical tick.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum MidiEventKind {
     ControlChange,
@@ -33,7 +33,7 @@ pub enum MidiEventKind {
     ChannelPressure,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MidiEvent {
     pub id: String,
@@ -46,7 +46,7 @@ pub struct MidiEvent {
 }
 
 /// A lossless instrument performance control at a clip-relative tick.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct InstrumentControlEvent {
     pub id: String,
@@ -57,7 +57,7 @@ pub struct InstrumentControlEvent {
 }
 
 /// Native precision values used by the Instrument, independent of MIDI encoding.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[serde(tag = "type", deny_unknown_fields, rename_all = "camelCase")]
 pub enum InstrumentControlEventKind {
     SustainPedal {
@@ -90,6 +90,23 @@ pub enum InstrumentControlEventKind {
         #[ts(rename = "durationTicks")]
         duration_ticks: u64,
     },
+    KeySwitch {
+        note: u8,
+        mode: KeySwitchMode,
+        down: bool,
+    },
+    ControlChange {
+        number: u8,
+        value: u8,
+    },
+}
+
+/// Lifetime of one VST3 key switch selection.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, TS, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum KeySwitchMode {
+    Hold,
+    Latch,
 }
 
 /// A non-destructive MIDI clip on the arrangement.
@@ -147,25 +164,8 @@ impl MidiClip {
                 self.name
             ));
         }
-        for note in &self.notes {
-            if note.id.trim().is_empty()
-                || note.note > 127
-                || note.velocity > 127
-                || note.channel == 0
-                || note.channel > 16
-                || note.duration_ticks == 0
-                || note.start_tick.0 >= self.duration_ticks
-                || note
-                    .start_tick
-                    .0
-                    .checked_add(note.duration_ticks)
-                    .is_none_or(|end| end > self.duration_ticks)
-            {
-                return Err(format!(
-                    "MIDI clip '{}' contains an invalid note.",
-                    self.name
-                ));
-            }
+        for (index, note) in self.notes.iter().enumerate() {
+            self.validate_note(index, note)?;
         }
         for event in &self.events {
             if event.id.trim().is_empty()
@@ -213,6 +213,16 @@ impl MidiClip {
                             .checked_add(*duration_ticks)
                             .is_some_and(|end| end <= self.duration_ticks)
                 }
+                InstrumentControlEventKind::KeySwitch { note, mode, down } => {
+                    *note <= 127
+                        && match mode {
+                            KeySwitchMode::Hold => !*down || event.tick.0 < self.duration_ticks,
+                            KeySwitchMode::Latch => *down && event.tick.0 < self.duration_ticks,
+                        }
+                }
+                InstrumentControlEventKind::ControlChange { number, value } => {
+                    *number <= 127 && *value <= 127
+                }
             };
             if event.id.trim().is_empty()
                 || !ids.insert(&event.id)
@@ -227,9 +237,38 @@ impl MidiClip {
         }
         Ok(())
     }
+
+    pub(super) fn validate_note(&self, index: usize, note: &MidiNote) -> Result<(), String> {
+        let reason = if note.id.trim().is_empty() {
+            Some("note id is empty")
+        } else if note.note > 127 {
+            Some("pitch exceeds 127")
+        } else if note.velocity > 127 {
+            Some("velocity exceeds 127")
+        } else if !(1..=16).contains(&note.channel) {
+            Some("channel must be between 1 and 16")
+        } else if note.duration_ticks == 0 {
+            Some("duration is zero")
+        } else if note.start_tick.0 >= self.duration_ticks {
+            Some("start is outside the clip")
+        } else {
+            match note.start_tick.0.checked_add(note.duration_ticks) {
+                None => Some("end tick overflows"),
+                Some(end) if end > self.duration_ticks => Some("end exceeds the clip"),
+                Some(_) => None,
+            }
+        };
+        if let Some(reason) = reason {
+            return Err(format!(
+                "MIDI clip '{}' ({}) note {index} (id {:?}, pitch {}, start tick {}, duration {}): {reason}",
+                self.name, self.id, note.id, note.note, note.start_tick.0, note.duration_ticks
+            ));
+        }
+        Ok(())
+    }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MidiClipMove {
     pub clip_id: String,
@@ -238,7 +277,7 @@ pub struct MidiClipMove {
     pub track_id: String,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MidiClipPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -306,6 +345,109 @@ mod tests {
             loop_enabled: false,
             recording_take_id: None,
         }
+    }
+
+    #[test]
+    fn note_validation_reports_clip_note_and_specific_cause() {
+        let clip = midi_clip("instrument");
+        let note = clip.notes[0].clone();
+        let mut cases = Vec::new();
+        let mut candidate = note.clone();
+        candidate.id.clear();
+        cases.push((candidate, "note id is empty"));
+        let mut candidate = note.clone();
+        candidate.note = 128;
+        cases.push((candidate, "pitch exceeds 127"));
+        let mut candidate = note.clone();
+        candidate.velocity = 128;
+        cases.push((candidate, "velocity exceeds 127"));
+        let mut candidate = note.clone();
+        candidate.channel = 17;
+        cases.push((candidate, "channel must be"));
+        let mut candidate = note.clone();
+        candidate.duration_ticks = 0;
+        cases.push((candidate, "duration is zero"));
+        let mut candidate = note.clone();
+        candidate.start_tick = TimelineTick(1920);
+        cases.push((candidate, "start is outside"));
+        let mut candidate = note.clone();
+        candidate.duration_ticks = 2000;
+        cases.push((candidate, "end exceeds"));
+        let mut candidate = note;
+        candidate.duration_ticks = u64::MAX;
+        cases.push((candidate, "end tick overflows"));
+        for (candidate, reason) in cases {
+            let error = clip.validate_note(3, &candidate).unwrap_err();
+            assert!(
+                error.contains("MIDI")
+                    && error.contains("midi-clip:1")
+                    && error.contains("note 3")
+                    && error.contains(reason),
+                "{error}"
+            );
+            assert!(
+                error.contains(&format!("pitch {}", candidate.note))
+                    && error.contains(&format!("start tick {}", candidate.start_tick.0))
+                    && error.contains(&format!("duration {}", candidate.duration_ticks))
+            );
+        }
+    }
+
+    #[test]
+    fn vst3_keyswitch_and_cc_controls_validate_their_ranges() {
+        let track = Track::instrument("instrument".into(), "Instrument".into());
+        let mut clip = midi_clip("instrument");
+        clip.instrument_control_events = vec![InstrumentControlEvent {
+            id: "control".into(),
+            tick: TimelineTick(0),
+            source_order: 0,
+            kind: InstrumentControlEventKind::KeySwitch {
+                note: 128,
+                mode: KeySwitchMode::Latch,
+                down: true,
+            },
+        }];
+        assert!(clip.validate_and_normalize(Some(&track)).is_err());
+
+        let mut control = clip.instrument_control_events[0].clone();
+        control.kind = InstrumentControlEventKind::KeySwitch {
+            note: 127,
+            mode: KeySwitchMode::Latch,
+            down: true,
+        };
+        clip.instrument_control_events[0] = control.clone();
+        assert!(clip.validate_and_normalize(Some(&track)).is_ok());
+
+        control.kind = InstrumentControlEventKind::KeySwitch {
+            note: 24,
+            mode: KeySwitchMode::Latch,
+            down: false,
+        };
+        clip.instrument_control_events[0] = control.clone();
+        assert!(clip.validate_and_normalize(Some(&track)).is_err());
+
+        control.kind = InstrumentControlEventKind::ControlChange {
+            number: 11,
+            value: 128,
+        };
+        clip.instrument_control_events[0] = control.clone();
+        assert!(clip.validate_and_normalize(Some(&track)).is_err());
+
+        control.tick = TimelineTick(clip.duration_ticks);
+        control.kind = InstrumentControlEventKind::KeySwitch {
+            note: 24,
+            mode: KeySwitchMode::Hold,
+            down: true,
+        };
+        clip.instrument_control_events[0] = control.clone();
+        assert!(clip.validate_and_normalize(Some(&track)).is_err());
+        control.kind = InstrumentControlEventKind::KeySwitch {
+            note: 24,
+            mode: KeySwitchMode::Hold,
+            down: false,
+        };
+        clip.instrument_control_events[0] = control;
+        assert!(clip.validate_and_normalize(Some(&track)).is_ok());
     }
 
     #[test]

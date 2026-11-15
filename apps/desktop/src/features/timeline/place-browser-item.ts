@@ -5,7 +5,7 @@ import { type BrowserPlacement } from '@/shared/browser-placement';
 
 type PlacementApi = Pick<
   NativeApi,
-  | 'addTrack'
+  | 'createInstrumentTrack'
   | 'applyInstrument'
   | 'setTrackVst3Instrument'
   | 'addEffect'
@@ -18,10 +18,7 @@ type PlacementRunner = (
   operation: Promise<ArrangementMutationResult>,
 ) => Promise<ArrangementMutationResult | null>;
 
-/**
- * Places a Browser item on its resolved target. A new Track is created first
- * and then receives the instrument, so the two steps commit separately.
- */
+/** Places a Browser item with a single canonical commit. */
 export async function placeBrowserItem(
   api: PlacementApi,
   run: PlacementRunner,
@@ -30,9 +27,23 @@ export async function placeBrowserItem(
   startTick?: number,
 ): Promise<void> {
   if (target.kind === 'newTrack') {
-    const created = await run(api.addTrack(placement.name, 'instrument'));
-    const trackId = created?.createdEntityIds.tracks?.[0];
-    if (trackId) await run(loadOnTrack(api, placement, trackId, startTick));
+    if (placement.kind === 'instrument') {
+      await run(
+        api.createInstrumentTrack(placement.name, {
+          kind: 'library',
+          instrumentId: placement.instrumentId,
+        }),
+      );
+    } else if (placement.kind === 'instrumentPlugin') {
+      await run(
+        api.createInstrumentTrack(placement.name, {
+          kind: 'vst3',
+          pluginPath: placement.pluginPath,
+        }),
+      );
+    } else {
+      throw new Error('new instrument Tracks require an instrument placement');
+    }
     return;
   }
   await run(

@@ -5,8 +5,13 @@ import type { PluginEntry } from "./PluginEntry";
 import type { ProjectRecoveryState } from "./ProjectRecoveryState";
 import type { ProjectState } from "./ProjectState";
 import type { RuntimeProjectionStatus } from "./RuntimeProjectionStatus";
+import type { ScoreSyncStatus } from "./ScoreSyncStatus";
 
 /**
  * Host-owned state required to initialize an embedded or attached Desktop.
  */
-export type HostBootstrap = { canonical: CanonicalState, projectState: ProjectState, pluginCatalog: Array<PluginEntry>, runtimeStarted: boolean, runtimeStartupFinished: boolean, runtimeProjection: RuntimeProjectionStatus, audioStatus: AudioStatus, recovery: ProjectRecoveryState, safeMode: boolean, dataRoot: string, };
+export type HostBootstrap = { canonical: CanonicalState, projectState: ProjectState, pluginCatalog: Array<PluginEntry>, runtimeStarted: boolean, runtimeStartupFinished: boolean, runtimeProjection: RuntimeProjectionStatus, audioStatus: AudioStatus, recovery: ProjectRecoveryState, safeMode: boolean, dataRoot: string, 
+/**
+ * Current synchronization state of the linked Score file.
+ */
+scoreSync: ScoreSyncStatus, };

@@ -82,6 +82,8 @@ pub fn reuse_cached_scan_results(data_root: &Path, report: &mut ScanReport) {
                 && plugin.modified_at_ms.is_some()
                 && candidate.modified_at_ms == plugin.modified_at_ms
                 && candidate.scan_state != PluginScanState::Discovered
+                && (candidate.identifier.is_some()
+                    || candidate.scan_state != PluginScanState::Validated)
                 && (candidate.role.is_some()
                     || matches!(
                         candidate.scan_state,
@@ -93,6 +95,7 @@ pub fn reuse_cached_scan_results(data_root: &Path, report: &mut ScanReport) {
         plugin.name = previous.name.clone();
         plugin.vendor = previous.vendor.clone();
         plugin.version = previous.version.clone();
+        plugin.identifier = previous.identifier.clone();
         plugin.role = previous.role;
         plugin.scan_state = previous.scan_state;
     }
@@ -186,15 +189,125 @@ pub(crate) fn selected_plugin_path(
             if matching.next().is_some() {
                 return Err(format!("plugin ID is ambiguous: {id}"));
             }
-            if entry.scan_state != PluginScanState::Validated || entry.role != Some(expected_role) {
-                return Err(format!(
-                    "plugin ID is not validated for {expected_role:?}: {id}"
-                ));
-            }
-            validated_plugin(data_root, Path::new(&entry.path), expected_role).map(|(_, path)| path)
+            validated_entry(entry, expected_role)
         }
         _ => Err("select exactly one of pluginPath or pluginId".into()),
     }
+}
+
+fn validated_entry(entry: &PluginEntry, expected_role: PluginRole) -> Result<PathBuf, String> {
+    if entry.scan_state != PluginScanState::Validated || entry.role != Some(expected_role) {
+        return Err(format!(
+            "plugin is not validated for {expected_role:?}: {} (state: {:?}, role: {:?})",
+            entry.path, entry.scan_state, entry.role
+        ));
+    }
+    let path = PathBuf::from(&entry.path);
+    path.canonicalize()
+        .map_err(|error| format!("plugin path is unavailable: {}: {error}", path.display()))?;
+    Ok(path)
+}
+
+/// Resolves the one validated catalog entry installed at a path.
+///
+/// A VST3 bundle can expose several classes. A path alone cannot identify one,
+/// so this returns an error when the catalog contains more than one validated
+/// class at the same location.
+fn same_plugin_path(first: &str, second: &str) -> bool {
+    first == second
+        || Path::new(first)
+            .canonicalize()
+            .ok()
+            .zip(Path::new(second).canonicalize().ok())
+            .is_some_and(|(first, second)| first == second)
+}
+
+pub(crate) fn validated_entry_at_path(data_root: &Path, path: &str) -> Result<PluginEntry, String> {
+    let entries =
+        load(data_root).map_err(|error| format!("could not read plugin catalog: {error}"))?;
+    let mut matching = entries.into_iter().filter(|entry| {
+        entry.scan_state == PluginScanState::Validated && same_plugin_path(&entry.path, path)
+    });
+    let entry = matching
+        .next()
+        .ok_or_else(|| format!("plugin is not validated in the current catalog: {path}"))?;
+    if matching.next().is_some() {
+        return Err(format!(
+            "multiple plugin classes share {path}; the catalog cannot select one for a state snapshot"
+        ));
+    }
+    Ok(entry)
+}
+
+pub(crate) fn selected_named_plugin(
+    data_root: &Path,
+    name: &str,
+    identifier: Option<&str>,
+    expected_role: PluginRole,
+) -> Result<PluginEntry, String> {
+    let entries =
+        load(data_root).map_err(|error| format!("could not read plugin catalog: {error}"))?;
+    let candidates: Vec<_> = entries
+        .iter()
+        .filter(|entry| {
+            entry.name == name
+                && identifier.is_none_or(|id| entry.identifier.as_deref() == Some(id))
+        })
+        .collect();
+    let valid: Vec<_> = candidates
+        .iter()
+        .filter(|entry| validated_entry(entry, expected_role).is_ok())
+        .collect();
+    if valid.len() == 1 {
+        let selected = valid[0];
+        let selected_path = Path::new(&selected.path)
+            .canonicalize()
+            .map_err(|error| error.to_string())?;
+        if entries.iter().any(|entry| {
+            entry.identifier != selected.identifier
+                && Path::new(&entry.path)
+                    .canonicalize()
+                    .is_ok_and(|path| path == selected_path)
+        }) {
+            return Err(format!(
+                "multiple plugin classes share {}; the host cannot select a class within this VST3",
+                selected.path
+            ));
+        }
+        return Ok((*selected).clone());
+    }
+    let listed = if candidates.is_empty() {
+        entries
+            .iter()
+            .filter(|entry| entry.name == name)
+            .collect::<Vec<_>>()
+    } else {
+        candidates.clone()
+    };
+    let descriptions = listed
+        .iter()
+        .map(|entry| {
+            format!(
+                "{} ({}, {}, {:?}, {:?})",
+                entry.name,
+                entry.identifier.as_deref().unwrap_or("no identifier"),
+                entry.path,
+                entry.role,
+                entry.scan_state
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    if valid.is_empty() {
+        let identifier =
+            identifier.map_or_else(String::new, |id| format!(" with identifier {id:?}"));
+        return Err(format!(
+            "no validated {expected_role:?} plugin matches {name:?}{identifier}; scan plugins and check installed paths; candidates: {descriptions}"
+        ));
+    }
+    Err(format!(
+        "plugin name {name:?} is ambiguous; specify identifier; candidates: {descriptions}"
+    ))
 }
 
 #[cfg(test)]
@@ -225,6 +338,7 @@ mod tests {
                 name: "Test".into(),
                 vendor: None,
                 version: None,
+                identifier: None,
                 format: PluginFormat::Vst3,
                 role: Some(PluginRole::Effect),
                 path: "C:\\VST3\\Test.vst3".into(),
@@ -262,6 +376,7 @@ mod tests {
                 name: "Amp".into(),
                 vendor: Some("Vendor".into()),
                 version: Some("1.0".into()),
+                identifier: None,
                 format: PluginFormat::Vst3,
                 role: Some(PluginRole::Effect),
                 path: plugin_path.to_string_lossy().into_owned(),
@@ -300,6 +415,43 @@ mod tests {
         );
         save(&root, &report).unwrap();
 
+        let mut classes = report.clone();
+        classes.plugins[0].identifier = Some("class-a".into());
+        let mut second = classes.plugins[0].clone();
+        second.id = "vst3-amp-second".into();
+        second.identifier = Some("class-b".into());
+        classes.plugins.push(second.clone());
+        save(&root, &classes).unwrap();
+        assert!(
+            selected_named_plugin(&root, "Amp", None, PluginRole::Effect)
+                .unwrap_err()
+                .contains("ambiguous")
+        );
+        assert!(
+            selected_named_plugin(&root, "Amp", Some("class-b"), PluginRole::Effect)
+                .unwrap_err()
+                .contains("cannot select a class")
+        );
+        let second_path = root.join("VST3/Amp2.vst3");
+        fs::create_dir_all(&second_path).unwrap();
+        second.path = second_path.to_string_lossy().into_owned();
+        classes.plugins[1] = second;
+        save(&root, &classes).unwrap();
+        assert_eq!(
+            selected_named_plugin(&root, "Amp", Some("class-b"), PluginRole::Effect)
+                .unwrap()
+                .id,
+            "vst3-amp-second"
+        );
+        assert!(
+            selected_named_plugin(&root, "Amp", Some("class-b"), PluginRole::Instrument).is_err()
+        );
+        let error = selected_named_plugin(&root, "Amp", Some("missing-class"), PluginRole::Effect)
+            .unwrap_err();
+        assert!(error.contains("Amp2.vst3"), "{error}");
+        assert!(error.contains("class-a"), "{error}");
+        save(&root, &report).unwrap();
+
         let error = validated_plugin(&root, &plugin_path, PluginRole::Instrument).unwrap_err();
         assert!(error.contains("role Effect"));
 
@@ -330,6 +482,7 @@ mod tests {
                 name: "Amp (old catalog)".into(),
                 vendor: Some("Vendor".into()),
                 version: Some("1.0".into()),
+                identifier: None,
                 format: PluginFormat::Vst3,
                 role: None,
                 path: plugin_path.to_string_lossy().into_owned(),
@@ -380,6 +533,7 @@ mod tests {
                 name: "Amp (validated)".into(),
                 vendor: Some("Vendor".into()),
                 version: Some("1.0".into()),
+                identifier: Some("VST3-Amp-1234".into()),
                 format: PluginFormat::Vst3,
                 role: Some(PluginRole::Instrument),
                 path: plugin_path.to_string_lossy().into_owned(),
@@ -395,11 +549,27 @@ mod tests {
         discovered.plugins[0].name = "Amp".into();
         discovered.plugins[0].vendor = None;
         discovered.plugins[0].version = None;
+        discovered.plugins[0].identifier = None;
         discovered.plugins[0].scan_state = PluginScanState::Discovered;
         reuse_cached_scan_results(&root, &mut discovered);
 
         assert_eq!(discovered.plugins[0].name, "Amp (validated)");
+        assert_eq!(
+            discovered.plugins[0].identifier.as_deref(),
+            Some("VST3-Amp-1234")
+        );
         assert_eq!(discovered.plugins[0].scan_state, PluginScanState::Validated);
+
+        let mut without_identifier = cached;
+        without_identifier.plugins[0].identifier = None;
+        save(&root, &without_identifier).unwrap();
+        discovered.plugins[0].scan_state = PluginScanState::Discovered;
+        discovered.plugins[0].identifier = None;
+        reuse_cached_scan_results(&root, &mut discovered);
+        assert_eq!(
+            discovered.plugins[0].scan_state,
+            PluginScanState::Discovered
+        );
         let _ = fs::remove_dir_all(root);
     }
 }

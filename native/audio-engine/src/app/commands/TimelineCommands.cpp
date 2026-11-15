@@ -53,26 +53,27 @@ void AudioCommandDispatcher::handle(const PrepareTimelineSnapshotCommand& comman
     const auto sampleRate = context.pipeline.getSampleRate();
     const auto pending = std::make_shared<CommandResponder>(std::move(responder));
     context.timelineOperationRunning.store(true, std::memory_order_release);
-    const auto submitted = context.runtimeLifecycle.submit(
-        [this, snapshot = command.snapshot, pending, sampleRate, blockSize] {
-            juce::String timelineError;
-            bool loaded = false;
-            try {
-                loaded = context.timelineEngine.loadSnapshot(
-                    snapshot, context.formatManager, sampleRate, blockSize, timelineError, false);
-            } catch (const std::exception& exception) {
-                timelineError = "Arrangement VST3 loading raised an exception: " +
-                                juce::String(exception.what());
-            } catch (...) {
-                timelineError = "Arrangement VST3 loading failed with an unknown exception.";
-            }
-            context.timelineOperationRunning.store(false, std::memory_order_release);
-            if (loaded)
-                pending->respond(TimelineAckSpec{});
-            else
-                pending->fail("timeline", timelineError, "runtime.timeline.prepare");
-        },
-        kTimelineVstLifecycleTimeout);
+    pending->progress({});
+    const auto submitted = context.runtimeLifecycle.submitLoad([this, snapshot = command.snapshot,
+                                                                pending, sampleRate, blockSize] {
+        juce::String timelineError;
+        bool loaded = false;
+        try {
+            loaded = context.timelineEngine.loadSnapshot(
+                snapshot, context.formatManager, sampleRate, blockSize, timelineError, false,
+                [pending](const LoadProgressSpec& progress) { pending->progress(progress); });
+        } catch (const std::exception& exception) {
+            timelineError =
+                "Arrangement VST3 loading raised an exception: " + juce::String(exception.what());
+        } catch (...) {
+            timelineError = "Arrangement VST3 loading failed with an unknown exception.";
+        }
+        context.timelineOperationRunning.store(false, std::memory_order_release);
+        if (loaded)
+            pending->respond(TimelineAckSpec{});
+        else
+            pending->fail("timeline", timelineError, "runtime.timeline.prepare");
+    });
     if (!submitted) {
         context.timelineOperationRunning.store(false, std::memory_order_release);
         pending->fail("runtimeLifecycle", "The VST lifecycle executor is stopping.",

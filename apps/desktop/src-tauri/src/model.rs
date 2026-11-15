@@ -17,5 +17,6 @@ pub struct BootstrapState {
     pub native_available: bool,
     pub data_root: String,
     pub vst3_root: String,
+    pub score_sync: riffra_runtime::api::output::ScoreSyncStatus,
     pub host_connection: crate::host_connection::HostConnectionState,
 }

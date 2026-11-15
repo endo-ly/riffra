@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 
 /// Optional scope applied to a session inspection.
-#[derive(Clone, Debug, Deserialize, Serialize, ts_rs::TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, ts_rs::TS, schemars::JsonSchema)]
 #[ts(optional_fields = nullable)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct SessionInspectionQuery {

@@ -3,4 +3,4 @@
 /**
  * Result of exporting MIDI to a file.
  */
-export type MidiExport = { path: string; noteCount: number };
+export type MidiExport = { path: string, noteCount: number, };

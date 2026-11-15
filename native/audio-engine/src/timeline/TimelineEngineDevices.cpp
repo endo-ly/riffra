@@ -551,7 +551,8 @@ bool TimelineEngine::synchronizeDeviceParameters(PluginRack& rack, juce::String&
 bool TimelineEngine::setDeviceParameter(const EffectOwnerSpec& deviceOwner,
                                         const juce::String& deviceId, const int parameterIndex,
                                         const std::optional<float> value, juce::String& error,
-                                        const std::optional<juce::String>& display) noexcept {
+                                        const std::optional<juce::String>& display,
+                                        const bool nearest) noexcept {
     auto* rack = findDevice(deviceOwner, deviceId);
     if (rack == nullptr) {
         error = "Channel Device was not found.";
@@ -569,17 +570,31 @@ bool TimelineEngine::setDeviceParameter(const EffectOwnerSpec& deviceOwner,
         error = "Select exactly one of value or display.";
         return false;
     }
+    if (nearest && !display.has_value()) {
+        error = "Nearest requires numeric display text.";
+        return false;
+    }
     if (!rack->canQueueParameterValue(parameterIndex, error)) return false;
     auto normalized = value;
     if (display.has_value()) {
-        normalized = juce::MessageManager::callSync([&] {
-                         return rack->parameterValueForText(parameterIndex, *display, error);
-                     }).value_or(std::nullopt);
+        normalized =
+            juce::MessageManager::callSync([&] {
+                return rack->parameterValueForText(parameterIndex, *display, error, nearest);
+            }).value_or(std::nullopt);
         if (!normalized.has_value()) return false;
+    }
+    auto expectedDisplay = display;
+    if (nearest) {
+        expectedDisplay =
+            juce::MessageManager::callSync([&] {
+                return rack->parameterDisplayValue(parameterIndex, *normalized, error);
+            }).value_or(std::nullopt);
+        if (!expectedDisplay.has_value()) return false;
     }
     const HostEditScope edit(rack->hostEditInProgress);
     if (!synchronizeDeviceParameters(*rack, error, parameterIndex, *normalized)) return false;
-    return verifyDeviceParameterApplication(*rack, parameterIndex, *normalized, display, error);
+    return verifyDeviceParameterApplication(*rack, parameterIndex, *normalized, expectedDisplay,
+                                            error);
 }
 
 bool TimelineEngine::setDevicePersistedState(const EffectOwnerSpec& deviceOwner,

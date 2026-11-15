@@ -10,6 +10,7 @@ mod job;
 mod library;
 mod project;
 mod recording;
+mod score;
 mod session;
 
 pub use audio::*;
@@ -19,6 +20,7 @@ pub use job::*;
 pub use library::*;
 pub use project::*;
 pub use recording::*;
+pub use score::*;
 pub use session::*;
 
 use super::params::AudioDriverConfig;
@@ -54,6 +56,7 @@ pub enum ControlOutput {
     ArrangementMutation(ArrangementMutationResult),
     BatchMutation(BatchMutationResult),
     AutomationLanes(Vec<AutomationLane>),
+    AutomationEvaluation(AutomationEvaluation),
     Tracks(Vec<TrackSummary>),
     AudioClips(Vec<AudioClip>),
     MidiClips(Vec<MidiClip>),
@@ -67,6 +70,9 @@ pub enum ControlOutput {
     ProjectState(ProjectState),
     ProjectActivation(ProjectActivationResult),
     ProjectExport(ProjectExport),
+    ScoreRebuild(ScoreRebuild),
+    ScoreValidation(ScoreValidation),
+    ScoreInspection(ScoreInspection),
     MidiExport(MidiExport),
     InstrumentLibrary(Vec<InstrumentLibraryItem>),
     InstrumentLibraryItem(InstrumentLibraryItem),
@@ -80,6 +86,8 @@ pub enum ControlOutput {
     DeviceParameterMutation(DeviceParameterMutationResult),
     DeviceParameterText(String),
     PluginState(PluginStateSnapshot),
+    PluginStateInspection(PluginStateInspection),
+    PluginStateRead(PluginStateReadResult),
     PluginPresets(Vec<PluginPresetInfo>),
     PluginPreset(PluginPresetInfo),
     Plugins(Vec<PluginEntry>),

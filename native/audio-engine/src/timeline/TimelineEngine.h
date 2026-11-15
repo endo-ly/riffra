@@ -1,5 +1,4 @@
 #pragma once
-
 #include <JuceHeader.h>
 
 #include <array>
@@ -27,8 +26,10 @@
 #include "concurrency/RealtimeCommandQueue.h"
 #include "concurrency/SeqLockFrame.h"
 #include "contract/ExecutionGraph.h"
+#include "contract/LoadProgress.h"
 #include "contract/SidecarMessages.h"
 #include "instruments/InstrumentRuntime.h"
+#include "instruments/SonalloyInstrumentRuntime.h"
 #include "plugins/PluginChain.h"
 #include "recording/ArrangementCaptureSink.h"
 #include "recording/RecordingCaptureRuntime.h"
@@ -108,7 +109,7 @@ public:
     // Graph preparation. Message thread.
     bool loadSnapshot(const TimelineSnapshotSpec& snapshot, juce::AudioFormatManager& formats,
                       double outputSampleRate, int maximumBlockSize, juce::String& error,
-                      bool commitImmediately = true);
+                      bool commitImmediately = true, const LoadObserver& observer = {});
     RealtimeRequest commitPreparedSnapshot(juce::String& error);
     void discardPreparedSnapshot() noexcept;
     [[nodiscard]] bool preparedOwnerReusesRuntimeDevices(const EffectOwnerSpec& deviceOwner) const;
@@ -181,7 +182,8 @@ public:
                            bool bypassed, juce::String& error) noexcept;
     bool setDeviceParameter(const EffectOwnerSpec& deviceOwner, const juce::String& deviceId,
                             int parameterIndex, std::optional<float> value, juce::String& error,
-                            const std::optional<juce::String>& display = {}) noexcept;
+                            const std::optional<juce::String>& display = {},
+                            bool nearest = false) noexcept;
     bool setDeviceProgram(const EffectOwnerSpec& deviceOwner, const juce::String& deviceId,
                           int programIndex, juce::String& error);
     bool setDevicePersistedState(const EffectOwnerSpec& deviceOwner, const juce::String& deviceId,
@@ -242,6 +244,12 @@ public:
     /// Processes every VST3 instrument and effect chain with silence and no MIDI, discarding the
     /// output, so plugins that finish preparing while processing can do so before playback.
     void warmUpPluginDevices(int sampleCount) noexcept;
+
+    /// Returns a previously prepared offline output capture buffer.
+    [[nodiscard]] const juce::AudioBuffer<float>& captureBuffer(std::size_t index) const noexcept;
+    /// Prepares aligned Track and Bus observation buffers for offline rendering.
+    bool prepareOutputCapture(const std::vector<OfflineCaptureTarget>& targets,
+                              juce::String& error);
 
 private:
     friend class TimelineEngineTestPeer;
@@ -403,7 +411,16 @@ private:
                                                        const char* noun, juce::String& error);
 
     juce::TimeSliceThread readAheadThread{"Riffra timeline read-ahead"};
+    SonalloyInstrumentRuntime::CompiledCache instrumentCache;
     bool offlineMode = false;
+    struct OutputCapture final {
+        TrackRuntime* track = nullptr;
+        MixerChannel* bus = nullptr;
+        MixRouteDelay delay;
+        juce::AudioBuffer<float> scratch;
+        juce::AudioBuffer<float> output;
+    };
+    std::vector<std::unique_ptr<OutputCapture>> outputCaptures;
     std::unique_ptr<TrackProcessingPool> pool;
     ControlGraphRegistry graphRegistry;
     ControlGraphRegistry::Retired retiredGraphs;

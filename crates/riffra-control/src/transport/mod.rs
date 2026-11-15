@@ -8,7 +8,12 @@ use std::time::Duration;
 use crate::LocalControlEndpoint;
 
 /// Maximum encoded payload accepted for one local control frame.
-pub const MAX_FRAME_SIZE: usize = 8 * 1024 * 1024;
+///
+/// Canonical sessions travel whole in session reads, mutation results, and
+/// state events, and they embed every opaque plugin state. Sessions with many
+/// sample-based instruments reach tens of MiB, so the bound only rejects
+/// corrupt length prefixes rather than real projects.
+pub const MAX_FRAME_SIZE: usize = 256 * 1024 * 1024;
 
 /// A stream that can carry framed control messages.
 pub trait ReadWrite: Read + Write + Send + Sync {
@@ -65,17 +70,8 @@ where
     T: Serialize,
 {
     let payload = serde_json::to_vec(value)?;
-    if payload.len() > MAX_FRAME_SIZE {
-        return Err(TransportError::FrameTooLarge {
-            size: payload.len(),
-            limit: MAX_FRAME_SIZE,
-        });
-    }
-    let length = u32::try_from(payload.len()).map_err(|_| TransportError::FrameTooLarge {
-        size: payload.len(),
-        limit: MAX_FRAME_SIZE,
-    })?;
-    writer.write_all(&length.to_le_bytes())?;
+    check_frame_size(payload.len())?;
+    writer.write_all(&(payload.len() as u32).to_le_bytes())?;
     writer.write_all(&payload)?;
     writer.flush()?;
     Ok(())
@@ -90,16 +86,21 @@ where
     let mut length_bytes = [0; 4];
     reader.read_exact(&mut length_bytes)?;
     let size = u32::from_le_bytes(length_bytes) as usize;
+    check_frame_size(size)?;
+    let mut payload = vec![0; size];
+    reader.read_exact(&mut payload)?;
+    let payload = String::from_utf8(payload).map_err(|_| TransportError::InvalidUtf8)?;
+    Ok(serde_json::from_str(&payload)?)
+}
+
+fn check_frame_size(size: usize) -> Result<(), TransportError> {
     if size > MAX_FRAME_SIZE {
         return Err(TransportError::FrameTooLarge {
             size,
             limit: MAX_FRAME_SIZE,
         });
     }
-    let mut payload = vec![0; size];
-    reader.read_exact(&mut payload)?;
-    let payload = String::from_utf8(payload).map_err(|_| TransportError::InvalidUtf8)?;
-    Ok(serde_json::from_str(&payload)?)
+    Ok(())
 }
 
 /// How long an interrupted frame reader still has to observe the interrupt
@@ -326,15 +327,12 @@ mod tests {
     }
 
     #[test]
-    fn exact_frame_limit_is_accepted() {
-        let value = "x".repeat(MAX_FRAME_SIZE - 2);
-        let mut encoded = Cursor::new(Vec::new());
-        write_frame(&mut encoded, &value).unwrap();
-        let mut reader = Cursor::new(encoded.into_inner());
-
-        let decoded: String = read_frame(&mut reader).unwrap();
-
-        assert_eq!(decoded.len(), MAX_FRAME_SIZE - 2);
+    fn frame_limit_is_inclusive() {
+        assert!(check_frame_size(MAX_FRAME_SIZE).is_ok());
+        assert!(matches!(
+            check_frame_size(MAX_FRAME_SIZE + 1),
+            Err(TransportError::FrameTooLarge { .. })
+        ));
     }
 
     #[test]

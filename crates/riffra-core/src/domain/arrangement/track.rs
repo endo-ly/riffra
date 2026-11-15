@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 /// The production source hosted by a timeline track.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum TrackKind {
     Audio,
@@ -63,6 +63,10 @@ pub struct Track {
     pub pan_law: PanLaw,
     #[serde(default)]
     pub external_audio_source_track_ids: Vec<String>,
+    /// Score instrument that owns this Track when the Project is linked to a Score.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub score_instrument: Option<String>,
 }
 
 /// A partial update for a timeline Track.
@@ -85,7 +89,7 @@ pub struct TrackPatch {
 
 /// Audio Track input monitoring state. `Auto` monitors only while the track is
 /// armed; `On` always monitors; `Off` never monitors.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum MonitoringState {
     Off,
@@ -114,6 +118,7 @@ impl Track {
             instrument: None,
             effects: Vec::new(),
             output_bus_id: None,
+            score_instrument: None,
         }
     }
 
@@ -129,6 +134,13 @@ impl Track {
     pub(crate) fn validate_and_normalize(&mut self) -> Result<(), String> {
         if self.id.trim().is_empty() || self.name.trim().is_empty() {
             return Err("Tracks require non-empty ids and names.".into());
+        }
+        if self
+            .score_instrument
+            .as_deref()
+            .is_some_and(|instrument| instrument.trim().is_empty())
+        {
+            return Err("A Score-owned Track names its Score instrument.".into());
         }
         super::mixer::normalize_mix(&mut self.gain_db, &mut self.pan)?;
         match self.kind {
@@ -165,7 +177,9 @@ impl Track {
 }
 
 /// Stereo panning gain convention for a Track's output.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[derive(
+    Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize, TS, schemars::JsonSchema,
+)]
 #[serde(rename_all = "camelCase")]
 pub enum PanLaw {
     #[default]

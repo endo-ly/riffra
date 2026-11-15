@@ -75,7 +75,7 @@ bool PluginChain::load(const std::vector<PluginDeviceSpec>& values,
                        const std::vector<SidechainSendSpec>& sidechainSends,
                        const double sampleRate, const int blockSize,
                        const PluginProcessingMode mode, juce::String& error,
-                       const juce::String& runtimeRole) {
+                       const juce::String& runtimeRole, const DeviceLoadObserver& observer) {
     std::vector<juce::String> deviceIds;
     deviceIds.reserve(values.size());
     for (const auto& value : values) deviceIds.push_back(value.id);
@@ -90,13 +90,17 @@ bool PluginChain::load(const std::vector<PluginDeviceSpec>& values,
             return false;
         }
         const auto sidechain = std::find(targets.begin(), targets.end(), id) != targets.end();
+        const PluginLoadObserver report = [&](LoadPhase phase) {
+            if (observer) observer(id, path, phase);
+        };
         auto rack = std::make_unique<PluginRack>();
-        if (const auto loadError = rack->load(path, sampleRate, blockSize, mode, sidechain)) {
+        if (const auto loadError =
+                rack->load(path, sampleRate, blockSize, mode, sidechain, report)) {
             error = runtimeRole + " device " + id + " failed at " + loadError->scope + ": " +
                     loadError->message;
             return false;
         }
-        if (!rack->applyPersistedState(value.state, error)) {
+        if (!rack->applyPersistedState(value.state, error, report)) {
             error = runtimeRole + " device " + id + " failed at stateApply: " + error;
             return false;
         }
@@ -108,6 +112,7 @@ bool PluginChain::load(const std::vector<PluginDeviceSpec>& values,
             configuredTargets.push_back(id);
         }
         candidate.push_back(std::move(device));
+        report(LoadPhase::deviceReady);
     }
     std::sort(configuredTargets.begin(), configuredTargets.end());
     configuredTargets.erase(std::unique(configuredTargets.begin(), configuredTargets.end()),

@@ -117,6 +117,10 @@ std::unique_ptr<OfflineRenderer> OfflineRenderer::prepare(const OfflineRenderReq
         error = "Offline Render request is invalid.";
         return nullptr;
     }
+    if (!request.captures.empty() && (request.normalize || !request.stems.empty())) {
+        error = "Capture requires an unnormalized capture-only output.";
+        return nullptr;
+    }
     TimelineTimebase timelineTimebase;
     timelineTimebase.ppq = request.graph.timebase.ppq;
     timelineTimebase.tempoChanges = request.graph.timebase.tempoChanges;
@@ -153,7 +157,8 @@ std::unique_ptr<OfflineRenderer> OfflineRenderer::prepare(const OfflineRenderReq
         error = "Offline Render range has no samples.";
         return nullptr;
     }
-    if (!destination.getParentDirectory().createDirectory()) {
+    if (request.stems.empty() && request.captures.empty() &&
+        !destination.getParentDirectory().createDirectory()) {
         error = "Offline Render output directory could not be created.";
         return nullptr;
     }
@@ -166,6 +171,28 @@ std::unique_ptr<OfflineRenderer> OfflineRenderer::prepare(const OfflineRenderReq
     auto timelineEngine = std::make_unique<TimelineEngine>(true);
     if (!timelineEngine->loadSnapshot(renderSnapshot, formats, sampleRate, blockSize, error))
         return nullptr;
+    if (!request.stems.empty()) {
+        std::vector<OfflineCaptureTarget> targets;
+        for (const auto& stem : request.stems) {
+            if (!juce::File(stem.destination).getParentDirectory().createDirectory()) {
+                error = "Stem output directory could not be created: " + stem.destination;
+                return nullptr;
+            }
+            targets.push_back({OfflineCaptureKind::track, stem.trackId});
+        }
+        if (!timelineEngine->prepareOutputCapture(targets, error)) return nullptr;
+    }
+    if (!request.captures.empty()) {
+        std::vector<OfflineCaptureTarget> targets;
+        for (const auto& capture : request.captures) {
+            if (!juce::File(capture.destination).getParentDirectory().createDirectory()) {
+                error = "Capture output directory could not be created: " + capture.destination;
+                return nullptr;
+            }
+            targets.push_back(capture.target);
+        }
+        if (!timelineEngine->prepareOutputCapture(targets, error)) return nullptr;
+    }
     const auto status = timelineEngine->status();
     const auto latencySamples = status.graph.has_value()
                                     ? static_cast<std::int64_t>(status.graph->maximumLatencySamples)
@@ -181,6 +208,8 @@ std::unique_ptr<OfflineRenderer> OfflineRenderer::prepare(const OfflineRenderReq
     const auto automationWarnings =
         status.graph ? status.graph->automationWarnings : std::vector<juce::String>{};
     Plan renderPlan{destination,
+                    request.stems,
+                    request.captures,
                     sampleRate,
                     blockSize,
                     startSample,
@@ -212,14 +241,50 @@ bool OfflineRenderer::render(juce::AudioFormatManager& formats, Result& result,
         return false;
     }
 
-    const auto& destination = plan.destination;
-    const auto partial = destination.getSiblingFile(destination.getFileName() + ".partial");
-    const auto normalized = destination.getSiblingFile(destination.getFileName() + ".normalized");
-    partial.deleteFile();
-    normalized.deleteFile();
-    destination.deleteFile();
-    auto writer = createWriter(partial, plan.sampleRate, error);
-    if (writer == nullptr) return false;
+    struct Output final {
+        juce::File destination, partial, normalized;
+        std::unique_ptr<juce::AudioFormatWriter> writer;
+        float peak = 0.0f;
+        bool published = false;
+    };
+    struct Outputs final {
+        std::vector<Output> files;
+        bool committed = false;
+        ~Outputs() {
+            for (auto& file : files) {
+                file.writer.reset();
+                file.partial.deleteFile();
+                file.normalized.deleteFile();
+                if (!committed && file.published) file.destination.deleteFile();
+            }
+        }
+    } outputs;
+    auto addOutput = [&](const juce::File& destination) {
+        if ((!plan.stems.empty() || !plan.captures.empty()) && destination.exists()) {
+            error = "Render output already exists: " + destination.getFullPathName();
+            return false;
+        }
+        outputs.files.emplace_back();
+        auto& output = outputs.files.back();
+        output.destination = destination;
+        output.partial = destination.getSiblingFile(destination.getFileName() + ".partial");
+        output.normalized = destination.getSiblingFile(destination.getFileName() + ".normalized");
+        output.partial.deleteFile();
+        output.normalized.deleteFile();
+        destination.deleteFile();
+        output.writer = createWriter(output.partial, plan.sampleRate, error);
+        if (output.writer == nullptr) return false;
+        return true;
+    };
+    if (!plan.captures.empty()) {
+        for (const auto& capture : plan.captures)
+            if (!addOutput(juce::File(capture.destination))) return false;
+    } else if (plan.stems.empty()) {
+        if (!addOutput(plan.destination)) return false;
+    } else {
+        for (const auto& stem : plan.stems)
+            if (!addOutput(juce::File(stem.destination))) return false;
+    }
 
     juce::AudioBuffer<float> buffer(2, plan.blockSize);
     // Latency compensation shifts produced audio later in the callback stream, so the write
@@ -227,57 +292,67 @@ bool OfflineRenderer::render(juce::AudioFormatManager& formats, Result& result,
     const auto writeBegin = plan.startSample + plan.latencySamples;
     const auto writeEnd = plan.outputEndSample + plan.latencySamples;
     std::uint64_t writtenFrames = 0;
-    float peak = 0.0f;
     std::int64_t position = 0;
     while (position < plan.processingEnd) {
         const auto count =
             static_cast<int>(std::min<std::int64_t>(plan.blockSize, plan.processingEnd - position));
         buffer.clear();
         engine->mix(buffer.getArrayOfWritePointers(), 2, count);
-        engine->applyMasterGain(buffer.getArrayOfWritePointers(), 2, count, plan.masterGainDb);
+        if (plan.stems.empty())
+            engine->applyMasterGain(buffer.getArrayOfWritePointers(), 2, count, plan.masterGainDb);
         const auto stop = std::min(writeEnd, position + count);
         if (stop > writeBegin) {
             const auto from = std::max(writeBegin, position);
             const auto offsetInBlock = static_cast<int>(from - position);
             const auto writeCount = static_cast<int>(stop - from);
-            for (int channel = 0; channel < 2; ++channel)
-                peak = std::max(peak, buffer.getMagnitude(channel, offsetInBlock, writeCount));
-            if (!writer->writeFromAudioSampleBuffer(buffer, offsetInBlock, writeCount)) {
-                error = "Offline Render WAV could not be written.";
-                writer.reset();
-                partial.deleteFile();
-                return false;
+            for (std::size_t i = 0; i < outputs.files.size(); ++i) {
+                auto& output = outputs.files[i];
+                const auto master = !plan.captures.empty() &&
+                                    plan.captures[i].target.kind == OfflineCaptureKind::master;
+                const auto& source = master || (plan.stems.empty() && plan.captures.empty())
+                                         ? buffer
+                                         : engine->captureBuffer(i);
+                for (int channel = 0; channel < 2; ++channel)
+                    output.peak = std::max(output.peak,
+                                           source.getMagnitude(channel, offsetInBlock, writeCount));
+                if (!output.writer->writeFromAudioSampleBuffer(source, offsetInBlock, writeCount)) {
+                    error = "Offline Render WAV could not be written: " +
+                            output.destination.getFullPathName();
+                    return false;
+                }
             }
             writtenFrames += static_cast<std::uint64_t>(writeCount);
         }
         position += count;
     }
-    writer.reset();
+    for (auto& output : outputs.files) output.writer.reset();
 
     // Every stream sample of the requested range must reach the writer; latency shifts the
     // window, it never shrinks it.
     const auto expectedFrames = static_cast<std::uint64_t>(plan.outputEndSample - plan.startSample);
     if (writtenFrames != expectedFrames) {
         error = "Offline Render WAV frame count does not match the requested range.";
-        partial.deleteFile();
         return false;
     }
 
-    const auto normalizationGain = plan.normalize && peak > 0.0f ? 0.98f / peak : 1.0f;
-    if (plan.normalize && std::abs(normalizationGain - 1.0f) > 0.000001f) {
-        if (!normalizeFile(partial, normalized, formats, normalizationGain, error) ||
-            !normalized.moveFileTo(destination)) {
-            partial.deleteFile();
-            normalized.deleteFile();
-            if (error.isEmpty()) error = "Offline Render normalized WAV could not be finalized.";
+    for (auto& output : outputs.files) {
+        const auto normalizationGain =
+            plan.normalize && output.peak > 0.0f ? 0.98f / output.peak : 1.0f;
+        if (plan.normalize && std::abs(normalizationGain - 1.0f) > 0.000001f) {
+            if (!normalizeFile(output.partial, output.normalized, formats, normalizationGain,
+                               error) ||
+                !output.normalized.moveFileTo(output.destination)) {
+                if (error.isEmpty())
+                    error = "Offline Render normalized WAV could not be finalized.";
+                return false;
+            }
+        } else if (!output.partial.moveFileTo(output.destination)) {
+            error = "Offline Render WAV could not be finalized.";
             return false;
         }
-        partial.deleteFile();
-    } else if (!partial.moveFileTo(destination)) {
-        partial.deleteFile();
-        error = "Offline Render WAV could not be finalized.";
-        return false;
+        output.published = true;
     }
+    outputs.committed = true;
 
     result.frames = writtenFrames;
     result.sampleRate = plan.sampleRate;

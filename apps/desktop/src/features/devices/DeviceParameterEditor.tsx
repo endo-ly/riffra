@@ -5,10 +5,11 @@ import type {
   AutomationLane,
   DeviceParameterInfo,
   EffectOwner,
+  ProjectTimebase,
 } from '@/model/generated';
 import { Icon } from '@/shared/ui/primitives';
 import controls from '@/shared/ui/controls.module.css';
-import { useSessionContext } from '@/shared/session/session-context';
+import { useSession, useSessionContext } from '@/shared/session/session-context';
 import { useDeviceDetails } from './useDeviceDetails';
 import { DeviceSidechainEditor } from './DeviceSidechainEditor';
 import { automationValueAt } from '@/model/automation';
@@ -18,11 +19,10 @@ import styles from './Devices.module.css';
 interface DeviceParameterEditorProps {
   owner: EffectOwner;
   deviceId: string;
+  pluginPath: string;
   stateData?: string;
   parameterValues: number[];
   automationLanes: AutomationLane[];
-  automationReadActive: boolean;
-  currentTick: number;
   onOpenAutomation: (parameter: DeviceParameterInfo) => void;
   arrangement: Arrangement;
   isInstrument: boolean;
@@ -37,9 +37,9 @@ function ParameterControl({
   canonicalValue,
   disabled,
   onCommit,
-  automated,
   onOpenAutomation,
-  automationValue,
+  automationLane,
+  timebase,
 }: {
   parameter: DeviceParameterInfo;
   owner: EffectOwner;
@@ -47,11 +47,23 @@ function ParameterControl({
   canonicalValue: number;
   disabled: boolean;
   onCommit: (value: number) => Promise<boolean>;
-  automated: boolean;
   onOpenAutomation: () => void;
-  automationValue?: number;
+  automationLane?: AutomationLane;
+  timebase: ProjectTimebase;
 }) {
   const { api } = useSessionContext();
+  const currentTick = useSession((state) => (automationLane ? state.transport.displayTick : 0));
+  const automated = Boolean(automationLane);
+  const automationValue = automationLane
+    ? automationValueAt(
+        automationLane.points,
+        automationLane.interpolation,
+        currentTick,
+        canonicalValue,
+        timebase,
+      )
+    : undefined;
+
   const [draft, setDraft] = useState(parameter.value);
   const ownerKind = owner.kind;
   const ownerId = 'id' in owner ? owner.id : null;
@@ -190,9 +202,16 @@ function ParameterControl({
 
 export function DeviceParameterEditor(props: DeviceParameterEditorProps) {
   const { api } = useSessionContext();
+  const playing = useSession((state) => state.transport.status?.state === 'playing');
+  const automationReadActive =
+    playing &&
+    props.automationLanes.some(
+      (lane) => lane.target.kind === 'deviceParameter' && lane.target.deviceId === props.deviceId,
+    );
   const { details, loading, error, saving, mutate, openEditor } = useDeviceDetails(
     props.owner,
     props.deviceId,
+    props.pluginPath,
     props.parameterValues,
     props.stateData,
   );
@@ -207,7 +226,7 @@ export function DeviceParameterEditor(props: DeviceParameterEditorProps) {
           Loading device…
         </p>
       )}
-      {props.automationReadActive && (
+      {automationReadActive && (
         <p className={styles.notice}>Automation Read · stop playback to edit device state.</p>
       )}
       {error && (
@@ -226,10 +245,13 @@ export function DeviceParameterEditor(props: DeviceParameterEditorProps) {
                   className={controls.control}
                   aria-label="Preset"
                   value={details.currentPreset?.index ?? ''}
-                  disabled={loading || saving || props.automationReadActive}
+                  disabled={loading || saving || automationReadActive}
                   onChange={(event) => {
                     const index = Number(event.currentTarget.value);
-                    void mutate(() => api.setPluginPreset(props.owner, props.deviceId, index));
+                    void mutate(
+                      () => api.setPluginPreset(props.owner, props.deviceId, index),
+                      true,
+                    );
                   }}
                 >
                   <option value="" disabled>
@@ -266,49 +288,33 @@ export function DeviceParameterEditor(props: DeviceParameterEditorProps) {
           />
           {details.parameters.length > 0 && (
             <div className={styles.parameters} role="group" aria-label="Parameters">
-              {details.parameters.map((parameter) =>
-                (() => {
-                  const lane = props.automationLanes.find(
-                    (candidate) =>
-                      candidate.target.kind === 'deviceParameter' &&
-                      candidate.target.deviceId === props.deviceId &&
-                      candidate.target.parameterId === parameter.parameterId,
-                  );
-                  const staticValue = props.parameterValues[parameter.index] ?? parameter.value;
-                  const currentValue = lane
-                    ? automationValueAt(
-                        lane.points,
-                        lane.interpolation,
-                        props.currentTick,
-                        staticValue,
-                        props.arrangement.timebase,
+              {details.parameters.map((parameter) => {
+                const lane = props.automationLanes.find(
+                  (candidate) =>
+                    candidate.target.kind === 'deviceParameter' &&
+                    candidate.target.deviceId === props.deviceId &&
+                    candidate.target.parameterId === parameter.parameterId,
+                );
+                const staticValue = props.parameterValues[parameter.index] ?? parameter.value;
+                return (
+                  <ParameterControl
+                    key={parameter.index}
+                    owner={props.owner}
+                    deviceId={props.deviceId}
+                    automationLane={lane}
+                    timebase={props.arrangement.timebase}
+                    onOpenAutomation={() => props.onOpenAutomation(parameter)}
+                    parameter={parameter}
+                    canonicalValue={staticValue}
+                    disabled={loading || saving || automationReadActive}
+                    onCommit={(value) =>
+                      mutate(() =>
+                        api.setDeviceParameter(props.owner, props.deviceId, parameter.index, value),
                       )
-                    : undefined;
-                  return (
-                    <ParameterControl
-                      key={parameter.index}
-                      owner={props.owner}
-                      deviceId={props.deviceId}
-                      automated={Boolean(lane)}
-                      onOpenAutomation={() => props.onOpenAutomation(parameter)}
-                      parameter={parameter}
-                      canonicalValue={staticValue}
-                      automationValue={currentValue}
-                      disabled={loading || saving || props.automationReadActive}
-                      onCommit={(value) =>
-                        mutate(() =>
-                          api.setDeviceParameter(
-                            props.owner,
-                            props.deviceId,
-                            parameter.index,
-                            value,
-                          ),
-                        )
-                      }
-                    />
-                  );
-                })(),
-              )}
+                    }
+                  />
+                );
+              })}
             </div>
           )}
         </>

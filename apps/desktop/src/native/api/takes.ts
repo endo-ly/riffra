@@ -17,7 +17,7 @@ async function setAudioClipTakeVariant(
   clipId: string,
   variant: AudioTakeVariant,
 ): Promise<ArrangementMutationResult> {
-  return dispatchControl({ command: 'audio-clip.take-variant.set', params: { clipId, variant } });
+  return dispatchControl({ command: 'clip.audio.take-variant.set', params: { clipId, variant } });
 }
 
 async function startTakeComparison(takeId: string): Promise<AudioStatus> {

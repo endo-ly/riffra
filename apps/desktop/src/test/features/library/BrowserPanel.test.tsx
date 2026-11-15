@@ -38,6 +38,7 @@ const verb: PluginEntry = {
   name: 'Space Verb',
   vendor: 'Echo Labs',
   version: '1.0',
+  identifier: null,
   format: 'VST3',
   role: 'effect',
   path: 'C:\\VST3\\SpaceVerb.vst3',

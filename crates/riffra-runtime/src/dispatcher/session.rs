@@ -1,4 +1,4 @@
-//! Atomic `session.apply` batches.
+//! Atomic edits prepared against an isolated candidate session.
 
 use super::{DispatchError, HostDispatcher};
 use crate::api::output::BatchMutationResult;
@@ -24,6 +24,56 @@ impl riffra_core::ports::SessionStorage for BatchCandidateStorage {
 }
 
 impl HostDispatcher<'_> {
+    pub(super) fn create_instrument_track<S: riffra_core::SessionStorage + ?Sized>(
+        &self,
+        application: &mut riffra_core::application::Application<'_, S>,
+        canonical: riffra_core::CanonicalState,
+        params: crate::api::params::InstrumentTrackCreateParams,
+    ) -> Result<ControlOutput, DispatchError> {
+        use crate::api::params::InstrumentTrackSource;
+        let mut candidate =
+            riffra_core::AppCore::new(canonical.project_id, canonical.session, canonical.sequence);
+        let memory = BatchCandidateStorage;
+        let mut owned_snapshots = Vec::new();
+        let mut app = candidate.application(&memory);
+        let mut created = batch_operation(
+            self,
+            &mut app,
+            "track.add",
+            serde_json::json!({
+                "name": params.name, "kind": "instrument",
+            }),
+            &mut owned_snapshots,
+        )?;
+        let track_id = &created["tracks"][0];
+        let (command, assignment) = match params.source {
+            InstrumentTrackSource::Library { instrument_id } => (
+                "instrument.apply",
+                serde_json::json!({
+                    "trackId": track_id, "instrumentId": instrument_id,
+                }),
+            ),
+            InstrumentTrackSource::Vst3 { plugin_path } => (
+                "instrument.vst3.set",
+                serde_json::json!({
+                    "trackId": track_id, "pluginPath": plugin_path,
+                }),
+            ),
+        };
+        let assigned =
+            match batch_operation(self, &mut app, command, assignment, &mut owned_snapshots) {
+                Ok(assigned) => assigned,
+                Err(error) => return Err(with_snapshot_cleanup(error, &owned_snapshots)),
+            };
+        created.extend(assigned);
+        if let Err(error) =
+            application.commit_prepared_candidate(app.canonical_state().session, canonical.sequence)
+        {
+            return Err(with_snapshot_cleanup(error.into(), &owned_snapshots));
+        }
+        self.arrangement_mutation(created, application)
+    }
+
     pub(super) fn apply_batch<S: riffra_core::SessionStorage + ?Sized>(
         &self,
         application: &mut riffra_core::application::Application<'_, S>,
@@ -49,16 +99,46 @@ impl HostDispatcher<'_> {
         let memory = BatchCandidateStorage;
         let mut created_entity_counts = BTreeMap::<String, usize>::new();
         let mut created_entity_ids = BTreeMap::<String, Vec<String>>::new();
+        let mut device_bindings = BTreeMap::<String, String>::new();
         let mut owned_snapshots = Vec::<OwnedProjectInstrumentSnapshot>::new();
         for (operation_index, operation) in params.operations.into_iter().enumerate() {
-            let BatchOperation { command, params } = operation;
-            let created = match batch_operation(
-                self,
-                &mut candidate.application(&memory),
-                &command,
+            let BatchOperation {
+                command,
                 params,
-                &mut owned_snapshots,
-            ) {
+                bind,
+            } = operation;
+            let result = (|| {
+                if let Some(name) = &bind {
+                    if name.trim().is_empty() || name.starts_with('@') {
+                        return Err(DispatchError::invalid_request(
+                            "bind must be a non-empty name without a leading @",
+                        ));
+                    }
+                    if device_bindings.contains_key(name) {
+                        return Err(DispatchError::invalid_request(format!(
+                            "duplicate device binding '{name}'"
+                        )));
+                    }
+                }
+                let params = resolve_device_bindings(&command, params, &device_bindings)?;
+                let created = batch_operation(
+                    self,
+                    &mut candidate.application(&memory),
+                    &command,
+                    params,
+                    &mut owned_snapshots,
+                )?;
+                if let Some(name) = bind {
+                    let Some([id]) = created.get("devices").map(Vec::as_slice) else {
+                        return Err(DispatchError::invalid_request(format!(
+                            "bind '{name}' requires exactly one created device"
+                        )));
+                    };
+                    device_bindings.insert(name, id.clone());
+                }
+                Ok(created)
+            })();
+            let created = match result {
                 Ok(created) => created,
                 Err(error) => {
                     let error = error.with_batch_context(operation_index, &command);
@@ -110,6 +190,54 @@ impl HostDispatcher<'_> {
     }
 }
 
+fn resolve_device_bindings(
+    command: &str,
+    mut params: Value,
+    bindings: &BTreeMap<String, String>,
+) -> Result<Value, DispatchError> {
+    fn resolve(
+        value: Option<&mut Value>,
+        bindings: &BTreeMap<String, String>,
+    ) -> Result<(), DispatchError> {
+        if let Some(Value::String(value)) = value
+            && let Some(name) = value.strip_prefix('@')
+        {
+            *value = bindings.get(name).cloned().ok_or_else(|| {
+                DispatchError::invalid_request(format!("unknown device binding '@{name}'"))
+            })?;
+        }
+        Ok(())
+    }
+    match command {
+        "effect.remove" | "device.bypass" | "device.parameter.set" | "plugin.state.import" => {
+            resolve(params.get_mut("deviceId"), bindings)?
+        }
+        "effect.reorder" => {
+            if let Some(Value::Array(ids)) = params.get_mut("deviceIds") {
+                for id in ids {
+                    resolve(Some(id), bindings)?;
+                }
+            }
+        }
+        "mixer.sidechain.add" => resolve(params.get_mut("targetDeviceId"), bindings)?,
+        "mixer.sidechain.update" => resolve(
+            params
+                .get_mut("patch")
+                .and_then(|patch| patch.get_mut("targetDeviceId")),
+            bindings,
+        )?,
+        "automation.set" | "automation.clear" => {
+            if let Some(target) = params.get_mut("target")
+                && target.get("kind").and_then(Value::as_str) == Some("deviceParameter")
+            {
+                resolve(target.get_mut("deviceId"), bindings)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(params)
+}
+
 /// Resolves, decodes, validates, and applies one operation to the candidate,
 /// returning the entities it created.
 fn batch_operation(
@@ -152,11 +280,16 @@ fn batch_operation(
         });
     }
     if let CanonicalCommand::DeviceParameterSet(params) = command {
+        if params.nearest {
+            return Err(DispatchError::CommandFailed(
+                "session apply requires a normalized value for device parameters".into(),
+            ));
+        }
         let value = match (params.value, params.display) {
             (Some(value), None) => value,
             (None, Some(_)) => {
                 return Err(DispatchError::CommandFailed(
-                    "display parameter input requires a live Host".into(),
+                    "session apply requires a normalized value for device parameters".into(),
                 ));
             }
             _ => {
@@ -440,12 +573,108 @@ fn resolve_automation_points(
 
 #[cfg(test)]
 mod tests {
+    use super::resolve_device_bindings;
+    use crate::api::output::{PluginEntry, PluginFormat, PluginRole, PluginScanState, ScanReport};
     use crate::dispatcher::Dispatcher;
     use crate::test_support::{command, mutated_session, output_type, output_value};
     use riffra_control::{ControlRequest, ErrorCode, new_instance_id};
     use riffra_host::{ProjectStore, now_ms};
     use serde_json::json;
+    use std::collections::BTreeMap;
     use std::fs;
+
+    fn production_catalog(root: &std::path::Path, entries: &[(&str, &str)]) {
+        let report = ScanReport {
+            root: root.to_string_lossy().into_owned(),
+            started_at_ms: 0,
+            finished_at_ms: 0,
+            issues: Vec::new(),
+            plugins: entries
+                .iter()
+                .map(|(path, identifier)| PluginEntry {
+                    id: identifier.to_string(),
+                    name: std::path::Path::new(path)
+                        .file_stem()
+                        .unwrap()
+                        .to_string_lossy()
+                        .into_owned(),
+                    vendor: None,
+                    version: None,
+                    identifier: Some(identifier.to_string()),
+                    format: PluginFormat::Vst3,
+                    role: Some(PluginRole::Instrument),
+                    path: path.to_string(),
+                    bundle: true,
+                    modified_at_ms: None,
+                    scan_state: PluginScanState::Validated,
+                })
+                .collect(),
+        };
+        crate::plugins::catalog::save(root, &report).unwrap();
+    }
+
+    #[test]
+    fn instrument_track_creation_commits_once_and_rolls_back_failed_assignment() {
+        let root =
+            std::env::temp_dir().join(format!("riffra-create-instrument-track-{}", now_ms()));
+        let dispatcher = Dispatcher::open(
+            root.clone(),
+            crate::test_support::prepare_built_in_resource_root(&root),
+        )
+        .unwrap();
+        let before = dispatcher
+            .dispatch(command("session.get", json!({})), None)
+            .unwrap();
+
+        let failed = dispatcher.dispatch(command("instrument.track.create", json!({
+            "name": "Keys", "source": {"kind": "library", "instrumentId": "builtin:missing"},
+        })), None);
+
+        assert!(failed.is_err());
+        let unchanged = dispatcher
+            .dispatch(command("session.get", json!({})), None)
+            .unwrap();
+        assert_eq!(unchanged.sequence, before.sequence);
+        assert_eq!(output_value(&unchanged), output_value(&before));
+        let created = dispatcher
+            .dispatch(
+                command(
+                    "instrument.track.create",
+                    json!({"name":"Keys", "source": {"kind":"vst3", "pluginPath":"Keys.vst3"}}),
+                ),
+                None,
+            )
+            .unwrap();
+        assert_eq!(created.sequence, before.sequence + 1);
+        let session = mutated_session(&created);
+        assert_eq!(session.arrangement.tracks.len(), 1);
+        assert!(session.arrangement.tracks[0].instrument.is_some());
+        assert_eq!(
+            output_value(&created)["createdEntityIds"]["tracks"][0],
+            session.arrangement.tracks[0].id
+        );
+        assert_eq!(
+            output_value(&created)["createdEntityIds"]["devices"][0],
+            session.arrangement.tracks[0]
+                .instrument
+                .as_ref()
+                .unwrap()
+                .id
+        );
+        let undone = dispatcher
+            .dispatch(command("history.undo", json!({})), None)
+            .unwrap();
+        assert!(mutated_session(&undone).arrangement.tracks.is_empty());
+        let redone = dispatcher
+            .dispatch(command("history.redo", json!({})), None)
+            .unwrap();
+        assert_eq!(
+            mutated_session(&redone).arrangement.tracks,
+            session.arrangement.tracks
+        );
+        drop(dispatcher);
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn timebase_set_map_preserves_current_ppq_and_tempo_ticks() {
@@ -471,7 +700,7 @@ mod tests {
             .unwrap();
             let before = output_value(
                 &dispatcher
-                    .dispatch(command("timebase.get-map", json!({})), None)
+                    .dispatch(command("music.timebase.get-map", json!({})), None)
                     .unwrap(),
             );
             assert_eq!(before["ppq"], ppq);
@@ -479,7 +708,7 @@ mod tests {
             dispatcher
                 .dispatch(
                     command(
-                        "timebase.set-map",
+                        "music.timebase.set-map",
                         json!({
                             "tempoChanges":[{"tick":0,"bpm":120},{"tick":tempo_tick,"bpm":bpm}],
                             "timeSignatureChanges":[{"tick":0,"numerator":4,"denominator":4}]
@@ -491,7 +720,7 @@ mod tests {
 
             let map = output_value(
                 &dispatcher
-                    .dispatch(command("timebase.get-map", json!({})), None)
+                    .dispatch(command("music.timebase.get-map", json!({})), None)
                     .unwrap(),
             );
             assert_eq!(map["ppq"], ppq);
@@ -620,7 +849,7 @@ mod tests {
             .unwrap();
 
         let undone = dispatcher
-            .dispatch(command("undo", json!({})), None)
+            .dispatch(command("history.undo", json!({})), None)
             .unwrap();
         assert_eq!(output_type(&undone), "arrangementMutation");
         assert_eq!(
@@ -632,7 +861,7 @@ mod tests {
         );
 
         let redone = dispatcher
-            .dispatch(command("redo", json!({})), None)
+            .dispatch(command("history.redo", json!({})), None)
             .unwrap();
         assert_eq!(output_type(&redone), "arrangementMutation");
         assert_eq!(
@@ -696,6 +925,27 @@ mod tests {
             output_value(&assigned)["canonical"]["session"]["arrangement"]["tracks"][0]["instrument"]
                 ["source"]["resource"]["presetId"],
             "01-clean-sub-bass"
+        );
+
+        let created = dispatcher.dispatch(command("instrument.track.create", json!({
+            "name":"Keys", "source":{"kind":"library", "instrumentId":"builtin:01-clean-sub-bass"},
+        })), None).unwrap();
+        assert_eq!(mutated_session(&created).arrangement.tracks.len(), 2);
+        assert!(
+            mutated_session(&created).arrangement.tracks[1]
+                .instrument
+                .is_some()
+        );
+        assert_ne!(
+            mutated_session(&created).arrangement.tracks[0].id,
+            mutated_session(&created).arrangement.tracks[1].id
+        );
+        let undone = dispatcher
+            .dispatch(command("history.undo", json!({})), None)
+            .unwrap();
+        assert_eq!(
+            mutated_session(&undone).arrangement.tracks,
+            mutated_session(&assigned).arrangement.tracks
         );
 
         let before = dispatcher
@@ -937,7 +1187,7 @@ mod tests {
         assert_eq!(result.sequence, 1);
 
         let undone = dispatcher
-            .dispatch(command("undo", json!({})), None)
+            .dispatch(command("history.undo", json!({})), None)
             .unwrap();
         assert_eq!(
             output_value(&undone)["canonical"]["session"]["arrangement"]["tracks"]
@@ -1003,7 +1253,7 @@ mod tests {
                     "session.apply",
                     json!({
                         "operations":[
-                            {"command":"midi-note.clear","params":{"trackName":"Lead","clipName":"Verse"}},
+                            {"command":"clip.midi.note.clear","params":{"trackName":"Lead","clipName":"Verse"}},
                             {"command":"music.note.insert","params":{"trackName":"Lead","clipName":"Verse","notes":[
                                 {"pitch":"E4","position":"1:2","duration":"1/8"},
                                 {"pitch":"G4","position":"2:1","duration":"1/8"}
@@ -1035,7 +1285,7 @@ mod tests {
                 "session.apply",
                 json!({
                     "operations":[
-                        {"command":"midi-note.clear","params":{"trackName":"Lead","clipName":"Verse"}},
+                        {"command":"clip.midi.note.clear","params":{"trackName":"Lead","clipName":"Verse"}},
                         {"command":"music.note.insert","params":{"trackName":"Lead","clipName":"Verse","notes":[
                             {"pitch":"C4","position":"1:1","duration":"0"}
                         ]}}
@@ -1050,6 +1300,39 @@ mod tests {
             .unwrap();
         assert_eq!(after_failure.sequence, replaced_state.sequence);
         assert_eq!(output_value(&after_failure), output_value(&replaced_state));
+
+        let batch = |clip_to_end| {
+            command(
+                "session.apply",
+                json!({"operations":[
+                    {"command":"clip.midi.note.clear","params":{"trackName":"Lead","clipName":"Verse"}},
+                    {"command":"music.note.insert","params":{"trackName":"Lead","clipName":"Verse","clipToEnd":clip_to_end,"notes":[{"pitch":"C4","position":"4:4+1/2","duration":"1/4"}]}}
+                ]}),
+            )
+        };
+        let error = dispatcher
+            .dispatch(batch(false), None)
+            .unwrap_err()
+            .protocol_error();
+        assert_eq!(error.details.as_ref().unwrap()["operationIndex"], 1);
+        assert!(
+            error.details.as_ref().unwrap()["cause"]
+                .as_str()
+                .unwrap()
+                .contains("end exceeds the clip")
+        );
+        let unchanged = dispatcher
+            .dispatch(command("session.get", json!({})), None)
+            .unwrap();
+        assert_eq!(output_value(&unchanged), output_value(&replaced_state));
+        dispatcher.dispatch(batch(true), None).unwrap();
+        let clipped = dispatcher
+            .dispatch(command("session.get", json!({})), None)
+            .unwrap();
+        assert_eq!(
+            output_value(&clipped)["arrangement"]["midiClips"][0]["notes"][0]["durationTicks"],
+            480
+        );
 
         let _ = fs::remove_dir_all(root);
     }
@@ -1191,6 +1474,13 @@ mod tests {
             crate::test_support::prepare_built_in_resource_root(&root),
         )
         .unwrap();
+        production_catalog(
+            &root,
+            &[
+                (r"C:\Plugins\NewDrums.vst3", "new-drums-class"),
+                (r"C:\Plugins\Other.vst3", "other-class"),
+            ],
+        );
         let mut dispatcher = dispatcher;
         dispatcher.test_sidechain_capability =
             Some(crate::api::output::DeviceSidechainCapability {
@@ -1220,7 +1510,7 @@ mod tests {
                             {"command":"effect.add","params":{"owner":{"kind":"track","name":"Drums"},"pluginPath":"C:\\Plugins\\OldCompressor.vst3"}},
                             {"command":"effect.add","params":{"owner":{"kind":"bus","name":"Group"},"pluginPath":"C:\\Plugins\\OldLimiter.vst3"}},
                             {"command":"effect.add","params":{"owner":{"kind":"master"},"pluginPath":"Master.vst3"}},
-                            {"command":"marker.add","params":{"name":"Old","position":"1:1"}}
+                            {"command":"music.marker.add","params":{"name":"Old","position":"1:1"}}
                         ]
                     }),
                 ),
@@ -1299,7 +1589,7 @@ mod tests {
             {"command":"track.add","params":{"name":"Drums","kind":"instrument"}},
             {"command":"instrument.vst3.set","params":{"trackName":"Lead","pluginPath":"C:\\Plugins\\NewLead.vst3"}},
             {"command":"instrument.vst3.set","params":{"trackName":"Drums","pluginPath":"C:\\Plugins\\NewDrums.vst3"}},
-            {"command":"plugin.state.import","params":{"owner":{"kind":"track","name":"Drums"},"state":{"schemaVersion":1,"pluginPath":"C:\\Plugins\\NewDrums.vst3","parameterValues":[0.25,0.75],"stateData":"a2l0"}}},
+            {"command":"plugin.state.import","params":{"owner":{"kind":"track","name":"Drums"},"state":{"schemaVersion":2,"pluginIdentifier":"new-drums-class","pluginPath":"C:\\Plugins\\NewDrums.vst3","parameterValues":[0.25,0.75],"stateData":"a2l0"}}},
             {"command":"music.midi-clip.create","params":{"trackName":"Lead","name":"Verse","start":"1:1","end":"5:1"}},
             {"command":"music.note.insert","params":{"trackName":"Lead","clipName":"Verse","notes":[{"pitch":"D4","position":"1:1","duration":"1/4"}]}},
             {"command":"mixer.bus.add","params":{"name":"Group","kind":"group"}},
@@ -1310,7 +1600,7 @@ mod tests {
             {"command":"automation.set","params":{"target":{"kind":"masterGain"},"interpolation":"linear","points":[{"id":"point:master","tick":0,"value":-6}]}}
         ]);
         let mut failed_operations = operations.as_array().unwrap().clone();
-        failed_operations.push(json!({"command":"plugin.state.import","params":{"owner":{"kind":"track","name":"Drums"},"state":{"schemaVersion":1,"pluginPath":"C:\\Plugins\\Other.vst3","parameterValues":[]}}}));
+        failed_operations.push(json!({"command":"plugin.state.import","params":{"owner":{"kind":"track","name":"Drums"},"state":{"schemaVersion":2,"pluginIdentifier":"other-class","pluginPath":"C:\\Plugins\\NewDrums.vst3","parameterValues":[]}}}));
         let failed = dispatcher.dispatch(
             command(
                 "session.apply",
@@ -1412,7 +1702,7 @@ mod tests {
         assert_eq!(final_arrangement["markers"], json!([]));
         assert_eq!(final_arrangement["mixer"]["masterEffects"], json!([]));
         let undone = dispatcher
-            .dispatch(command("undo", json!({})), None)
+            .dispatch(command("history.undo", json!({})), None)
             .unwrap();
         let restored = &output_value(&undone)["canonical"]["session"];
         let mut expected = output_value(&before_rebuild);
@@ -1452,7 +1742,7 @@ mod tests {
                                 "target":{"kind":"busMix","busName":"Group","parameter":"gain"},
                                 "interpolation":"linear",
                                 "points":[{"id":"point:group","tick":0,"value":0}]}},
-                            {"command":"timebase.set-map","params":{
+                            {"command":"music.timebase.set-map","params":{
                                 "tempoChanges":[{"tick":0,"bpm":120}],
                                 "timeSignatureChanges":[{"tick":0,"numerator":4,"denominator":4},{"tick":15360,"numerator":2,"denominator":4}]}},
                             {"command":"automation.set","params":{
@@ -1745,6 +2035,151 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn session_apply_binds_devices_and_rolls_back_invalid_references() {
+        let root = std::env::temp_dir().join(format!("riffra-dispatcher-device-bind-{}", now_ms()));
+        let mut dispatcher = Dispatcher::open(
+            root.clone(),
+            crate::test_support::prepare_built_in_resource_root(&root),
+        )
+        .unwrap();
+        dispatcher.test_sidechain_capability =
+            Some(crate::api::output::DeviceSidechainCapability {
+                available: true,
+                mono: false,
+                stereo: true,
+                channels: 0,
+                reason: None,
+            });
+        let track = dispatcher
+            .dispatch(
+                command("track.add", json!({"name":"@verb","kind":"instrument"})),
+                None,
+            )
+            .unwrap();
+        let track_id = mutated_session(&track).arrangement.tracks[0].id.clone();
+        let result = dispatcher.dispatch(command("session.apply", json!({"includeCreatedIds":true,"operations":[
+            {"command":"mixer.bus.add","params":{"name":"FX","kind":"return"}},
+            {"command":"mixer.bus.add","params":{"name":"Other","kind":"return"}},
+            {"command":"effect.add","params":{"owner":{"kind":"bus","name":"Other"},"pluginPath":"same.vst3"}},
+            {"command":"effect.add","params":{"owner":{"kind":"bus","name":"FX"},"pluginPath":"same.vst3"},"bind":"verb"},
+            {"command":"effect.add","params":{"owner":{"kind":"bus","name":"FX"},"pluginPath":"second.vst3"},"bind":"second"},
+            {"command":"effect.reorder","params":{"owner":{"kind":"bus","name":"FX"},"deviceIds":["@second","@verb"]}},
+            {"command":"device.parameter.set","params":{"owner":{"kind":"bus","name":"FX"},"deviceId":"@verb","parameterIndex":0,"value":0.45}},
+            {"command":"mixer.send.add","params":{"trackName":"@verb","returnBusName":"FX","levelDb":-12}},
+            {"command":"mixer.sidechain.add","params":{"sourceTrackId":track_id,"targetDeviceId":"@verb","levelDb":-9}}
+        ]})), None).unwrap();
+        let ids = output_value(&result)["createdEntityIds"]["devices"]
+            .as_array()
+            .unwrap()
+            .clone();
+        assert_eq!(ids.len(), 3);
+        let state = dispatcher
+            .dispatch(command("session.get", json!({})), None)
+            .unwrap();
+        let arrangement = &output_value(&state)["arrangement"];
+        let buses = arrangement["mixer"]["buses"].as_array().unwrap();
+        assert_eq!(buses[0]["effects"][0]["id"], ids[2]);
+        assert_eq!(buses[0]["effects"][1]["id"], ids[1]);
+        assert!(
+            (buses[0]["effects"][1]["plugin"]["parameterValues"][0]
+                .as_f64()
+                .unwrap()
+                - 0.45)
+                .abs()
+                < 1e-6
+        );
+        assert_eq!(
+            arrangement["mixer"]["sidechainSends"][0]["targetDeviceId"],
+            ids[1]
+        );
+        assert_eq!(arrangement["tracks"][0]["name"], "@verb");
+
+        let cases = [
+            (
+                json!([{"command":"device.bypass","params":{"owner":{"kind":"bus","name":"FX"},"deviceId":"@later","bypassed":true}},{"command":"effect.add","params":{"owner":{"kind":"bus","name":"FX"},"pluginPath":"x.vst3"},"bind":"later"}]),
+                0,
+                "unknown device binding",
+            ),
+            (
+                json!([{"command":"effect.add","params":{"owner":{"kind":"bus","name":"FX"},"pluginPath":"x.vst3"},"bind":"x"},{"command":"effect.add","params":{"owner":{"kind":"bus","name":"FX"},"pluginPath":"x.vst3"},"bind":"x"}]),
+                1,
+                "duplicate device binding",
+            ),
+            (
+                json!([{"command":"mixer.bus.add","params":{"name":"Unused","kind":"return"},"bind":"x"}]),
+                0,
+                "exactly one created device",
+            ),
+            (
+                json!([{"command":"effect.add","params":{"owner":{"kind":"track","name":"@verb"},"pluginPath":"a.vst3"}},{"command":"effect.add","params":{"owner":{"kind":"track","name":"@verb"},"pluginPath":"b.vst3"}},{"command":"track.duplicate","params":{"trackName":"@verb"},"bind":"x"}]),
+                2,
+                "exactly one created device",
+            ),
+            (
+                json!([{"command":"effect.add","params":{"owner":{"kind":"bus","name":"FX"},"pluginPath":"x.vst3"},"bind":"x"},{"command":"device.parameter.set","params":{"owner":{"kind":"bus","name":"Other"},"deviceId":"@x","parameterIndex":0,"value":0.5}}]),
+                1,
+                "device",
+            ),
+            (
+                json!([{"command":"effect.add","params":{"owner":{"kind":"bus","name":"FX"},"pluginPath":"x.vst3"},"bind":"x"},{"command":"device.parameter.set","params":{"owner":{"kind":"bus","name":"FX"},"deviceId":"@x","parameterIndex":0,"display":"-4 dB"}}]),
+                1,
+                "requires a normalized value",
+            ),
+        ];
+        for (operations, index, cause) in cases {
+            let error = dispatcher
+                .dispatch(
+                    command("session.apply", json!({"operations":operations})),
+                    None,
+                )
+                .unwrap_err()
+                .protocol_error();
+            assert_eq!(error.details.as_ref().unwrap()["operationIndex"], index);
+            assert!(
+                error.details.as_ref().unwrap()["cause"]
+                    .as_str()
+                    .unwrap()
+                    .contains(cause),
+                "{error:?}"
+            );
+            let after = dispatcher
+                .dispatch(command("session.get", json!({})), None)
+                .unwrap();
+            assert_eq!(after.sequence, state.sequence);
+            assert_eq!(output_value(&after), output_value(&state));
+        }
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn device_bindings_are_limited_to_device_fields() {
+        let bindings = BTreeMap::from([("x".to_owned(), "device:1".to_owned())]);
+        let params = resolve_device_bindings(
+            "mixer.sidechain.update",
+            json!({"sidechainSendId":"@x","patch":{"targetDeviceId":"@x"}}),
+            &bindings,
+        )
+        .unwrap();
+        assert_eq!(params["sidechainSendId"], "@x");
+        assert_eq!(params["patch"]["targetDeviceId"], "device:1");
+        let params = resolve_device_bindings(
+            "automation.set",
+            json!({"target":{"kind":"deviceParameter","deviceId":"@x","parameterId":"@x"}}),
+            &bindings,
+        )
+        .unwrap();
+        assert_eq!(params["target"]["deviceId"], "device:1");
+        assert_eq!(params["target"]["parameterId"], "@x");
+        let params = resolve_device_bindings(
+            "track.midi-input.set",
+            json!({"trackId":"t","deviceId":"@x"}),
+            &bindings,
+        )
+        .unwrap();
+        assert_eq!(params["deviceId"], "@x");
     }
 
     #[test]

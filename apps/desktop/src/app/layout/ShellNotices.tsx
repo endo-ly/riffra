@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import { openScoreYaml } from '@/native/dialog';
+import { logNativeError } from '@/native/invoke';
 import { useSession } from '@/shared/session/session-context';
 import { selectHostReady } from '@/shared/session/selectors';
 import { isEmergencyMuteActive } from '@/shared/audio/audio-safety';
@@ -16,7 +18,22 @@ export function ShellNotices({ appUpdater }: { appUpdater: ReturnType<typeof use
   const boot = project.boot!;
   const hostConnected = useSession(selectHostReady);
   const projectSwitching = project.switching;
-  const { restoreRecovery, keepRecovered: dismissRecovery } = project;
+  const { restoreRecovery, keepRecovered: dismissRecovery, rebuildScore } = project;
+  const scoreSync = project.scoreSync;
+  const [recoveringScore, setRecoveringScore] = useState(false);
+  const relinkScore = async () => {
+    const path = await openScoreYaml().catch((error: unknown) => {
+      logNativeError('openScoreYaml')(error);
+      return null;
+    });
+    if (!path) return;
+    setRecoveringScore(true);
+    try {
+      await rebuildScore({ path });
+    } finally {
+      setRecoveringScore(false);
+    }
+  };
   const { active: backgroundJob, cancel: cancelActiveJob } = jobs;
   const liveFeedbackSuspected = useAudioFeedbackSuspected();
   const feedbackSuspected = liveFeedbackSuspected || audio.feedbackSuspected;
@@ -32,6 +49,44 @@ export function ShellNotices({ appUpdater }: { appUpdater: ReturnType<typeof use
                 ? 'Feedback was detected, so all output was silenced automatically.'
                 : 'All audio output is silenced.'}
             </span>
+          </div>
+        )}
+        {scoreSync?.state === 'failed' && (
+          <div className={`${styles.shellNotice} ${styles.dangerBanner}`} role="alert">
+            <strong>SCORE SYNC FAILED</strong>
+            <span>
+              {scoreSync.path ? `${scoreSync.path} could not be applied. ` : ''}
+              The Project keeps its last successful synchronization.
+            </span>
+            {(scoreSync.diagnostics?.length ?? 0) > 0 && (
+              <ul className={styles.scoreDiagnostics}>
+                {(scoreSync.diagnostics ?? []).slice(0, 5).map((diagnostic, index) => (
+                  <li key={`${diagnostic.path}-${index}`}>
+                    <code>
+                      {diagnostic.path || 'score'}
+                      {diagnostic.line > 0 ? `:${diagnostic.line}:${diagnostic.column}` : ''}
+                    </code>{' '}
+                    {diagnostic.message}
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className={styles.recoveryActions}>
+              <button
+                className={surface.textButton}
+                disabled={!hostConnected || projectSwitching || recoveringScore}
+                onClick={() => void rebuildScore()}
+              >
+                Retry
+              </button>
+              <button
+                className={surface.textButton}
+                disabled={!hostConnected || projectSwitching || recoveringScore}
+                onClick={() => void relinkScore()}
+              >
+                Link another Score…
+              </button>
+            </div>
           </div>
         )}
         {boot.safeMode && (

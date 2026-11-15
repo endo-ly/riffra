@@ -3,4 +3,4 @@
 /**
  * True peak location relative to the measured WAV.
  */
-export type RangePeak = { db: number; seconds: number };
+export type RangePeak = { db: number, seconds: number, };

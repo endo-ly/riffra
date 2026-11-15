@@ -53,6 +53,21 @@ TEST(SidecarContractTest, DecodesEditorClosureOnTimelineIdle) {
     EXPECT_TRUE(command->closeEditor);
 }
 
+TEST(SidecarContractTest, NearestRequiresDisplayAndIsDecoded) {
+    auto fixture = commandFixture("setDeviceParameter");
+    setValue(fixture, {"command", "nearest"}, true);
+    juce::String error;
+    EXPECT_FALSE(decodes(fixture, error));
+    setValue(fixture, {"command", "value"}, juce::var());
+    setValue(fixture, {"command", "display"}, "-4.00 dB");
+    error.clear();
+    SidecarRequestSpec request;
+    ASSERT_TRUE(decodeSidecarRequest(fixture, request, error)) << error;
+    const auto* command = std::get_if<SetDeviceParameterCommand>(&request.command);
+    ASSERT_NE(command, nullptr);
+    EXPECT_TRUE(command->nearest);
+}
+
 TEST(SidecarContractTest, RejectsRepresentativeMalformedCommands) {
     const auto expectRejected = [](const char* mutation, const juce::var& value) {
         juce::String error;

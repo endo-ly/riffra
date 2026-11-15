@@ -1,14 +1,15 @@
 pub(crate) mod events;
 mod lower;
 mod parse;
+pub(super) mod production;
 mod resolve;
 pub(super) mod syntax;
 mod time;
 
 use std::collections::BTreeMap;
-use std::path::Path;
 
 use num_traits::ToPrimitive;
+use riffra_core::KeySwitchMode;
 use serde::Serialize;
 use serde_json::Value;
 
@@ -16,6 +17,37 @@ use events::{MeterChange, MusicalEvent, PerformanceEvents, TempoChange};
 use time::q;
 
 type Result<T> = std::result::Result<T, Error>;
+
+/// A known Score extension that Riffra does not execute yet.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Extension {
+    Lyrics,
+    LineLyrics,
+    Breath,
+    VoiceDynamics,
+    VoiceStyle,
+}
+
+impl Extension {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Lyrics => "lyrics",
+            Self::LineLyrics => "line lyrics",
+            Self::Breath => "breath event",
+            Self::VoiceDynamics => "voice dynamics event",
+            Self::VoiceStyle => "voice style event",
+        }
+    }
+
+    fn event(kind: &str) -> Option<Self> {
+        match kind {
+            "breath" => Some(Self::Breath),
+            "voice_dynamics" => Some(Self::VoiceDynamics),
+            "voice_style" => Some(Self::VoiceStyle),
+            _ => None,
+        }
+    }
+}
 
 #[derive(Debug, Default)]
 struct ErrorContext {
@@ -39,6 +71,7 @@ pub(crate) struct Error {
     column: usize,
     actual: Option<Box<Value>>,
     context: Option<Box<ErrorContext>>,
+    kind: Option<&'static str>,
 }
 
 impl Error {
@@ -51,7 +84,16 @@ impl Error {
             column: 0,
             actual: None,
             context: None,
+            kind: None,
         }
+    }
+    fn not_implemented(path: &str, extension: Extension) -> Self {
+        let mut error = Self::new(
+            path,
+            format!("{} is not implemented by Riffra", extension.label()),
+        );
+        error.kind = Some("notImplemented");
+        error
     }
     fn at(mut self, path: &str) -> Self {
         if self.path.is_empty() {
@@ -170,9 +212,11 @@ impl Error {
             .context
             .as_deref()
             .and_then(|context| context.occurrence);
-        self.detail = Box::new(
-            serde_json::json!({"source_type":"score","source_bar":source_bar,"bar":bar,"step":step,"line":self.line,"column":self.column,"actual":self.actual,"expected":self.message,"section":section,"occurrence":occurrence}),
-        );
+        let mut detail = serde_json::json!({"source_type":"score","path":self.path,"source_bar":source_bar,"bar":bar,"step":step,"line":self.line,"column":self.column,"actual":self.actual,"expected":self.message,"section":section,"occurrence":occurrence});
+        if let Some(kind) = self.kind {
+            detail["kind"] = Value::String(kind.into());
+        }
+        self.detail = Box::new(detail);
         self
     }
 }
@@ -244,9 +288,41 @@ pub(crate) struct ScoreLane {
     pub(crate) sources: Vec<EventSource>,
 }
 
+/// A logical VST3 performance control expanded to an absolute musical tick.
+#[derive(Debug, Clone)]
+pub(crate) struct PerformanceControl {
+    pub(crate) source: String,
+    pub(crate) tick: u64,
+    pub(crate) at_quarters: String,
+    pub(crate) kind: PerformanceControlKind,
+    pub(crate) sort_order: u8,
+    pub(crate) path: String,
+    pub(crate) section: String,
+    pub(crate) occurrence: usize,
+    pub(crate) bar: usize,
+    pub(crate) step: String,
+    pub(crate) line: usize,
+    pub(crate) column: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PerformanceControlKind {
+    KeySwitch {
+        note: u8,
+        mode: KeySwitchMode,
+        down: bool,
+    },
+    ControlChange {
+        number: u8,
+        value: u8,
+    },
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct EventSource {
     pub(crate) path: String,
+    #[serde(skip_serializing)]
+    trigger: bool,
     pub(crate) spelling: Option<String>,
     #[serde(skip_serializing)]
     pub(crate) token_offset: Option<usize>,
@@ -268,7 +344,15 @@ pub(crate) struct ScorePlan {
     source: Source,
     pub(crate) title: String,
     pub(crate) instruments: serde_json::Map<String, Value>,
+    pub(crate) production_sources: BTreeMap<String, production::SourceSpec>,
+    pub(crate) production_effects: BTreeMap<String, Vec<production::EffectSpec>>,
+    pub(crate) kits: BTreeMap<String, production::KitSpec>,
+    pub(crate) kit_members: BTreeMap<String, String>,
+    pub(crate) audio_instruments: std::collections::BTreeSet<String>,
+    pub(crate) audio_clips: BTreeMap<String, Vec<production::AudioClipSpec>>,
+    pub(crate) mix: Option<production::mix::Mix>,
     pub(crate) lanes: Vec<ScoreLane>,
+    pub(crate) performance_controls: Vec<PerformanceControl>,
     pub(crate) sections: Vec<Occurrence>,
     pub(crate) length_ticks: u64,
     pub(crate) ticks_per_beat: u16,
@@ -288,38 +372,23 @@ pub(crate) struct PartWindow {
 }
 
 impl ScorePlan {
-    pub(crate) fn source_yaml(&self) -> &str {
-        &self.source.text
-    }
-
     /// Resolve source metadata for a diagnostic at a score field path.
     pub(crate) fn source_detail(&self, path: &str, message: &str) -> Value {
         *Error::new(path, message).locate(&self.source).detail
     }
-}
 
-/// Distinguishes file access failures from errors in the score itself.
-#[derive(Debug, thiserror::Error)]
-pub(crate) enum ReadError {
-    #[error("could not read score: {path}: {source}")]
-    Io {
-        path: std::path::PathBuf,
-        source: std::io::Error,
-    },
-    #[error(transparent)]
-    Parse(#[from] Error),
-}
-
-/// Read and expand a Score YAML file.
-///
-/// # Errors
-/// Returns a file access error or a source-located score error.
-pub(crate) fn read(path: &Path) -> std::result::Result<ScorePlan, ReadError> {
-    let text = std::fs::read_to_string(path).map_err(|source| ReadError::Io {
-        path: path.to_owned(),
-        source,
-    })?;
-    Ok(compile(&text)?)
+    pub(crate) fn position_tick(
+        &self,
+        section: &Occurrence,
+        position: &production::Position,
+    ) -> u64 {
+        let bar = match position.bar {
+            production::Bar::Number(n) => n,
+            production::Bar::Last => section.bars,
+        };
+        section.bar_start_ticks[bar - 1]
+            + time::tick(&position.offset, self.ticks_per_beat).expect("validated position")
+    }
 }
 
 /// Parse, validate, and expand Score YAML into a musical plan.
@@ -329,50 +398,246 @@ pub(crate) fn read(path: &Path) -> std::result::Result<ScorePlan, ReadError> {
 pub(crate) fn compile(text: &str) -> Result<ScorePlan> {
     let mut source = Source::default();
     let result = parse::parse(text, &mut source).and_then(|document| {
-        resolve::validate_structure(&document)?;
-        lower::lower(&document)
+        reject_extensions(&document)?;
+        let mut view = document.clone();
+        let mix = view
+            .as_object_mut()
+            .and_then(|root| root.remove("mix"))
+            .map(|value| production::mix::parse(&value))
+            .transpose()?;
+        let mut sources = BTreeMap::new();
+        let mut effects = BTreeMap::new();
+        let kits = view
+            .as_object_mut()
+            .and_then(|root| root.remove("kits"))
+            .map(|value| production::parse_kits(&value))
+            .transpose()?
+            .unwrap_or_default();
+        let mut kit_members = BTreeMap::new();
+        let mut audio_instruments = std::collections::BTreeSet::new();
+        let mut audio_clips = BTreeMap::new();
+        if let Some(sections) = view.get_mut("sections").and_then(Value::as_object_mut) {
+            for (name, section) in sections {
+                if let Some(value) = section
+                    .as_object_mut()
+                    .and_then(|section| section.remove("audio_clips"))
+                {
+                    audio_clips.insert(
+                        name.clone(),
+                        production::parse_audio_clips(
+                            &value,
+                            &format!("sections.{name}.audio_clips"),
+                        )?,
+                    );
+                }
+            }
+        }
+        if let Some(instruments) = view.get_mut("instruments").and_then(Value::as_object_mut) {
+            for (id, instrument) in instruments {
+                if kits.contains_key(id) {
+                    return Err(Error::new(
+                        format!("kits.{id}"),
+                        "kit id conflicts with an instrument id",
+                    ));
+                }
+                if let Some(value) = instrument
+                    .as_object_mut()
+                    .and_then(|spec| spec.remove("kit"))
+                {
+                    let path = format!("instruments.{id}.kit");
+                    let kit = string(&value, &path)?;
+                    if !kits.contains_key(kit) {
+                        return Err(Error::new(path, format!("undefined kit {kit}")));
+                    }
+                    for key in ["source", "effects", "audio", "audio_input"] {
+                        if instrument.get(key).is_some() {
+                            return Err(Error::new(
+                                format!("instruments.{id}.{key}"),
+                                "kit members cannot specify this field",
+                            ));
+                        }
+                    }
+                    if instrument.get("trigger_note_midi").is_none() {
+                        return Err(Error::new(
+                            format!("instruments.{id}.trigger_note_midi"),
+                            "kit members require a trigger note",
+                        ));
+                    }
+                    kit_members.insert(id.clone(), kit.to_owned());
+                }
+                if let Some(value) = instrument
+                    .as_object_mut()
+                    .and_then(|spec| spec.remove("audio"))
+                {
+                    if value != Value::Bool(true) {
+                        return Err(Error::new(
+                            format!("instruments.{id}.audio"),
+                            "audio must be true",
+                        ));
+                    }
+                    for key in ["preset", "definition", "external", "source", "audio_input"] {
+                        if instrument.get(key).is_some() {
+                            return Err(Error::new(
+                                format!("instruments.{id}.{key}"),
+                                "audio instruments cannot specify this field",
+                            ));
+                        }
+                    }
+                    audio_instruments.insert(id.clone());
+                }
+                if let Some(value) = instrument
+                    .as_object_mut()
+                    .and_then(|spec| spec.remove("effects"))
+                {
+                    effects.insert(
+                        id.clone(),
+                        production::parse_effects(&value, &format!("instruments.{id}.effects"))?,
+                    );
+                }
+                if let Some(value) = instrument
+                    .as_object_mut()
+                    .and_then(|spec| spec.remove("source"))
+                {
+                    let path = format!("instruments.{id}.source");
+                    if instrument.get("audio_input").is_some() {
+                        return Err(Error::new(
+                            format!("instruments.{id}.audio_input"),
+                            "audio input is not supported for production sources",
+                        ));
+                    }
+                    sources.insert(id.clone(), production::parse_source(&value, &path)?);
+                }
+            }
+        }
+        for id in kits.keys() {
+            if !kit_members.values().any(|kit| kit == id) {
+                return Err(Error::new(
+                    format!("kits.{id}"),
+                    "kit must have at least one member",
+                ));
+            }
+            let score_key = format!("kit:{id}");
+            if view
+                .get("instruments")
+                .and_then(Value::as_object)
+                .is_some_and(|instruments| instruments.contains_key(&score_key))
+            {
+                return Err(Error::new(
+                    format!("kits.{id}"),
+                    "kit id conflicts with an instrument score id",
+                ));
+            }
+        }
+        let source_less = sources
+            .keys()
+            .chain(kit_members.keys())
+            .chain(audio_instruments.iter())
+            .cloned()
+            .collect();
+        resolve::validate_structure(&view, &source_less)?;
+        for (section, clips) in &audio_clips {
+            for (index, clip) in clips.iter().enumerate() {
+                if !audio_instruments.contains(&clip.instrument) {
+                    return Err(Error::new(
+                        format!("sections.{section}.audio_clips[{index}].instrument"),
+                        "audio clip must reference an audio instrument",
+                    ));
+                }
+            }
+        }
+        let mut additional_times: Vec<_> = audio_clips
+            .values()
+            .flatten()
+            .map(|clip| clip.at.offset.clone())
+            .collect();
+        if let Some(mix) = &mix {
+            additional_times.extend(
+                mix.automation
+                    .iter()
+                    .flat_map(|lane| lane.points.iter().map(|point| point.at.offset.clone())),
+            );
+        }
+        let control_sources = lower::ControlSources {
+            articulations: sources
+                .iter()
+                .map(|(id, source)| (id.clone(), source.articulations.clone()))
+                .chain(
+                    kits.iter()
+                        .map(|(id, kit)| (id.clone(), kit.source.articulations.clone())),
+                )
+                .collect(),
+            articulation_paths: sources
+                .keys()
+                .map(|id| (id.clone(), format!("instruments.{id}.source.articulations")))
+                .chain(
+                    kits.keys()
+                        .map(|id| (id.clone(), format!("kits.{id}.source.articulations"))),
+                )
+                .collect(),
+            kits: kits.keys().cloned().collect(),
+            members: kit_members.clone(),
+            audio: audio_instruments.clone(),
+        };
+        let mut plan = lower::lower(&view, &control_sources, &additional_times)?;
+        plan.instruments = object(&document["instruments"], "instruments")?.clone();
+        plan.production_sources = sources;
+        plan.production_effects = effects;
+        plan.kits = kits;
+        plan.kit_members = kit_members;
+        plan.audio_instruments = audio_instruments;
+        plan.audio_clips = audio_clips;
+        plan.mix = mix;
+        for (section, clips) in &plan.audio_clips {
+            for (index, clip) in clips.iter().enumerate() {
+                let path = format!("sections.{section}.audio_clips[{index}].at");
+                for occurrence in plan.sections.iter().filter(|item| item.section == *section) {
+                    let bar = match clip.at.bar {
+                        production::Bar::Number(n) => n,
+                        production::Bar::Last => occurrence.bars,
+                    };
+                    if bar == 0 || bar > occurrence.bars {
+                        return Err(Error::new(&path, "bar is outside the section"));
+                    }
+                    let offset = time::tick(&clip.at.offset, plan.ticks_per_beat)
+                        .map_err(|error| error.at(&path))?;
+                    if offset
+                        >= occurrence.bar_end_ticks[bar - 1] - occurrence.bar_start_ticks[bar - 1]
+                    {
+                        return Err(Error::new(&path, "position is outside the selected bar"));
+                    }
+                }
+            }
+        }
+        if let Some(lane) = plan
+            .lanes
+            .iter()
+            .find(|lane| plan.audio_instruments.contains(&lane.id))
+        {
+            let path = lane.sources.first().map_or_else(
+                || format!("instruments.{}", lane.id),
+                |source| source.path.clone(),
+            );
+            return Err(Error::new(
+                path,
+                "audio instruments cannot receive performance events",
+            ));
+        }
+        validate_kit_performance(&document, &plan, &source)?;
+        production::mix::validate(&plan)?;
+        Ok(plan)
     });
     result
         .map_err(|error| error.locate(&source))
         .map(|mut plan| {
             for lane in &mut plan.lanes {
                 for origin in &mut lane.sources {
-                    if let Some((section_index, section)) = plan
-                        .sections
-                        .iter()
-                        .enumerate()
-                        .find(|(_, section)| {
-                            origin.tick >= section.start_tick && origin.tick < section.end_tick
-                        })
-                        .or_else(|| {
-                            plan.sections
-                                .iter()
-                                .enumerate()
-                                .next_back()
-                                .filter(|(_, section)| origin.tick == section.end_tick)
-                        })
+                    if let Some((section, occurrence, bar, step)) =
+                        tick_position(origin.tick, &plan.sections, plan.ticks_per_beat)
                     {
-                        let (numerator, denominator) =
-                            syntax::meter(&section.meter).expect("resolved meter");
-                        let elapsed = q(
-                            i64::try_from(origin.tick - section.start_tick)
-                                .expect("resolved musical time"),
-                            i64::from(plan.ticks_per_beat),
-                        );
-                        let bar_length = q(i64::from(numerator) * 4, i64::from(denominator));
-                        let index = (&elapsed / &bar_length)
-                            .to_integer()
-                            .to_usize()
-                            .expect("resolved bar")
-                            .min(section.bars - 1);
-                        origin.section = section.section.clone();
-                        origin.occurrence = section_index + 1;
-                        origin.bar = index + 1;
-                        origin.step = ((elapsed
-                            - bar_length * q(i64::try_from(index).expect("resolved bar"), 1))
-                            * q(4, 1)
-                            + q(1, 1))
-                        .to_string();
+                        origin.section = section;
+                        origin.occurrence = occurrence;
+                        origin.bar = bar;
+                        origin.step = step;
                     }
                     let token_location = origin
                         .token_offset
@@ -385,23 +650,210 @@ pub(crate) fn compile(text: &str) -> Result<ScorePlan> {
                         origin.column = column;
                         continue;
                     }
-                    let mut path = origin.path.as_str();
-                    loop {
-                        if let Some(&(line, column)) = source.positions.get(path) {
-                            origin.line = line;
-                            origin.column = column;
-                            break;
-                        }
-                        let Some(i) = path.rfind(['.', '[']) else {
-                            break;
-                        };
-                        path = &path[..i];
-                    }
+                    (origin.line, origin.column) = source_line(&origin.path, &source);
                 }
+            }
+            for control in &mut plan.performance_controls {
+                (control.line, control.column) = source_line(&control.path, &source);
             }
             plan.source = source;
             plan
         })
+}
+
+fn tick_position(
+    tick: u64,
+    sections: &[Occurrence],
+    ticks_per_beat: u16,
+) -> Option<(String, usize, usize, String)> {
+    let (index, section) = sections
+        .iter()
+        .enumerate()
+        .find(|(_, section)| tick >= section.start_tick && tick < section.end_tick)
+        .or_else(|| {
+            sections
+                .iter()
+                .enumerate()
+                .next_back()
+                .filter(|(_, section)| tick == section.end_tick)
+        })?;
+    let (numerator, denominator) = syntax::meter(&section.meter).expect("resolved meter");
+    let elapsed = q(
+        i64::try_from(tick - section.start_tick).expect("resolved musical time"),
+        i64::from(ticks_per_beat),
+    );
+    let bar_length = q(i64::from(numerator) * 4, i64::from(denominator));
+    let index_in_section = (&elapsed / &bar_length)
+        .to_integer()
+        .to_usize()
+        .expect("resolved bar")
+        .min(section.bars - 1);
+    let step = ((elapsed
+        - bar_length * q(i64::try_from(index_in_section).expect("resolved bar"), 1))
+        * q(4, 1)
+        + q(1, 1))
+    .to_string();
+    let occurrence = sections[..=index]
+        .iter()
+        .filter(|candidate| candidate.section == section.section)
+        .count();
+    Some((
+        section.section.clone(),
+        occurrence,
+        index_in_section + 1,
+        step,
+    ))
+}
+
+fn source_line(path: &str, source: &Source) -> (usize, usize) {
+    let mut path = path;
+    loop {
+        if let Some(&(line, column)) = source.positions.get(path) {
+            return (line, column);
+        }
+        let Some(index) = path.rfind(['.', '[']) else {
+            return (0, 0);
+        };
+        path = &path[..index];
+    }
+}
+
+fn validate_kit_performance(document: &Value, plan: &ScorePlan, source: &Source) -> Result<()> {
+    fn reject_gain(value: &Value, path: &str, members: &BTreeMap<String, String>) -> Result<()> {
+        match value {
+            Value::Object(fields) => {
+                if fields
+                    .get("instrument")
+                    .and_then(Value::as_str)
+                    .is_some_and(|id| members.contains_key(id))
+                    && fields.contains_key("gain_db")
+                {
+                    return Err(Error::new(
+                        format!("{path}.gain_db"),
+                        "kit members cannot have individual event gain",
+                    ));
+                }
+                for (key, child) in fields {
+                    reject_gain(child, &format!("{path}.{key}"), members)?;
+                }
+            }
+            Value::Array(items) => {
+                for (index, child) in items.iter().enumerate() {
+                    reject_gain(child, &format!("{path}[{index}]"), members)?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+    if let Some(sections) = document.get("sections") {
+        reject_gain(sections, "sections", &plan.kit_members)?;
+    }
+    if let Some(sections) = document.get("sections").and_then(Value::as_object) {
+        for (section, value) in sections {
+            if let Some(gains) = value.get("part_gains").and_then(Value::as_object)
+                && let Some(id) = gains.keys().find(|id| plan.kit_members.contains_key(*id))
+            {
+                return Err(Error::new(
+                    format!("sections.{section}.part_gains.{id}"),
+                    "kit members cannot have individual gain automation",
+                ));
+            }
+        }
+    }
+    for lane in plan
+        .lanes
+        .iter()
+        .filter(|lane| plan.kit_members.contains_key(&lane.id))
+    {
+        for (event, origin) in lane.pattern.events.iter().zip(&lane.sources) {
+            match event {
+                MusicalEvent::Note { .. } if origin.trigger => {}
+                MusicalEvent::Note { .. } => {
+                    return Err(Error::new(
+                        &origin.path,
+                        "kit members only support trigger notes",
+                    ));
+                }
+                _ => {
+                    return Err(Error::new(
+                        &origin.path,
+                        "kit members cannot use instrument control events",
+                    ));
+                }
+            }
+            let gain_path = format!("{}.gain_db", origin.path);
+            if source.values.contains_key(&gain_path) {
+                return Err(Error::new(
+                    gain_path,
+                    "kit members cannot have individual event gain",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Returns every known extension site as a source field path, in document order.
+fn extension_sites(document: &Value) -> Vec<(Extension, String)> {
+    let mut sites = Vec::new();
+    if document.get("lyrics").is_some() {
+        sites.push((Extension::Lyrics, "lyrics".to_owned()));
+    }
+    if let Some(sections) = document.get("sections").and_then(Value::as_object) {
+        for (name, section) in sections {
+            if let Some(lines) = section.get("lines").and_then(Value::as_object) {
+                for (line, value) in lines {
+                    if value.get("lyrics").is_some() {
+                        sites.push((
+                            Extension::LineLyrics,
+                            format!("sections.{name}.lines.{line}.lyrics"),
+                        ));
+                    }
+                }
+            }
+            if let Some(events) = section.get("events").and_then(Value::as_array) {
+                for (index, event) in events.iter().enumerate() {
+                    if let Some(extension) = event
+                        .get("kind")
+                        .and_then(Value::as_str)
+                        .and_then(Extension::event)
+                    {
+                        sites.push((extension, format!("sections.{name}.events[{index}]")));
+                    }
+                }
+            }
+        }
+    }
+    if let Some(macros) = document.get("macros").and_then(Value::as_object) {
+        for (name, event) in macros {
+            if let Some(extension) = event
+                .get("kind")
+                .and_then(Value::as_str)
+                .and_then(Extension::event)
+            {
+                sites.push((extension, format!("macros.{name}")));
+            }
+        }
+    }
+    sites
+}
+
+/// Rejects the first known Score extension that Riffra cannot execute yet.
+fn reject_extensions(document: &Value) -> Result<()> {
+    match extension_sites(document).into_iter().next() {
+        Some((extension, path)) => Err(Error::not_implemented(&path, extension)),
+        None => Ok(()),
+    }
+}
+
+/// Parses an `automation.control` value addressed to a MIDI continuous controller.
+pub(super) fn cc_number(control: &str) -> Option<u8> {
+    let number = control.strip_prefix("cc:")?;
+    if number.is_empty() || !number.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    number.parse::<u8>().ok().filter(|number| *number <= 127)
 }
 
 /// Convert finite decibels to a finite linear gain, returning `None` on overflow.
@@ -1713,5 +2165,878 @@ mod tests {
         let error = compile(&doc.to_string()).unwrap_err();
         assert_eq!(error.path, "time_changes[0]");
         assert_eq!(error.message, "tempo change overlaps tempo ramp");
+    }
+
+    const EXTENSION_SCORE: &str = include_str!("../../testdata/score-extensions.yaml");
+
+    fn extension_document() -> serde_json::Value {
+        let mut source = Source::default();
+        parse::parse(EXTENSION_SCORE, &mut source).expect("the extension fixture parses")
+    }
+
+    #[test]
+    fn performance_controls_expand_keyswitches_cc_and_conflicts() {
+        let mut doc = document();
+        doc["instruments"]["part"] = json!({
+            "source": {
+                "vst3": {"plugin": "Synth"},
+                "articulations": {
+                    "default": {"keyswitch": 24, "mode": "latch"},
+                    "mute": {"keyswitch": 26, "mode": "latch"},
+                    "open": {"keyswitch": 27, "mode": "hold"},
+                    "harmonic": {"cc": {"number": 68, "value": 127, "reset": 0}}
+                }
+            }
+        });
+        doc["sections"]["phrase"]["events"] = json!([
+            {"kind": "articulation", "instrument": "part", "name": "mute", "at": {"bar": 1, "step": 1}, "duration_quarters": 1},
+            {"kind": "articulation", "instrument": "part", "name": "open", "at": {"bar": 1, "step": 5}, "duration_quarters": 1},
+            {"kind": "cc", "instrument": "part", "number": 11, "value": 96, "at": {"bar": 1, "step": 9}}
+        ]);
+        let plan = compile(&to_yaml(&doc).unwrap()).unwrap();
+        let controls = &plan.performance_controls;
+        assert!(matches!(
+            controls[0].kind,
+            PerformanceControlKind::KeySwitch {
+                note: 26,
+                down: true,
+                mode: KeySwitchMode::Latch
+            }
+        ));
+        assert_eq!(controls[0].tick, 0);
+        assert!(matches!(
+            controls[1].kind,
+            PerformanceControlKind::KeySwitch {
+                note: 27,
+                down: true,
+                mode: KeySwitchMode::Hold
+            }
+        ));
+        assert_eq!(controls[1].at_quarters, "1");
+        assert!(matches!(
+            controls[2].kind,
+            PerformanceControlKind::KeySwitch {
+                note: 27,
+                down: false,
+                ..
+            }
+        ));
+        assert!(matches!(
+            controls[3].kind,
+            PerformanceControlKind::ControlChange {
+                number: 11,
+                value: 96
+            }
+        ));
+        assert_eq!(controls[3].tick, 2 * u64::from(plan.ticks_per_beat));
+        assert_eq!(controls[3].section, "phrase");
+        assert_eq!(controls[3].occurrence, 1);
+        assert_eq!(controls[3].bar, 1);
+        assert_eq!(controls[3].step, "9");
+        assert!(controls[3].line > 0);
+
+        doc["instruments"]["kick"] = json!({"kit": "drums", "trigger_note_midi": 36});
+        doc["kits"] = json!({"drums": {"source": {
+            "vst3": {"plugin": "Drums"},
+            "articulations": {
+                "default": {"keyswitch": 24, "mode": "latch"},
+                "mute": {"keyswitch": 26, "mode": "latch"}
+            }
+        }}});
+        doc["sections"]["phrase"]["events"] = json!([
+            {"kind": "articulation", "instrument": "drums", "name": "mute", "at": {"bar": 1, "step": 1}, "duration_quarters": 1},
+            {"kind": "automation", "instrument": "drums", "control": "cc:74", "from_value": 0, "to_value": 127, "at": {"bar": 1, "step": 9}, "duration_quarters": 1}
+        ]);
+        let kit_plan = compile(&to_yaml(&doc).unwrap()).unwrap();
+        assert!(
+            kit_plan
+                .performance_controls
+                .iter()
+                .all(|control| control.source == "drums")
+        );
+        assert!(kit_plan.performance_controls.iter().any(|control| matches!(
+            control.kind,
+            PerformanceControlKind::ControlChange {
+                number: 74,
+                value: 0
+            }
+        )));
+
+        doc["sections"]["phrase"]["events"] = json!([
+            {"kind": "cc", "instrument": "part", "number": 11, "value": 96, "at": {"bar": 1, "step": 1}},
+            {"kind": "automation", "instrument": "part", "control": "cc:11", "from_value": 96, "to_value": 64, "at": {"bar": 1, "step": 1}, "duration_quarters": 1}
+        ]);
+        assert_eq!(
+            compile(&to_yaml(&doc).unwrap()).unwrap_err().path,
+            "sections.phrase.events[0]"
+        );
+
+        doc["sections"]["phrase"]["events"] = json!([
+            {"kind": "articulation", "instrument": "part", "name": "open", "at": {"bar": 1, "step": 1}, "duration_quarters": 1},
+            {"kind": "articulation", "instrument": "part", "name": "open", "at": {"bar": 1, "step": 5}, "duration_quarters": 1}
+        ]);
+        let adjacent = compile(&to_yaml(&doc).unwrap()).unwrap();
+        assert_eq!(
+            adjacent
+                .performance_controls
+                .iter()
+                .map(|control| control.kind)
+                .collect::<Vec<_>>(),
+            [
+                PerformanceControlKind::KeySwitch {
+                    note: 27,
+                    mode: KeySwitchMode::Hold,
+                    down: true
+                },
+                PerformanceControlKind::KeySwitch {
+                    note: 27,
+                    mode: KeySwitchMode::Hold,
+                    down: false
+                }
+            ]
+        );
+        assert_eq!(adjacent.performance_controls[0].tick, 0);
+        assert_eq!(
+            adjacent.performance_controls[1].tick,
+            2 * u64::from(adjacent.ticks_per_beat)
+        );
+
+        doc["sections"]["phrase"]["events"] = json!([
+            {"kind": "articulation", "instrument": "part", "name": "open", "at": {"bar": 1, "step": 13}, "duration_quarters": 1}
+        ]);
+        let ending = compile(&to_yaml(&doc).unwrap()).unwrap();
+        let last = ending.performance_controls.last().expect("hold release");
+        assert_eq!(last.tick, ending.length_ticks);
+        assert!(matches!(
+            last.kind,
+            PerformanceControlKind::KeySwitch {
+                note: 27,
+                down: false,
+                ..
+            }
+        ));
+
+        doc["sections"]["phrase"]["events"] = json!([
+            {"kind": "articulation", "instrument": "part", "name": "mute", "at": {"bar": 1, "step": 13}, "duration_quarters": 1}
+        ]);
+        let final_latch = compile(&to_yaml(&doc).unwrap()).unwrap();
+        assert_eq!(final_latch.performance_controls.len(), 2);
+        assert_eq!(final_latch.performance_controls[0].tick, 0);
+        assert!(matches!(
+            final_latch.performance_controls[0].kind,
+            PerformanceControlKind::KeySwitch { note: 24, .. }
+        ));
+        assert_ne!(
+            final_latch.performance_controls[1].tick,
+            final_latch.length_ticks
+        );
+
+        doc["sections"]["phrase"]["events"] = json!([
+            {"kind": "mod_wheel", "instrument": "part", "value": 0.5, "at": {"bar": 1, "step": 1}},
+            {"kind": "automation", "instrument": "part", "control": "cc:1", "from_value": 0, "to_value": 127, "at": {"bar": 1, "step": 1}, "duration_quarters": 1}
+        ]);
+        let error = compile(&to_yaml(&doc).unwrap()).unwrap_err();
+        assert_eq!(error.path, "sections.phrase.events[0]");
+        assert!(
+            error
+                .message
+                .contains("VST3 instruments support only note, articulation, and cc")
+        );
+
+        doc["sections"]["phrase"]["events"] = json!([
+            {"kind": "articulation", "instrument": "part", "name": "mute", "at": {"bar": 1, "step": 1}, "duration_quarters": 2},
+            {"kind": "articulation", "instrument": "part", "name": "open", "at": {"bar": 1, "step": 5}, "duration_quarters": 1}
+        ]);
+        assert_eq!(
+            compile(&to_yaml(&doc).unwrap()).unwrap_err().path,
+            "sections.phrase.events[1]"
+        );
+
+        doc["sections"]["phrase"]["events"] = json!([
+            {"kind": "articulation", "instrument": "part", "name": "harmonic", "at": {"bar": 1, "step": 1}, "duration_quarters": 1},
+            {"kind": "cc", "instrument": "part", "number": 68, "value": 64, "at": {"bar": 1, "step": 5}}
+        ]);
+        let boundary = compile(&to_yaml(&doc).unwrap()).unwrap();
+        let boundary_tick = u64::from(boundary.ticks_per_beat);
+        let values = boundary
+            .performance_controls
+            .iter()
+            .filter(|control| control.tick == boundary_tick)
+            .filter_map(|control| match control.kind {
+                PerformanceControlKind::ControlChange { number: 68, value } => Some(value),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(values, [0, 64]);
+
+        doc["sections"]["phrase"]["events"] = json!([
+            {"kind": "articulation", "instrument": "part", "name": "missing", "at": {"bar": 1, "step": 1}, "duration_quarters": 1}
+        ]);
+        assert_eq!(
+            compile(&to_yaml(&doc).unwrap()).unwrap_err().path,
+            "sections.phrase.events[0].name"
+        );
+
+        doc["sections"]["phrase"]["events"] = json!([
+            {"kind": "articulation", "instrument": "part", "name": "default", "at": {"bar": 1, "step": 1}, "duration_quarters": 1}
+        ]);
+        assert_eq!(
+            compile(&to_yaml(&doc).unwrap()).unwrap_err().path,
+            "sections.phrase.events[0].name"
+        );
+    }
+
+    #[test]
+    fn performance_control_transitions_end_the_previous_state() {
+        let mut doc = document();
+        doc["instruments"]["part"] = json!({
+            "source": {
+                "vst3": {"plugin": "Synth"},
+                "articulations": {
+                    "default": {"keyswitch": 24, "mode": "latch"},
+                    "mute": {"keyswitch": 26, "mode": "latch"},
+                    "open": {"keyswitch": 27, "mode": "hold"},
+                    "closed": {"keyswitch": 28, "mode": "hold"},
+                    "expression": {"cc": {"number": 11, "value": 96, "reset": 64}},
+                    "swell": {"cc": {"number": 11, "value": 32, "reset": 0}}
+                }
+            }
+        });
+        let compile_document = |doc: &serde_json::Value| {
+            compile(&to_yaml(doc).unwrap()).expect("performance control transition")
+        };
+        let key_switches = |plan: &ScorePlan| {
+            plan.performance_controls
+                .iter()
+                .filter_map(|control| match control.kind {
+                    PerformanceControlKind::KeySwitch { note, down, .. } => {
+                        Some((control.tick, note, down))
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        let controller_values = |plan: &ScorePlan| {
+            plan.performance_controls
+                .iter()
+                .filter_map(|control| match control.kind {
+                    PerformanceControlKind::ControlChange { number: 11, value } => {
+                        Some((control.tick, value))
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+
+        doc["sections"]["phrase"]["events"] = json!([
+            {"kind":"articulation","instrument":"part","name":"mute","at":{"bar":1,"step":1},"duration_quarters":1},
+            {"kind":"articulation","instrument":"part","name":"expression","at":{"bar":1,"step":5},"duration_quarters":1}
+        ]);
+        let plan = compile_document(&doc);
+        let beat = u64::from(plan.ticks_per_beat);
+        assert_eq!(
+            key_switches(&plan),
+            [(0, 26, true), (beat, 24, true)],
+            "a latch interval returns to default before an adjacent controller interval"
+        );
+        assert_eq!(controller_values(&plan), [(beat, 96), (2 * beat, 64)]);
+
+        doc["sections"]["phrase"]["events"] = json!([
+            {"kind":"articulation","instrument":"part","name":"expression","at":{"bar":1,"step":1},"duration_quarters":1},
+            {"kind":"articulation","instrument":"part","name":"mute","at":{"bar":1,"step":5},"duration_quarters":1}
+        ]);
+        let plan = compile_document(&doc);
+        assert_eq!(
+            key_switches(&plan),
+            [(0, 24, true), (beat, 26, true), (2 * beat, 24, true)]
+        );
+        assert_eq!(controller_values(&plan), [(0, 96), (beat, 64)]);
+
+        doc["sections"]["phrase"]["events"] = json!([
+            {"kind":"articulation","instrument":"part","name":"open","at":{"bar":1,"step":1},"duration_quarters":1},
+            {"kind":"articulation","instrument":"part","name":"closed","at":{"bar":1,"step":5},"duration_quarters":1}
+        ]);
+        let plan = compile_document(&doc);
+        assert_eq!(
+            key_switches(&plan),
+            [
+                (0, 27, true),
+                (beat, 27, false),
+                (beat, 28, true),
+                (2 * beat, 28, false)
+            ],
+            "adjacent holds release before the next press without overlapping"
+        );
+
+        doc["sections"]["phrase"]["events"] = json!([
+            {"kind":"articulation","instrument":"part","name":"open","at":{"bar":1,"step":1},"duration_quarters":1},
+            {"kind":"articulation","instrument":"part","name":"mute","at":{"bar":1,"step":5},"duration_quarters":1}
+        ]);
+        let plan = compile_document(&doc);
+        assert_eq!(
+            key_switches(&plan),
+            [
+                (0, 27, true),
+                (beat, 27, false),
+                (beat, 26, true),
+                (2 * beat, 24, true)
+            ]
+        );
+
+        doc["sections"]["phrase"]["events"] = json!([
+            {"kind":"articulation","instrument":"part","name":"mute","at":{"bar":1,"step":1},"duration_quarters":1},
+            {"kind":"articulation","instrument":"part","name":"open","at":{"bar":1,"step":5},"duration_quarters":1}
+        ]);
+        let plan = compile_document(&doc);
+        assert_eq!(
+            key_switches(&plan),
+            [(0, 26, true), (beat, 27, true), (2 * beat, 27, false)],
+            "an adjacent hold replaces the latch selection at the boundary"
+        );
+
+        doc["sections"]["phrase"]["events"] = json!([
+            {"kind":"articulation","instrument":"part","name":"expression","at":{"bar":1,"step":1},"duration_quarters":1},
+            {"kind":"articulation","instrument":"part","name":"swell","at":{"bar":1,"step":5},"duration_quarters":1}
+        ]);
+        let plan = compile_document(&doc);
+        assert_eq!(
+            controller_values(&plan),
+            [(0, 96), (beat, 32), (2 * beat, 0)]
+        );
+
+        doc["sections"]["phrase"]["events"] = json!([
+            {"kind":"articulation","instrument":"part","name":"mute","at":{"bar":1,"step":1},"duration_quarters":1},
+            {"kind":"articulation","instrument":"part","name":"expression","at":{"bar":1,"step":13},"duration_quarters":1}
+        ]);
+        let plan = compile_document(&doc);
+        assert_eq!(key_switches(&plan), [(0, 26, true), (beat, 24, true)]);
+        assert_eq!(controller_values(&plan), [(3 * beat, 96), (4 * beat, 64)]);
+
+        doc["sections"]["phrase"]["events"] = json!([
+            {"kind":"articulation","instrument":"part","name":"open","at":{"bar":1,"step":1},"duration_quarters":"63/64"},
+            {"kind":"articulation","instrument":"part","name":"closed","at":{"bar":1,"offset_quarters":1},"duration_quarters":1}
+        ]);
+        let plan = compile_document(&doc);
+        let short_beat = u64::from(plan.ticks_per_beat);
+        let short_gap = short_beat * 63 / 64;
+        assert_eq!(
+            key_switches(&plan),
+            [
+                (0, 27, true),
+                (short_gap, 27, false),
+                (short_gap, 28, true),
+                (2 * short_beat, 28, false)
+            ],
+            "a short gap delays the next keyswitch until the preceding interval ends"
+        );
+        assert!(key_switches(&plan)[2].0 < short_beat);
+        assert!(plan.lanes.iter().any(|lane| {
+            lane.pattern.events.iter().any(
+                |event| matches!(event, MusicalEvent::Note { tick, .. } if *tick == short_beat),
+            )
+        }));
+
+        doc["sections"]["phrase"]["events"] = json!([
+            {"kind":"articulation","instrument":"part","name":"open","at":{"bar":1,"step":1},"duration_quarters":"31/32"},
+            {"kind":"articulation","instrument":"part","name":"closed","at":{"bar":1,"offset_quarters":1},"duration_quarters":1}
+        ]);
+        let plan = compile_document(&doc);
+        let second_beat = u64::from(plan.ticks_per_beat);
+        let one_thirty_second_gap = second_beat - second_beat / 32;
+        assert_eq!(
+            key_switches(&plan),
+            [
+                (0, 27, true),
+                (one_thirty_second_gap, 27, false),
+                (one_thirty_second_gap, 28, true),
+                (2 * second_beat, 28, false)
+            ],
+            "a gap of one thirty-second keeps the normal anticipation"
+        );
+
+        let mut forward_doc = doc.clone();
+        forward_doc["sections"]["phrase"]["events"] = json!([
+            {"kind":"articulation","instrument":"part","name":"open","at":{"bar":1,"offset_quarters":1},"duration_quarters":1},
+            {"kind":"articulation","instrument":"part","name":"mute","at":{"bar":1,"step":1},"duration_quarters":"63/64"}
+        ]);
+        let forward = compile_document(&forward_doc);
+        let forward_beat = u64::from(forward.ticks_per_beat);
+        let transition_tick = forward_beat * 63 / 64;
+        assert_eq!(
+            key_switches(&forward),
+            [
+                (0, 26, true),
+                (transition_tick, 24, true),
+                (transition_tick, 27, true),
+                (2 * forward_beat, 27, false)
+            ],
+            "a latch default is restored before the following selection at the same tick"
+        );
+
+        let mut reverse_doc = doc.clone();
+        reverse_doc["sections"]["phrase"]["events"] = json!([
+            {"kind":"articulation","instrument":"part","name":"mute","at":{"bar":1,"step":1},"duration_quarters":"63/64"},
+            {"kind":"articulation","instrument":"part","name":"open","at":{"bar":1,"offset_quarters":1},"duration_quarters":1}
+        ]);
+        let reverse = compile_document(&reverse_doc);
+        assert_eq!(
+            key_switches(&reverse),
+            key_switches(&forward),
+            "YAML event order does not decide the control order"
+        );
+    }
+
+    #[test]
+    fn performance_control_provenance_uses_the_declaration_not_the_lead_tick() {
+        let mut doc = document();
+        doc["form"] = json!([
+            {"section":"phrase","bars":1,"tonic":"C","scale":"ionian"},
+            {"section":"chorus","bars":1,"tonic":"C","scale":"ionian"},
+            {"section":"phrase","bars":1,"tonic":"C","scale":"ionian"}
+        ]);
+        doc["sections"]["chorus"] =
+            json!({"lines":{"main":{"instrument":"part","melody":"phrase"}}});
+        doc["instruments"]["part"] = json!({
+            "source": {
+                "vst3": {"plugin": "Synth"},
+                "articulations": {
+                    "open": {"keyswitch": 27, "mode": "hold"},
+                    "default": {"keyswitch": 24, "mode": "latch"}
+                }
+            }
+        });
+        doc["sections"]["phrase"]["events"] = json!([
+            {"kind":"articulation","instrument":"part","name":"open","at":{"bar":1,"step":1},"duration_quarters":4},
+            {"kind":"cc","instrument":"part","number":11,"value":96,"at":{"bar":1,"step":5}}
+        ]);
+        let plan = compile(&to_yaml(&doc).unwrap()).unwrap();
+        let starts: Vec<_> = plan
+            .performance_controls
+            .iter()
+            .filter(|control| {
+                matches!(
+                    control.kind,
+                    PerformanceControlKind::KeySwitch { down: true, .. }
+                )
+            })
+            .collect();
+        assert_eq!(starts.len(), 2);
+        for (index, control) in starts.iter().enumerate() {
+            assert_eq!(control.section, "phrase");
+            assert_eq!(control.occurrence, index + 1);
+            assert_eq!(control.bar, 1);
+            assert_eq!(control.step, "1");
+        }
+        assert!(starts[1].tick < plan.sections[2].start_tick);
+        let release = plan
+            .performance_controls
+            .iter()
+            .rev()
+            .find(|control| {
+                matches!(
+                    control.kind,
+                    PerformanceControlKind::KeySwitch { down: false, .. }
+                )
+            })
+            .expect("terminal hold release");
+        assert_eq!(release.occurrence, 2);
+        assert_eq!(release.tick, plan.length_ticks);
+
+        let cc = plan
+            .performance_controls
+            .iter()
+            .filter(|control| {
+                matches!(
+                    control.kind,
+                    PerformanceControlKind::ControlChange {
+                        number: 11,
+                        value: 96
+                    }
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(cc.len(), 2);
+        assert_eq!(cc[0].occurrence, 1);
+        assert_eq!(cc[1].occurrence, 2);
+        assert_eq!(
+            cc[1].tick,
+            plan.sections[2].start_tick + u64::from(plan.ticks_per_beat)
+        );
+
+        let phrase_occurrences = plan.lanes[0]
+            .sources
+            .iter()
+            .filter(|source| source.section == "phrase")
+            .map(|source| source.occurrence)
+            .collect::<Vec<_>>();
+        assert_eq!(phrase_occurrences.first(), Some(&1));
+        assert_eq!(phrase_occurrences.last(), Some(&2));
+        assert!(!phrase_occurrences.contains(&3));
+        assert!(
+            plan.lanes[0]
+                .sources
+                .iter()
+                .any(|source| { source.section == "chorus" && source.occurrence == 1 })
+        );
+
+        doc["form"] = json!([
+            {"section":"phrase","bars":1,"tonic":"C","scale":"ionian"},
+            {"section":"phrase","bars":1,"tonic":"C","scale":"ionian"}
+        ]);
+        doc["instruments"]["part"]["source"]["articulations"]["expression"] =
+            json!({"cc":{"number":11,"value":96,"reset":64}});
+        doc["sections"]["phrase"]["events"] = json!([
+            {"kind":"articulation","instrument":"part","name":"expression","at":{"bar":1,"step":1},"duration_quarters":4}
+        ]);
+        let repeated = compile(&to_yaml(&doc).unwrap()).unwrap();
+        assert_eq!(
+            repeated
+                .performance_controls
+                .iter()
+                .filter(|control| matches!(
+                    control.kind,
+                    PerformanceControlKind::ControlChange {
+                        number: 11,
+                        value: 96
+                    }
+                ))
+                .map(|control| control.occurrence)
+                .collect::<Vec<_>>(),
+            [1, 2]
+        );
+    }
+
+    #[test]
+    fn production_source_preserves_musical_lanes_and_original_locations() {
+        let mut doc = document();
+        doc["instruments"]["part"] = json!({"source":{"vst3":{"plugin":"Synth"}}});
+        let yaml = to_yaml(&doc).unwrap();
+        let plan = compile(&yaml).unwrap();
+        assert_eq!(plan.lanes[0].id, "part");
+        assert_eq!(plan.production_sources["part"].vst3.plugin, "Synth");
+        assert_eq!(
+            plan.instruments["part"]["source"]["vst3"]["plugin"],
+            "Synth"
+        );
+
+        doc["instruments"]["part"]["source"]["vst3"]["params"] = json!({"Mix": 1.5});
+        let error = compile(&to_yaml(&doc).unwrap()).unwrap_err();
+        assert_eq!(error.path, "instruments.part.source.vst3.params.Mix");
+        assert!(error.detail["line"].as_u64().unwrap() > 0);
+    }
+
+    #[test]
+    fn kits_resolve_members_and_reject_inconsistent_declarations() {
+        let mut doc = document();
+        doc["kits"] = json!({"drums":{"source":{"use":"drum-kit"}}});
+        assert_eq!(
+            compile(&to_yaml(&doc).unwrap()).unwrap_err().path,
+            "kits.drums.source.use"
+        );
+        doc["kits"] = json!({"drums":{"source":{"vst3":{"plugin":"drum-kit"}}}});
+        doc["instruments"]["kick"] = json!({"kit":"drums", "trigger_note_midi":36});
+        let plan = compile(&to_yaml(&doc).unwrap()).unwrap();
+        assert_eq!(plan.kit_members["kick"], "drums");
+        assert_eq!(plan.kits["drums"].source.vst3.plugin, "drum-kit");
+        assert!(plan.kits["drums"].effects.is_empty());
+
+        doc["sections"]["phrase"]["events"] =
+            json!([{"kind":"hit", "instrument":"kick", "at":{"bar":1,"step":1}}]);
+        assert!(compile(&to_yaml(&doc).unwrap()).is_ok());
+        doc["sections"]["phrase"]["part_gains"] = json!({"kick":-1});
+        assert_eq!(
+            compile(&to_yaml(&doc).unwrap()).unwrap_err().path,
+            "sections.phrase.part_gains.kick"
+        );
+        doc["sections"]["phrase"]
+            .as_object_mut()
+            .unwrap()
+            .remove("part_gains");
+        doc["sections"]["phrase"]["lines"]["main"]["instrument"] = json!("kick");
+        assert!(
+            compile(&to_yaml(&doc).unwrap())
+                .unwrap_err()
+                .message
+                .contains("trigger notes")
+        );
+        doc["sections"]["phrase"]["lines"]["main"]["instrument"] = json!("part");
+        for event in [
+            json!({"kind":"mod_wheel", "instrument":"kick", "value":0, "at":{"bar":1,"step":1}}),
+            json!({"kind":"sustain_pedal", "instrument":"kick", "down":true, "at":{"bar":1,"step":1}}),
+        ] {
+            doc["sections"]["phrase"]["events"] = json!([event]);
+            let error = compile(&to_yaml(&doc).unwrap()).unwrap_err();
+            assert_eq!(error.path, "sections.phrase.events[0]");
+            assert!(
+                error
+                    .message
+                    .contains("VST3 instruments support only note, articulation, and cc")
+            );
+        }
+        doc["sections"]["phrase"]["events"] =
+            json!([{"kind":"hit", "instrument":"kick", "at":{"bar":1,"step":1}}]);
+
+        doc["instruments"]["kick"]["kit"] = json!("missing");
+        assert_eq!(
+            compile(&to_yaml(&doc).unwrap()).unwrap_err().path,
+            "instruments.kick.kit"
+        );
+        doc["instruments"]["kick"]["kit"] = json!("drums");
+        doc["instruments"]["kick"]["effects"] = json!([]);
+        assert_eq!(
+            compile(&to_yaml(&doc).unwrap()).unwrap_err().path,
+            "instruments.kick.effects"
+        );
+    }
+
+    #[test]
+    fn unimplemented_extensions_are_rejected_with_their_source_position() {
+        let error = compile(EXTENSION_SCORE).expect_err("extensions are not implemented");
+        assert_eq!(error.path, "lyrics");
+        assert!(error.message.contains("lyrics"));
+        let detail = &error.detail;
+        assert_eq!(detail["kind"], "notImplemented");
+        assert_eq!(detail["path"], "lyrics");
+        assert!(detail["line"].as_u64().expect("line") > 0);
+        assert!(detail["column"].as_u64().expect("column") > 0);
+
+        let mut document = extension_document();
+        document.as_object_mut().unwrap().remove("kits");
+        assert_eq!(compile(&document.to_string()).unwrap_err().path, "lyrics");
+        document.as_object_mut().unwrap().remove("lyrics");
+        document.as_object_mut().unwrap().remove("mix");
+
+        let lead = document["instruments"]["lead"].as_object_mut().unwrap();
+        lead.remove("source");
+        document["instruments"]["lead"]
+            .as_object_mut()
+            .unwrap()
+            .remove("effects");
+        document["instruments"]["bass"]
+            .as_object_mut()
+            .unwrap()
+            .remove("kit");
+        document["instruments"]["take"]
+            .as_object_mut()
+            .unwrap()
+            .remove("audio");
+        document["sections"]["verse"]
+            .as_object_mut()
+            .unwrap()
+            .remove("audio_clips");
+        assert_eq!(
+            compile(&document.to_string()).unwrap_err().path,
+            "sections.verse.lines.main.lyrics"
+        );
+        document["sections"]["verse"]["lines"]["main"]
+            .as_object_mut()
+            .unwrap()
+            .remove("lyrics");
+        let events = document["sections"]["verse"]["events"]
+            .as_array_mut()
+            .unwrap();
+        events.remove(0);
+        events.remove(0);
+        for _ in 0..3 {
+            assert_eq!(
+                compile(&document.to_string()).unwrap_err().path,
+                "sections.verse.events[0]"
+            );
+            document["sections"]["verse"]["events"]
+                .as_array_mut()
+                .unwrap()
+                .remove(0);
+        }
+    }
+
+    #[test]
+    fn audio_instruments_cannot_be_played_or_combined_with_a_source() {
+        let mut doc = document();
+        doc["instruments"]["take"] = json!({"audio":true});
+        let plan = compile(&to_yaml(&doc).unwrap()).unwrap();
+        assert!(plan.audio_instruments.contains("take"));
+        doc["instruments"]["take"]["preset"] = json!("piano");
+        assert_eq!(
+            compile(&to_yaml(&doc).unwrap()).unwrap_err().path,
+            "instruments.take.preset"
+        );
+        doc["instruments"]["take"]
+            .as_object_mut()
+            .unwrap()
+            .remove("preset");
+        doc["sections"]["phrase"]["lines"]["main"]["instrument"] = json!("take");
+        assert!(
+            compile(&to_yaml(&doc).unwrap())
+                .unwrap_err()
+                .message
+                .contains("cannot receive performance events")
+        );
+    }
+
+    #[test]
+    fn audio_clips_resolve_in_each_section_occurrence_with_exact_positions() {
+        let mut doc = document();
+        doc["instruments"]["take"] = json!({"audio":true});
+        doc["sections"]["phrase"]["audio_clips"] = json!([{
+            "id":"rain", "instrument":"take", "file":"audio/rain.wav",
+            "at":{"bar":1,"offset_quarters":"1/7"}, "duration_seconds":3,
+            "fade_in_seconds":0.5
+        }]);
+        let occurrence = doc["form"][0].clone();
+        doc["form"].as_array_mut().unwrap().push(occurrence);
+        let plan = compile(&to_yaml(&doc).unwrap()).unwrap();
+        assert_eq!(plan.sections.len(), 2);
+        assert_eq!(plan.ticks_per_beat % 7, 0);
+        assert_eq!(plan.audio_clips["phrase"][0].id, "rain");
+        doc["sections"]["phrase"]["audio_clips"][0]["at"]["offset_quarters"] = json!("4");
+        assert_eq!(
+            compile(&to_yaml(&doc).unwrap()).unwrap_err().path,
+            "sections.phrase.audio_clips[0].at"
+        );
+        doc["sections"]["phrase"]["audio_clips"][0]["instrument"] = json!("part");
+        assert_eq!(
+            compile(&to_yaml(&doc).unwrap()).unwrap_err().path,
+            "sections.phrase.audio_clips[0].instrument"
+        );
+    }
+
+    #[test]
+    fn mix_routes_and_automation_resolve_against_the_score() {
+        let mut doc = document();
+        doc["instruments"]["part"]["source"] = json!({"vst3":{"plugin":"Synth"}});
+        doc["instruments"]["part"]["effects"] =
+            json!([{"id":"duck", "vst3":{"plugin":"compressor"}}]);
+        doc["instruments"]["kick"] = json!({"kit":"drums", "trigger_note_midi":36});
+        doc["kits"] = json!({"drums":{"source":{"vst3":{"plugin":"drum-kit"}}}});
+        doc["mix"] = json!({
+            "buses":{"rhythm":{"kind":"group"},"room":{"kind":"return"}},
+            "tracks":{"part":{"output":"rhythm", "sends":{"room":-18}},"drums":{"gain_db":-2}},
+            "sidechain":[{"from":"drums", "to":{"instrument":"part", "effect":"duck"}}],
+            "automation":[{"target":{"source":"part", "parameter":"Cutoff"},"section":"phrase", "points":[{"at":{"bar":1,"offset_quarters":"1/7"},"value":0.5}]}]
+        });
+        let plan = compile(&to_yaml(&doc).unwrap()).unwrap();
+        let mix = plan.mix.unwrap();
+        assert_eq!(mix.tracks.len(), 2);
+        assert_eq!(mix.buses.len(), 2);
+        assert_eq!(mix.sidechain.len(), 1);
+        assert_eq!(mix.automation.len(), 1);
+        assert_eq!(plan.ticks_per_beat % 7, 0);
+
+        doc["mix"]["tracks"]["part"]["output"] = json!("room");
+        assert_eq!(
+            compile(&to_yaml(&doc).unwrap()).unwrap_err().path,
+            "mix.tracks.part.output"
+        );
+        doc["mix"]["tracks"]["part"]["output"] = json!("rhythm");
+        doc["mix"]["sidechain"][0]["to"]["effect"] = json!("missing");
+        assert_eq!(
+            compile(&to_yaml(&doc).unwrap()).unwrap_err().path,
+            "mix.sidechain[0].to"
+        );
+        doc["mix"]["sidechain"][0]["to"]["effect"] = json!("duck");
+        doc["mix"]["automation"][0]["occurrence"] = json!(2);
+        assert_eq!(
+            compile(&to_yaml(&doc).unwrap()).unwrap_err().path,
+            "mix.automation[0].occurrence"
+        );
+    }
+
+    #[test]
+    fn sound_and_section_notes_are_display_metadata() {
+        let mut doc = document();
+        doc["instruments"]["part"] = json!({"external": true, "sound": "Round finger bass"});
+        doc["sections"]["phrase"]["notes"] = json!("The phrase introduces the bass.");
+        let with_metadata = compile(&doc.to_string()).expect("display metadata compiles");
+        doc["instruments"]["part"] = json!({"external": true});
+        doc["sections"]["phrase"]
+            .as_object_mut()
+            .expect("section")
+            .remove("notes");
+        let without_metadata = compile(&doc.to_string()).expect("Score compiles");
+
+        assert_eq!(
+            serde_json::to_value(&with_metadata.lanes[0].pattern.events).unwrap(),
+            serde_json::to_value(&without_metadata.lanes[0].pattern.events).unwrap()
+        );
+        assert_eq!(with_metadata.length_ticks, without_metadata.length_ticks);
+
+        doc["instruments"]["part"]["sound"] = json!(7);
+        assert_eq!(
+            compile(&doc.to_string()).unwrap_err().path,
+            "instruments.part.sound"
+        );
+        doc["instruments"]["part"]["sound"] = json!("bass");
+        doc["sections"]["phrase"]["notes"] = json!(["not", "text"]);
+        assert_eq!(
+            compile(&doc.to_string()).unwrap_err().path,
+            "sections.phrase.notes"
+        );
+    }
+
+    #[test]
+    fn unknown_instrument_keys_and_event_kinds_remain_errors() {
+        let mut doc = document();
+        doc["instruments"]["part"]["voices"] = json!(8);
+        assert_eq!(
+            compile(&doc.to_string()).unwrap_err().path,
+            "instruments.part.voices"
+        );
+
+        let mut doc = document();
+        doc["sections"]["phrase"]["events"] = json!([{"kind": "glissando", "instrument": "part", "value": 1, "at": {"bar": 1, "step": 1}}]);
+        assert_eq!(
+            compile(&doc.to_string()).unwrap_err().path,
+            "sections.phrase.events[0].kind"
+        );
+    }
+
+    #[test]
+    fn shared_extension_fixture_expands_to_the_same_music_without_extensions() {
+        let mut document = extension_document();
+        let object = document.as_object_mut().expect("fixture mapping");
+        for key in ["kits", "lyrics", "mix"] {
+            object.remove(key);
+        }
+        let instruments = object["instruments"].as_object_mut().unwrap();
+        instruments.remove("take");
+        for spec in instruments.values_mut() {
+            for key in ["source", "effects", "kit"] {
+                spec.as_object_mut().unwrap().remove(key);
+            }
+        }
+        let verse = object["sections"]["verse"].as_object_mut().unwrap();
+        for key in ["audio_clips", "events", "chords", "notes"] {
+            verse.remove(key);
+        }
+        verse["lines"]["main"]
+            .as_object_mut()
+            .unwrap()
+            .remove("lyrics");
+        let plan = compile(&document.to_string()).expect("extension-free fixture compiles");
+        let notes = plan
+            .lanes
+            .iter()
+            .filter(|lane| lane.id == "lead")
+            .flat_map(|lane| &lane.pattern.events)
+            .filter_map(|event| match event {
+                MusicalEvent::Note {
+                    tick,
+                    duration_ticks,
+                    note,
+                    velocity,
+                } => Some((*tick, *duration_ticks, *note, *velocity)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            notes,
+            [
+                (0, 480, 60, 100),
+                (480, 480, 64, 100),
+                (960, 480, 67, 100),
+                (1440, 480, 72, 100)
+            ]
+        );
+        assert_eq!(plan.length_ticks, 1920);
     }
 }

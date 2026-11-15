@@ -241,6 +241,10 @@ struct InstrumentControlEventSpec final {
     juce::String parameter;
     float endValue = 0.0f;
     std::uint64_t durationTicks = 0;
+    std::uint8_t note = 0;
+    bool latch = false;
+    std::uint8_t controllerNumber = 0;
+    std::uint8_t controllerValue = 0;
     bool operator==(const InstrumentControlEventSpec&) const = default;
 };
 
@@ -346,6 +350,26 @@ struct TimelineSnapshotSpec final {
     bool operator==(const TimelineSnapshotSpec&) const = default;
 };
 
+struct OfflineStemOutputSpec final {
+    juce::String trackId;
+    juce::String destination;
+    bool operator==(const OfflineStemOutputSpec&) const = default;
+};
+
+enum class OfflineCaptureKind { track, bus, master };
+
+struct OfflineCaptureTarget final {
+    OfflineCaptureKind kind = OfflineCaptureKind::master;
+    juce::String id;
+    bool operator==(const OfflineCaptureTarget&) const = default;
+};
+
+struct OfflineCaptureOutputSpec final {
+    OfflineCaptureTarget target;
+    juce::String destination;
+    bool operator==(const OfflineCaptureOutputSpec&) const = default;
+};
+
 struct OfflineRenderRequestSpec final {
     ExecutionGraph graph;
     juce::String destination;
@@ -356,6 +380,8 @@ struct OfflineRenderRequestSpec final {
     bool normalize = false;
     double tailSeconds = 0.0;
     bool includeEndEvents = false;
+    std::vector<OfflineStemOutputSpec> stems;
+    std::vector<OfflineCaptureOutputSpec> captures;
     bool operator==(const OfflineRenderRequestSpec&) const = default;
 };
 

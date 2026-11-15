@@ -1,7 +1,7 @@
 {
+  "requestId": 1,
   "command": {
-    "gainDb": -6.0,
-    "type": "previewMasterGainDb"
-  },
-  "requestId": 1
+    "type": "previewMasterGainDb",
+    "gainDb": -6.0
+  }
 }

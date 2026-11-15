@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import type { CreativeSession } from '@/model/generated';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { canonicalState, defaultSession } from '@/native/browser-defaults';
@@ -253,63 +253,78 @@ describe('EditorWorkspace', () => {
     );
   });
 
-  it('reports clips when confirming Track deletion and closes the selected Track Devices', async () => {
-    // Arrange
-    const session = defaultSession();
-    session.arrangement.tracks.push({
-      externalAudioSourceTrackIds: [],
-      panLaw: 'equalPower' as const,
-      id: 'track:instrument-delete',
-      name: 'Instrument Delete',
-      kind: 'instrument',
-      gainDb: 0,
-      pan: 0,
-      muted: false,
-      solo: false,
-      armed: false,
-      monitoring: 'off',
-      midiInput: {},
-      effects: [],
-    });
-    session.arrangement.midiClips.push({
-      instrumentControlEvents: [],
-      id: 'clip:midi-delete',
-      name: 'MIDI Delete',
-      trackId: 'track:instrument-delete',
-      startTick: 0,
-      durationTicks: 1_920,
-      notes: [],
-      events: [],
-      muted: false,
-      loopEnabled: false,
-    });
-    const api = createFakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
-    const afterDelete = structuredClone(session);
-    afterDelete.arrangement.tracks = afterDelete.arrangement.tracks.filter(
-      (track) => track.id !== 'track:instrument-delete',
-    );
-    afterDelete.arrangement.midiClips = [];
-    api.removeTrack = vi.fn().mockResolvedValue(api.mutationResult(afterDelete));
-    renderWorkspace(api, { session });
+  it.each(['delete', 'replace session'] as const)(
+    'discards Track deletion UI after %s',
+    async (change) => {
+      // Arrange
+      const session = defaultSession();
+      session.arrangement.tracks.push({
+        externalAudioSourceTrackIds: [],
+        panLaw: 'equalPower' as const,
+        id: 'track:instrument-delete',
+        name: 'Instrument Delete',
+        kind: 'instrument',
+        gainDb: 0,
+        pan: 0,
+        muted: false,
+        solo: false,
+        armed: false,
+        monitoring: 'off',
+        midiInput: {},
+        effects: [],
+      });
+      session.arrangement.midiClips.push({
+        instrumentControlEvents: [],
+        id: 'clip:midi-delete',
+        name: 'MIDI Delete',
+        trackId: 'track:instrument-delete',
+        startTick: 0,
+        durationTicks: 1_920,
+        notes: [],
+        events: [],
+        muted: false,
+        loopEnabled: false,
+      });
+      const api = createFakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
+      const afterDelete = structuredClone(session);
+      afterDelete.arrangement.tracks = afterDelete.arrangement.tracks.filter(
+        (track) => track.id !== 'track:instrument-delete',
+      );
+      afterDelete.arrangement.midiClips = [];
+      api.removeTrack = vi.fn().mockResolvedValue(api.mutationResult(afterDelete));
+      const { store } = renderWorkspace(api, { session });
 
-    // Act
-    fireEvent.click(screen.getByLabelText('Instrument Delete track menu'));
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Open Devices' }));
-    expect(screen.getByRole('region', { name: 'Arrange lower area' })).toHaveAttribute(
-      'data-view',
-      'devices',
-    );
-    fireEvent.click(screen.getByLabelText('Instrument Delete track menu'));
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
+      // Act
+      fireEvent.click(screen.getByLabelText('Instrument Delete track menu'));
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Open Devices' }));
+      expect(screen.getByRole('region', { name: 'Arrange lower area' })).toHaveAttribute(
+        'data-view',
+        'devices',
+      );
+      fireEvent.click(screen.getByLabelText('Instrument Delete track menu'));
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
 
-    // Assert
-    expect(screen.getByText(/This also removes 1 Clip from the Timeline/)).toBeInTheDocument();
-    expect(screen.getByText(/Source assets will be kept\./)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Delete Track' }));
-    await waitFor(() =>
-      expect(screen.queryByRole('region', { name: 'Arrange lower area' })).not.toBeInTheDocument(),
-    );
-  });
+      // Assert
+      expect(screen.getByText(/This also removes 1 Clip from the Timeline/)).toBeInTheDocument();
+      expect(screen.getByText(/Source assets will be kept\./)).toBeInTheDocument();
+      if (change === 'replace session') {
+        act(() => {
+          const next = structuredClone(session);
+          next.sessionId = 'replacement-session';
+          store.getState().project.acceptCanonical(api.mutationResult(next).canonical);
+        });
+        expect(screen.queryByRole('button', { name: 'Delete Track' })).not.toBeInTheDocument();
+        expect(api.removeTrack).not.toHaveBeenCalled();
+        return;
+      }
+      fireEvent.click(screen.getByRole('button', { name: 'Delete Track' }));
+      await waitFor(() =>
+        expect(
+          screen.queryByRole('region', { name: 'Arrange lower area' }),
+        ).not.toBeInTheDocument(),
+      );
+    },
+  );
 
   it('opens Devices from the track menu with available and disabled plugins', () => {
     // Arrange
@@ -420,16 +435,24 @@ describe('EditorWorkspace', () => {
 
     const lowerArea = screen.getByRole('region', { name: 'Arrange lower area' });
     fireEvent.click(screen.getByRole('button', { name: 'Restore lower area' }));
-    expect(lowerArea.querySelector('[hidden]')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('MIDI Editor')).toBeVisible();
 
     fireEvent.pointerDown(resizeHandle, { clientY: 500 });
     fireEvent.pointerMove(window, { clientY: -200 });
     fireEvent.pointerUp(window, { clientY: -200 });
     expect(lowerArea).toHaveStyle('--lower-height: 558px');
 
+    const midiEditor = screen.getByLabelText('MIDI Editor');
+    fireEvent.click(within(midiEditor).getByRole('button', { name: 'Draw' }));
     fireEvent.click(screen.getByRole('button', { name: 'Collapse lower area' }));
     expect(screen.getByRole('button', { name: 'Restore lower area' })).toBeInTheDocument();
-    expect(lowerArea.querySelector('[hidden]')).toBeInTheDocument();
+    expect(midiEditor).not.toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Restore lower area' }));
+    expect(midiEditor).toBeVisible();
+    expect(within(midiEditor).getByRole('button', { name: 'Draw' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
 
     fireEvent.click(screen.getByRole('button', { name: 'Maximize lower area' }));
     expect(screen.getByRole('button', { name: 'Restore lower area size' })).toBeInTheDocument();

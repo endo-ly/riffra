@@ -1,5 +1,8 @@
-use crate::api::output::{ProjectionDiagnostics, RenderResult, RenderStem, RenderStemsResult};
-use crate::api::params::{RenderOptions, RenderRange};
+use crate::api::output::{
+    ProjectionDiagnostics, RenderCapture, RenderCaptureResult, RenderResult, RenderStem,
+    RenderStemsResult,
+};
+use crate::api::params::{CaptureTarget, RenderOptions, RenderRange};
 use crate::asset;
 use crate::execution::{ExecutionGraph, project_graph, resolve};
 use crate::instrument::BuiltInInstrumentCatalog;
@@ -16,6 +19,7 @@ mod mastering;
 mod sections;
 mod worker;
 
+pub(crate) use history::resolve_levels_render;
 pub(crate) use history::{delete_render, export_render, list_renders, resolve_measurement_sources};
 pub(crate) use worker::RenderWorker;
 
@@ -24,7 +28,7 @@ pub(crate) struct OfflineRenderRequest {
     pub(crate) include_end_events: bool,
     pub(crate) tail_seconds: f64,
     pub(crate) graph: ExecutionGraph,
-    pub(crate) destination: PathBuf,
+    pub(crate) output: OfflineRenderTarget,
     pub(crate) start_tick: u64,
     pub(crate) end_tick: u64,
     pub(crate) sample_rate: u32,
@@ -32,9 +36,50 @@ pub(crate) struct OfflineRenderRequest {
     pub(crate) normalize: bool,
 }
 
+pub(crate) enum OfflineRenderTarget {
+    Mixdown(PathBuf),
+    Stems(Vec<(String, PathBuf)>),
+    Captures(Vec<(crate::api::params::CaptureTarget, PathBuf)>),
+}
+
+#[cfg(test)]
+impl OfflineRenderRequest {
+    fn destination(&self) -> &Path {
+        match &self.output {
+            OfflineRenderTarget::Mixdown(path) => path,
+            OfflineRenderTarget::Stems(_) => panic!("expected mixdown"),
+            OfflineRenderTarget::Captures(_) => panic!("expected mixdown"),
+        }
+    }
+
+    fn stem_outputs(&self) -> &[(String, PathBuf)] {
+        match &self.output {
+            OfflineRenderTarget::Stems(outputs) => outputs,
+            OfflineRenderTarget::Mixdown(_) => panic!("expected stems"),
+            OfflineRenderTarget::Captures(_) => panic!("expected stems"),
+        }
+    }
+}
+
 const MAX_RENDER_MINUTES: f64 = 30.0;
 const DEFAULT_OFFLINE_SAMPLE_RATE: u32 = 48_000;
 const DEFAULT_OFFLINE_BLOCK_SIZE: u32 = 512;
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RenderTimebase<'a> {
+    timebase: &'a riffra_core::ProjectTimebase,
+    start_tick: u64,
+    end_tick: u64,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RenderManifest<'a, T: serde::Serialize> {
+    #[serde(flatten)]
+    result: &'a T,
+    musical_range: RenderTimebase<'a>,
+}
 
 struct RenderPlan {
     tail_seconds: f64,
@@ -56,6 +101,11 @@ struct SharedRenderConditions {
     tail_seconds: f64,
     block_size: u32,
     sample_rate: u32,
+}
+
+struct RenderRequirements<'a> {
+    tracks: &'a [&'a str],
+    allow_silent: bool,
 }
 
 /// Immutable inputs captured for one timeline render job.
@@ -101,18 +151,42 @@ pub(crate) struct StemRenderContext<'a> {
 /// Stem metadata and cleanup guard awaiting atomic job completion.
 pub(crate) struct PendingRenderStems {
     pub(crate) result: RenderStemsResult,
-    pub(crate) output: PendingStemOutput,
+    pub(crate) output: PendingRenderOutput,
+}
+
+/// Capture metadata and cleanup guard awaiting atomic job completion.
+pub(crate) struct PendingRenderCapture {
+    pub(crate) result: RenderCaptureResult,
+    pub(crate) output: PendingRenderOutput,
+}
+
+/// Immutable inputs for a single multi-output capture job.
+pub(crate) struct CaptureRenderContext<'a> {
+    pub(crate) data_root: &'a Path,
+    pub(crate) built_in_instruments: &'a BuiltInInstrumentCatalog,
+    pub(crate) session: &'a CreativeSession,
+    pub(crate) project_id: &'a str,
+    pub(crate) source_sequence: u64,
+    pub(crate) created_at_ms: u64,
+    pub(crate) params: crate::api::params::RenderCaptureParams,
+}
+
+/// Timeline metadata and cleanup guard awaiting atomic job completion.
+pub(crate) struct PendingRenderTimeline {
+    pub(crate) result: RenderResult,
+    pub(crate) output: PendingRenderOutput,
 }
 
 /// Holds generated files and Asset registrations until the owning job completes.
-pub(crate) struct PendingStemOutput {
+pub(crate) struct PendingRenderOutput {
     data_root: PathBuf,
     directory: PathBuf,
     registrations: Vec<(AssetId, PathBuf)>,
+    external_files: Vec<PathBuf>,
     committed: bool,
 }
 
-impl PendingStemOutput {
+impl PendingRenderOutput {
     fn register(&mut self, id: AssetId, path: PathBuf) {
         self.registrations.push((id, path));
     }
@@ -123,10 +197,17 @@ impl PendingStemOutput {
     }
 }
 
-impl Drop for PendingStemOutput {
+impl Drop for PendingRenderOutput {
     fn drop(&mut self) {
         if self.committed {
             return;
+        }
+        for path in &self.external_files {
+            if let Err(error) = fs::remove_file(path)
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                tracing::error!(%error, path = %path.display(), "render export cleanup failed");
+            }
         }
         let mut registrations_removed = true;
         for (id, path) in &self.registrations {
@@ -134,7 +215,7 @@ impl Drop for PendingStemOutput {
                 asset::discard_output_registration(&self.data_root, id, &path.to_string_lossy())
             {
                 registrations_removed = false;
-                tracing::error!(%error, asset_id = %id, "render stem asset cleanup failed");
+                tracing::error!(%error, asset_id = %id, "render asset cleanup failed");
             }
         }
         if !registrations_removed {
@@ -143,35 +224,8 @@ impl Drop for PendingStemOutput {
         if let Err(error) = fs::remove_dir_all(&self.directory)
             && self.directory.exists()
         {
-            tracing::error!(%error, path = %self.directory.display(), "render stem output cleanup failed");
+            tracing::error!(%error, path = %self.directory.display(), "render output cleanup failed");
         }
-    }
-}
-
-struct PendingOutput<'a> {
-    data_root: &'a Path,
-    path: &'a Path,
-    asset_id: Option<AssetId>,
-    committed: bool,
-}
-
-impl Drop for PendingOutput<'_> {
-    fn drop(&mut self) {
-        if self.committed {
-            return;
-        }
-        if let Some(id) = &self.asset_id
-            && let Err(error) =
-                asset::discard_output_registration(self.data_root, id, &self.path.to_string_lossy())
-        {
-            tracing::error!(%error, "render output registration cleanup failed");
-            return;
-        }
-        let _ = fs::remove_file(self.path);
-        if let Some(directory) = self.path.parent() {
-            let _ = fs::remove_file(directory.join("render.json"));
-        }
-        remove_empty_render_directory(self.path);
     }
 }
 
@@ -179,19 +233,19 @@ pub(crate) fn render_timeline_with_project_cancellation(
     renderer: &RenderWorker,
     context: TimelineRenderContext<'_>,
     cancelled: &AtomicBool,
-) -> Result<RenderResult, String> {
-    render_timeline_with_renderer(
+) -> Result<PendingRenderTimeline, String> {
+    render_timeline_pending(
         context,
         |request| renderer.render_timeline_offline_cancellable(request, cancelled),
         Some(cancelled),
     )
 }
 
-fn render_timeline_with_renderer(
+fn render_timeline_pending(
     context: TimelineRenderContext<'_>,
     render: impl FnOnce(OfflineRenderRequest) -> Result<Vec<String>, String>,
     cancelled: Option<&AtomicBool>,
-) -> Result<RenderResult, String> {
+) -> Result<PendingRenderTimeline, String> {
     let TimelineRenderContext {
         data_root,
         built_in_instruments,
@@ -212,7 +266,6 @@ fn render_timeline_with_renderer(
         created_at_ms,
         &options,
         None,
-        None,
     )?;
     let directory = plan
         .output_path
@@ -221,10 +274,11 @@ fn render_timeline_with_renderer(
     fs::create_dir_all(directory.parent().expect("render folder has a parent"))
         .and_then(|()| fs::create_dir(directory))
         .map_err(|error| format!("render output folder could not be created: {error}"))?;
-    let mut pending = PendingOutput {
-        data_root,
-        path: &plan.output_path,
-        asset_id: None,
+    let mut pending = PendingRenderOutput {
+        data_root: data_root.to_owned(),
+        directory: directory.to_owned(),
+        registrations: Vec::new(),
+        external_files: Vec::new(),
         committed: false,
     };
 
@@ -232,7 +286,7 @@ fn render_timeline_with_renderer(
         include_end_events: matches!(options.range, RenderRange::EntireArrangement),
         tail_seconds: plan.tail_seconds,
         graph: plan.graph,
-        destination: plan.output_path.clone(),
+        output: OfflineRenderTarget::Mixdown(plan.output_path.clone()),
         start_tick: plan.start_tick,
         end_tick: plan.end_tick,
         sample_rate: plan.sample_rate,
@@ -258,6 +312,10 @@ fn render_timeline_with_renderer(
     let (_, rendered_frames) = riffra_host::read_wav_metadata(&plan.output_path)?;
     let section_plan = sections::SectionPlan::new(
         &session.arrangement.markers,
+        session
+            .score_source
+            .as_ref()
+            .map(|_| session.arrangement.regions.as_slice()),
         &session.arrangement.timebase,
         plan.start_tick,
         plan.end_tick,
@@ -283,8 +341,10 @@ fn render_timeline_with_renderer(
         RenderRange::EntireArrangement => "entireArrangement",
         RenderRange::LoopRange => "loopRange",
         RenderRange::TimeSelection { .. } => "timeSelection",
+        RenderRange::Section { .. } => "section",
     };
-    let provenance_parameters = serde_json::Map::from_iter([
+    let (section_name, section_occurrence) = section_identity(&options.range);
+    let mut provenance_parameters = serde_json::Map::from_iter([
         (
             "normalize".into(),
             serde_json::Value::Bool(options.normalize),
@@ -293,6 +353,15 @@ fn render_timeline_with_renderer(
         ("startTick".into(), serde_json::Value::from(plan.start_tick)),
         ("endTick".into(), serde_json::Value::from(plan.end_tick)),
     ]);
+    if let Some(name) = &section_name {
+        provenance_parameters.insert("sectionName".into(), serde_json::Value::from(name.clone()));
+    }
+    if let Some(occurrence) = section_occurrence {
+        provenance_parameters.insert(
+            "sectionOccurrence".into(),
+            serde_json::Value::from(occurrence),
+        );
+    }
     let rendered_asset_id = if plan.source_ids.is_empty() {
         // Piano-roll MIDI may be canonical session data without a backing Asset.
         // Register the WAV without inventing a false source relationship.
@@ -314,7 +383,7 @@ fn render_timeline_with_renderer(
             provenance_parameters,
         )?
     };
-    pending.asset_id = Some(rendered_asset_id.clone());
+    pending.register(rendered_asset_id.clone(), plan.output_path.clone());
 
     let mut result = RenderResult {
         measurements,
@@ -329,13 +398,24 @@ fn render_timeline_with_renderer(
         frames,
         duration_ms: range_end_ms.saturating_sub(range_start_ms),
         clip_count: plan.clip_count,
+        range_kind: range_kind.to_owned(),
         range_start_ms,
         range_end_ms,
         normalized: options.normalize && session.settings.mixdown.mastering.is_none(),
         track_id: options.track_id,
+        section_name,
+        section_occurrence,
         state: "completed".into(),
         message: "Timeline rendered through the same Arrangement Graph used for playback.".into(),
     };
+    if cancelled.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire)) {
+        return Err("timeline render was cancelled".into());
+    }
+    if let Some(output_path) = output_path {
+        history::copy_files_no_clobber(&[(plan.output_path.clone(), output_path.clone())])?;
+        result.exported_path = Some(output_path.to_string_lossy().into_owned());
+        pending.external_files.push(output_path);
+    }
     let manifest = plan
         .output_path
         .parent()
@@ -343,25 +423,21 @@ fn render_timeline_with_renderer(
         .join("render.json");
     fs::write(
         manifest,
-        serde_json::to_vec_pretty(&result)
-            .map_err(|error| format!("Render manifest could not be encoded: {error}"))?,
+        serde_json::to_vec_pretty(&RenderManifest {
+            result: &result,
+            musical_range: RenderTimebase {
+                timebase: &session.arrangement.timebase,
+                start_tick: plan.start_tick,
+                end_tick: plan.end_tick,
+            },
+        })
+        .map_err(|error| format!("Render manifest could not be encoded: {error}"))?,
     )
     .map_err(|error| format!("Render manifest could not be saved: {error}"))?;
-    if cancelled.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire)) {
-        return Err("timeline render was cancelled".into());
-    }
-    pending.committed = true;
-    if let Some(output_path) = output_path {
-        history::copy_files_no_clobber(&[(plan.output_path.clone(), output_path.clone())])?;
-        result.exported_path = Some(output_path.to_string_lossy().into_owned());
-    }
-    Ok(result)
-}
-
-fn remove_empty_render_directory(output_path: &Path) {
-    if let Some(directory) = output_path.parent() {
-        let _ = fs::remove_dir(directory);
-    }
+    Ok(PendingRenderTimeline {
+        result,
+        output: pending,
+    })
 }
 
 /// Resolves a stem selection before the Host creates a background job.
@@ -500,7 +576,7 @@ pub(crate) fn render_stems_with_cancellation(
     cancelled: &AtomicBool,
     progress: impl FnMut(f32, String),
 ) -> Result<PendingRenderStems, String> {
-    render_stems_with_renderer(
+    render_stems_pending(
         context,
         |request| renderer.render_timeline_offline_cancellable(request, cancelled),
         Some(cancelled),
@@ -508,7 +584,335 @@ pub(crate) fn render_stems_with_cancellation(
     )
 }
 
-fn render_stems_with_renderer(
+fn stem_filename(index: usize, name: &str) -> String {
+    output_filename("stem", index, name)
+}
+
+fn output_filename(prefix: &str, index: usize, name: &str) -> String {
+    // Bound UTF-16 length as well as UTF-8 length so the component stays portable.
+    let mut safe = String::new();
+    for ch in name.chars() {
+        let ch = if ch.is_control()
+            || matches!(ch, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')
+        {
+            '_'
+        } else {
+            ch
+        };
+        if safe.len() + ch.len_utf8() > 120 {
+            break;
+        }
+        safe.push(ch);
+    }
+    let safe = safe.trim_matches(|ch: char| ch == '.' || ch.is_whitespace());
+    let safe = if safe.is_empty() { "Track" } else { safe };
+    format!("{prefix}-{index:03}-{safe}.wav")
+}
+
+/// Validates the canonical identity of every requested observation point.
+fn validate_capture_targets(
+    session: &CreativeSession,
+    targets: &[CaptureTarget],
+) -> Result<(), String> {
+    if !(1..=16).contains(&targets.len()) {
+        return Err("capture requires 1 to 16 targets".into());
+    }
+    let mut seen = BTreeSet::new();
+    for target in targets {
+        if !seen.insert(target) {
+            return Err("capture targets must be unique".into());
+        }
+        match target {
+            CaptureTarget::Track { id }
+                if !id.trim().is_empty()
+                    && session
+                        .arrangement
+                        .tracks
+                        .iter()
+                        .any(|track| track.id == *id) => {}
+            CaptureTarget::Bus { id }
+                if !id.trim().is_empty()
+                    && session
+                        .arrangement
+                        .mixer
+                        .buses
+                        .iter()
+                        .any(|bus| bus.id == *id) => {}
+            CaptureTarget::Master => {}
+            _ => return Err("capture target is empty or does not exist".into()),
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_capture_params(
+    session: &CreativeSession,
+    params: &crate::api::params::RenderCaptureParams,
+) -> Result<(), String> {
+    validate_capture_targets(session, &params.targets)?;
+    shared_render_conditions(session, &params.range)?;
+    if let Some(directory) = &params.output_directory {
+        history::validate_output_directory(directory)?;
+    }
+    Ok(())
+}
+
+/// Renders selected outputs with one immutable graph and a shared cleanup guard.
+pub(crate) fn render_capture_with_cancellation(
+    renderer: &RenderWorker,
+    context: CaptureRenderContext<'_>,
+    cancelled: &AtomicBool,
+    progress: impl FnMut(f32, String),
+) -> Result<PendingRenderCapture, String> {
+    render_capture_pending(
+        context,
+        |request| renderer.render_timeline_offline_cancellable(request, cancelled),
+        Some(cancelled),
+        progress,
+    )
+}
+
+fn render_capture_pending(
+    context: CaptureRenderContext<'_>,
+    render: impl FnOnce(OfflineRenderRequest) -> Result<Vec<String>, String>,
+    cancelled: Option<&AtomicBool>,
+    mut progress: impl FnMut(f32, String),
+) -> Result<PendingRenderCapture, String> {
+    let CaptureRenderContext {
+        data_root,
+        built_in_instruments,
+        session,
+        project_id,
+        source_sequence,
+        created_at_ms,
+        params,
+    } = context;
+    validate_capture_targets(session, &params.targets)?;
+    let external = params
+        .output_directory
+        .as_deref()
+        .map(history::validate_output_directory)
+        .transpose()?;
+    let conditions = shared_render_conditions(session, &params.range)?;
+    let required_tracks = params
+        .targets
+        .iter()
+        .filter_map(|target| match target {
+            CaptureTarget::Track { id } => Some(id.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let options = RenderOptions {
+        range: params.range.clone(),
+        normalize: false,
+        track_id: None,
+        output_path: None,
+    };
+    let plan = build_render_plan_with_required(
+        data_root,
+        built_in_instruments,
+        session,
+        created_at_ms,
+        &options,
+        Some(&conditions),
+        RenderRequirements {
+            tracks: &required_tracks,
+            allow_silent: true,
+        },
+    )?;
+    let directory = plan
+        .output_path
+        .parent()
+        .expect("render output has a parent")
+        .to_path_buf();
+    fs::create_dir_all(directory.parent().expect("render directory has a parent"))
+        .and_then(|()| fs::create_dir(&directory))
+        .map_err(|error| format!("render output folder could not be created: {error}"))?;
+    let mut pending = PendingRenderOutput {
+        data_root: data_root.to_owned(),
+        directory: directory.clone(),
+        registrations: Vec::new(),
+        external_files: Vec::new(),
+        committed: false,
+    };
+    let outputs = params
+        .targets
+        .iter()
+        .enumerate()
+        .map(|(index, target)| {
+            let (name, bus_kind) = match target {
+                CaptureTarget::Track { id } => (
+                    session
+                        .arrangement
+                        .tracks
+                        .iter()
+                        .find(|track| track.id == *id)
+                        .expect("target validated")
+                        .name
+                        .clone(),
+                    None,
+                ),
+                CaptureTarget::Bus { id } => {
+                    let bus = session
+                        .arrangement
+                        .mixer
+                        .buses
+                        .iter()
+                        .find(|bus| bus.id == *id)
+                        .expect("target validated");
+                    (bus.name.clone(), Some(bus.kind))
+                }
+                CaptureTarget::Master => ("Master".to_owned(), None),
+            };
+            let path = directory.join(output_filename("capture", index + 1, &name));
+            (target.clone(), name, bus_kind, path)
+        })
+        .collect::<Vec<_>>();
+    let request_outputs = outputs
+        .iter()
+        .map(|(target, _, _, path)| (target.clone(), path.clone()))
+        .collect();
+    progress(0.0, format!("rendering {} captures", outputs.len()));
+    let automation_warnings = render(OfflineRenderRequest {
+        include_end_events: matches!(params.range, RenderRange::EntireArrangement),
+        tail_seconds: plan.tail_seconds,
+        graph: plan.graph,
+        output: OfflineRenderTarget::Captures(request_outputs),
+        start_tick: plan.start_tick,
+        end_tick: plan.end_tick,
+        sample_rate: plan.sample_rate,
+        block_size: plan.block_size,
+        normalize: false,
+    })?;
+    let mut captures = Vec::with_capacity(outputs.len());
+    let mut frames = None;
+    for (index, (target, name, bus_kind, path)) in outputs.into_iter().enumerate() {
+        if cancelled.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire)) {
+            return Err("capture render was cancelled".into());
+        }
+        let (rate, count) = riffra_host::read_wav_metadata(&path)?;
+        if rate != conditions.sample_rate || frames.is_some_and(|expected| expected != count) {
+            return Err(
+                "capture WAVs do not share the requested sample rate and frame count".into(),
+            );
+        }
+        frames = Some(count);
+        let section_plan = sections::SectionPlan::new(
+            &session.arrangement.markers,
+            session
+                .score_source
+                .as_ref()
+                .map(|_| session.arrangement.regions.as_slice()),
+            &session.arrangement.timebase,
+            conditions.start_tick,
+            conditions.end_tick,
+            count as f64 / f64::from(rate),
+        );
+        progress(
+            index as f32 / params.targets.len() as f32,
+            format!("measuring capture {}: {name}", index + 1),
+        );
+        let (measurements, mut warnings) =
+            mastering::measure_output(&path, rate, None, None, &section_plan, cancelled)?;
+        warnings.extend(plan.dependency_warnings.iter().cloned());
+        warnings.extend(automation_warnings.iter().cloned());
+        let parameters = serde_json::Map::from_iter([
+            (
+                "target".into(),
+                serde_json::to_value(&target).map_err(|error| error.to_string())?,
+            ),
+            ("startTick".into(), conditions.start_tick.into()),
+            ("endTick".into(), conditions.end_tick.into()),
+        ]);
+        let asset_id = if plan.source_ids.is_empty() {
+            asset::register(
+                data_root,
+                riffra_core::AssetKind::Audio,
+                &format!("{name} capture"),
+                &path.to_string_lossy(),
+                None,
+            )?
+        } else {
+            asset::register_derived(
+                data_root,
+                &plan.source_ids,
+                riffra_core::AssetKind::Audio,
+                &format!("{name} capture"),
+                &path.to_string_lossy(),
+                riffra_core::ProvenanceOperation::Rendered,
+                parameters,
+            )?
+        };
+        pending.register(asset_id.clone(), path.clone());
+        captures.push(RenderCapture {
+            target,
+            name,
+            bus_kind,
+            asset_id,
+            path: path.to_string_lossy().into_owned(),
+            measurements,
+            warnings,
+        });
+    }
+    if cancelled.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire)) {
+        return Err("capture render was cancelled".into());
+    }
+    let mut result = RenderCaptureResult {
+        render_id: directory
+            .file_name()
+            .expect("managed render has an id")
+            .to_string_lossy()
+            .into_owned(),
+        project_id: project_id.to_owned(),
+        created_at_ms,
+        source_sequence,
+        sample_rate: conditions.sample_rate,
+        start_tick: conditions.start_tick,
+        end_tick: conditions.end_tick,
+        frames: frames.ok_or("capture produced no output")?,
+        captures,
+        exported_directory: None,
+    };
+    if let Some(external) = external {
+        let copies = result
+            .captures
+            .iter()
+            .map(|capture| {
+                let source = PathBuf::from(&capture.path);
+                let name = source
+                    .file_name()
+                    .ok_or("capture path has no filename")?
+                    .to_os_string();
+                Ok((source, external.join(name)))
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        history::copy_files_no_clobber(&copies)?;
+        pending.external_files = copies
+            .into_iter()
+            .map(|(_, destination)| destination)
+            .collect();
+        result.exported_directory = Some(external.to_string_lossy().into_owned());
+    }
+    fs::write(
+        directory.join("render.json"),
+        serde_json::to_vec_pretty(&RenderManifest {
+            result: &result,
+            musical_range: RenderTimebase {
+                timebase: &session.arrangement.timebase,
+                start_tick: conditions.start_tick,
+                end_tick: conditions.end_tick,
+            },
+        })
+        .map_err(|error| format!("render manifest could not be encoded: {error}"))?,
+    )
+    .map_err(|error| format!("render manifest could not be saved: {error}"))?;
+    Ok(PendingRenderCapture {
+        result,
+        output: pending,
+    })
+}
+
+fn render_stems_pending(
     context: StemRenderContext<'_>,
     mut render: impl FnMut(OfflineRenderRequest) -> Result<Vec<String>, String>,
     cancelled: Option<&AtomicBool>,
@@ -529,6 +933,11 @@ fn render_stems_with_renderer(
         .as_deref()
         .map(history::validate_output_directory)
         .transpose()?;
+    let required_tracks = selection
+        .track_ids
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
     let conditions = shared_render_conditions(session, &range)?;
     if cancelled.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire)) {
         return Err("Timeline render was cancelled.".into());
@@ -553,10 +962,11 @@ fn render_stems_with_renderer(
     fs::create_dir_all(directory.parent().expect("render directory has a parent"))
         .and_then(|()| fs::create_dir(&directory))
         .map_err(|error| format!("render output folder could not be created: {error}"))?;
-    let mut pending = PendingStemOutput {
+    let mut pending = PendingRenderOutput {
         data_root: data_root.to_owned(),
         directory: directory.clone(),
         registrations: Vec::with_capacity(selected_tracks.len()),
+        external_files: Vec::new(),
         committed: false,
     };
     let mut completed = Vec::with_capacity(selected_tracks.len());
@@ -565,63 +975,70 @@ fn render_stems_with_renderer(
 
     let total = selected_tracks.len();
     progress(0.0, format!("starting {total} stems"));
-    for (index, track) in selected_tracks.into_iter().enumerate() {
-        progress(
-            index as f32 / total as f32,
-            format!(
-                "rendering stem {}/{}: {} ({})",
-                index + 1,
-                total,
-                track.name,
-                track.id
-            ),
-        );
-        if cancelled.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire)) {
-            return Err("Timeline render was cancelled.".into());
+    let mut render_session = session.clone();
+    for track in &mut render_session.arrangement.tracks {
+        track.solo = false;
+        if selection.track_ids.contains(&track.id) {
+            track.muted = false;
         }
-        let options = RenderOptions {
-            range: range.clone(),
-            normalize: false,
-            track_id: Some(track.id.clone()),
-            output_path: None,
-        };
-        let output_path = directory.join(format!("stem-{:03}.wav", index + 1));
-        let plan = build_render_plan(
-            data_root,
-            built_in_instruments,
-            session,
-            created_at_ms,
-            &options,
-            Some(&conditions),
-            Some(output_path),
-        )
-        .map_err(|e| format!("stem {} ({}) preparation failed: {e}", track.name, track.id))?;
-        if cancelled.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire)) {
-            return Err("Timeline render was cancelled.".into());
-        }
-        let mut automation_warnings = render(OfflineRenderRequest {
-            include_end_events: matches!(&range, RenderRange::EntireArrangement),
-            tail_seconds: plan.tail_seconds,
-            graph: plan.graph,
-            destination: plan.output_path.clone(),
-            start_tick: plan.start_tick,
-            end_tick: plan.end_tick,
-            sample_rate: plan.sample_rate,
-            block_size: plan.block_size,
-            normalize: false,
+    }
+    for bus in &mut render_session.arrangement.mixer.buses {
+        bus.solo = false;
+    }
+    let options = RenderOptions {
+        range: range.clone(),
+        normalize: false,
+        track_id: None,
+        output_path: None,
+    };
+    let plan = build_render_plan_with_required(
+        data_root,
+        built_in_instruments,
+        &render_session,
+        created_at_ms,
+        &options,
+        Some(&conditions),
+        RenderRequirements {
+            tracks: &required_tracks,
+            allow_silent: false,
+        },
+    )?;
+    let outputs = selected_tracks
+        .iter()
+        .enumerate()
+        .map(|(index, track)| {
+            (
+                track.id.clone(),
+                directory.join(stem_filename(index + 1, &track.name)),
+            )
         })
-        .map_err(|e| format!("stem {} ({}) rendering failed: {e}", track.name, track.id))?;
+        .collect::<Vec<_>>();
+    progress(0.0, format!("rendering {total} stems"));
+    let automation_warnings = render(OfflineRenderRequest {
+        include_end_events: matches!(&range, RenderRange::EntireArrangement),
+        tail_seconds: plan.tail_seconds,
+        graph: plan.graph,
+        output: OfflineRenderTarget::Stems(outputs.clone()),
+        start_tick: plan.start_tick,
+        end_tick: plan.end_tick,
+        sample_rate: plan.sample_rate,
+        block_size: plan.block_size,
+        normalize: false,
+    })
+    .map_err(|e| format!("stem rendering failed: {e}"))?;
+    for (index, track) in selected_tracks.into_iter().enumerate() {
         if cancelled.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire)) {
             return Err("Timeline render was cancelled.".into());
         }
-        if !plan.output_path.is_file() {
+        let output_path = &outputs[index].1;
+        if !output_path.is_file() {
             return Err(format!(
                 "stem {} ({}) rendering completed without wav output",
                 track.name, track.id
             ));
         }
-        let (sample_rate, stem_frames) = riffra_host::read_wav_metadata(&plan.output_path)
-            .map_err(|e| {
+        let (sample_rate, stem_frames) =
+            riffra_host::read_wav_metadata(output_path).map_err(|e| {
                 format!(
                     "stem {} ({}) wav validation failed: {e}",
                     track.name, track.id
@@ -643,6 +1060,10 @@ fn render_stems_with_renderer(
         let section_plan = section_plan.get_or_insert_with(|| {
             sections::SectionPlan::new(
                 &session.arrangement.markers,
+                session
+                    .score_source
+                    .as_ref()
+                    .map(|_| session.arrangement.regions.as_slice()),
                 &session.arrangement.timebase,
                 conditions.start_tick,
                 conditions.end_tick,
@@ -660,7 +1081,7 @@ fn render_stems_with_renderer(
             ),
         );
         let (measurements, mut warnings) = mastering::measure_output(
-            &plan.output_path,
+            output_path,
             sample_rate,
             None,
             None,
@@ -669,11 +1090,11 @@ fn render_stems_with_renderer(
         )
         .map_err(|e| format!("stem {} ({}) measurement failed: {e}", track.name, track.id))?;
         warnings.extend(plan.dependency_warnings.iter().cloned());
-        warnings.append(&mut automation_warnings);
+        warnings.extend(automation_warnings.iter().cloned());
         completed.push((
             track,
-            plan.source_ids,
-            plan.output_path,
+            stem_source_ids(&render_session, &track.id),
+            output_path.clone(),
             measurements,
             warnings,
         ));
@@ -690,13 +1111,15 @@ fn render_stems_with_renderer(
         RenderRange::EntireArrangement => "entireArrangement",
         RenderRange::LoopRange => "loopRange",
         RenderRange::TimeSelection { .. } => "timeSelection",
+        RenderRange::Section { .. } => "section",
     };
+    let (section_name, section_occurrence) = section_identity(&range);
     let mut stems = Vec::with_capacity(completed.len());
     for (track, source_ids, output_path, measurements, warnings) in completed {
         if cancelled.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire)) {
             return Err("Timeline render was cancelled.".into());
         }
-        let parameters = serde_json::Map::from_iter([
+        let mut parameters = serde_json::Map::from_iter([
             ("rangeKind".into(), serde_json::Value::from(kind)),
             (
                 "startTick".into(),
@@ -708,6 +1131,15 @@ fn render_stems_with_renderer(
             ),
             ("trackId".into(), serde_json::Value::from(track.id.clone())),
         ]);
+        if let Some(name) = &section_name {
+            parameters.insert("sectionName".into(), serde_json::Value::from(name.clone()));
+        }
+        if let Some(occurrence) = section_occurrence {
+            parameters.insert(
+                "sectionOccurrence".into(),
+                serde_json::Value::from(occurrence),
+            );
+        }
         let asset_id = if source_ids.is_empty() {
             asset::register(
                 data_root,
@@ -748,21 +1180,17 @@ fn render_stems_with_renderer(
         sample_rate: conditions.sample_rate,
         start_tick: conditions.start_tick,
         end_tick: conditions.end_tick,
+        range_kind: kind.to_owned(),
         frames,
         stems,
         skipped_track_ids: selection.skipped_track_ids,
+        section_name,
+        section_occurrence,
     };
-    fs::write(
-        directory.join("render.json"),
-        serde_json::to_vec_pretty(&result)
-            .map_err(|error| format!("Render manifest could not be encoded: {error}"))?,
-    )
-    .map_err(|error| format!("Render manifest could not be saved: {error}"))?;
     if cancelled.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire)) {
         return Err("Timeline render was cancelled.".into());
     }
     if let Some(output_directory) = output_directory {
-        pending.commit();
         let copies = result
             .stems
             .iter()
@@ -778,12 +1206,60 @@ fn render_stems_with_renderer(
             })
             .collect::<Result<Vec<_>, String>>()?;
         history::copy_files_no_clobber(&copies)?;
+        pending.external_files = copies
+            .into_iter()
+            .map(|(_, destination)| destination)
+            .collect();
         result.exported_directory = Some(output_directory.to_string_lossy().into_owned());
     }
+    fs::write(
+        directory.join("render.json"),
+        serde_json::to_vec_pretty(&RenderManifest {
+            result: &result,
+            musical_range: RenderTimebase {
+                timebase: &session.arrangement.timebase,
+                start_tick: conditions.start_tick,
+                end_tick: conditions.end_tick,
+            },
+        })
+        .map_err(|error| format!("Render manifest could not be encoded: {error}"))?,
+    )
+    .map_err(|error| format!("Render manifest could not be saved: {error}"))?;
     Ok(PendingRenderStems {
         result,
         output: pending,
     })
+}
+
+fn stem_source_ids(session: &CreativeSession, track_id: &str) -> Vec<AssetId> {
+    let mut candidate = session.clone();
+    for track in &mut candidate.arrangement.tracks {
+        track.solo = track.id == track_id;
+        if track.solo {
+            track.muted = false;
+        }
+    }
+    for bus in &mut candidate.arrangement.mixer.buses {
+        bus.solo = false;
+    }
+    let tracks = processing_track_ids_with_required(&candidate, &[track_id]);
+    candidate
+        .arrangement
+        .audio_clips
+        .iter()
+        .filter(|clip| !clip.muted && tracks.contains(clip.track_id.as_str()))
+        .map(|clip| clip.asset_id.clone())
+        .chain(
+            candidate
+                .arrangement
+                .midi_clips
+                .iter()
+                .filter(|clip| !clip.muted && tracks.contains(clip.track_id.as_str()))
+                .filter_map(|clip| clip.asset_id.clone()),
+        )
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 fn build_render_plan(
@@ -793,8 +1269,34 @@ fn build_render_plan(
     created_at_ms: u64,
     options: &RenderOptions,
     shared_conditions: Option<&SharedRenderConditions>,
-    output_path: Option<PathBuf>,
 ) -> Result<RenderPlan, String> {
+    build_render_plan_with_required(
+        data_root,
+        built_in_instruments,
+        session,
+        created_at_ms,
+        options,
+        shared_conditions,
+        RenderRequirements {
+            tracks: &[],
+            allow_silent: false,
+        },
+    )
+}
+
+fn build_render_plan_with_required(
+    data_root: &Path,
+    built_in_instruments: &BuiltInInstrumentCatalog,
+    session: &CreativeSession,
+    created_at_ms: u64,
+    options: &RenderOptions,
+    shared_conditions: Option<&SharedRenderConditions>,
+    requirements: RenderRequirements<'_>,
+) -> Result<RenderPlan, String> {
+    let RenderRequirements {
+        tracks: required_tracks,
+        allow_silent,
+    } = requirements;
     let mut render_session = session.clone();
     if let Some(track_id) = options.track_id.as_deref() {
         if !render_session
@@ -837,7 +1339,7 @@ fn build_render_plan(
         None => shared_render_conditions(&render_session, &options.range)?,
     };
 
-    let processing_tracks = processing_track_ids(&render_session);
+    let processing_tracks = processing_track_ids_with_required(&render_session, required_tracks);
     let clip_audible = |track_id: &str, muted: bool| !muted && processing_tracks.contains(track_id);
     let audio_clips = render_session
         .arrangement
@@ -852,7 +1354,11 @@ fn build_render_plan(
         .filter(|clip| clip_audible(&clip.track_id, clip.muted))
         .collect::<Vec<_>>();
     let clip_count = audio_clips.len() + midi_clips.len();
-    if clip_count == 0 {
+    if clip_count == 0
+        && (!allow_silent
+            || (render_session.arrangement.audio_clips.is_empty()
+                && render_session.arrangement.midi_clips.is_empty()))
+    {
         return Err("Timeline has no audible clips to render.".into());
     }
 
@@ -872,7 +1378,8 @@ fn build_render_plan(
     }
     let resources = resolve(data_root, built_in_instruments, &render_session)?;
     let (graph, diagnostics) = project_graph(&render_session, &resources);
-    let dependency_warnings = validate_render_dependencies(&render_session, &diagnostics)?;
+    let dependency_warnings =
+        validate_render_dependencies(&render_session, &diagnostics, required_tracks)?;
 
     Ok(RenderPlan {
         tail_seconds: conditions.tail_seconds,
@@ -884,19 +1391,24 @@ fn build_render_plan(
         sample_rate: conditions.sample_rate,
         clip_count,
         source_ids,
-        output_path: output_path.unwrap_or_else(|| {
-            data_root
-                .join("renders")
-                .join(format!(
-                    "render-{created_at_ms}-{}",
-                    riffra_control::new_instance_id()
-                ))
-                .join("timeline.wav")
-        }),
+        output_path: data_root
+            .join("renders")
+            .join(format!(
+                "render-{created_at_ms}-{}",
+                riffra_control::new_instance_id()
+            ))
+            .join("timeline.wav"),
     })
 }
 
 fn processing_track_ids(session: &CreativeSession) -> BTreeSet<&str> {
+    processing_track_ids_with_required(session, &[])
+}
+
+fn processing_track_ids_with_required<'a>(
+    session: &'a CreativeSession,
+    forced_tracks: &[&str],
+) -> BTreeSet<&'a str> {
     let arrangement = &session.arrangement;
     let has_solo = arrangement.tracks.iter().any(|track| track.solo)
         || arrangement.mixer.buses.iter().any(|bus| bus.solo);
@@ -904,6 +1416,9 @@ fn processing_track_ids(session: &CreativeSession) -> BTreeSet<&str> {
         .tracks
         .iter()
         .filter(|track| {
+            if forced_tracks.contains(&track.id.as_str()) {
+                return true;
+            }
             if track.muted {
                 return false;
             }
@@ -1011,12 +1526,48 @@ fn resolve_range(session: &CreativeSession, range: &RenderRange) -> Result<(u64,
             }
             Ok((start_tick, end_tick))
         }
+        RenderRange::Section { name, occurrence } => {
+            if session.score_source.is_none() {
+                return Err("Section render requires a Project created from a Score.".into());
+            }
+            if name.is_empty() {
+                return Err("Section name must not be empty.".into());
+            }
+            if *occurrence == 0 {
+                return Err("Section occurrence must be positive.".into());
+            }
+            let index = usize::try_from(*occurrence - 1)
+                .map_err(|_| "Section occurrence is out of range.".to_string())?;
+            let region = session
+                .arrangement
+                .regions
+                .iter()
+                .filter(|region| region.name == *name)
+                .nth(index)
+                .ok_or_else(|| {
+                    format!("Score section '{name}' occurrence {occurrence} does not exist.")
+                })?;
+            if region.end_tick.0 <= region.start_tick.0 {
+                return Err(format!(
+                    "Score section '{name}' occurrence {occurrence} has no positive duration."
+                ));
+            }
+            Ok((region.start_tick.0, region.end_tick.0))
+        }
+    }
+}
+
+fn section_identity(range: &RenderRange) -> (Option<String>, Option<u32>) {
+    match range {
+        RenderRange::Section { name, occurrence } => (Some(name.clone()), Some(*occurrence)),
+        _ => (None, None),
     }
 }
 
 fn validate_render_dependencies(
     session: &CreativeSession,
     diagnostics: &ProjectionDiagnostics,
+    required_tracks: &[&str],
 ) -> Result<Vec<String>, String> {
     if !diagnostics.unavailable_clip_ids.is_empty() {
         return Err(format!(
@@ -1025,7 +1576,7 @@ fn validate_render_dependencies(
         ));
     }
 
-    let audible_tracks = processing_track_ids(session);
+    let audible_tracks = processing_track_ids_with_required(session, required_tracks);
     let midi_source_tracks = session
         .arrangement
         .midi_clips
@@ -1078,6 +1629,16 @@ pub(super) mod tests {
         AudioClip, EffectDevice, MidiClip, TimelineLoopRange, TimelineTick, Track, TrackInstrument,
     };
 
+    #[test]
+    fn stem_names_are_portable_and_distinct() {
+        assert_eq!(stem_filename(1, "歌 🎵"), "stem-001-歌 🎵.wav");
+        assert_eq!(stem_filename(2, " a:/\\?*. "), "stem-002-a_____.wav");
+        assert_eq!(stem_filename(3, " ... "), "stem-003-Track.wav");
+        // The numeric prefix also prevents Windows device names from being special.
+        assert_eq!(stem_filename(4, "CON"), "stem-004-CON.wav");
+        assert_eq!(stem_filename(5, "CON"), "stem-005-CON.wav");
+        assert!(stem_filename(6, &"歌".repeat(100)).len() <= 137);
+    }
     pub(super) fn session_with_clips() -> CreativeSession {
         let mut session = CreativeSession::new(1);
         session
@@ -1122,6 +1683,16 @@ pub(super) mod tests {
         }
     }
 
+    fn render_timeline_with_renderer(
+        context: TimelineRenderContext<'_>,
+        render: impl FnOnce(OfflineRenderRequest) -> Result<Vec<String>, String>,
+        cancelled: Option<&AtomicBool>,
+    ) -> Result<RenderResult, String> {
+        let mut pending = render_timeline_pending(context, render, cancelled)?;
+        pending.output.commit();
+        Ok(pending.result)
+    }
+
     pub(super) fn wav(sample_rate: u32, frames: u32) -> Vec<u8> {
         let data_len = frames * 4;
         let mut bytes = Vec::new();
@@ -1154,6 +1725,205 @@ pub(super) mod tests {
     }
 
     #[test]
+    fn capture_preserves_mute_and_solo_and_registers_one_aligned_render() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-capture-{}",
+            riffra_control::new_instance_id()
+        ));
+        let mut session = session_with_clips();
+        session.arrangement.tracks[0].muted = true;
+        session.arrangement.tracks[0].solo = true;
+        assert!(validate_capture_targets(&session, &[]).is_err());
+        assert!(
+            validate_capture_targets(&session, &[CaptureTarget::Master, CaptureTarget::Master])
+                .is_err()
+        );
+        assert!(
+            validate_capture_targets(
+                &session,
+                &[CaptureTarget::Bus {
+                    id: "missing".into()
+                }]
+            )
+            .is_err()
+        );
+        let params = crate::api::params::RenderCaptureParams {
+            targets: vec![
+                CaptureTarget::Track {
+                    id: "instrument".into(),
+                },
+                CaptureTarget::Master,
+            ],
+            range: RenderRange::EntireArrangement,
+            output_directory: None,
+        };
+        let mut calls = 0;
+        let pending = render_capture_pending(
+            CaptureRenderContext {
+                data_root: &root,
+                built_in_instruments: empty_catalog(),
+                session: &session,
+                project_id: "project",
+                source_sequence: 42,
+                created_at_ms: 1,
+                params,
+            },
+            |request| {
+                calls += 1;
+                assert!(request.graph.tracks[0].muted);
+                assert!(request.graph.tracks[0].solo);
+                let OfflineRenderTarget::Captures(outputs) = request.output else {
+                    panic!("expected captures")
+                };
+                assert_eq!(outputs.len(), 2);
+                for (_, path) in outputs {
+                    fs::write(path, wav(request.sample_rate, 128)).unwrap();
+                }
+                Ok(Vec::new())
+            },
+            None,
+            |_, _| {},
+        )
+        .unwrap();
+        assert_eq!(calls, 1);
+        assert_eq!(pending.result.source_sequence, 42);
+        assert_eq!(pending.result.captures.len(), 2);
+        assert_eq!(pending.result.frames, 128);
+        let entries = history::list_renders(&root).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].kind, crate::api::output::RenderKind::Capture);
+        assert_eq!(entries[0].file_count, 2);
+        let exported = root.join("exports");
+        fs::create_dir_all(&exported).unwrap();
+        assert_eq!(
+            history::export_render(
+                &root,
+                &pending.result.render_id,
+                &exported.to_string_lossy()
+            )
+            .unwrap()
+            .file_count,
+            2
+        );
+        let ids = pending
+            .result
+            .captures
+            .iter()
+            .map(|capture| capture.asset_id.clone())
+            .collect::<Vec<_>>();
+        let render_id = pending.result.render_id.clone();
+        let directory = pending.output.directory.clone();
+        let jobs = crate::jobs::JobRegistry::default();
+        let (job_id, _) = jobs.start(crate::api::output::JobKind::RenderCapture);
+        let value = crate::jobs::serialize_result(&pending.result).unwrap();
+        let mut output = pending.output;
+        assert!(jobs.complete_if_not_cancelled(&job_id, value, "done", move || output.commit()));
+        let crate::api::output::BackgroundJobStatus::RenderCapture {
+            result: Some(result),
+            ..
+        } = crate::jobs::to_background_status(jobs.status(&job_id).unwrap()).unwrap()
+        else {
+            panic!("capture job must return the typed result");
+        };
+        assert_eq!(result.render_id, render_id);
+        assert!(directory.is_dir());
+        assert!(
+            ids.iter()
+                .all(|id| asset::load(&root, id).unwrap().is_some())
+        );
+        let store = riffra_host::ProjectStore::new(&root);
+        let project = store.initialize().unwrap();
+        let deleted = history::delete_render(
+            &root,
+            &store,
+            &project.project_id,
+            &project.loaded.session,
+            std::iter::empty(),
+            &jobs,
+            &render_id,
+        )
+        .unwrap();
+        assert_eq!(deleted.deleted_file_count, 3);
+        assert!(!directory.exists());
+        assert!(
+            ids.iter()
+                .all(|id| asset::load(&root, id).unwrap().is_none())
+        );
+        let failure = render_capture_pending(
+            CaptureRenderContext {
+                data_root: &root,
+                built_in_instruments: empty_catalog(),
+                session: &session,
+                project_id: "project",
+                source_sequence: 42,
+                created_at_ms: 2,
+                params: crate::api::params::RenderCaptureParams {
+                    targets: vec![
+                        CaptureTarget::Track {
+                            id: "instrument".into(),
+                        },
+                        CaptureTarget::Master,
+                    ],
+                    range: RenderRange::EntireArrangement,
+                    output_directory: None,
+                },
+            },
+            |request| {
+                let OfflineRenderTarget::Captures(outputs) = request.output else {
+                    panic!("expected captures")
+                };
+                for (index, (_, path)) in outputs.into_iter().enumerate() {
+                    fs::write(
+                        path,
+                        wav(request.sample_rate, if index == 0 { 128 } else { 64 }),
+                    )
+                    .unwrap();
+                }
+                Ok(Vec::new())
+            },
+            None,
+            |_, _| {},
+        );
+        assert!(failure.is_err());
+        assert_eq!(fs::read_dir(root.join("renders")).unwrap().count(), 0);
+        assert!(
+            crate::library::search(&root, "Instrument capture")
+                .unwrap()
+                .is_empty()
+        );
+        let silent = render_capture_pending(
+            CaptureRenderContext {
+                data_root: &root,
+                built_in_instruments: empty_catalog(),
+                session: &session,
+                project_id: "project",
+                source_sequence: 42,
+                created_at_ms: 3,
+                params: crate::api::params::RenderCaptureParams {
+                    targets: vec![CaptureTarget::Master],
+                    range: RenderRange::EntireArrangement,
+                    output_directory: None,
+                },
+            },
+            |request| {
+                assert!(request.graph.tracks[0].muted);
+                let OfflineRenderTarget::Captures(outputs) = request.output else {
+                    panic!("expected captures")
+                };
+                fs::write(&outputs[0].1, wav(request.sample_rate, 128)).unwrap();
+                Ok(Vec::new())
+            },
+            None,
+            |_, _| {},
+        )
+        .unwrap();
+        assert_eq!(silent.result.captures.len(), 1);
+        drop(silent);
+        assert_eq!(fs::read_dir(root.join("renders")).unwrap().count(), 0);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn render_omits_missing_effects_but_rejects_missing_sources_and_instruments() {
         // Arrange
         let mut session = session_with_clips();
@@ -1181,7 +1951,7 @@ pub(super) mod tests {
         };
 
         // Act
-        let effect_result = validate_render_dependencies(&session, &effect_diagnostics);
+        let effect_result = validate_render_dependencies(&session, &effect_diagnostics, &[]);
 
         // Assert
         assert_eq!(
@@ -1205,7 +1975,7 @@ pub(super) mod tests {
 
         // Assert
         assert!(
-            validate_render_dependencies(&session, &instrument_diagnostics)
+            validate_render_dependencies(&session, &instrument_diagnostics, &[])
                 .unwrap_err()
                 .contains("Track Instruments: instrument:missing")
         );
@@ -1215,7 +1985,8 @@ pub(super) mod tests {
                 &ProjectionDiagnostics {
                     unavailable_clip_ids: vec!["clip:missing-source".into()],
                     ..ProjectionDiagnostics::default()
-                }
+                },
+                &[],
             )
             .unwrap_err()
             .contains("clip:missing-source")
@@ -1250,13 +2021,13 @@ pub(super) mod tests {
                 RenderOptions::default(),
             ),
             |request| {
-                fs::write(&request.destination, wav(request.sample_rate, 128)).unwrap();
+                fs::write(request.destination(), wav(request.sample_rate, 128)).unwrap();
                 Ok(Vec::new())
             },
             None,
         )
         .unwrap();
-        let mut pending_stems = render_stems_with_renderer(
+        let mut pending_stems = render_stems_pending(
             StemRenderContext {
                 data_root: &root,
                 built_in_instruments: empty_catalog(),
@@ -1269,7 +2040,9 @@ pub(super) mod tests {
                 output_directory: None,
             },
             |request| {
-                fs::write(&request.destination, wav(request.sample_rate, 128)).unwrap();
+                for (_, path) in request.stem_outputs() {
+                    fs::write(path, wav(request.sample_rate, 128)).unwrap();
+                }
                 Ok(Vec::new())
             },
             None,
@@ -1342,7 +2115,6 @@ pub(super) mod tests {
                 ..RenderOptions::default()
             },
             None,
-            None,
         )
         .unwrap();
 
@@ -1371,6 +2143,69 @@ pub(super) mod tests {
             None,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn stem_for_a_track_under_a_muted_group_bus_keeps_its_clips() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-muted-bus-stem-{}",
+            riffra_control::new_instance_id()
+        ));
+        let source = register_source(&root, "target", 48_000, 48_000);
+        let mut session = CreativeSession::new(1);
+        let mut track = Track::audio("target".into(), "Target".into());
+        track.output_bus_id = Some("bus:group".into());
+        session.arrangement.tracks.push(track);
+        session.arrangement.audio_clips.push(AudioClip::full_source(
+            "clip:target".into(),
+            "Target".into(),
+            "target".into(),
+            source,
+            TimelineTick(0),
+            48_000,
+            48_000,
+        ));
+        session.arrangement.mixer.buses.push(riffra_core::MixBus {
+            id: "bus:group".into(),
+            name: "Group".into(),
+            kind: riffra_core::MixBusKind::Group,
+            gain_db: 0.0,
+            pan: 0.0,
+            pan_law: riffra_core::PanLaw::UnityCenterStereo,
+            muted: true,
+            solo: false,
+            effects: Vec::new(),
+        });
+        let selection = select_stem_tracks(&session, true, &[]).unwrap();
+
+        let mut pending = render_stems_pending(
+            StemRenderContext {
+                data_root: &root,
+                built_in_instruments: empty_catalog(),
+                session: &session,
+                project_id: "project-1",
+                source_sequence: 1,
+                created_at_ms: 1,
+                selection,
+                range: RenderRange::EntireArrangement,
+                output_directory: None,
+            },
+            |request| {
+                assert_eq!(request.graph.tracks[0].audio_clips.len(), 1);
+                assert!(request.graph.mixer.buses[0].muted);
+                for (_, path) in request.stem_outputs() {
+                    fs::write(path, wav(request.sample_rate, 128)).unwrap();
+                }
+                Ok(Vec::new())
+            },
+            None,
+            |_, _| {},
+        )
+        .unwrap();
+
+        assert_eq!(pending.result.stems.len(), 1);
+        pending.output.commit();
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -1464,8 +2299,9 @@ pub(super) mod tests {
         )
         .unwrap();
         let mut requests = Vec::new();
+        let mut calls = 0;
         let mut stages = Vec::new();
-        let pending = render_stems_with_renderer(
+        let pending = render_stems_pending(
             StemRenderContext {
                 data_root: &root,
                 built_in_instruments: empty_catalog(),
@@ -1478,24 +2314,26 @@ pub(super) mod tests {
                 output_directory: None,
             },
             |request| {
-                let audible_tracks = request
-                    .graph
-                    .tracks
-                    .iter()
-                    .filter(|track| track.solo && !track.muted)
-                    .map(|track| track.id.as_str())
-                    .collect::<Vec<_>>();
-                assert_eq!(audible_tracks.len(), 1);
-                requests.push((
-                    audible_tracks[0].to_owned(),
-                    request.start_tick,
-                    request.end_tick,
-                    request.sample_rate,
-                    request.block_size,
-                    request.tail_seconds,
-                    request.normalize,
-                ));
-                fs::write(&request.destination, wav(request.sample_rate, 128)).unwrap();
+                calls += 1;
+                assert!(
+                    request
+                        .graph
+                        .tracks
+                        .iter()
+                        .all(|track| !track.solo && !track.muted)
+                );
+                for (track_id, path) in request.stem_outputs() {
+                    requests.push((
+                        track_id.clone(),
+                        request.start_tick,
+                        request.end_tick,
+                        request.sample_rate,
+                        request.block_size,
+                        request.tail_seconds,
+                        request.normalize,
+                    ));
+                    fs::write(path, wav(request.sample_rate, 128)).unwrap();
+                }
                 Ok(Vec::new())
             },
             None,
@@ -1503,6 +2341,7 @@ pub(super) mod tests {
         )
         .unwrap();
 
+        assert_eq!(calls, 1);
         assert_eq!(
             requests
                 .iter()
@@ -1522,8 +2361,7 @@ pub(super) mod tests {
         assert!(
             stages
                 .iter()
-                .any(|(_, message)| message.contains("rendering stem 2/3")
-                    && message.contains("solo"))
+                .any(|(_, message)| message == "rendering 3 stems")
         );
         assert!(stages.iter().any(
             |(_, message)| message.contains("measuring stem 3/3") && message.contains("other")
@@ -1554,7 +2392,15 @@ pub(super) mod tests {
             &fs::read(pending.output.directory.join("render.json")).unwrap(),
         )
         .unwrap();
-        assert_eq!(manifest, serde_json::to_value(&pending.result).unwrap());
+        assert_eq!(
+            manifest["musicalRange"]["startTick"],
+            pending.result.start_tick
+        );
+        assert_eq!(manifest["musicalRange"]["endTick"], pending.result.end_tick);
+        assert_eq!(
+            manifest["musicalRange"]["timebase"],
+            serde_json::to_value(&session.arrangement.timebase).unwrap()
+        );
         let render_id = Path::new(&pending.result.directory)
             .file_name()
             .unwrap()
@@ -1805,8 +2651,20 @@ pub(super) mod tests {
                 tick: TimelineTick(960),
                 value: -12.0,
             });
-        let mut static_session = session.clone();
-        static_session.arrangement.automation_lanes.clear();
+        let mut reference_session = session.clone();
+        reference_session.arrangement.tracks[1].output_bus_id = None;
+        reference_session.arrangement.mixer.buses.clear();
+        reference_session.arrangement.mixer.sends.clear();
+        reference_session.arrangement.mixer.master_effects.clear();
+        reference_session
+            .arrangement
+            .automation_lanes
+            .retain(|lane| {
+                matches!(&lane.target,
+                AutomationTarget::TrackMix { track_id, .. } if track_id == "audio")
+                    || matches!(&lane.target,
+                    AutomationTarget::DeviceParameter { device_id, .. } if device_id == "fx:audio")
+            });
 
         let selection = select_stem_tracks(&session, true, &[]).unwrap();
         let worker = RenderWorker::new(executable.into());
@@ -1854,12 +2712,14 @@ pub(super) mod tests {
             frame_counts.insert(metadata.frame_count);
         }
         assert_eq!(frame_counts, BTreeSet::from([pending.result.frames]));
-        let mix = render_timeline_with_project_cancellation(
+        let mut mix = render_timeline_with_project_cancellation(
             &worker,
             timeline_render_context(&root, &catalog, &session, 2, RenderOptions::default()),
             &AtomicBool::new(false),
         )
         .unwrap();
+        mix.output.commit();
+        let mix = mix.result;
         let samples = |path: &Path| {
             let bytes = fs::read(path).unwrap();
             let wav = riffra_host::parse_wav(&bytes).unwrap();
@@ -1886,15 +2746,15 @@ pub(super) mod tests {
             })
             .fold(0.0_f64, f64::max);
         assert!(
-            maximum_error < 0.0001,
-            "linear mixer stems differ from the complete mix by {maximum_error}"
+            maximum_error > 0.001,
+            "shared mixer processing unexpectedly appears in stems"
         );
-        let baseline = render_timeline_with_project_cancellation(
+        let mut baseline = render_timeline_with_project_cancellation(
             &worker,
             timeline_render_context(
                 &root,
                 &catalog,
-                &static_session,
+                &reference_session,
                 3,
                 RenderOptions {
                     track_id: Some("audio".into()),
@@ -1904,6 +2764,8 @@ pub(super) mod tests {
             &AtomicBool::new(false),
         )
         .unwrap();
+        baseline.output.commit();
+        let baseline = baseline.result;
         let baseline_samples = samples(Path::new(&baseline.path));
         let audio_stem = pending
             .result
@@ -1919,18 +2781,12 @@ pub(super) mod tests {
                 / ((end - start) * 2) as f64)
                 .sqrt()
         };
-        let gain = 10.0_f64.powf(-6.0 / 20.0);
-        let send = 10.0_f64.powf(-12.0 / 20.0);
-        let expected_ratio = 1.125 * gain.powi(3) * (1.0 + send) / (1.0 + gain);
-        for (start, end, ratio) in [
-            (5_000, 6_000, expected_ratio),
-            (25_000, 26_000, expected_ratio * gain),
-        ] {
+        for (start, end) in [(5_000, 6_000), (25_000, 26_000)] {
             let actual_ratio =
                 rms(&stem_samples[audio_stem], start, end) / rms(&baseline_samples, start, end);
             assert!(
-                (actual_ratio - ratio).abs() < 0.0001,
-                "automated stem ratio {actual_ratio} differs from {ratio}"
+                (actual_ratio - 1.0).abs() < 0.0001,
+                "track stem differs from isolated track output by {actual_ratio}"
             );
         }
         let manifest: serde_json::Value = serde_json::from_slice(
@@ -1942,6 +2798,73 @@ pub(super) mod tests {
             serde_json::to_value(&pending.result.stems[0].measurements).unwrap()
         );
         assert!(mix.measurements.sample_peak_dbfs.is_some());
+        let capture = render_capture_with_cancellation(
+            &worker,
+            CaptureRenderContext {
+                data_root: &root,
+                built_in_instruments: &catalog,
+                session: &session,
+                project_id: "native-capture-test",
+                source_sequence: 2,
+                created_at_ms: 4,
+                params: crate::api::params::RenderCaptureParams {
+                    targets: vec![
+                        CaptureTarget::Track { id: "audio".into() },
+                        CaptureTarget::Bus {
+                            id: "bus:group".into(),
+                        },
+                        CaptureTarget::Bus {
+                            id: "bus:return".into(),
+                        },
+                        CaptureTarget::Master,
+                    ],
+                    range: RenderRange::EntireArrangement,
+                    output_directory: None,
+                },
+            },
+            &AtomicBool::new(false),
+            |_, _| {},
+        )
+        .unwrap();
+        assert_eq!(capture.result.frames, mix.frames);
+        assert_eq!(capture.result.captures.len(), 4);
+        for output in &capture.result.captures {
+            let rendered = samples(Path::new(&output.path));
+            assert_eq!(rendered.len(), mix_samples.len());
+            assert!(rendered.iter().any(|sample| sample.abs() > 0.001));
+        }
+        let levels = crate::analysis::levels::prepare(
+            &root,
+            crate::api::params::AnalysisLevelsParams {
+                render_id: capture.result.render_id.clone(),
+                grid: "1/16".parse().unwrap(),
+                start: None,
+                end: None,
+                source: None,
+            },
+        )
+        .unwrap();
+        let levels =
+            crate::analysis::levels::measure(levels, &AtomicBool::new(false), |_, _| {}).unwrap();
+        assert_eq!(levels.sources.len(), 4);
+        assert!(
+            levels
+                .sources
+                .iter()
+                .all(|source| source.windows.len() == 16)
+        );
+        assert!(
+            levels.sources.iter().all(
+                |source| source.windows[0].start_tick == 0 && source.windows[0].end_tick == 240
+            )
+        );
+        assert!(
+            levels
+                .sources
+                .iter()
+                .all(|source| source.windows[0].peak_dbfs.is_some())
+        );
+        drop(capture);
         pending.output.commit();
         fs::remove_dir_all(root).unwrap();
     }
@@ -1963,7 +2886,7 @@ pub(super) mod tests {
         session.arrangement.midi_clips.push(second_clip);
         let selection = select_stem_tracks(&session, true, &[]).unwrap();
         let mut calls = 0;
-        let result = render_stems_with_renderer(
+        let result = render_stems_pending(
             StemRenderContext {
                 data_root: &root,
                 built_in_instruments: empty_catalog(),
@@ -1977,8 +2900,10 @@ pub(super) mod tests {
             },
             |request| {
                 calls += 1;
-                let frames = if calls == 1 { 64 } else { 32 };
-                fs::write(&request.destination, wav(request.sample_rate, frames)).unwrap();
+                for (index, (_, path)) in request.stem_outputs().iter().enumerate() {
+                    let frames = if index == 0 { 64 } else { 32 };
+                    fs::write(path, wav(request.sample_rate, frames)).unwrap();
+                }
                 Ok(Vec::new())
             },
             None,
@@ -1993,7 +2918,7 @@ pub(super) mod tests {
                 && error.contains("wav validation failed")
                 && error.contains("shared frame count")
         );
-        assert_eq!(calls, 2);
+        assert_eq!(calls, 1);
         assert_eq!(fs::read_dir(root.join("renders")).unwrap().count(), 0);
         assert!(
             crate::library::search(&root, "Instrument stem")
@@ -2040,7 +2965,7 @@ pub(super) mod tests {
         let selection =
             select_stem_tracks(&session, false, &["first".into(), "second".into()]).unwrap();
 
-        let result = render_stems_with_renderer(
+        let result = render_stems_pending(
             StemRenderContext {
                 data_root: &root,
                 built_in_instruments: empty_catalog(),
@@ -2053,12 +2978,9 @@ pub(super) mod tests {
                 output_directory: None,
             },
             |request| {
-                fs::write(&request.destination, wav(request.sample_rate, 128)).unwrap();
-                if request
-                    .graph
-                    .tracks
-                    .iter()
-                    .any(|track| track.id == "second" && track.solo)
+                for (_, path) in request.stem_outputs() {
+                    fs::write(path, wav(request.sample_rate, 128)).unwrap();
+                }
                 {
                     asset::discard_output_registration(
                         &root,
@@ -2126,10 +3048,11 @@ pub(super) mod tests {
             serde_json::Map::new(),
         )
         .unwrap();
-        let pending = PendingStemOutput {
+        let pending = PendingRenderOutput {
             data_root: root.clone(),
             directory: directory.clone(),
             registrations: vec![(output_asset.clone(), output_path.clone())],
+            external_files: Vec::new(),
             committed: false,
         };
 
@@ -2211,6 +3134,129 @@ pub(super) mod tests {
     }
 
     #[test]
+    fn section_range_resolves_score_regions_by_occurrence() {
+        let mut session = session_with_clips();
+        let range = RenderRange::Section {
+            name: "walk".into(),
+            occurrence: 2,
+        };
+        assert!(resolve_range(&session, &range).is_err());
+        session.score_source = Some(riffra_core::ScoreSource {
+            file_name: "score.yaml".into(),
+            yaml: String::new(),
+            path: None,
+            bindings: Default::default(),
+            production_inputs: Default::default(),
+        });
+        session.arrangement.regions = vec![
+            riffra_core::TimelineRegion {
+                id: "walk-1".into(),
+                name: "walk".into(),
+                start_tick: TimelineTick(0),
+                end_tick: TimelineTick(960),
+            },
+            riffra_core::TimelineRegion {
+                id: "walk-2".into(),
+                name: "walk".into(),
+                start_tick: TimelineTick(960),
+                end_tick: TimelineTick(1_920),
+            },
+        ];
+
+        assert_eq!(resolve_range(&session, &range).unwrap(), (960, 1_920));
+        assert!(
+            resolve_range(
+                &session,
+                &RenderRange::Section {
+                    name: "walk".into(),
+                    occurrence: 3,
+                }
+            )
+            .is_err()
+        );
+        assert!(
+            resolve_range(
+                &session,
+                &RenderRange::Section {
+                    name: "missing".into(),
+                    occurrence: 1,
+                }
+            )
+            .is_err()
+        );
+        assert!(
+            resolve_range(
+                &session,
+                &RenderRange::Section {
+                    name: "walk".into(),
+                    occurrence: 0,
+                }
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn section_render_records_its_range_and_score_occurrence() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-section-render-{}",
+            riffra_control::new_instance_id()
+        ));
+        let mut session = session_with_clips();
+        session.score_source = Some(riffra_core::ScoreSource {
+            file_name: "score.yaml".into(),
+            yaml: String::new(),
+            path: None,
+            bindings: Default::default(),
+            production_inputs: Default::default(),
+        });
+        session.arrangement.regions = vec![riffra_core::TimelineRegion {
+            id: "score:region:walk".into(),
+            name: "walk".into(),
+            start_tick: TimelineTick(0),
+            end_tick: TimelineTick(960),
+        }];
+        let options = RenderOptions {
+            range: RenderRange::Section {
+                name: "walk".into(),
+                occurrence: 1,
+            },
+            ..RenderOptions::default()
+        };
+
+        let result = render_timeline_with_renderer(
+            timeline_render_context(&root, empty_catalog(), &session, 51, options),
+            |request| {
+                assert_eq!((request.start_tick, request.end_tick), (0, 960));
+                fs::write(request.destination(), wav(request.sample_rate, 128)).unwrap();
+                Ok(Vec::new())
+            },
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(result.range_kind, "section");
+        assert_eq!(result.section_name.as_deref(), Some("walk"));
+        assert_eq!(result.section_occurrence, Some(1));
+        let render_id = Path::new(&result.path)
+            .parent()
+            .unwrap()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let history = super::history::list_renders(&root).unwrap();
+        let entry = history
+            .iter()
+            .find(|entry| entry.render_id == render_id)
+            .expect("section render is listed");
+        assert_eq!(entry.range_kind.as_deref(), Some("section"));
+        assert_eq!(entry.section_name.as_deref(), Some("walk"));
+        assert_eq!(entry.section_occurrence, Some(1));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn midi_session_data_does_not_invent_an_asset_source() {
         let root = std::env::temp_dir().join("riffra-midi-render-plan");
         let catalog = empty_catalog();
@@ -2220,7 +3266,6 @@ pub(super) mod tests {
             &session_with_clips(),
             1,
             &RenderOptions::default(),
-            None,
             None,
         )
         .unwrap();
@@ -2270,7 +3315,6 @@ pub(super) mod tests {
                 ..Default::default()
             },
             None,
-            None,
         )
         .unwrap();
 
@@ -2308,7 +3352,7 @@ pub(super) mod tests {
                     RenderOptions::default(),
                 ),
                 |request| {
-                    fs::write(request.destination, b"incomplete wav").unwrap();
+                    fs::write(request.destination(), b"incomplete wav").unwrap();
                     if failure == 0 {
                         return Err("render failed".into());
                     }
@@ -2340,7 +3384,7 @@ pub(super) mod tests {
                 RenderOptions::default(),
             ),
             |request| {
-                fs::write(&request.destination, wav(request.sample_rate, 128)).unwrap();
+                fs::write(request.destination(), wav(request.sample_rate, 128)).unwrap();
                 Ok(Vec::new())
             },
             None,
@@ -2372,7 +3416,7 @@ pub(super) mod tests {
                 },
             ),
             |request| {
-                fs::write(&request.destination, wav(request.sample_rate, 128)).unwrap();
+                fs::write(request.destination(), wav(request.sample_rate, 128)).unwrap();
                 Ok(Vec::new())
             },
             None,
@@ -2388,6 +3432,53 @@ pub(super) mod tests {
             fs::read(&requested_output).unwrap(),
             fs::read(&rendered.path).unwrap()
         );
+        let manifest: serde_json::Value = serde_json::from_slice(
+            &fs::read(
+                Path::new(&rendered.path)
+                    .parent()
+                    .unwrap()
+                    .join("render.json"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(manifest["musicalRange"]["startTick"], 0);
+        assert_eq!(manifest["musicalRange"]["endTick"], 2_400);
+        assert_eq!(
+            manifest["musicalRange"]["timebase"],
+            serde_json::to_value(&session.arrangement.timebase).unwrap()
+        );
+
+        let cancelled_output = exports.join("cancelled.wav");
+        let pending = render_timeline_pending(
+            timeline_render_context(
+                &root,
+                catalog,
+                &session,
+                4,
+                RenderOptions {
+                    output_path: Some(cancelled_output.to_string_lossy().into_owned()),
+                    ..RenderOptions::default()
+                },
+            ),
+            |request| {
+                fs::write(request.destination(), wav(request.sample_rate, 128)).unwrap();
+                Ok(Vec::new())
+            },
+            None,
+        )
+        .unwrap();
+        let cancelled_internal = PathBuf::from(&pending.result.path);
+        let cancelled_asset = pending.result.asset_id.clone();
+        let value = crate::jobs::serialize_result(&pending.result).unwrap();
+        let mut output = pending.output;
+        let registry = crate::jobs::JobRegistry::default();
+        let (id, _) = registry.start(crate::api::output::JobKind::Render);
+        registry.cancel(&id).unwrap();
+        assert!(!registry.complete_if_not_cancelled(&id, value, "done", move || output.commit()));
+        assert!(!cancelled_internal.exists());
+        assert!(!cancelled_output.exists());
+        assert!(asset::load(&root, &cancelled_asset).unwrap().is_none());
 
         let existing_output = exports.join("already-there.wav");
         fs::write(&existing_output, b"preserve existing file").unwrap();
@@ -2403,7 +3494,7 @@ pub(super) mod tests {
                 },
             ),
             |request| {
-                fs::write(&request.destination, wav(request.sample_rate, 128)).unwrap();
+                fs::write(request.destination(), wav(request.sample_rate, 128)).unwrap();
                 Ok(Vec::new())
             },
             None,
@@ -2433,38 +3524,22 @@ pub(super) mod tests {
             fs::read(&existing_output).unwrap(),
             b"preserve existing file"
         );
-        let failed_render_directory = fs::read_dir(root.join("renders"))
-            .unwrap()
-            .map(|entry| entry.unwrap().path())
-            .find(|path| {
-                path.file_name()
-                    .unwrap()
-                    .to_string_lossy()
-                    .starts_with("render-2-")
-            })
-            .unwrap();
-        assert!(failed_render_directory.join("timeline.wav").is_file());
-        let recovered_output = exports.join("recovered.wav");
-        let recovered = export_render(
-            &root,
-            failed_render_directory
-                .file_name()
+        assert!(
+            !fs::read_dir(root.join("renders"))
                 .unwrap()
-                .to_str()
-                .unwrap(),
-            recovered_output.to_str().unwrap(),
-        )
-        .unwrap();
-        assert_eq!(recovered.file_count, 1);
-        assert_eq!(
-            fs::read(recovered_output).unwrap(),
-            fs::read(failed_render_directory.join("timeline.wav")).unwrap()
+                .map(|entry| entry.unwrap().path())
+                .any(|path| {
+                    path.file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .starts_with("render-2-")
+                })
         );
 
         let stem_directory = exports.join("stems");
         fs::create_dir(&stem_directory).unwrap();
         let selection = select_stem_tracks(&session, true, &[]).unwrap();
-        let mut stems = render_stems_with_renderer(
+        let mut stems = render_stems_pending(
             StemRenderContext {
                 data_root: &root,
                 built_in_instruments: catalog,
@@ -2477,7 +3552,9 @@ pub(super) mod tests {
                 output_directory: Some(stem_directory.to_string_lossy().into_owned()),
             },
             |request| {
-                fs::write(&request.destination, wav(request.sample_rate, 128)).unwrap();
+                for (_, path) in request.stem_outputs() {
+                    fs::write(path, wav(request.sample_rate, 128)).unwrap();
+                }
                 Ok(Vec::new())
             },
             None,
@@ -2498,6 +3575,60 @@ pub(super) mod tests {
             fs::read(&internal_stem).unwrap()
         );
         stems.output.commit();
+
+        let mut multi = session.clone();
+        multi.arrangement.tracks[0].name = "First vocal".into();
+        multi
+            .arrangement
+            .tracks
+            .push(Track::instrument("second".into(), "Second vocal".into()));
+        let mut second_clip = multi.arrangement.midi_clips[0].clone();
+        second_clip.id = "second-clip".into();
+        second_clip.track_id = "second".into();
+        multi.arrangement.midi_clips.push(second_clip);
+        let existing_stem = stem_directory.join("stem-002-Second vocal.wav");
+        fs::write(&existing_stem, b"existing").unwrap();
+        let failed = render_stems_pending(
+            StemRenderContext {
+                data_root: &root,
+                built_in_instruments: catalog,
+                session: &multi,
+                project_id: "project-render-export",
+                source_sequence: 5,
+                created_at_ms: 5,
+                selection: select_stem_tracks(&multi, true, &[]).unwrap(),
+                range: RenderRange::EntireArrangement,
+                output_directory: Some(stem_directory.to_string_lossy().into_owned()),
+            },
+            |request| {
+                for (_, path) in request.stem_outputs() {
+                    fs::write(path, wav(request.sample_rate, 128)).unwrap();
+                }
+                Ok(Vec::new())
+            },
+            None,
+            |_, _| {},
+        );
+        assert!(matches!(failed, Err(error) if error.contains("render output already exists")));
+        assert_eq!(fs::read(existing_stem).unwrap(), b"existing");
+        assert!(!stem_directory.join("stem-001-First vocal.wav").exists());
+        assert!(!fs::read_dir(root.join("renders")).unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with("render-5-")
+        }));
+        assert!(
+            crate::library::search(&root, "First vocal stem")
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            crate::library::search(&root, "Second vocal stem")
+                .unwrap()
+                .is_empty()
+        );
         fs::remove_dir_all(root).unwrap();
     }
 }

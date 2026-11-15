@@ -6,9 +6,6 @@ use crate::session::context::SessionContext;
 use crate::session::error::AdapterError;
 use riffra_core::CreativeSession;
 use std::sync::Arc;
-use std::time::Duration;
-
-const ARRANGEMENT_RUNTIME_TIMEOUT: Duration = Duration::from_secs(60);
 
 pub fn sync_arrangement_runtime<D: RuntimeDriver>(
     context: &SessionContext<'_, D>,
@@ -27,7 +24,6 @@ pub fn sync_arrangement_runtime<D: RuntimeDriver>(
                 sequence: canonical.sequence,
                 session_revision: canonical.session.arrangement.revision,
             },
-            ARRANGEMENT_RUNTIME_TIMEOUT,
         )
         .map_err(|error| error.to_string())
 }
@@ -66,7 +62,6 @@ pub fn prepare_arrangement_candidate<D: RuntimeDriver>(
                 sequence: expected_sequence.saturating_add(1),
                 session_revision: candidate.arrangement.revision,
             },
-            ARRANGEMENT_RUNTIME_TIMEOUT,
         )
         .map_err(|error| AdapterError::runtime(error.to_string()))
 }

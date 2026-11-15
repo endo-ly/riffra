@@ -3,5 +3,4 @@
 /**
  * Evaluation between adjacent points in musical time.
  */
-export type AutomationInterpolation =
-  'linear' | 'step' | { linearAmplitude: { durationSeconds: number } };
+export type AutomationInterpolation = "linear" | "step" | { "linearAmplitude": { durationSeconds: number, } };

@@ -18,7 +18,7 @@ pub struct Mixer {
 }
 
 /// Input role of a stereo mixing channel whose output is always Master.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum MixBusKind {
     Group,
@@ -41,7 +41,9 @@ pub struct MixBus {
 }
 
 /// The Track signal position used by a Send.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS, schemars::JsonSchema,
+)]
 #[serde(rename_all = "camelCase")]
 pub enum SendPosition {
     PreFader,
@@ -74,7 +76,7 @@ pub struct SidechainSend {
 }
 
 /// Partial controls for an existing mixing channel; its input role is immutable.
-#[derive(Clone, Debug, Default, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(optional_fields = nullable)]
 pub struct MixBusPatch {
@@ -87,7 +89,7 @@ pub struct MixBusPatch {
 }
 
 /// Partial controls and destination for an existing Send.
-#[derive(Clone, Debug, Default, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(optional_fields = nullable)]
 pub struct SendPatch {
@@ -98,7 +100,7 @@ pub struct SendPatch {
 }
 
 /// Partial controls and destination for an existing Sidechain Send.
-#[derive(Clone, Debug, Default, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(optional_fields = nullable)]
 pub struct SidechainSendPatch {
@@ -109,7 +111,19 @@ pub struct SidechainSendPatch {
 }
 
 /// Canonical owner of an ordered effect chain.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize, TS)]
+#[derive(
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Deserialize,
+    Serialize,
+    TS,
+    schemars::JsonSchema,
+)]
 #[serde(deny_unknown_fields, tag = "kind", rename_all = "camelCase")]
 pub enum EffectOwner {
     Track { id: String },

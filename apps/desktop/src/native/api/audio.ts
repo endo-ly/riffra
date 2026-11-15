@@ -50,7 +50,7 @@ async function probeDeviceChannels(
   outputDevice: string,
 ): Promise<DeviceChannels> {
   return dispatchControl({
-    command: 'audio.channels.probe',
+    command: 'audio.probe-channels',
     params: { driver, inputDevice, outputDevice },
   });
 }
@@ -81,7 +81,7 @@ function openPluginAudition(pluginPath: string): Promise<AudioStatus> {
 }
 
 function stopPreview(): Promise<AudioStatus> {
-  return dispatchControl({ command: 'asset.preview.stop', params: {} });
+  return dispatchControl({ command: 'asset.stop-preview', params: {} });
 }
 
 async function getAudioStatus(): Promise<AudioStatus> {
@@ -101,7 +101,7 @@ function recoverAudioDevice(): Promise<AudioStatus> {
 }
 
 async function retryStartupRuntime(): Promise<AudioStatus> {
-  return dispatchControl({ command: 'audio.startup.retry', params: {} });
+  return dispatchControl({ command: 'audio.startup-retry', params: {} });
 }
 
 async function setAudioDriver(config: AudioDriverConfig): Promise<AudioStatus> {

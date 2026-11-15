@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <map>
 #include <new>
 #include <regex>
@@ -55,6 +56,14 @@ bool PluginRack::hasQueuedParameterChanges() const noexcept {
     for (std::size_t index = 0; index < queue->capacity; ++index)
         if (queue->dirty[index].load(std::memory_order_acquire)) return true;
     return false;
+}
+
+float PluginRack::latestParameterValue(const std::size_t offset,
+                                       const juce::AudioProcessorParameter& parameter) const {
+    return parameterQueue != nullptr && offset < parameterQueue->capacity &&
+                   parameterQueue->dirty[offset].load(std::memory_order_acquire)
+               ? parameterQueue->values[offset].load(std::memory_order_acquire)
+               : parameter.getValue();
 }
 
 bool PluginRack::hasPrograms() const noexcept {
@@ -143,7 +152,6 @@ bool PluginRack::setProgram(const int index, juce::String& error) {
         error = "device state editing is unavailable during automation read";
         return false;
     }
-    staticStateDirty.store(true, std::memory_order_release);
     const juce::SpinLock::ScopedLockType lock(pluginLock);
     if (plugin == nullptr) {
         error = "No VST3 plugin is loaded.";
@@ -155,6 +163,7 @@ bool PluginRack::setProgram(const int index, juce::String& error) {
             error = "Plugin program index is out of range.";
             return false;
         }
+        staticStateDirty.store(true, std::memory_order_release);
         plugin->setCurrentProgram(index);
         updateParameterCount(*plugin);
         return true;
@@ -179,12 +188,19 @@ bool PluginRack::applyStateData(const juce::String& base64, juce::String& error)
         return false;
     }
     output.flush();
+    // Restoring opaque state supersedes edits queued for the previous state.
+    if (parameterQueue != nullptr) {
+        for (std::size_t index = 0; index < parameterQueue->capacity; ++index)
+            parameterQueue->dirty[index].store(false, std::memory_order_release);
+    }
+    staticStateDirty.store(true, std::memory_order_release);
     plugin->setStateInformation(state.getData(), static_cast<int>(state.getSize()));
     updateParameterCount(*plugin);
     return true;
 }
 
-bool PluginRack::applyPersistedState(const PluginStateSpec& state, juce::String& error) noexcept {
+bool PluginRack::applyPersistedState(const PluginStateSpec& state, juce::String& error,
+                                     const PluginLoadObserver& observer) noexcept {
     if (isAutomationActive()) {
         error = "device state editing is unavailable during automation read";
         return false;
@@ -213,7 +229,6 @@ bool PluginRack::applyPersistedState(const PluginStateSpec& state, juce::String&
         error = "plugin static state projection could not be prepared";
         return false;
     }
-    staticStateDirty.store(true, std::memory_order_release);
     try {
         FaultInjection::before(FaultStage::stateApply);
     } catch (const std::exception& exception) {
@@ -224,27 +239,30 @@ bool PluginRack::applyPersistedState(const PluginStateSpec& state, juce::String&
         error = "Fault injection interrupted VST3 state application.";
         return false;
     }
-    if (state.stateData.has_value() && state.stateData->isNotEmpty()) {
-        if (!applyStateData(*state.stateData, error)) return false;
-    }
+    const auto restoresOpaqueState = state.stateData.has_value() && state.stateData->isNotEmpty();
+    if (observer) observer(LoadPhase::restoring);
+    if (restoresOpaqueState && !applyStateData(*state.stateData, error)) return false;
     {
-        const auto available = parameters();
-        const auto count = std::min(state.parameterValues.size(), available.size());
+        const juce::SpinLock::ScopedLockType lock(pluginLock);
+        if (plugin == nullptr) {
+            error = "No VST3 plugin is loaded.";
+            return false;
+        }
+        const auto& available = plugin->getParameters();
+        const auto count =
+            std::min(state.parameterValues.size(), static_cast<std::size_t>(available.size()));
         for (std::size_t offset = 0; offset < count; ++offset) {
             const auto index = static_cast<int>(offset);
+            const auto* parameter = available[index];
+            if (parameter == nullptr) continue;
             const auto target = state.parameterValues[offset];
-            const auto availableIndex = available[offset].index;
-            const auto current =
-                parameterQueue != nullptr && offset < parameterQueue->capacity &&
-                        parameterQueue->dirty[offset].load(std::memory_order_acquire)
-                    ? parameterQueue->values[offset].load(std::memory_order_acquire)
-                    : available[offset].value;
+            const auto current = latestParameterValue(offset, *parameter);
             // VST instruments often expose thousands of parameters, most of
             // which are already at their saved/default value immediately
             // after construction. Avoid calling third-party automation hooks
             // for those entries; applying them all can turn a normal restore
             // into a multi-second operation even though no state changes.
-            if (availableIndex == index && std::isfinite(target) && std::isfinite(current) &&
+            if (std::isfinite(target) && std::isfinite(current) &&
                 std::abs(target - current) <= 0.000001f)
                 continue;
             if (!setParameter(index, target, error)) return false;
@@ -253,8 +271,22 @@ bool PluginRack::applyPersistedState(const PluginStateSpec& state, juce::String&
     setBypassed(state.bypassed);
     try {
         const juce::SpinLock::ScopedLockType lock(pluginLock);
+        if (restoresOpaqueState) {
+            const auto& parameters = plugin->getParameters();
+            staticProjection.parameterValues.clear();
+            staticProjection.parameterValues.reserve(static_cast<std::size_t>(parameters.size()));
+            for (int index = 0; index < parameters.size(); ++index) {
+                const auto* parameter = parameters[index];
+                staticProjection.parameterValues.push_back(
+                    parameter != nullptr
+                        ? latestParameterValue(static_cast<std::size_t>(index), *parameter)
+                        : 0.0f);
+            }
+        }
         staticState = std::move(staticProjection);
-        staticStateDirty.store(false, std::memory_order_release);
+        // A plugin may omit restore inputs when serializing its state. Retain
+        // the restored opaque data until an edit requires a new capture.
+        staticStateDirty.store(!restoresOpaqueState, std::memory_order_release);
     } catch (...) {
         error = "plugin static state projection could not be retained";
         return false;
@@ -268,8 +300,12 @@ std::optional<PluginStateSpec> PluginRack::persistedState(juce::String& error) c
         error = "No VST3 plugin is loaded.";
         return std::nullopt;
     }
-    if (staticState && (!staticStateDirty.load(std::memory_order_acquire) || isAutomationActive()))
-        return staticState;
+    if (staticState &&
+        (!staticStateDirty.load(std::memory_order_acquire) || isAutomationActive())) {
+        auto result = *staticState;
+        result.bypassed = bypassed.load(std::memory_order_acquire);
+        return result;
+    }
     PluginStateSpec result;
     try {
         juce::MemoryBlock state;
@@ -285,8 +321,12 @@ std::optional<PluginStateSpec> PluginRack::persistedState(juce::String& error) c
     }
     const auto& parameters = plugin->getParameters();
     result.parameterValues.reserve(static_cast<std::size_t>(parameters.size()));
-    for (auto* parameter : parameters)
-        result.parameterValues.push_back(parameter != nullptr ? parameter->getValue() : 0.0f);
+    for (int index = 0; index < parameters.size(); ++index) {
+        const auto* parameter = parameters[index];
+        result.parameterValues.push_back(
+            parameter != nullptr ? latestParameterValue(static_cast<std::size_t>(index), *parameter)
+                                 : 0.0f);
+    }
     result.bypassed = bypassed.load(std::memory_order_acquire);
     if (staticState) {
         staticState = result;
@@ -352,6 +392,110 @@ juce::String normalizedDisplayText(const juce::String& text) {
     return text.toLowerCase().removeCharacters(" \t\r\n");
 }
 
+struct NumericDisplay {
+    double value;
+    juce::String unit;
+};
+
+std::optional<NumericDisplay> parseNumericDisplay(const juce::String& text,
+                                                  const juce::String& fallbackUnit = {}) {
+    static const std::regex number(R"(^\s*([+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+))\s*([^0-9]*)$)");
+    std::smatch match;
+    const auto input = text.toStdString();
+    if (!std::regex_match(input, match, number)) return std::nullopt;
+    try {
+        const auto value = std::stod(match[1].str());
+        if (!std::isfinite(value)) return std::nullopt;
+        auto unit = normalizedDisplayText(juce::String(match[2].str()));
+        if (unit.isEmpty()) unit = normalizedDisplayText(fallbackUnit);
+        return NumericDisplay{value, unit};
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
+std::optional<float> nearestNumericValue(const juce::AudioProcessorParameter& parameter,
+                                         const NumericDisplay& requested, juce::String& error) {
+    const auto fail = [&error](const juce::String& reason) -> std::optional<float> {
+        error = "Plugin display approximation failed: " + reason;
+        return std::nullopt;
+    };
+    const auto read = [&](const float position) -> std::optional<double> {
+        try {
+            const auto first = parameter.getText(position, 96);
+            const auto second = parameter.getText(position, 96);
+            if (normalizedDisplayText(first) != normalizedDisplayText(second)) return std::nullopt;
+            // A gain control may display negative infinity at silence without a unit.
+            const auto text = normalizedDisplayText(first);
+            const auto label = normalizedDisplayText(parameter.getLabel());
+            if (requested.unit == "db" && (label.isEmpty() || label == "db") &&
+                (text == "-inf" || text == "-infinity" || text == "-infdb" ||
+                 text == "-infinitydb"))
+                return -std::numeric_limits<double>::infinity();
+            const auto parsed = parseNumericDisplay(first, parameter.getLabel());
+            if (!parsed || parsed->unit != requested.unit) return std::nullopt;
+            return parsed->value;
+        } catch (...) {
+            return std::nullopt;
+        }
+    };
+    const auto discrete = parameter.isDiscrete();
+    const auto steps = discrete ? parameter.getNumSteps() : 257;
+    if (steps < 2 || steps > 4096) return fail("unsupported parameter steps.");
+    std::vector<double> samples;
+    samples.reserve(static_cast<std::size_t>(steps));
+    auto bestPosition = 0.0f;
+    auto bestError = std::numeric_limits<double>::infinity();
+    const auto consider = [&](const float position, const double value) {
+        if (const auto distance = std::abs(value - requested.value); distance < bestError) {
+            bestError = distance;
+            bestPosition = position;
+        }
+    };
+    for (int i = 0; i < steps; ++i) {
+        const auto position = static_cast<float>(i) / static_cast<float>(steps - 1);
+        const auto value = read(position);
+        if (!value) return fail("display is non-numeric, unstable, or has a different unit.");
+        samples.push_back(*value);
+        consider(position, *value);
+    }
+    const auto increasing = samples.back() >= samples.front();
+    for (std::size_t i = 1; i < samples.size(); ++i) {
+        if ((increasing && samples[i] < samples[i - 1]) ||
+            (!increasing && samples[i] > samples[i - 1]))
+            return fail("display is not monotonic.");
+    }
+    if (requested.value < std::min(samples.front(), samples.back()) ||
+        requested.value > std::max(samples.front(), samples.back()))
+        return fail("requested value is outside the displayed range.");
+    if (!discrete) {
+        auto low = 0.0f, high = 1.0f;
+        auto lowValue = samples.front(), highValue = samples.back();
+        for (int i = 0; i < 24; ++i) {
+            const auto mid = (low + high) * 0.5f;
+            if (mid == low || mid == high) break;
+            const auto value = read(mid);
+            if (!value) return fail("display is non-numeric, unstable, or has a different unit.");
+            if ((increasing && (*value < lowValue || *value > highValue)) ||
+                (!increasing && (*value > lowValue || *value < highValue)))
+                return fail("display is not monotonic.");
+            consider(mid, *value);
+            if ((increasing && *value < requested.value) ||
+                (!increasing && *value > requested.value)) {
+                low = mid;
+                lowValue = *value;
+            } else {
+                high = mid;
+                highValue = *value;
+            }
+        }
+    }
+    const auto verified = read(bestPosition);
+    if (!verified || std::abs(*verified - requested.value) != bestError)
+        return fail("display changed during conversion.");
+    return bestPosition;
+}
+
 }  // namespace
 
 bool PluginRack::equivalentDisplayText(const juce::String& input, const juce::String& output,
@@ -380,20 +524,42 @@ bool PluginRack::equivalentDisplayText(const juce::String& input, const juce::St
 }
 
 std::optional<float> PluginRack::parameterValueForText(const int index, const juce::String& text,
-                                                       juce::String& error) const {
+                                                       juce::String& error,
+                                                       const bool nearest) const {
     const auto& parameters = plugin->getParameters();
     if (index < 0 || index >= parameters.size() || parameters[index] == nullptr) {
         error = "Plugin parameter index is out of range.";
         return std::nullopt;
     }
     const auto* parameter = parameters[index];
-    const auto value = parameter->getValueForText(text);
-    if (text.trim().isEmpty() || !std::isfinite(value) || value < 0.0f || value > 1.0f ||
-        !equivalentDisplayText(text, parameter->getText(value, 96), parameter->getLabel())) {
-        error = "Plugin cannot convert this display text unambiguously.";
+    const auto requested = nearest ? parseNumericDisplay(text) : std::nullopt;
+    if (nearest && !requested) {
+        error = "Nearest requires numeric display text.";
         return std::nullopt;
     }
-    return value;
+    try {
+        const auto value = parameter->getValueForText(text);
+        if (text.trim().isNotEmpty() && std::isfinite(value) && value >= 0.0f && value <= 1.0f &&
+            equivalentDisplayText(text, parameter->getText(value, 96), parameter->getLabel())) {
+            return value;
+        }
+        if (nearest) return nearestNumericValue(*parameter, *requested, error);
+    } catch (...) {
+        error = "Plugin display conversion failed.";
+        return std::nullopt;
+    }
+    error = "Plugin cannot convert this display text unambiguously.";
+    return std::nullopt;
+}
+
+std::optional<float> PluginRack::resolveParameterDisplay(const int index, const juce::String& text,
+                                                         juce::String& error) const {
+    const juce::SpinLock::ScopedLockType lock(pluginLock);
+    if (plugin == nullptr) {
+        error = "No VST3 plugin is loaded.";
+        return std::nullopt;
+    }
+    return parameterValueForText(index, text, error);
 }
 
 std::optional<juce::String> PluginRack::parameterDisplayValue(const int index, const float value,

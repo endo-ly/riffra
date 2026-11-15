@@ -191,9 +191,44 @@ fn handle_command_client(state: Weak<HostState>, stream: &mut Box<dyn transport:
                 ProtocolError::new(ErrorCode::InvalidRequest, error.to_string()),
             ),
         };
-        if transport::write_frame(&mut **stream, &response).is_err() {
+        if write_response(&mut **stream, &response).is_err() {
             return;
         }
+    }
+}
+
+/// Writes one command response, replacing a response too large for one frame
+/// with an explicit failure so the client is not left with a closed stream.
+///
+/// The replacement keeps the response sequence: a mutation whose result could
+/// not be delivered has still been committed.
+fn write_response(
+    stream: &mut dyn transport::ReadWrite,
+    response: &riffra_control::ControlResponse,
+) -> Result<(), transport::TransportError> {
+    match transport::write_frame(stream, response) {
+        Err(transport::TransportError::FrameTooLarge { size, limit }) => {
+            tracing::warn!(
+                request_id = %response.request_id,
+                size,
+                limit,
+                "Host control response exceeds the frame limit"
+            );
+            transport::write_frame(
+                stream,
+                &riffra_control::ControlResponse::failure(
+                    response.request_id.clone(),
+                    response.sequence,
+                    ProtocolError::new(
+                        ErrorCode::CommandFailed,
+                        format!(
+                            "command finished, but its {size}-byte response exceeds the {limit}-byte control frame limit"
+                        ),
+                    ),
+                ),
+            )
+        }
+        result => result,
     }
 }
 
@@ -202,7 +237,10 @@ fn handle_event_client(
     stream: &mut Box<dyn transport::ReadWrite>,
 ) {
     while let Ok(frame) = subscription.recv() {
-        if transport::write_frame(&mut **stream, &frame).is_err() {
+        if let Err(error) = transport::write_frame(&mut **stream, &frame) {
+            if matches!(error, transport::TransportError::FrameTooLarge { .. }) {
+                tracing::warn!(event = %frame.event, error = %error, "Host event could not be delivered");
+            }
             return;
         }
     }

@@ -2,6 +2,6 @@
 import type { MusicalPosition } from "./MusicalPosition";
 
 /**
- * Params of `loop-range.set` and `punch-range.set`.
+ * Params of `transport.loop.set` and `record.punch.set`.
  */
 export type RangeParams = { enabled: boolean, start: MusicalPosition, end: MusicalPosition, };

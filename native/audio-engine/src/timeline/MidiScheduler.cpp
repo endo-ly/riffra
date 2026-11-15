@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <limits>
+#include <map>
 #include <numeric>
+#include <set>
 #include <tuple>
 
 namespace riffra {
@@ -14,6 +16,17 @@ void appendEvent(CompiledMidiClip& destination, const juce::MidiMessage& message
                  const std::int64_t offset, const int ordering) {
     if (offset < 0 || offset > destination.lengthSamples) return;
     destination.events.push_back({offset, ordering, message});
+}
+
+// Playback and seek restoration share this order. Absolute time comes first, then the
+// prepared event type, absolute musical time, canonical clip order, loop iteration,
+// source order, and compiled order. No controller value or note number decides priority.
+using MidiOrderKey = std::tuple<std::int64_t, int, std::uint64_t, std::uint64_t, std::uint64_t,
+                                std::uint32_t, std::uint64_t>;
+
+MidiOrderKey midiOrderKey(const MidiEventRef& ref) noexcept {
+    return {ref.absoluteSample, ref.event->ordering,    ref.absoluteTick, ref.clipOrder,
+            ref.iteration,      ref.event->sourceOrder, ref.eventOrder};
 }
 
 std::size_t saturatingAdd(const std::size_t left, const std::size_t right) noexcept {
@@ -270,7 +283,7 @@ bool MidiScheduler::compile(const MidiClipSpec& source, const MidiCompileOptions
                         juce::MidiMessage::noteOn(channel(note.channel), *outputNote,
                                                   static_cast<juce::uint8>(juce::jlimit(
                                                       1, 127, static_cast<int>(note.velocity)))),
-                        noteStart, 1);
+                        noteStart, 3);
             appendEvent(destination, juce::MidiMessage::noteOff(channel(note.channel), *outputNote),
                         noteEnd, 0);
         }
@@ -303,11 +316,71 @@ bool MidiScheduler::compile(const MidiClipSpec& source, const MidiCompileOptions
                         juce::MidiMessage::channelPressureChange(eventChannel, event.data1), offset,
                         2);
     }
-    if (!source.instrumentControlEvents.empty() && !options.directInstrumentEvents) {
-        error = "Instrument controls require a Sonalloy instrument.";
-        return false;
-    }
     for (const auto& control : source.instrumentControlEvents) {
+        const auto offset = timebase.tickToSample(options.startTick + control.tick, sampleRate) -
+                            destination.startSample;
+        if (!options.directInstrumentEvents) {
+            const auto appendControl = [&](const std::int64_t at, const juce::MidiMessage& message,
+                                           const int ordering, const MidiControlKind kind,
+                                           const std::uint8_t number, const std::uint8_t value,
+                                           const std::uint64_t originalTick) {
+                if (at < 0 || at > destination.lengthSamples) return;
+                destination.events.push_back({at,
+                                              ordering,
+                                              message,
+                                              originalTick,
+                                              control.sourceOrder,
+                                              std::nullopt,
+                                              {},
+                                              kind,
+                                              number,
+                                              value});
+            };
+            if (control.type == "keySwitch") {
+                if (control.latch) {
+                    // A tick can round to the same sample, so keep the latch pulse audible.
+                    const auto pressSample = std::min<std::int64_t>(
+                        destination.lengthSamples - 1, std::max<std::int64_t>(0, offset));
+                    const auto tick = options.startTick + control.tick;
+                    const auto releaseTick =
+                        tick < std::numeric_limits<std::uint64_t>::max() ? tick + 1 : tick;
+                    const auto releaseOriginalTick =
+                        control.tick < std::numeric_limits<std::uint64_t>::max() ? control.tick + 1
+                                                                                 : control.tick;
+                    const auto releaseSample = std::min<std::int64_t>(
+                        destination.lengthSamples,
+                        std::max<std::int64_t>(pressSample + 1,
+                                               timebase.tickToSample(releaseTick, sampleRate) -
+                                                   destination.startSample));
+                    appendControl(
+                        pressSample,
+                        juce::MidiMessage::noteOn(1, control.note, static_cast<juce::uint8>(127)),
+                        1, MidiControlKind::keyswitchLatch, control.note, 0, control.tick);
+                    appendControl(releaseSample, juce::MidiMessage::noteOff(1, control.note), 1,
+                                  MidiControlKind::keyswitchLatch, control.note, 0,
+                                  releaseOriginalTick);
+                } else if (control.down) {
+                    appendControl(
+                        offset,
+                        juce::MidiMessage::noteOn(1, control.note, static_cast<juce::uint8>(127)),
+                        1, MidiControlKind::keyswitchHold, control.note, 0, control.tick);
+                } else {
+                    appendControl(offset, juce::MidiMessage::noteOff(1, control.note), 0,
+                                  MidiControlKind::keyswitchHold, control.note, 0, control.tick);
+                }
+                continue;
+            }
+            if (control.type == "controlChange") {
+                appendControl(offset,
+                              juce::MidiMessage::controllerEvent(1, control.controllerNumber,
+                                                                 control.controllerValue),
+                              1, MidiControlKind::controlChange, control.controllerNumber,
+                              control.controllerValue, control.tick);
+                continue;
+            }
+            error = "Instrument controls require a Sonalloy instrument.";
+            return false;
+        }
         SonalloyEvent event{};
         int priority = 0;
         event.value = control.value;
@@ -344,8 +417,6 @@ bool MidiScheduler::compile(const MidiClipSpec& source, const MidiCompileOptions
             error = "Unknown instrument control event.";
             return false;
         }
-        const auto offset = timebase.tickToSample(options.startTick + control.tick, sampleRate) -
-                            destination.startSample;
         destination.events.push_back(
             {offset, priority, {}, control.tick, control.sourceOrder, event, control.parameter});
     }
@@ -364,10 +435,105 @@ bool MidiScheduler::compile(const MidiClipSpec& source, const MidiCompileOptions
 
 void MidiScheduler::schedule(const std::vector<CompiledMidiClip>& clips,
                              const std::int64_t rangeStart, const int sampleCount,
-                             juce::MidiBuffer& destination) noexcept {
+                             juce::MidiBuffer& destination, std::vector<MidiEventRef>& eventRefs,
+                             const bool restoreControls) noexcept {
+    eventRefs.clear();
     if (sampleCount <= 0) return;
+    if (restoreControls) {
+        struct ControlState final {
+            bool has = false;
+            MidiOrderKey order{};
+            bool down = false;
+            int value = -1;
+        };
+        std::array<ControlState, 128> holds;
+        std::array<ControlState, 128> latches;
+        std::array<ControlState, 128> controllers;
+        const auto consider = [&](const MidiEventRef& ref) {
+            const auto& event = *ref.event;
+            ControlState* state = nullptr;
+            bool down = false;
+            int value = -1;
+            if (event.controlKind == MidiControlKind::keyswitchHold) {
+                state = &holds[static_cast<std::size_t>(event.controlNumber)];
+                down = event.message.isNoteOn();
+            } else if (event.controlKind == MidiControlKind::keyswitchLatch) {
+                if (!event.message.isNoteOn()) return;
+                state = &latches[static_cast<std::size_t>(event.controlNumber)];
+                down = true;
+            } else if (event.controlKind == MidiControlKind::controlChange) {
+                state = &controllers[static_cast<std::size_t>(event.controlNumber)];
+                value = static_cast<int>(event.controlValue);
+            } else {
+                return;
+            }
+            const auto order = midiOrderKey(ref);
+            if (state->has && order < state->order) return;
+            state->has = true;
+            state->order = order;
+            state->down = down;
+            state->value = value;
+        };
+        const auto considerClip = [&](const CompiledMidiClip& clip, const std::size_t clipOrder) {
+            if (clip.muted || clip.lengthSamples <= 0 || rangeStart <= clip.startSample) return;
+            const auto elapsed = rangeStart - clip.startSample;
+            const auto iteration = elapsed / clip.lengthSamples;
+            const auto phase = elapsed % clip.lengthSamples;
+            const auto seek = [&](const std::int64_t currentIteration, const bool prefix) {
+                const auto start = clip.startSample + currentIteration * clip.lengthSamples;
+                for (std::size_t eventOrder = 0; eventOrder < clip.events.size(); ++eventOrder) {
+                    const auto& event = clip.events[eventOrder];
+                    if (prefix && event.sampleOffset >= phase) break;
+                    const auto absoluteSample = start + event.sampleOffset;
+                    if (absoluteSample >= rangeStart) break;
+                    const auto absoluteTick =
+                        clip.startTick +
+                        static_cast<std::uint64_t>(currentIteration) * clip.durationTicks +
+                        event.originalTick;
+                    consider({&event, absoluteSample, absoluteTick,
+                              static_cast<std::uint64_t>(clipOrder),
+                              static_cast<std::uint64_t>(currentIteration),
+                              static_cast<std::uint64_t>(eventOrder)});
+                }
+            };
+            if (clip.loop) {
+                if (iteration > 0) seek(iteration - 1, false);
+                if (phase > 0) seek(iteration, true);
+            } else {
+                seek(0, false);
+            }
+        };
+        for (std::size_t clipOrder = 0; clipOrder < clips.size(); ++clipOrder)
+            considerClip(clips[clipOrder], clipOrder);
+
+        for (std::size_t note = 0; note < holds.size(); ++note)
+            if (holds[note].has && holds[note].down)
+                destination.addEvent(juce::MidiMessage::noteOn(1, static_cast<int>(note),
+                                                               static_cast<juce::uint8>(127)),
+                                     0);
+        auto latch = -1;
+        MidiOrderKey latchOrder{};
+        for (std::size_t note = 0; note < latches.size(); ++note) {
+            if (!latches[note].has) continue;
+            if (latch < 0 || latchOrder < latches[note].order) {
+                latch = static_cast<int>(note);
+                latchOrder = latches[note].order;
+            }
+        }
+        if (latch >= 0) {
+            destination.addEvent(juce::MidiMessage::noteOn(1, latch, static_cast<juce::uint8>(127)),
+                                 0);
+            destination.addEvent(juce::MidiMessage::noteOff(1, latch), sampleCount > 1 ? 1 : 0);
+        }
+        for (std::size_t number = 0; number < controllers.size(); ++number)
+            if (controllers[number].has)
+                destination.addEvent(juce::MidiMessage::controllerEvent(1, static_cast<int>(number),
+                                                                        controllers[number].value),
+                                     0);
+    }
     const auto rangeEnd = rangeStart + sampleCount;
-    for (const auto& clip : clips) {
+    for (std::size_t clipOrder = 0; clipOrder < clips.size(); ++clipOrder) {
+        const auto& clip = clips[clipOrder];
         if (clip.muted || clip.lengthSamples <= 0) continue;
         const auto firstIteration =
             clip.loop && rangeStart > clip.startSample
@@ -395,19 +561,33 @@ void MidiScheduler::schedule(const std::vector<CompiledMidiClip>& clips,
                                  [](const CompiledMidiEvent& event, const std::int64_t value) {
                                      return event.sampleOffset < value;
                                  });
-            for (auto event = begin; event != clip.events.end(); ++event) {
+            auto eventOrder = static_cast<std::size_t>(begin - clip.events.begin());
+            for (auto event = begin; event != clip.events.end(); ++event, ++eventOrder) {
                 const auto inRange =
                     event->sampleOffset < localEnd ||
                     (event->sampleOffset == clip.lengthSamples && localEnd == clip.lengthSamples);
                 if (!inRange) break;
                 const auto absoluteSample = iterationStart + event->sampleOffset;
+                const auto absoluteTick =
+                    clip.startTick + static_cast<std::uint64_t>(iteration) * clip.durationTicks +
+                    event->originalTick;
                 const auto offset = static_cast<int>(absoluteSample - rangeStart);
                 if (!event->instrumentEvent && offset >= 0 && offset < sampleCount)
-                    (void)destination.addEvent(event->message, offset);
+                    eventRefs.push_back({&*event, absoluteSample, absoluteTick,
+                                         static_cast<std::uint64_t>(clipOrder),
+                                         static_cast<std::uint64_t>(iteration),
+                                         static_cast<std::uint64_t>(eventOrder)});
             }
             if (!clip.loop) break;
         }
     }
+    std::sort(eventRefs.begin(), eventRefs.end(),
+              [](const MidiEventRef& left, const MidiEventRef& right) {
+                  return midiOrderKey(left) < midiOrderKey(right);
+              });
+    for (const auto& ref : eventRefs)
+        (void)destination.addEvent(ref.event->message,
+                                   static_cast<int>(ref.absoluteSample - rangeStart));
 }
 
 std::size_t MidiScheduler::scheduleInstrumentEvents(

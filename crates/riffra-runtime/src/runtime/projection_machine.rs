@@ -49,6 +49,8 @@ struct Job {
     request: Request,
     phase: JobPhase,
     environment: Environment,
+    started_at: Instant,
+    last_progress_at: Instant,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -63,7 +65,6 @@ pub(super) struct Request {
     pub(super) key: ProjectionKey,
     pub(super) projection: Arc<ProjectedTimeline>,
     origin: Origin,
-    pub(super) deadline: Option<Instant>,
 }
 
 struct Waiter {
@@ -95,23 +96,29 @@ pub(super) struct Machine {
     waiters: BTreeMap<OperationId, Waiter>,
     counters: Counters,
     next_operation_id: OperationId,
+    load_progress: Option<crate::api::output::RuntimeLoadProgress>,
 }
 
 pub(super) enum Input {
     SubmitCanonical {
         key: ProjectionKey,
         projection: Arc<ProjectedTimeline>,
-        deadline: Option<Instant>,
         waiter: Option<OperationId>,
     },
     SubmitCandidate {
         key: ProjectionKey,
         projection: Arc<ProjectedTimeline>,
-        deadline: Option<Instant>,
         waiter: Option<OperationId>,
     },
     PromoteCandidate {
         key: ProjectionKey,
+    },
+    RestoreCanonical {
+        key: ProjectionKey,
+    },
+    PreparationProgress {
+        operation: OperationId,
+        progress: crate::api::output::RuntimeLoadStep,
     },
     Prepared {
         operation: OperationId,
@@ -123,7 +130,7 @@ pub(super) enum Input {
     },
     GenerationObserved(u64),
     AudioEnvironmentAdvanced,
-    DeadlineReached(OperationId),
+    WaitExpired(OperationId),
     Stop,
     WorkRequested,
 }
@@ -168,6 +175,7 @@ impl Machine {
                 stopped: false,
             },
             next_operation_id: 0,
+            load_progress: None,
         }
     }
 
@@ -182,29 +190,20 @@ impl Machine {
             Input::SubmitCanonical {
                 key,
                 projection,
-                deadline,
                 waiter,
             } => {
                 let result = self
-                    .submit((key, projection), deadline, waiter, true, now, &mut effects)
+                    .submit((key, projection), waiter, true, now, &mut effects)
                     .map(Some);
                 effects.push(Effect::Respond { result });
             }
             Input::SubmitCandidate {
                 key,
                 projection,
-                deadline,
                 waiter,
             } => {
                 let result = self
-                    .submit(
-                        (key, projection),
-                        deadline,
-                        waiter,
-                        false,
-                        now,
-                        &mut effects,
-                    )
+                    .submit((key, projection), waiter, false, now, &mut effects)
                     .map(Some);
                 effects.push(Effect::Respond { result });
             }
@@ -228,10 +227,67 @@ impl Machine {
                     self.counters.error = None;
                     effects.push(Effect::Respond { result: Ok(None) });
                 } else {
+                    tracing::warn!(
+                        ?key,
+                        active_key = ?self.active.as_ref().map(|graph| graph.key),
+                        active_environment = ?self.active.as_ref().map(|graph| graph.environment),
+                        environment = ?self.environment,
+                        job_operation = ?self.job.as_ref().map(|job| job.request.operation),
+                        queued_operation = ?self.queued.as_ref().map(|request| request.operation),
+                        stopped = self.counters.stopped,
+                        "prepared runtime candidate could not be promoted"
+                    );
                     effects.push(Effect::Respond {
                         result: Err(RuntimeError::Internal(
                             "prepared runtime candidate is no longer available".into(),
                         )),
+                    });
+                }
+            }
+            Input::RestoreCanonical { key } => {
+                if let Some(intent) = self.canonical.as_mut()
+                    && intent.key.sequence > key.sequence
+                {
+                    intent.key = key;
+                    if let Some(active) = self.active.as_mut()
+                        && active.environment == self.environment
+                        && same_projected_graph(&active.projection, &intent.projection)
+                    {
+                        active.key = key;
+                    }
+                    self.counters.target = Some(key);
+                }
+            }
+            Input::PreparationProgress {
+                operation,
+                progress,
+            } => {
+                if let Some(job) = self.job.as_mut()
+                    && job.request.operation == operation
+                    && job.environment == self.environment
+                {
+                    if self
+                        .load_progress
+                        .as_ref()
+                        .is_none_or(|p| p.stage != progress)
+                    {
+                        job.last_progress_at = now;
+                    }
+                    self.load_progress = Some(crate::api::output::RuntimeLoadProgress {
+                        operation_id: operation,
+                        stage: progress,
+                        elapsed_ms: now
+                            .duration_since(job.started_at)
+                            .as_millis()
+                            .try_into()
+                            .unwrap_or(u64::MAX),
+                        phase_elapsed_ms: now
+                            .duration_since(job.last_progress_at)
+                            .as_millis()
+                            .try_into()
+                            .unwrap_or(u64::MAX),
+                        stalled: now.duration_since(job.last_progress_at)
+                            >= std::time::Duration::from_secs(30),
                     });
                 }
             }
@@ -249,7 +305,7 @@ impl Machine {
                     }) {
                         self.counters.native_at = Some(self.time_ms(now));
                     }
-                    if !self.job_is_current(now) {
+                    if !self.job_is_current() {
                         if result.is_ok() {
                             self.discard(operation, &mut effects);
                         }
@@ -296,7 +352,7 @@ impl Machine {
                     }) {
                         self.counters.native_at = Some(self.time_ms(now));
                     }
-                    let current = self.job_is_current(now);
+                    let current = self.job_is_current();
                     match result {
                         Ok(()) if current => self.finish_job(Ok(()), now, &mut effects),
                         Ok(()) => {
@@ -345,12 +401,7 @@ impl Machine {
                     &mut effects,
                 );
             }
-            Input::DeadlineReached(operation) => {
-                if let Some(job) = self.job.as_mut()
-                    && job.request.operation == operation
-                {
-                    job.request.deadline = Some(now);
-                }
+            Input::WaitExpired(operation) => {
                 self.complete(
                     operation,
                     Err(RuntimeError::Timeout {
@@ -358,15 +409,6 @@ impl Machine {
                     }),
                     &mut effects,
                 );
-                if self
-                    .queued
-                    .as_ref()
-                    .is_some_and(|request| request.operation == operation)
-                {
-                    self.queued = None;
-                }
-                // Native work may still be inside a plugin. Its result is rejected
-                // using the request deadline before any subsequent commit.
             }
             Input::WorkRequested => {
                 if self.counters.stopped {
@@ -397,7 +439,6 @@ impl Machine {
     fn submit(
         &mut self,
         graph: (ProjectionKey, Arc<ProjectedTimeline>),
-        deadline: Option<Instant>,
         waiter: Option<OperationId>,
         canonical: bool,
         now: Instant,
@@ -443,18 +484,10 @@ impl Machine {
             self.counters.error = None;
             self.counters.operation = operation;
             self.counters.target = Some(key);
-            if self.active.as_ref().is_some_and(|active| {
-                active.environment == self.environment
-                    && same_projected_graph(&active.projection, &projection)
-            }) {
+            if self.active_holds(&projection) {
                 self.supersede_queued_canonical(effects);
-                let active = self.active.as_mut().expect("active checked");
-                active.key = key;
-                active.origin = Origin::Canonical;
-                if let Some(waiter) = waiter {
-                    self.complete(waiter, Ok(self.status()), effects);
-                }
-                return Ok(CanonicalSubmit::Adopted);
+                self.active.as_mut().expect("active checked").origin = Origin::Canonical;
+                return Ok(self.adopt_active(key, waiter, effects));
             }
             let matching_job = self
                 .job
@@ -493,6 +526,10 @@ impl Machine {
                     key,
                 }));
             }
+        } else if self.job.is_none() && self.active_holds(&projection) {
+            // The running graph already is the proposal, so its plugins are
+            // kept instead of being instantiated again.
+            return Ok(self.adopt_active(key, waiter, effects));
         }
         let request = Request {
             operation,
@@ -503,7 +540,6 @@ impl Machine {
             } else {
                 Origin::Candidate(operation)
             },
-            deadline,
         };
         if canonical {
             self.counters.queued_at = Some(self.time_ms(now));
@@ -528,6 +564,26 @@ impl Machine {
         }))
     }
 
+    fn active_holds(&self, projection: &ProjectedTimeline) -> bool {
+        self.active.as_ref().is_some_and(|active| {
+            active.environment == self.environment
+                && same_projected_graph(&active.projection, projection)
+        })
+    }
+
+    fn adopt_active(
+        &mut self,
+        key: ProjectionKey,
+        waiter: Option<OperationId>,
+        effects: &mut Vec<Effect>,
+    ) -> CanonicalSubmit {
+        self.active.as_mut().expect("active checked").key = key;
+        if let Some(waiter) = waiter {
+            self.complete(waiter, Ok(self.status()), effects);
+        }
+        CanonicalSubmit::Adopted
+    }
+
     fn start(&mut self, request: Request, now: Instant) {
         if request.origin == Origin::Canonical {
             self.counters.started_at = Some(self.time_ms(now));
@@ -536,15 +592,14 @@ impl Machine {
             request,
             phase: JobPhase::Preparing,
             environment: self.environment,
+            started_at: now,
+            last_progress_at: now,
         });
     }
 
-    fn job_is_current(&self, now: Instant) -> bool {
+    fn job_is_current(&self) -> bool {
         let Some(job) = &self.job else { return false };
-        if self.counters.stopped
-            || job.environment != self.environment
-            || job.request.deadline.is_some_and(|deadline| now >= deadline)
-        {
+        if self.counters.stopped || job.environment != self.environment {
             return false;
         }
         if job.request.origin == Origin::Canonical {
@@ -578,8 +633,11 @@ impl Machine {
     }
 
     fn install_committed_graph(&mut self, request: Request, environment: Environment) {
+        // A request newer than the canonical intent keeps its own identity:
+        // a Project reload proposes the same graph under the next sequence.
         let adopted = self.canonical.as_ref().filter(|intent| {
             environment == self.environment
+                && intent.key.sequence >= request.key.sequence
                 && same_projected_graph(&intent.projection, &request.projection)
         });
         self.active = Some(Graph {
@@ -601,6 +659,7 @@ impl Machine {
         effects: &mut Vec<Effect>,
     ) {
         let job = self.job.take().expect("job checked");
+        self.load_progress = None;
         if result.is_ok() {
             self.install_committed_graph(job.request.clone(), job.environment);
             if self
@@ -695,6 +754,7 @@ impl Machine {
     }
 
     fn invalidate(&mut self, error: RuntimeError, effects: &mut Vec<Effect>) {
+        self.load_progress = None;
         self.active = None;
         self.queued = None;
         self.counters.error = None;
@@ -747,6 +807,7 @@ impl Machine {
         };
         let target = self.counters.target;
         RuntimeProjectionStatus {
+            load_progress: self.load_progress.clone(),
             state,
             operation_id: self.counters.operation,
             running_operation_id: canonical_job.map(|job| job.request.operation),
@@ -909,14 +970,12 @@ mod tests {
             Input::SubmitCanonical {
                 key,
                 projection,
-                deadline: None,
                 waiter: Some(operation),
             }
         } else {
             Input::SubmitCandidate {
                 key,
                 projection,
-                deadline: None,
                 waiter: Some(operation),
             }
         };
@@ -992,7 +1051,6 @@ mod tests {
             Input::SubmitCanonical {
                 key: key(1, 1),
                 projection: graph.clone(),
-                deadline: None,
                 waiter: Some(first),
             },
             now,
@@ -1004,7 +1062,6 @@ mod tests {
             Input::SubmitCanonical {
                 key: key(2, 2),
                 projection: reidentify(&graph, 2),
-                deadline: None,
                 waiter: Some(alias),
             },
             now,
@@ -1014,7 +1071,6 @@ mod tests {
             Input::SubmitCanonical {
                 key: key(3, 3),
                 projection: reidentify(&graph, 3),
-                deadline: None,
                 waiter: None,
             },
             now,
@@ -1128,6 +1184,32 @@ mod tests {
             Some(Ok(status)) if status.active_projection_sequence == Some(22)
         ));
         assert!(machine.job.is_none());
+    }
+
+    #[test]
+    fn restoring_a_promoted_key_allows_the_previous_session_to_be_resubmitted() {
+        // Arrange
+        let now = Instant::now();
+        let mut machine = machine(now);
+        let previous = snapshot(10);
+        active(&mut machine, Arc::clone(&previous), key(1, 10), now);
+        let (candidate, _) = submit(&mut machine, snapshot(20), key(2, 20), false, now);
+        finish(&mut machine, candidate, now);
+        machine.step(Input::PromoteCandidate { key: key(2, 20) }, now);
+
+        // Act: the older key is rejected until the promoted key is rewound.
+        let (rejected, _) = submit(&mut machine, Arc::clone(&previous), key(1, 10), true, now);
+        assert!(matches!(
+            machine.result(rejected),
+            Some(Err(RuntimeError::Superseded { .. }))
+        ));
+        machine.step(Input::RestoreCanonical { key: key(1, 10) }, now);
+        let (restored, _) = submit(&mut machine, previous, key(1, 10), true, now);
+
+        // Assert
+        finish(&mut machine, restored, now);
+        assert_eq!(machine.status().active_projection_sequence, Some(1));
+        assert_eq!(machine.status().active_session_revision, Some(10));
     }
 
     #[test]
@@ -1275,6 +1357,40 @@ mod tests {
         assert_eq!(machine.status(), before);
         assert_eq!(machine.status().active_projection_sequence, Some(1));
         assert_eq!(machine.status().state, RuntimeProjectionState::Active);
+    }
+    #[test]
+    fn promotes_a_candidate_that_repeats_the_current_graph_under_a_newer_key() {
+        // Arrange
+        let now = Instant::now();
+        let mut machine = machine(now);
+        let graph = snapshot(10);
+        active(&mut machine, graph.clone(), key(1, 10), now);
+
+        // Act: nothing is running, so the active graph satisfies the candidate.
+        let (_, effects) = submit(&mut machine, reidentify(&graph, 10), key(2, 10), false, now);
+        let promoted = machine.step(Input::PromoteCandidate { key: key(2, 10) }, now);
+
+        // Assert
+        no_prepare(&effects);
+        assert!(matches!(response(&promoted), Ok(None)));
+        assert_eq!(machine.status().active_projection_sequence, Some(2));
+        assert_eq!(machine.status().state, RuntimeProjectionState::Active);
+
+        // A candidate queued behind the canonical job for its graph keeps its key.
+        let running_graph = snapshot(11);
+        let (running, _) = submit(&mut machine, running_graph.clone(), key(3, 11), true, now);
+        let (candidate, _) = submit(
+            &mut machine,
+            reidentify(&running_graph, 11),
+            key(4, 11),
+            false,
+            now,
+        );
+        finish(&mut machine, running, now);
+        finish(&mut machine, candidate, now);
+        let promoted = machine.step(Input::PromoteCandidate { key: key(4, 11) }, now);
+        assert!(matches!(response(&promoted), Ok(None)));
+        assert_eq!(machine.status().active_projection_sequence, Some(4));
     }
     #[test]
     fn does_not_publish_candidate_status_before_canonical_promotion() {
@@ -1433,14 +1549,11 @@ mod tests {
         );
     }
     #[test]
-    fn stop_and_deadline_complete_waiters_without_accepting_late_work() {
+    fn waiter_expiry_keeps_loading_and_stop_rejects_new_work() {
         let now = Instant::now();
         let mut machine = machine(now);
         let (operation, _) = submit(&mut machine, snapshot(10), key(1, 10), true, now);
-        machine.step(
-            Input::DeadlineReached(operation),
-            now + Duration::from_secs(1),
-        );
+        machine.step(Input::WaitExpired(operation), now + Duration::from_secs(1));
         assert!(matches!(
             machine.result(operation),
             Some(Err(RuntimeError::Timeout { .. }))
@@ -1455,14 +1568,21 @@ mod tests {
         assert!(
             effects
                 .iter()
-                .any(|effect| matches!(effect, Effect::Discard(id) if *id == operation))
+                .any(|effect| matches!(effect, Effect::Commit(id) if *id == operation))
         );
         assert!(
             !effects
                 .iter()
-                .any(|effect| matches!(effect, Effect::Commit(_)))
+                .any(|effect| matches!(effect, Effect::Discard(_)))
         );
-        assert!(machine.status().active_projection_sequence.is_none());
+        machine.step(
+            Input::Committed {
+                operation,
+                result: Ok(()),
+            },
+            now + Duration::from_secs(120),
+        );
+        assert_eq!(machine.status().active_projection_sequence, Some(1));
         machine.step(Input::Stop, now);
         let stopped = machine.step(Input::WorkRequested, now);
         assert!(matches!(
@@ -1630,33 +1750,66 @@ mod tests {
         assert_eq!(machine.status().active_session_revision, Some(40));
     }
     #[test]
-    fn slow_preparation_keeps_its_lifecycle_deadline() {
+    fn preparation_can_complete_after_minutes_of_progress() {
         let now = Instant::now();
         let mut machine = machine(now);
-        let operation = machine.next_operation();
-        let deadline = now + Duration::from_secs(30);
-        let effects = machine.step(
-            Input::SubmitCanonical {
-                key: key(31, 31),
-                projection: snapshot(31),
-                deadline: Some(deadline),
-                waiter: Some(operation),
+        let (operation, _) = submit(&mut machine, snapshot(31), key(31, 31), true, now);
+        finish(&mut machine, operation, now + Duration::from_secs(120));
+        assert_eq!(machine.status().active_session_revision, Some(31));
+    }
+
+    #[test]
+    fn progress_clock_ignores_repeated_steps_and_stale_generations() {
+        use crate::api::output::{RuntimeLoadPhase, RuntimeLoadStep};
+        let now = Instant::now();
+        let mut machine = machine(now);
+        let (operation, _) = submit(&mut machine, snapshot(31), key(31, 31), true, now);
+        let mut progress = RuntimeLoadStep {
+            phase: RuntimeLoadPhase::Restoring,
+            owner_id: "track-1".into(),
+            device_id: "device-1".into(),
+            plugin_path: "test.vst3".into(),
+            completed_devices: 0,
+            total_devices: 26,
+        };
+        machine.step(
+            Input::PreparationProgress {
+                operation,
+                progress: progress.clone(),
             },
             now,
         );
-        assert!(matches!(
-            response(&effects),
-            Ok(Some(CanonicalSubmit::Queued(_)))
-        ));
-        let effects = machine.step(Input::WorkRequested, now);
-        assert!(effects.iter().any(
-            |effect| matches!(effect,Effect::Prepare(request) if request.deadline==Some(deadline))
-        ));
-
-        finish(&mut machine, operation, now + Duration::from_secs(15));
-
-        assert!(
-            matches!(machine.result(operation),Some(Ok(status)) if status.active_session_revision==Some(31))
+        machine.step(
+            Input::PreparationProgress {
+                operation,
+                progress: progress.clone(),
+            },
+            now + Duration::from_secs(120),
         );
+        let status = machine.status();
+        let timing = status.load_progress.unwrap();
+        assert!(timing.stalled);
+        assert_eq!(timing.operation_id, operation);
+        assert_eq!(timing.phase_elapsed_ms, 120_000);
+        assert_eq!(status.state, RuntimeProjectionState::Preparing);
+        assert!(status.last_error.is_none());
+        progress.completed_devices = 1;
+        machine.step(
+            Input::PreparationProgress {
+                operation,
+                progress: progress.clone(),
+            },
+            now + Duration::from_secs(121),
+        );
+        assert!(!machine.status().load_progress.unwrap().stalled);
+        machine.step(Input::GenerationObserved(2), now + Duration::from_secs(122));
+        machine.step(
+            Input::PreparationProgress {
+                operation,
+                progress,
+            },
+            now + Duration::from_secs(123),
+        );
+        assert!(machine.status().load_progress.is_none());
     }
 }

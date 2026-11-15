@@ -42,6 +42,7 @@ DesktopはHostConnectionManagerを介して自身のEmbedded Hostまたは別プ
 | ---------------------------- | -------------------------------------------------------------------------------- |
 | `apps/desktop/`              | Tauri デスクトップアプリ（React フロントエンド + `src-tauri` Rust バックエンド） |
 | `apps/cli/`                  | Standalone編集、`riffra serve`、Hostへの`--attach`を提供するCLI                  |
+| `apps/mcp/`                  | 稼働中のHostをMCP(stdio)から操作するサーバー                                     |
 | `crates/riffra-core/`        | Application / Domain / Ports（Session / Asset / Rack / 履歴）                    |
 | `crates/riffra-control/`     | Local Host間通信の契約（endpoint / registry / transport / client）               |
 | `crates/riffra-host/`        | SessionStore、Asset、Project、制作ファイル解析、DataRoot所有                     |
@@ -52,7 +53,7 @@ DesktopはHostConnectionManagerを介して自身のEmbedded Hostまたは別プ
 | `docs/`                      | 設計・調整ドキュメント                                                           |
 | `agents/skills/`             | AI エージェントが参照するスキル（CLI ヘッドレス操作、作曲知識、曲設計図）        |
 
-依存関係は npm workspace（`@riffra/desktop`）と Cargo workspace（`riffra-core` / `riffra-control` / `riffra-host` / `riffra-runtime` / `riffra-cli` / デスクトップバイナリ）で管理する。
+依存関係は npm workspace（`@riffra/desktop`）と Cargo workspace（`riffra-core` / `riffra-control` / `riffra-host` / `riffra-runtime` / `riffra-cli` / `riffra-mcp` / デスクトップバイナリ）で管理する。
 
 ## 技術スタック
 
@@ -98,6 +99,7 @@ cargo run -p riffra-cli -- --data-root ./riffra-data session get
 cargo run -p riffra-cli -- --data-root ./riffra-data --interactive
 cargo run -p riffra-cli -- --data-root ./riffra-data serve --safe-mode
 cargo run -p riffra-cli -- --attach session get
+cargo run -p riffra-mcp -- --host <instance-id>
 
 # Native audio engineを使うLive Host
 ./native/audio-engine/build.sh Debug
@@ -108,6 +110,7 @@ cargo run -p riffra-cli -- --data-root ./riffra-data serve
 `--attach` は既存Hostへ接続し、DataRootを直接開かない。
 インストール済みデスクトップでは、CLIが実行ファイルと同じディレクトリ(既定 `%LOCALAPPDATA%\Riffra`)へ `riffra.exe` として同梱され、アプリの更新に合わせて更新される。
 ヘッドレス操作のコマンドカタログと運用手順は `agents/skills/riffra-headless/` を参照。
+MCPサーバーの起動、クライアント設定、ツールの呼び方は [docs/mcp.md](docs/mcp.md) を参照。
 
 ## ドキュメント
 
@@ -118,6 +121,7 @@ cargo run -p riffra-cli -- --data-root ./riffra-data serve
 | [docs/audio-engine.md](docs/audio-engine.md)   | 音声実行の設計（投影、経路、録音、音源とプラグイン、安全機構）             |
 | [docs/data-model.md](docs/data-model.md)       | 正準モデルのカタログと規則                                                 |
 | [docs/ipc.md](docs/ipc.md)                     | IPC 境界の契約（Tauri 命令 / イベント / サイドカープロトコル）             |
+| [docs/mcp.md](docs/mcp.md)                     | MCPサーバーの接続、ツール呼び出し、応答、配布                              |
 | [docs/ui-design.md](docs/ui-design.md)         | UI設計（画面の骨格、各領域の操作、ショートカット）                         |
 | [docs/score-yaml.md](docs/score-yaml.md)       | Score YAMLの読み込み、演奏内容の対応、音源の保存                           |
 | [docs/test-strategy.md](docs/test-strategy.md) | テスト戦略                                                                 |

@@ -1,3 +1,4 @@
+import { useSessionCommand } from '@/shared/session/useSessionCommand';
 import { snapToBar } from '@/model/timebase';
 import { useCallback, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import type { AudioAnalysis, CreativeSession } from '@/model/generated';
@@ -40,7 +41,8 @@ export function useTimelineEditor(options: UseTimelineEditorOptions) {
   );
   const { arrangement } = session;
   const { timebase } = arrangement;
-  const { api, commit: sessionCommit } = useSessionContext();
+  const { api } = useSessionContext();
+  const sessionCommit = useSessionCommand(JSON.stringify(selection));
   const startGesture = usePointerGesture();
   const commit: EditorCommit = sessionCommit;
   const [snapGuide, setSnapGuide] = useState<number | null>(null);

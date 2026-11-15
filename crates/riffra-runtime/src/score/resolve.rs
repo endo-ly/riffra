@@ -239,7 +239,10 @@ fn melody_items(
 }
 
 #[allow(clippy::too_many_lines)]
-pub(super) fn validate_structure(doc: &Value) -> Result<()> {
+pub(super) fn validate_structure(
+    doc: &Value,
+    source_less_instruments: &std::collections::BTreeSet<String>,
+) -> Result<()> {
     fields(
         doc,
         &[
@@ -340,7 +343,7 @@ pub(super) fn validate_structure(doc: &Value) -> Result<()> {
     let sections = required(doc, "sections", "")?;
     validate_sections(sections)?;
     validate_part_gains(sections, required(doc, "instruments", "")?)?;
-    validate_instruments(required(doc, "instruments", "")?)?;
+    validate_instruments(required(doc, "instruments", "")?, source_less_instruments)?;
     validate_materials(doc)?;
     if let Some(notes) = doc.get("notes") {
         string(notes, "notes")?;
@@ -409,6 +412,8 @@ fn event(v: &Value, path: &str) -> Result<()> {
             "duration_quarters",
             "parameter",
             "control",
+            "name",
+            "number",
             "from",
             "to",
             "native_value",
@@ -470,6 +475,8 @@ pub(super) fn event_kind(v: &Value, path: &str) -> Result<()> {
         ],
         "sustain_pedal" => &["instrument", "down"],
         "pitch_bend" | "mod_wheel" | "aftertouch" => &["instrument", "value"],
+        "articulation" => &["instrument", "name"],
+        "cc" => &["instrument", "number", "value"],
         "parameter_change" => &["instrument", "parameter", "native_value"],
         "automation" => &[
             "instrument",
@@ -488,8 +495,15 @@ pub(super) fn event_kind(v: &Value, path: &str) -> Result<()> {
     }
     if let Some(control) = v.get("control")
         && !["mod_wheel", "aftertouch", "pitch_bend"].contains(&string(control, path)?)
+        && super::cc_number(string(control, path)?).is_none()
     {
         return Err(Error::new(path, "unknown automation control"));
+    }
+    if kind == "articulation" && super::text_field(v, "name", path)?.is_empty() {
+        return Err(Error::new(
+            format!("{path}.name"),
+            "articulation name must not be empty",
+        ));
     }
     if kind == "dynamics" {
         for key in ["from", "to"] {
@@ -513,7 +527,7 @@ pub(super) fn event_kind(v: &Value, path: &str) -> Result<()> {
     }
     if matches!(
         kind,
-        "hit" | "hits" | "degree" | "silence" | "automation" | "dynamics"
+        "hit" | "hits" | "degree" | "silence" | "automation" | "dynamics" | "articulation"
     ) {
         allowed.extend(["duration_steps", "duration_quarters"]);
     }
@@ -522,13 +536,22 @@ pub(super) fn event_kind(v: &Value, path: &str) -> Result<()> {
         return Err(Error::new(path, "hits requires at least one instrument"));
     }
     validate_event_values(v, kind, path)?;
-    if matches!(kind, "silence" | "automation" | "dynamics")
+    if matches!(kind, "silence" | "automation" | "dynamics" | "articulation")
         && v.get("duration_steps").is_none()
         && v.get("duration_quarters").is_none()
     {
         return Err(Error::new(
             path,
             "duration_steps or duration_quarters is required",
+        ));
+    }
+    if kind == "articulation"
+        && v.get("duration_steps").is_some()
+        && v.get("duration_quarters").is_some()
+    {
+        return Err(Error::new(
+            path,
+            "duration_steps and duration_quarters are mutually exclusive",
         ));
     }
     Ok(())
@@ -545,7 +568,17 @@ fn validate_event_values(v: &Value, kind: &str, path: &str) -> Result<()> {
             number(value, &format!("{path}.{key}"))?;
         }
     }
-    if let Some(value) = v.get("value") {
+    if kind == "cc" {
+        for key in ["number", "value"] {
+            let value = integer(required(v, key, path)?, &format!("{path}.{key}"))?;
+            if !(0..=127).contains(&value) {
+                return Err(Error::new(
+                    format!("{path}.{key}"),
+                    "expected an integer 0..127",
+                ));
+            }
+        }
+    } else if let Some(value) = v.get("value") {
         let value = number(value, &format!("{path}.value"))?;
         let min = if kind == "pitch_bend" { -1.0 } else { 0.0 };
         if !(min..=1.0).contains(&value) {
@@ -553,6 +586,22 @@ fn validate_event_values(v: &Value, kind: &str, path: &str) -> Result<()> {
                 format!("{path}.value"),
                 format!("expected {min}..1"),
             ));
+        }
+    }
+    if kind == "automation"
+        && v.get("control")
+            .and_then(Value::as_str)
+            .and_then(super::cc_number)
+            .is_some()
+    {
+        for key in ["from_value", "to_value"] {
+            let value = integer(required(v, key, path)?, &format!("{path}.{key}"))?;
+            if !(0..=127).contains(&value) {
+                return Err(Error::new(
+                    format!("{path}.{key}"),
+                    "expected an integer 0..127",
+                ));
+            }
         }
     }
     Ok(())
@@ -606,9 +655,13 @@ fn validate_sections(sections: &Value) -> Result<()> {
                 "events",
                 "velocity",
                 "part_gains",
+                "notes",
             ],
             &path,
         )?;
+        if let Some(notes) = section.get("notes") {
+            string(notes, &format!("{path}.notes"))?;
+        }
         for field in ["pad", "arp", "counter"] {
             if let Some(v) = section.get(field) {
                 let allowed = if field == "counter" {
@@ -759,7 +812,10 @@ fn validate_articulations(v: &Value, path: &str) -> Result<()> {
     Ok(())
 }
 
-fn validate_instruments(instruments: &Value) -> Result<()> {
+fn validate_instruments(
+    instruments: &Value,
+    source_less_instruments: &std::collections::BTreeSet<String>,
+) -> Result<()> {
     if object(instruments, "instruments")?.is_empty() {
         return Err(Error::new(
             "instruments",
@@ -776,6 +832,7 @@ fn validate_instruments(instruments: &Value) -> Result<()> {
                 "gain_db",
                 "pan",
                 "role",
+                "sound",
                 "voicing_floor_midi",
                 "voicing_ceiling_midi",
                 "articulations",
@@ -790,17 +847,10 @@ fn validate_instruments(instruments: &Value) -> Result<()> {
             ],
             &format!("instruments.{name}"),
         )?;
-        let count = ["preset", "definition", "external"]
-            .iter()
-            .filter(|key| v.get(**key).is_some())
-            .count();
-        if count != 1 || v.get("external").is_some_and(|v| v != &Value::Bool(true)) {
-            return Err(Error::new(
-                format!("instruments.{name}"),
-                "expected exactly one of preset, definition, or external: true",
-            ));
-        }
         let path = format!("instruments.{name}");
+        if let Some(value) = v.get("sound") {
+            string(value, &format!("{path}.sound"))?;
+        }
         if let Some(value) = v.get("swing") {
             super::time::Swing::parse(value, &format!("{path}.swing"))?;
         }
@@ -853,6 +903,25 @@ fn validate_instruments(instruments: &Value) -> Result<()> {
             > super::optional_int(v, "bass_ceiling_midi", 39, &path)?
         {
             return Err(Error::new(path, "bass floor must not exceed bass ceiling"));
+        }
+        let count = ["preset", "definition", "external"]
+            .iter()
+            .filter(|key| v.get(**key).is_some())
+            .count();
+        if count == 0 {
+            if source_less_instruments.contains(name) {
+                continue;
+            }
+            return Err(Error::new(
+                format!("instruments.{name}"),
+                "expected exactly one of preset, definition, or external: true",
+            ));
+        }
+        if count != 1 || v.get("external").is_some_and(|v| v != &Value::Bool(true)) {
+            return Err(Error::new(
+                format!("instruments.{name}"),
+                "expected exactly one of preset, definition, or external: true",
+            ));
         }
     }
     Ok(())

@@ -1,5 +1,5 @@
 import type { RenderHistoryEntry } from '@/model/generated';
-import { chooseRenderStemDirectory, saveRenderWav } from '@/native/dialog';
+import { chooseRenderDirectory, saveRenderWav } from '@/native/dialog';
 import { errorText } from '@/shared/errors';
 import { useSessionContext } from '@/shared/session/session-context';
 import { ConfirmDialog } from '@/shared/ui/ConfirmDialog';
@@ -17,6 +17,7 @@ interface Props {
 const KIND_LABELS: Record<RenderHistoryEntry['kind'], string> = {
   timeline: 'MIX',
   stems: 'STEMS',
+  capture: 'CAPTURE',
   unknown: 'UNKNOWN',
 };
 
@@ -80,8 +81,8 @@ export function RenderHistoryPanel({ refreshToken }: Props) {
 
   const exportRender = async (render: RenderHistoryEntry) => {
     const outputPath =
-      render.kind === 'stems'
-        ? await chooseRenderStemDirectory()
+      render.kind === 'stems' || render.kind === 'capture'
+        ? await chooseRenderDirectory()
         : await saveRenderWav(render.renderId);
     if (!outputPath) return;
     setBusyRenderId(render.renderId);

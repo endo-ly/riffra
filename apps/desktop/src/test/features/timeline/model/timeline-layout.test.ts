@@ -1,6 +1,11 @@
+import { defaultSession } from '@/native/browser-defaults';
 import { describe, expect, it } from 'vitest';
 import type { AudioClip, MidiClip } from '@/model/generated';
-import { buildTrackTimeline, timelineGridDensity } from '@/features/timeline/model/timeline-layout';
+import {
+  buildTrackTimelines,
+  timelineGridDensity,
+  timelineLengthTicks,
+} from '@/features/timeline/model/timeline-layout';
 import { countOffGridNotes, clipGridTicks, snapClipTick, snapGridTicks } from '@/model/clip-grid';
 import { toAssetId } from '@/model/asset-id';
 
@@ -11,6 +16,24 @@ const timebase = {
 };
 
 describe('arrange timeline layout', () => {
+  it('includes large automation sets in the timeline extent', () => {
+    const session = defaultSession();
+    session.arrangement.automationLanes = Array.from({ length: 20 }, (_, lane) => ({
+      id: `lane:${lane}`,
+      target: { kind: 'masterGain' },
+      interpolation: 'linear',
+      points: Array.from({ length: 10000 }, (_, index) => ({
+        id: `point:${lane}:${index}`,
+        tick: lane * 10000 + index,
+        value: 0,
+      })),
+    }));
+
+    const length = timelineLengthTicks(session.arrangement, session.arrangement.timebase);
+
+    expect(length).toBe(199999 + 3840 * 2);
+  });
+
   it('reduces grid detail as the timeline zooms out', () => {
     expect(timelineGridDensity(timebase, 0.01)).toEqual({
       showBeats: false,
@@ -93,12 +116,24 @@ describe('arrange timeline layout', () => {
       loopEnabled: false,
     };
 
-    const timeline = buildTrackTimeline('track:shared', [audioClip], [midiClip], timebase);
+    const otherClip = { ...midiClip, id: 'clip:other', trackId: 'track:other' };
+    const timelines = buildTrackTimelines(
+      new Map([
+        ['track:shared', { audio: [audioClip], midi: [midiClip] }],
+        ['track:other', { audio: [], midi: [otherClip] }],
+        ['track:empty', { audio: [], midi: [] }],
+      ]),
+      timebase,
+    );
+    const timeline = timelines.get('track:shared')!;
     const audioItem = timeline.items.find((item) => item.kind === 'audio')!;
     const midiItem = timeline.items.find((item) => item.kind === 'midi')!;
 
     expect(timeline.laneCount).toBe(2);
     expect(timeline.lanes.get(audioItem.key)).not.toBe(timeline.lanes.get(midiItem.key));
+    expect(timelines.get('track:other')!.items.map((item) => item.clip.id)).toEqual(['clip:other']);
+    expect(timelines.get('track:empty')!.laneCount).toBe(1);
+    expect(timelines.get('track:empty')!.items).toEqual([]);
   });
 
   it('reuses a lane for adjacent items and orders equal starts deterministically', () => {
@@ -114,26 +149,35 @@ describe('arrange timeline layout', () => {
       muted: false,
       loopEnabled: false,
     });
-    const adjacent = buildTrackTimeline(
-      'track:shared',
-      [],
-      [midiClip('first', 0, 960), midiClip('second', 960, 960)],
+    const adjacent = buildTrackTimelines(
+      new Map([
+        [
+          'track:shared',
+          { audio: [], midi: [midiClip('first', 0, 960), midiClip('second', 960, 960)] },
+        ],
+      ]),
       timebase,
-    );
+    ).get('track:shared')!;
     expect(adjacent.laneCount).toBe(1);
 
-    const equalStart = buildTrackTimeline(
-      'track:shared',
-      [],
-      [midiClip('long', 0, 1_920), midiClip('short', 0, 960)],
+    const equalStart = buildTrackTimelines(
+      new Map([
+        [
+          'track:shared',
+          { audio: [], midi: [midiClip('long', 0, 1_920), midiClip('short', 0, 960)] },
+        ],
+      ]),
       timebase,
-    );
-    const equalStartReversed = buildTrackTimeline(
-      'track:shared',
-      [],
-      [midiClip('short', 0, 960), midiClip('long', 0, 1_920)],
+    ).get('track:shared')!;
+    const equalStartReversed = buildTrackTimelines(
+      new Map([
+        [
+          'track:shared',
+          { audio: [], midi: [midiClip('short', 0, 960), midiClip('long', 0, 1_920)] },
+        ],
+      ]),
       timebase,
-    );
+    ).get('track:shared')!;
     expect(equalStart.lanes.get('midi:short')).toBe(0);
     expect(equalStart.lanes.get('midi:long')).toBe(1);
     expect([...equalStartReversed.lanes.entries()]).toEqual([...equalStart.lanes.entries()]);

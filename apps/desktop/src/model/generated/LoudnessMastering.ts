@@ -3,8 +3,4 @@
 /**
  * Integrated loudness, peak ceiling, and optional loudness-range targets.
  */
-export type LoudnessMastering = {
-  integratedLufs: number;
-  truePeakDb: number;
-  loudnessRangeLu: number | null;
-};
+export type LoudnessMastering = { integratedLufs: number, truePeakDb: number, loudnessRangeLu: number | null, };

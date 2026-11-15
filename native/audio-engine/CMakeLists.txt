@@ -22,13 +22,13 @@ endif()
 option(RIFFRA_BUILTIN_RESOURCE_STAGE_ONLY
   "Configure only the built-in resource staging target." OFF)
 
-set(RIFFRA_SONALLOY_VERSION "2026.10.23")
-set(RIFFRA_SONALLOY_RELEASE_TAG "v${RIFFRA_SONALLOY_VERSION}")
+set(RIFFRA_SONALLOY_VERSION "2026.11.15")
+set(RIFFRA_SONALLOY_SOURCE_RELEASE "v${RIFFRA_SONALLOY_VERSION}")
 
 FetchContent_Declare(
   SONALLOY
   GIT_REPOSITORY https://github.com/endo-ly/sonalloy.git
-  GIT_TAG "${RIFFRA_SONALLOY_RELEASE_TAG}"
+  GIT_TAG "${RIFFRA_SONALLOY_SOURCE_RELEASE}"
   GIT_SHALLOW TRUE
   GIT_PROGRESS TRUE
 )
@@ -287,6 +287,10 @@ target_link_libraries(riffra-render-core PUBLIC
   sonalloy::capi
 )
 
+if(MSVC)
+  target_link_libraries(riffra-render-core PUBLIC Synchronization)
+endif()
+
 target_link_libraries(riffra-audio-core PUBLIC
   riffra-render-core
   ${RIFFRA_AUDIO_JUCE_LIBRARIES}
@@ -452,6 +456,14 @@ if(BUILD_TESTING)
   add_test(
     NAME PluginScannerTest.RiffraTestSidechain
     COMMAND riffra-plugin-scan --validate-load "${RIFFRA_TEST_SIDECHAIN_BUNDLE}")
+  add_test(
+    NAME PluginScannerTest.ParameterStateAndDisplay
+    COMMAND ${CMAKE_COMMAND}
+      "-DSCAN=$<TARGET_FILE:riffra-plugin-scan>"
+      "-DBUNDLE=${RIFFRA_TEST_EFFECT_BUNDLE}"
+      "-DREQUEST=${CMAKE_CURRENT_BINARY_DIR}/parameter-probe-test.json"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/plugins/PluginParameterProbeTest.cmake")
+  set_tests_properties(PluginScannerTest.ParameterStateAndDisplay PROPERTIES TIMEOUT 40)
 
   add_test(
     NAME RealVstRuntimeTest.LoadsMultipleRuntimeRoles
@@ -541,7 +553,7 @@ if(BUILD_TESTING)
     RIFFRA_CONTRACT_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../contracts/execution-graph"
     RIFFRA_SIDECAR_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../contracts/sidecar"
     RIFFRA_SONALLOY_TEST_PRESET_ROOT="${RIFFRA_BUILTIN_RESOURCE_ROOT}"
-    RIFFRA_SONALLOY_TEST_SOURCE_RELEASE="${RIFFRA_SONALLOY_RELEASE_TAG}")
+    RIFFRA_SONALLOY_TEST_SOURCE_RELEASE="${RIFFRA_SONALLOY_SOURCE_RELEASE}")
   add_dependencies(riffra-audio-tests riffra-builtin-resource-stage)
   if(NOT RIFFRA_SANITIZER STREQUAL "thread")
     add_dependencies(riffra-audio-tests riffra-test-effect_VST3 riffra-test-instrument_VST3
@@ -587,7 +599,7 @@ if(BUILD_TESTING)
     GTest::gtest_main)
   target_compile_definitions(riffra-audio-benchmarks PRIVATE
     RIFFRA_SONALLOY_TEST_PRESET_ROOT="${RIFFRA_BUILTIN_RESOURCE_ROOT}"
-    RIFFRA_SONALLOY_TEST_SOURCE_RELEASE="${RIFFRA_SONALLOY_RELEASE_TAG}")
+    RIFFRA_SONALLOY_TEST_SOURCE_RELEASE="${RIFFRA_SONALLOY_SOURCE_RELEASE}")
   add_dependencies(riffra-audio-benchmarks riffra-builtin-resource-stage)
   if(MSVC)
     target_compile_options(riffra-audio-benchmarks PRIVATE ${RIFFRA_MSVC_WARNINGS})

@@ -29,16 +29,15 @@ export function collectGhostNotes(
     if (clip.id === activeMidiClip.id || !trackColor) return [];
     return clip.notes.flatMap((note) => {
       const localTick = clip.startTick + note.startTick - activeMidiClip.startTick;
-      if (localTick < 0 || localTick >= activeMidiClip.durationTicks) return [];
+      const start = Math.max(0, localTick);
+      const end = Math.min(activeMidiClip.durationTicks, localTick + note.durationTicks);
+      if (end <= start) return [];
       return [
         {
           id: `${clip.id}:${note.id}`,
           pitch: note.note,
-          startTick: localTick,
-          durationTicks: Math.max(
-            1,
-            Math.min(note.durationTicks, activeMidiClip.durationTicks - localTick),
-          ),
+          startTick: start,
+          durationTicks: end - start,
           trackColor,
         },
       ];

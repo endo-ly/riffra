@@ -69,6 +69,16 @@ TEST(ExecutionGraphContractTest, DecodesRustGeneratedFixtures) {
     EXPECT_EQ(full.graph.tracks[1].midiClips[0].events[0].kind, MidiEventKindSpec::pitchBend);
     EXPECT_EQ(full.graph.tracks[2].midiClips[0].events[0].kind, MidiEventKindSpec::channelPressure);
     EXPECT_EQ(full.graph.tracks[2].midiClips[0].events[1].kind, MidiEventKindSpec::controlChange);
+    ASSERT_EQ(full.graph.tracks[2].midiClips[0].instrumentControlEvents.size(), 2u);
+    const auto& keySwitch = full.graph.tracks[2].midiClips[0].instrumentControlEvents[0];
+    EXPECT_EQ(keySwitch.type, "keySwitch");
+    EXPECT_EQ(keySwitch.note, 26);
+    EXPECT_TRUE(keySwitch.latch);
+    EXPECT_TRUE(keySwitch.down);
+    const auto& controller = full.graph.tracks[2].midiClips[0].instrumentControlEvents[1];
+    EXPECT_EQ(controller.type, "controlChange");
+    EXPECT_EQ(controller.controllerNumber, 11);
+    EXPECT_EQ(controller.controllerValue, 96);
     EXPECT_FALSE(full.graph.tracks[0].instrument.has_value());
     EXPECT_FALSE(full.graph.tracks[1].audioInput.has_value());
     EXPECT_FALSE(full.graph.tracks[0].midiInput.deviceId.has_value());
@@ -92,6 +102,61 @@ TEST(ExecutionGraphContractTest, DecodesRustGeneratedFixtures) {
     ASSERT_TRUE(decodePluginState(fixture("plugin-state.json"), state, error))
         << error.toStdString();
     EXPECT_EQ(state.parameterValues.size(), 2u);
+}
+
+TEST(ExecutionGraphContractTest, ValidatesDistinctStemOutputs) {
+    auto request = fixture("offline-render-request.json");
+    request.getDynamicObject()->setProperty(
+        "output",
+        juce::JSON::parse(
+            R"({"kind":"stems","outputs":[{"trackId":"a","destination":"a.wav"},{"trackId":"b","destination":"b.wav"}]})"));
+    OfflineRenderRequestSpec decoded;
+    juce::String error;
+    ASSERT_TRUE(decodeOfflineRenderRequest(request, decoded, error)) << error;
+    ASSERT_EQ(decoded.stems.size(), 2u);
+    EXPECT_EQ(decoded.stems[1].trackId, "b");
+
+    request.getDynamicObject()->setProperty(
+        "output",
+        juce::JSON::parse(
+            R"({"kind":"stems","outputs":[{"trackId":"a","destination":"a.wav"},{"trackId":"b","destination":"a.wav"}]})"));
+    OfflineRenderRequestSpec invalid;
+    error.clear();
+    EXPECT_FALSE(decodeOfflineRenderRequest(request, invalid, error));
+    EXPECT_TRUE(error.contains("unique")) << error;
+}
+
+TEST(ExecutionGraphContractTest, ValidatesCaptureTargetsAndDestinations) {
+    OfflineRenderRequestSpec shared;
+    juce::String sharedError;
+    ASSERT_TRUE(
+        decodeOfflineRenderRequest(fixture("offline-capture-request.json"), shared, sharedError))
+        << sharedError;
+    ASSERT_EQ(shared.captures.size(), 3u);
+    EXPECT_EQ(shared.captures[0].target.id, "track-audio");
+    auto request = fixture("offline-render-request.json");
+    request.getDynamicObject()->setProperty("normalize", false);
+    request.getDynamicObject()->setProperty(
+        "output",
+        juce::JSON::parse(
+            R"({"kind":"capture","outputs":[{"target":{"kind":"track","id":"a"},"destination":"a.wav"},{"target":{"kind":"bus","id":"b"},"destination":"b.wav"},{"target":{"kind":"master"},"destination":"master.wav"}]})"));
+    OfflineRenderRequestSpec decoded;
+    juce::String error;
+    ASSERT_TRUE(decodeOfflineRenderRequest(request, decoded, error)) << error;
+    ASSERT_EQ(decoded.captures.size(), 3u);
+    EXPECT_EQ(decoded.captures[1].target.kind, OfflineCaptureKind::bus);
+    request.getDynamicObject()->setProperty(
+        "output",
+        juce::JSON::parse(
+            R"({"kind":"capture","outputs":[{"target":{"kind":"master","id":"invalid"},"destination":"master.wav"}]})"));
+    error.clear();
+    EXPECT_FALSE(decodeOfflineRenderRequest(request, decoded, error));
+    request.getDynamicObject()->setProperty(
+        "output",
+        juce::JSON::parse(
+            R"({"kind":"capture","outputs":[{"target":{"kind":"bus","id":"b"},"destination":"a.wav"},{"target":{"kind":"bus","id":"b"},"destination":"b.wav"}]})"));
+    error.clear();
+    EXPECT_FALSE(decodeOfflineRenderRequest(request, decoded, error));
 }
 
 TEST(ExecutionGraphContractTest, RejectsMissingAndUnknownKeysAtEveryObjectDepth) {
@@ -168,6 +233,11 @@ TEST(ExecutionGraphContractTest, RejectsValuesOutsideContractRanges) {
     setValue(invalidMidiPosition,
              {"graph", "tracks", "#1", "midiClips", "#0", "events", "#0", "tick"}, 960);
     expectTimelineSnapshotRejected(invalidMidiPosition);
+    auto terminalKeySwitch = cloneJson(full);
+    setValue(terminalKeySwitch,
+             {"graph", "tracks", "#2", "midiClips", "#0", "instrumentControlEvents", "#0", "tick"},
+             960);
+    expectTimelineSnapshotRejected(terminalKeySwitch);
 
     auto missingSidechainTarget = cloneJson(full);
     setValue(missingSidechainTarget, {"graph", "mixer", "sidechainSends", "#0", "targetDeviceId"},

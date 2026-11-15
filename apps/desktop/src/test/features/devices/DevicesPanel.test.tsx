@@ -1,7 +1,16 @@
+import type * as SidechainModule from '@/features/devices/DeviceSidechainEditor';
 import { createTestSessionStore, TestSessionProvider } from '@/test/support/session-provider';
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  renderHook,
+  screen,
+  waitFor,
+} from '@testing-library/react';
 import { Profiler, useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type {
@@ -16,7 +25,21 @@ import type {
 import { defaultSession } from '@/native/browser-defaults';
 import { createFakeNativeApi, type FakeNativeApi } from '@/test/support/fake-native-api';
 import { resolveDeviceTarget } from '@/features/devices/device-target';
-import { DevicesPanelView } from '@/features/devices/DevicesPanel';
+import { DevicesPanel, DevicesPanelView } from '@/features/devices/DevicesPanel';
+import { useDeviceDetails } from '@/features/devices/useDeviceDetails';
+import { HostConnectionChangedError } from '@/native/invoke';
+
+const sidechainRenders = vi.hoisted(() => ({ count: 0 }));
+vi.mock('@/features/devices/DeviceSidechainEditor', async (importOriginal) => {
+  const actual = await importOriginal<typeof SidechainModule>();
+  return {
+    ...actual,
+    DeviceSidechainEditor: (props: Parameters<typeof actual.DeviceSidechainEditor>[0]) => {
+      sidechainRenders.count += 1;
+      return <actual.DeviceSidechainEditor {...props} />;
+    },
+  };
+});
 
 afterEach(cleanup);
 const effect = {
@@ -135,8 +158,6 @@ function Harness({
         sessionId={session.sessionId}
         automationLanes={session.arrangement.automationLanes}
         arrangement={session.arrangement}
-        playing={false}
-        currentTick={0}
         onOpenAutomation={onOpenAutomation}
         target={resolveDeviceTarget(session.arrangement, owner)}
         plugins={[]}
@@ -151,6 +172,174 @@ function Harness({
 }
 
 describe('DevicesPanel', () => {
+  it.each(['metadata refresh', 'host change', 'device change', 'unmount'] as const)(
+    'handles a pending edit across %s',
+    async (change) => {
+      const api = runtimeApi();
+      const store = createTestSessionStore(api);
+      const { result, rerender, unmount } = renderHook(
+        ({ values, deviceId }) =>
+          useDeviceDetails(
+            { kind: 'track', id: track.id },
+            deviceId,
+            effect.plugin.path,
+            values,
+            undefined,
+          ),
+        {
+          initialProps: { values: [0.5, 0], deviceId: effect.id },
+          wrapper: ({ children }) => (
+            <TestSessionProvider api={api} store={store}>
+              {children}
+            </TestSessionProvider>
+          ),
+        },
+      );
+      await waitFor(() => expect(result.current.loading).toBe(false));
+      let resolve!: (value: ReturnType<typeof api.mutationResult>) => void;
+      let reject!: (error: Error) => void;
+      const pending = new Promise<ReturnType<typeof api.mutationResult>>((done, fail) => {
+        resolve = done;
+        reject = fail;
+      });
+      let saved!: Promise<boolean>;
+      act(() => {
+        saved = result.current.mutate(() => pending);
+      });
+
+      if (change === 'metadata refresh') {
+        rerender({ values: [0.75, 0], deviceId: effect.id });
+      } else if (change === 'device change') {
+        rerender({ values: [0.5, 0], deviceId: 'effect:other' });
+      } else if (change === 'unmount') {
+        unmount();
+      } else {
+        act(() => {
+          const state = store.getState();
+          const boot = state.project.boot!;
+          state.host.adoptConnection({
+            ...state.host.connection,
+            generation: state.host.connection.generation + 1,
+          });
+          store.getState().project.acceptBootstrap(boot);
+        });
+      }
+      await waitFor(() => expect(result.current.loading).toBe(false));
+      const previous = store.getState().project.boot!.canonical;
+      const next = api.mutationResult({
+        ...api.bootstrapState.canonical.session,
+        projectName: 'Saved edit',
+      });
+      await act(async () => {
+        if (change === 'host change') reject(new HostConnectionChangedError());
+        else resolve(next);
+      });
+
+      expect(await saved).toBe(change === 'metadata refresh');
+      expect(store.getState().project.boot!.canonical).toStrictEqual(
+        change === 'host change' ? previous : next.canonical,
+      );
+      if (change !== 'unmount') await waitFor(() => expect(result.current.saving).toBe(false));
+    },
+  );
+
+  it('does not share metadata with a replaced plugin that reuses the device ID', async () => {
+    const api = runtimeApi();
+    let resolveOld!: (inspection: Awaited<ReturnType<typeof api.inspectDevice>>) => void;
+    const old = await api.inspectDevice({ kind: 'track', id: track.id }, effect.id);
+    const inspect = vi
+      .spyOn(api, 'inspectDevice')
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveOld = resolve;
+        }),
+      )
+      .mockResolvedValue({ ...old, name: 'Replacement' });
+    const { result, rerender } = renderHook(
+      ({ pluginPath }) =>
+        useDeviceDetails(
+          { kind: 'track', id: track.id },
+          effect.id,
+          pluginPath,
+          [0.5, 0],
+          undefined,
+        ),
+      {
+        initialProps: { pluginPath: 'old.vst3' },
+        wrapper: ({ children }) => <TestSessionProvider api={api}>{children}</TestSessionProvider>,
+      },
+    );
+    await waitFor(() => expect(inspect).toHaveBeenCalledTimes(1));
+
+    rerender({ pluginPath: 'replacement.vst3' });
+    await waitFor(() => expect(result.current.details?.inspection.name).toBe('Replacement'));
+    await act(async () => resolveOld(old));
+
+    expect(inspect).toHaveBeenCalledTimes(2);
+    expect(result.current.details?.inspection.name).toBe('Replacement');
+  });
+
+  it('updates only the automated parameter when the transport position changes', async () => {
+    const api = runtimeApi();
+    vi.spyOn(api, 'formatDeviceParameterValue').mockImplementation(
+      async (_owner, _device, _parameter, value) => String(value),
+    );
+    const session = defaultSession();
+    session.arrangement.tracks = [structuredClone(track)];
+    session.arrangement.automationLanes = [
+      {
+        id: 'lane',
+        target: { kind: 'deviceParameter', deviceId: effect.id, parameterId: 'level' },
+        interpolation: 'linear',
+        points: [
+          { id: 'start', tick: 0, value: 0.2 },
+          { id: 'end', tick: 960, value: 0.8 },
+        ],
+      },
+    ];
+    const store = createTestSessionStore(api, { session });
+    store.getState().workspace.setSelection({ kind: 'track', trackId: track.id });
+    render(
+      <TestSessionProvider api={api} store={store}>
+        <DevicesPanel />
+      </TestSessionProvider>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: effect.name }));
+    await waitFor(() =>
+      expect(screen.getByLabelText('Level current automation value')).toHaveTextContent(
+        'Automation: 0.2',
+      ),
+    );
+    sidechainRenders.count = 0;
+
+    act(() => {
+      store.getState().transport.seekLocally(480);
+    });
+
+    await waitFor(() =>
+      expect(screen.getByLabelText('Level current automation value')).toHaveTextContent(
+        'Automation: 0.5',
+      ),
+    );
+    expect(sidechainRenders.count).toBe(0);
+    expect(api.calls.filter((call) => call === 'inspectDevice')).toHaveLength(1);
+    expect(api.calls.filter((call) => call === 'listDeviceParameters')).toHaveLength(1);
+  });
+
+  it('keeps device metadata loaded when the same owner is rendered again', async () => {
+    const api = runtimeApi();
+    const { rerender } = render(<Harness api={api} />);
+    fireEvent.click(screen.getByRole('button', { name: effect.name }));
+    await screen.findByRole('slider', { name: 'Level' });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Reset Level' })).toBeEnabled());
+
+    rerender(<Harness api={api} />);
+    await act(async () => undefined);
+
+    expect(api.calls.filter((call) => call === 'inspectDevice')).toHaveLength(1);
+    expect(api.calls.filter((call) => call === 'listDeviceParameters')).toHaveLength(1);
+  });
+
   it.each(['track', 'bus', 'master'] as const)(
     'commits parameters, presets and editor actions on %s',
     async (kind) => {
@@ -245,6 +434,8 @@ describe('DevicesPanel', () => {
       fireEvent.blur(slider);
       await waitFor(() => expect(api.setDeviceParameter).toHaveBeenCalledTimes(1));
       expect(api.setDeviceParameter).toHaveBeenLastCalledWith(owner, effect.id, 0, 0.7);
+      expect(api.calls.filter((call) => call === 'inspectDevice')).toHaveLength(1);
+      expect(api.calls.filter((call) => call === 'listPluginPresets')).toHaveLength(1);
       await waitFor(() => expect(screen.getByLabelText('Mode')).toBeEnabled());
       fireEvent.change(screen.getByLabelText('Mode'), { target: { value: '1' } });
       await waitFor(() =>
@@ -270,6 +461,7 @@ describe('DevicesPanel', () => {
       await waitFor(() => expect(screen.getByLabelText('Preset')).toHaveValue('1'));
       fireEvent.click(screen.getByRole('button', { name: 'Open Plugin Editor' }));
       expect(api.openPluginEditor).toHaveBeenCalledWith(owner, effect.id);
+      await waitFor(() => expect(screen.getByLabelText('Level · AUTO')).toBeEnabled());
       api.setDeviceParameter = vi.fn().mockRejectedValue(new Error('Parameter rejected'));
       fireEvent.change(screen.getByLabelText('Level · AUTO'), { target: { value: '0.9' } });
       fireEvent.pointerUp(screen.getByLabelText('Level · AUTO'));
@@ -291,8 +483,6 @@ describe('DevicesPanel', () => {
       sessionId: 'project:1',
       automationLanes: [],
       arrangement: defaultSession().arrangement,
-      playing: false,
-      currentTick: 0,
       onOpenAutomation: () => undefined,
       target: {
         owner: { kind: 'track' as const, id: track.id },

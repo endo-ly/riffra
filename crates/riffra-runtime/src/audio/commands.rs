@@ -3,13 +3,13 @@ use super::recovery::AudioDeviceReopenOutcome;
 use super::wire::{SidecarCommand, SidecarResponse, TakeComparisonVariant, WirePluginState};
 use super::{AUDIO_DEVICE_COMMAND_TIMEOUT, AudioSupervisor, COMMAND_ACK_TIMEOUT};
 use crate::api::output::InstrumentPreviewDefinition;
+use crate::api::output::RuntimeLoadStep;
 use crate::api::output::{
     AudioStatus, DeviceCapabilities, DeviceInspection, DeviceParameterInfo,
     DeviceSidechainCapability, PluginPresetInfo,
 };
 use crate::api::params::AudioDriverConfig;
 use crate::execution::{GraphPluginState, TimelineSnapshot};
-use crate::runtime::TIMELINE_PREPARE_TIMEOUT;
 use riffra_core::AudioTakeVariant;
 use serde_json::Value;
 use std::path::Path;
@@ -18,6 +18,9 @@ use std::time::Duration;
 const TRACK_DEVICE_COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
 /// The sidecar's budget for loading a VST3, which is the slowest step of an audition.
 const PLUGIN_AUDITION_TIMEOUT: Duration = Duration::from_secs(45);
+/// The sidecar's queue budget plus its watchdog for a plugin restoring its state; sample-based
+/// instruments load their sounds before returning.
+const PLUGIN_STATE_SET_TIMEOUT: Duration = Duration::from_secs(130);
 
 /// Programs exposed by a Track Device plugin.
 #[derive(Clone, Debug)]
@@ -151,14 +154,17 @@ impl AudioSupervisor {
     pub(crate) fn prepare_timeline_snapshot(
         &self,
         snapshot: &TimelineSnapshot,
-        timeout: Duration,
+        progress: &dyn Fn(RuntimeLoadStep),
     ) -> NativeAudioResult<()> {
-        self.request_ack(
+        match self.request_load(
             SidecarCommand::PrepareTimelineSnapshot {
                 snapshot: Box::new(snapshot.clone()),
             },
-            timeout.min(TIMELINE_PREPARE_TIMEOUT),
-        )
+            progress,
+        )? {
+            SidecarResponse::TimelineAck {} => Ok(()),
+            response => Err(unexpected(&response)),
+        }
     }
 
     pub fn commit_timeline_snapshot(&self, timeout: Duration) -> NativeAudioResult<()> {
@@ -257,7 +263,13 @@ impl AudioSupervisor {
         parameter_index: u32,
         value: Option<f32>,
         display: Option<String>,
+        nearest: bool,
     ) -> NativeAudioResult<()> {
+        if nearest && display.is_none() {
+            return Err(NativeAudioError::native_rejected(
+                "nearest requires numeric display text",
+            ));
+        }
         if value.is_some() == display.is_some() || value.is_some_and(|value| !value.is_finite()) {
             return Err(NativeAudioError::native_rejected(
                 "select exactly one finite value or display text",
@@ -270,6 +282,7 @@ impl AudioSupervisor {
                 parameter_index,
                 value: value.map(|value| value.clamp(0.0, 1.0)),
                 display,
+                nearest,
             },
             TRACK_DEVICE_COMMAND_TIMEOUT,
         )
@@ -434,7 +447,7 @@ impl AudioSupervisor {
                 device_id: device_id.into(),
                 state,
             },
-            TRACK_DEVICE_COMMAND_TIMEOUT,
+            PLUGIN_STATE_SET_TIMEOUT,
         )
     }
 

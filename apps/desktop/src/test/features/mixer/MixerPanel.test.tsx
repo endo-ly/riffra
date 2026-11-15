@@ -132,6 +132,7 @@ it('edits Group and Send routes, commits their controls, and opens Bus and Maste
   const slider = within(send).getByLabelText('Reverb send level');
   fireEvent.click(within(send).getByRole('button', { name: 'Automation' }));
   expect(openAutomation).toHaveBeenLastCalledWith({ kind: 'sendLevel', sendId: 'send:1' });
+  fireEvent.pointerDown(slider);
   fireEvent.change(slider, { target: { value: '-12' } });
   fireEvent.pointerUp(slider);
   fireEvent.blur(slider);

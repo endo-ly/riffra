@@ -12,7 +12,7 @@ directory: string,
 /**
  * External directory containing the copied stem WAVs, when requested.
  */
-exportedDirectory: string | null,
+exportedDirectory: string | null, 
 /**
  * Project that supplied the rendered canonical state.
  */
@@ -20,7 +20,7 @@ projectId: string,
 /**
  * Timestamp used to identify this managed Render directory.
  */
-createdAtMs: number | null,
+createdAtMs: number | null, 
 /**
  * Canonical sequence captured when the job started.
  */
@@ -38,6 +38,10 @@ startTick: number,
  */
 endTick: number, 
 /**
+ * Requested range kind: `entireArrangement`, `loopRange`, `timeSelection`, or `section`.
+ */
+rangeKind: string, 
+/**
  * Shared frame count, including any render tail.
  */
 frames: number, 
@@ -48,4 +52,12 @@ stems: Array<RenderStem>,
 /**
  * Tracks skipped by an all-Tracks request because they had no unmuted Clips.
  */
-skippedTrackIds: Array<string>, };
+skippedTrackIds: Array<string>, 
+/**
+ * Score section name for a section render.
+ */
+sectionName: string | null, 
+/**
+ * One-based Score section occurrence for a section render.
+ */
+sectionOccurrence: number | null, };

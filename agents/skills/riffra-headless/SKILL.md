@@ -16,11 +16,11 @@ description: >-
 
 ## 目次
 
-1. **実行のしかた** — 実行モード / Host の起動と接続 / Safe Mode の範囲
+1. **実行のしかた** — 実行モード / Host の起動と接続 / MCPクライアントからの操作 / Safe Mode の範囲
 2. **要求と応答** — 要求の形式 / 応答の読み方 / エラーコード
-3. **楽曲を組み立てる** — Session の照会と Undo / 一括適用(session apply) / Track・Clip・Region / 楽曲の入力 / 和声・フレーズ・リズム
+3. **楽曲を組み立てる** — Session の照会と Undo / 一括適用(session apply) / Score YAML を正本にする / Track・Clip・Region / 楽曲の入力 / 和声・フレーズ・リズム
 4. **音とミックス** — Device・Plugin / Instrument / ミックス / Automation
-5. **音声と素材** — 録音 / 書き出しと測定 / Library・解析・Preview
+5. **音声と素材** — 録音 / 書き出しと測定 / Asset・解析・Preview
 6. **共通の注意** — 引数と入出力
 
 ## 1. 実行のしかた
@@ -55,9 +55,15 @@ Linuxの通常モードはALSA入出力デバイスを必要とする。デバ�
 
 Attachedは current-user registry から稼働中のHostを発見し、DataRootは開かない。候補が1件なら自動選択、複数件なら `--host <instance-id>` が必要である。Host一覧は `riffra host list` で確認する。
 
+### MCPクライアントからの操作
+
+MCPを使う場合もHostは同じで、`riffra-mcp` がstdio経由でControl Commandへ転送する。Hostを先に起動し、MCPクライアントの `command` に `riffra-mcp.exe` の絶対パスを指定する。複数のHostがある場合は `args` に `--host <instance-id>` を渡す。設定の詳細は [docs/mcp.md](../../../docs/mcp.md) を参照する。
+
+ツールは操作対象ごとにまとまり、`action` と `params` でControl Commandを選ぶ。状況把握には `session_read.inspect`、複数変更の原子的な適用には `session_edit.apply`、書き出しや測定の完了確認には `job.wait` を使う。位置・音価・音高はCLIと同じく音楽座標を優先する。Render→Job→Analysisの制作手順もCLIと同じである。ツール名と引数の一覧はここへ複写しない。
+
 ### Safe Mode の範囲
 
-正準状態の編集はSafe Modeでもそのまま使える。transport、live MIDI送信、`audio probe` 系、`audio driver set`、`plugin scan`、`record start`、`asset preview` は `runtimeUnavailable` になる一方で、`render` とjob管理、`library`、`analysis`、`plugin catalog list`、`missing list`、`record list` などの管理系は使える。
+正準状態の編集はSafe Modeでもそのまま使える。transport、live MIDI送信、`audio probe` 系、`audio driver set`、`plugin scan`、`record start`、`asset preview` は `runtimeUnavailable` になる一方で、`render` とjob管理、`asset`、`analysis`、`plugin catalog list`、`missing list`、`record list` などの管理系は使える。
 
 ## 2. 要求と応答
 
@@ -79,7 +85,7 @@ Attachedは current-user registry から稼働中のHostを発見し、DataRoot�
 - `expectedSequence`: 任意。指定すると正準シーケンスが一致するときだけ実行する。ワンショットでは `--expected-sequence <n>` フラグ
 - `params`: コマンドごとの引数。キー名は camelCase
 
-`session inspect`、Mutation、`render start`、`undo`、`redo` は `expectedSequence` を検証する。interactiveで操作を連鎖させるときは、応答を受け取ってから次の要求を組み立て、`expectedSequence` に直前応答の `sequence` を渡す。
+`session inspect`、Mutation、`render start`、`history undo`、`history redo` は `expectedSequence` を検証する。interactiveで操作を連鎖させるときは、応答を受け取ってから次の要求を組み立て、`expectedSequence` に直前応答の `sequence` を渡す。
 
 ### 応答の読み方
 
@@ -128,7 +134,7 @@ Mutationでは `result.value.createdEntityIds` に、そのMutationで生成さ�
 
 現在の構造と `sequence` は `session inspect` で照会する。`session get` はNote全件・録音詳細を含むフルスナップショットなので、Inspectにない詳細が必要なときだけ使う。
 
-編集には直前の `sequence` を `expectedSequence` に渡し、編集後は同じ範囲をInspectして確認する。取り消しは変更後の `sequence` を指定して `undo` する。
+編集には直前の `sequence` を `expectedSequence` に渡し、編集後は同じ範囲をInspectして確認する。取り消しは変更後の `sequence` を指定した `history undo` で行う。
 
 ```powershell
 # 応答の sequence を次の --expected-sequence に渡し、生成IDは createdEntityIds から取る
@@ -153,21 +159,42 @@ riffra --attach session apply --file ./song.jsonl --include-created-ids
 {"command":"track.add","params":{"name":"Lead","kind":"instrument"}}
 {"command":"music.midi-clip.create","params":{"trackName":"Lead","name":"Verse","start":"1:1","end":"9:1"}}
 {"command":"music.note.insert","params":{"trackName":"Lead","clipName":"Verse","notes":[{"pitch":"C4","position":"1:1","duration":"1/8"}]}}
+{"command":"effect.add","params":{"owner":{"kind":"track","name":"Lead"},"pluginPath":"C:/Plugins/Effect.vst3"},"bind":"effect"}
+{"command":"device.parameter.set","params":{"owner":{"kind":"track","name":"Lead"},"deviceId":"@effect","parameterIndex":0,"value":0.45}}
 ```
 
-既存ClipのNoteだけをまとめて置き換えるには、同じBatchに `midi-note.clear` → `music.note.insert` の順で含める。raw MIDI値でよければ `midi-clip.update` の `patch.notes` へNote配列を渡す。
+デバイスを1件作る操作に `bind` で名前を付けると、後続操作のデバイスIDに `@名前` を使える。名前はそのBatchの中だけで有効で、同じ名前は再利用できない。Batch内のパラメーター設定には正規化値 `value` を使う。
+
+既存ClipのNoteだけをまとめて置き換えるには、同じBatchに `clip.midi.note.clear` → `music.note.insert` の順で含める。raw MIDI値でよければ `clip.midi.update` の `patch.notes` へNote配列を渡す。
 
 paramsキーはCLIフラグ名と対応する(`--notes-json` → `notes`、`--file` → `operations`)。`music phrase insert` だけは `--phrase-json` の内容が `pattern` と `placements` の2つのparamsへ分かれる。
 
 失敗時は `error.details.operationIndex` と `command` でどのoperationか特定でき、JSONL入力では物理行番号が `inputLine` に入る。paramsの検証エラーには、JSON Pointer形式の `path` と配列要素の `index`、問題の値が付く。
 
+### Score YAML を正本にする
+
+Score YAML から Project を作ると、Project はそのファイルへリンクされ、YAML が曲の編集正本になる。YAML を直したら `project rebuild-score` で同じ Project を更新する。新しい Project は作らない。Live Host では保存を検知して自動で更新されるため、通常は明示操作も不要である。
+
+- `project import-score <path>`: YAML を新しい Project として読み込み、リンクする。`--bind ID=DEFINITION` で外部楽器の Definition を結び付ける
+- `project rebuild-score [--path PATH] [--bind ID=DEFINITION]`: アクティブな Project をリンク先の YAML で更新する。`--path` を省略するとリンク先を読む
+- `score validate <path>`: Project を作らずに文法・参照・音源・ミックス・オートメーション・音声を診断する。`--bind` を受け取る
+- `score inspect <path>`: Project を作らずに展開結果(トラック・キット・エフェクト・ルーティング・オートメーション・音声クリップ)を来源位置つきで確認する。`--bind` を受け取る
+
+Score は内蔵音源だけでなく、VST3 の `source`、キット、エフェクト、Group / Return / Send / Sidechain、オートメーション、Audio Track と WAV クリップを記述できる。VST3 名と State、パラメーターは Score に直接指定し、State と WAV は曲フォルダ内に置く。
+
+リンクされた Project では、YAML が所有する部分(時間軸・Score 由来の構成・演奏・和声・ミックス構造など)は編集対象外で、作業状態(ループ・パンチ・ミュート・ソロ・armed・monitoring など)だけを変更できる。YAML に未実装の拡張を書いた場合は、項目パスと行・列を持つ `notImplemented` 診断で拒否される。書式と未実装の一覧は [docs/score-yaml.md](../../../docs/score-yaml.md) を参照する。
+
+`.riffra` へ書き出すとリンクは無効になり、持ち出し先では `project rebuild-score --path ... --bind ...` で結び直す。失敗した同期は直前の状態を維持する。
+
 ### Track・Clip・Region
 
-Trackは `track add`、MIDI Clipは `music midi-clip create`(「楽曲の入力」)で作成し、`track list` / `session inspect` で確認する。取り込んだMIDI Asset(`asset import-midi`)の配置は `audio-clip add-asset` / `midi-clip add-asset` で行う。Regionは `Intro` や `Verse` などの自由な名前を持つ時間範囲で、重複・入れ子・同名を許可する。
+Trackは `track add`、MIDI Clipは `music midi-clip create`(「楽曲の入力」)で作成し、`track list` / `session inspect` で確認する。取り込んだMIDI Asset(`asset import-midi`)の配置は `clip audio add-asset` / `clip midi add-asset` で行う。Regionは `Intro` や `Verse` などの自由な名前を持つ時間範囲で、重複・入れ子・同名を許可する。
+
+隣接するClipの結合は `clip audio merge` / `clip midi merge` で、`--first-clip-id` と `--second-clip-id` に時間順の隣接クリップを指定し、一回の編集として行う。音声は同じ素材の連続範囲で音量・パン・ミュート・テイク・フェード形状が一致し、境界のフェードやループが無いことを要する。MIDIは同じトラックでミュートが一致し、ループしていないことを要する。録音セッションのスロットはコピーを配置してから結合する。
 
 ### 楽曲の入力
 
-通常の作曲では `music.*` を優先する。位置・音価・音高は音楽座標のまま渡し、Coreがテンポ・拍子に基づいて正準TimelineTickへ変換する。テンポ・拍子の変更は `timebase update`、変更点全体は `timebase get-map` / `set-map` で扱う。
+通常の作曲では `music.*` を優先する。位置・音価・音高は音楽座標のまま渡し、Coreがテンポ・拍子に基づいて正準TimelineTickへ変換する。テンポ・拍子の変更は `music timebase update`、変更点全体は `music timebase get-map` / `set-map` で扱う。
 
 ```text
 位置: 5:1、5:3+1/2
@@ -178,14 +205,14 @@ Trackは `track add`、MIDI Clipは `music midi-clip create`(「楽曲の入力�
 コマンドの使い分け:
 
 - `music note` / `music midi-clip`: 音楽座標によるNote・MIDI Clipの参照・作成・更新・削除・配置。通常のNote操作はこちら
-- `midi-note`: 量子化・変形・複製など、既知のNote IDをraw tick・MIDI値で直接編集する操作
-- `midi-clip`・`instrument-event` のraw tick系操作: CCやPitch Bendなど、音楽上の基本操作に含まれないMIDIイベントのtickによる直接編集
+- `clip midi note`: 量子化・変形・複製など、既知のNote IDをraw tick・MIDI値で直接編集する操作
+- `clip midi`・`clip midi instrument-event` のraw tick系操作: CCやPitch Bendなど、音楽上の基本操作に含まれないMIDIイベントのtickによる直接編集
 
 tickを直接扱う操作での換算基準は `session inspect.project.ppq` である(Instrument previewの `ticksPerBeat` はpreview固有の値)。
 
-Noteの取得は `music note list` で範囲を絞って行う。一括調整は `music note transform`、個別の更新・削除は `--include-ids` で取得したIDに対して行い、raw tickやMIDI値で扱うときだけ `--raw` を付ける。`position` はClip内部の相対位置ではなくArrangement全体の絶対位置である。複数Noteは1回の `music note insert` で渡す。
+Noteの取得は `music note list` で範囲を絞って行う。一括調整は `music note transform`、個別の更新・削除は `--include-ids` で取得したIDに対して行い、raw tickやMIDI値で扱うときだけ `--raw` を付ける。`position` はClip内部の相対位置ではなくArrangement全体の絶対位置である。複数Noteは1回の `music note insert` で渡す。Clip末尾を越えるNoteは `--clip-to-end` を指定すると末尾までに短縮でき、開始位置はClip内でなければならない。
 
-各Noteの `lyric` は `music note update --lyric` / `--clear-lyric` で変更・削除し、一括変更は `midi-note update-many` のpatchの `lyric`(`null` で削除)で扱う。
+各Noteの `lyric` は `music note update --lyric` / `--clear-lyric` で変更・削除し、一括変更は `clip midi note update-many` のpatchの `lyric`(`null` で削除)で扱う。
 
 ```powershell
 riffra --attach --expected-sequence 20 music note transform `
@@ -195,7 +222,7 @@ riffra --attach --expected-sequence 20 music note transform `
 
 `music export-midi --clip-id <id> --output <path>` はClip内のNoteとMIDIイベントをClip先頭から書き出す。`--track-id` を指定するとTrack内の全MIDI Clipをプロジェクト上の位置で書き出す。歌詞とプロジェクトのテンポ・拍子もSMFに含まれる。
 
-`instrument-event` はMIDI Clip内の音源制御(`sustainPedal`、`pitchBend`、`modWheel`、`aftertouch`、`parameterChange`)を編集する。Parameter Changeは `parameter` と `nativeValue` を保持する。
+`clip midi instrument-event` はMIDI Clip内の音源制御(`sustainPedal`、`pitchBend`、`modWheel`、`aftertouch`、`parameterChange`)を編集する。Parameter Changeは `parameter` と `nativeValue` を保持する。
 
 ### 和声・フレーズ・リズム
 
@@ -223,7 +250,28 @@ Effectの候補は `plugin catalog list` で確認し、`effect add` でEffect C
 
 `--plugin-id` は現在のDataRootのCatalogにあるValidated・Role一致のPluginへ解決され、解決後のパスがProjectへ保存される。IDはインストールパスに依存するため、別PCへ持ち運べる識別子ではない。Standaloneではパスだけを登録し、実体のロードはRuntimeが行う。
 
-`device inspect`、`device parameter list/get/set`、`plugin state save/load`、`plugin preset` は実体のPluginを扱うため Live Host 専用である。Built-in instrumentはparameter・state・preset・editorをサポートしない。
+`device inspect`、`device parameter list/get/set`、`plugin state save/load/inspect/read/patch`、`plugin preset` は実体のPluginを扱うため Live Host 専用である。Built-in instrumentはparameter・state・preset・editorをサポートしない。
+
+JUCE製PluginのStateは、ファイルを受け渡さず構造を指定して読み書きできる。`inspect` で構造と値の種類を確認し、`read` で1つの値を取り出し、`patch` で指定箇所だけを変更する。
+
+```powershell
+riffra --attach plugin state inspect --track-id <t> --device-id <d>
+riffra --attach plugin state read --track-id <t> --device-id <d> --path Plugin --xml-path Part0/InstrumentPath
+riffra --attach plugin state read --track-id <t> --device-id <d> --path Plugin --output multi.xml
+riffra --attach plugin state patch --track-id <t> --device-id <d> --set PROJECT/Slot/Level=0.5
+riffra --attach plugin state patch --track-id <t> --device-id <d> --path Plugin --xml-set "Part0/InstrumentPath=//Instruments/a.st3i" --xml-set "Part0/@id=1"
+```
+
+| 記法                | 意味                                                                                                            |
+| ------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `--path`            | ValueTreeのパス。子は `Type` か `Type[1]`、最後はプロパティ名。エンコードされた入れ子のTreeも同じ書き方でたどる |
+| `--xml-path`        | `--path` のXMLのルート直下からのパス。属性は `@name`                                                            |
+| `--set`             | 既存プロパティへの代入。値はプロパティの型に変換される。XMLを持つプロパティへは文書全体の置換                   |
+| `--set-file`        | ファイルの中身で文字列・XML文書全体を置換                                                                       |
+| `--xml-set`         | XMLの要素・属性への代入。最後の要素が無ければ親の末尾へ追加。子要素を持つ要素には代入できない                   |
+| `--operations-file` | `set` / `setTree` / `setXml` のJSON配列。Treeの置換や複数のXML文書の編集に使う                                  |
+
+複数の変更は1回の `patch` にまとめる。Stateの適用は音源の読み込みを待つため、数十秒かかることがある。
 
 `device parameter list` の主要フィールド:
 
@@ -240,19 +288,19 @@ Effectの候補は `plugin catalog list` で確認し、`effect add` でEffect C
 
 手動操作は `name` でParameterを特定し、離散値は `choices` の表示から選んでその `value` を渡す。Continuousの表示が空の場合は、normalized値(`value`)を用いる。Automationには `automatable: true` かつ `parameterId` が非nullのParameterを選び、既定値への復元には `defaultValue` を渡す。
 
-`device parameter set` の応答は `mutation`(正準変更)、`parameter`(対象の読み戻し)、`changedParameters`(値が変わったほかのParameter、index順)を持つ。`--display` はPluginに文字列からの変換を依頼し、表示へ戻した結果が入力と等価な場合だけ適用される。`session apply` 内では正規化値だけを書き、`--display` は使えない。
+`device parameter set` の応答は `mutation`(正準変更)、`parameter`(対象の読み戻し)、`changedParameters`(値が変わったほかのParameter、index順)を持つ。`--display` はPluginに文字列からの変換を依頼し、表示へ戻した結果が入力と等価な場合だけ適用される。数値表示には `--nearest` を併用でき、単位が一致する範囲で最も近い適用可能な表示値を選ぶ。適用値は応答の `parameter.value` と `displayValue` で確認できる。`session apply` 内では正規化値だけを書き、`--display` は使えない。
 
 ### Instrument
 
 役割(リード、ベース、コードなど)とプリセットの `category` は直接対応しない。`category` はライブラリ上の主分類であり、`instrument list` が返す全プリセットから `description`・`tags`・`recommended_range` で選ぶ。主旋律には `Lead` だけでなく `Pluck`・`Mallet`・`Keys` も候補になる。
 
-割り当ては `instrument apply`(`builtin:<presetId>` または `user:<id>`)。Built-in instrumentはSafe Modeでも割り当てられる。Instrument毎のMIDI設定は `instrument midi set --settings-json` で置換し、`transposeSemitones`、`playableNotes`(`{"type":"range","start":36,"end":84}` / `{"type":"set","notes":[...]}` / 制限なしの`null`)、`keyswitches`(`[{"note":24,"name":"C0"}]`)を持つ。
+割り当ては `instrument apply`(`builtin:<presetId>` または `user:<id>`)。Built-in instrumentはSafe Modeでも割り当てられる。音源付きトラックの作成は `instrument create-track --name Keys --instrument-id builtin:<presetId>` で、`--instrument-id` の代わりに `--plugin-path` も使える。トラック作成と割り当てをまとめて確定し、準備や保存の失敗ではトラックも追加しない。一回のUndoで全体を戻せる。Instrument毎のMIDI設定は `instrument midi set --settings-json` で置換し、`transposeSemitones`、`playableNotes`(`{"type":"range","start":36,"end":84}` / `{"type":"set","notes":[...]}` / 制限なしの`null`)、`keyswitches`(`[{"note":24,"name":"C0"}]`)を持つ。
 
-User Instrumentは `instrument save` で登録し、応答のIDを割当へ渡す。定義JSONと相対パスの素材は同じパッケージ構成で置く。複数Trackへの割当は `session apply` の `instrument.apply` に含める。
+User Instrumentは `instrument save` で登録し、応答のIDを割当へ渡す。定義が参照するサンプルなどの素材は登録時にパッケージへコピーされ、元のファイルから独立して利用できる。複数Trackへの割当は `session apply` の `instrument.apply` に含める。
 
 ### ミックス
 
-Track・Clipの音量・定位は `track update` / `audio-clip update` で、Masterのゲインは `session settings update --master-db` で調整する。Gain / VolumeはdB、Panは-1.0(左)..1.0(右)で指定する。
+Track・Clipの音量・定位は `track update` / `clip audio update` で、Masterのゲインは `session settings update --master-db` で調整する。Gain / VolumeはdB、Panは-1.0(左)..1.0(右)で指定する。
 
 Group・Return・Send・Sidechainは `mixer` コマンド群で編集し、状態は `mixer get` で確認する。RenderはTrackとClipのGain、Pan、Mute、Solo、Automation、Masterをすべて反映する。
 
@@ -264,7 +312,7 @@ Sidechainの送信先は別Track・Group・Return・Master上のEffect Deviceで
 
 Deviceの `value` には正規化数値またはPluginの表示文字列(例:`"250 ms"`)を渡せる。文字列はLive Hostが変換できた場合だけ保存される。
 
-更新はLane IDを維持し、新規LaneのIDは `createdEntityIds.automationLanes` に入る。空のPoint配列と `clear` はLaneを削除する。
+更新はLane IDを維持し、新規LaneのIDは `createdEntityIds.automationLanes` に入る。空のPoint配列と `clear` はLaneを削除する。補間後の予定制御値は `automation evaluate` で確認でき、指定したSample Rateと音楽グリッド上で返る。静的なミキサー値も評価できる。Plugin内部の量子化やGain Reductionの測定値ではないため、実際の音量はCaptureとLevelsで確認する。
 
 `session apply` 内では対象をCLI引数ではなく `target` オブジェクトで指定する。Pointは `tick` と `position` のいずれか一方を持ち、`position` はそのoperation時点のテンポ・拍子でTickへ変換される。
 
@@ -300,7 +348,7 @@ Deviceの `value` には正規化数値またはPluginの表示文字列(例:`"2
 
 ## 5. 音声と素材
 
-transport / audio / midi 送信 / record / render / job / library / plugin 実体の操作 / device parameter set は Live Host(`serve`)+ `--attach` が必要で、Standaloneでは引数の内容にかかわらず `runtimeUnavailable` になる。
+transport / audio / midi 送信 / record / render / job / asset / plugin 実体の操作 / device parameter set は Live Host(`serve`)+ `--attach` が必要で、Standaloneでは引数の内容にかかわらず `runtimeUnavailable` になる。
 
 ### 録音
 
@@ -310,13 +358,26 @@ Processed Variantに必要な制御信号を録音から再利用できない場
 
 ### 書き出しと測定
 
-音声の書き出しは `render start` で行う。`--expected-sequence` はRender対象の正準スナップショットを固定し、Conflictになった場合はInspectし直してからRenderし直す。
+音声の書き出しは `render start` で行う。`--expected-sequence` はRender対象の正準スナップショットを固定し、Conflictになった場合はInspectし直してからRenderし直す。ワンショットでは `render start --wait` / `render stems --wait` で完了結果を待てる。
 
-応答は `type: "job"` のジョブIDである。ワンショットは `job wait`(無指定ならterminal stateまで待機)、interactiveは `job get` の繰り返しで追跡し、`job cancel` で停止する。`plugin scan-start` と `analysis measure` も同じ非同期ジョブである。`ok: true` は要求の受付成功を表すので、Job自体の成功は `state: "completed"` で判断する。出力はDataRootの `renders/` 配下へ書き出される。
+応答は `type: "job"` のジョブIDである。ワンショットは `job wait JOB_ID`、interactiveは `job get` の繰り返しで追跡し、`job cancel` で停止する。待機のタイムアウトは `job wait --timeout-ms` で指定し、無指定なら終了まで待つ。`plugin scan --background` と `analysis measure` も同じ非同期ジョブである。`ok: true` は要求の受付成功を表すので、Job自体の成功は `state: "completed"` で判断する。出力はDataRootの `renders/` 配下へ書き出される。
+
+Scoreから取り込んだProjectでは、`--section <name> --occurrence <n>` でセクションの出現を指定できる。`--occurrence` は同名セクションの1始まりの出現番号で、`--section` と組み合わせる。`--start` / `--end` / `--range loop-range` とは併用せず、`--track-id` / `--track-ids` とは併用できる。`render start` と `render stems` は同じ指定を受ける。
+
+```powershell
+riffra --attach render start --section walk --occurrence 2 --wait
+riffra --attach render stems --all-tracks --section walk --occurrence 2 --wait
+```
+
+完成WAVをDataRootの外へ出すときは、Mixが `render start --output-path`、Stemが `render stems --output-directory` で出力先を指定する。保存済みRenderの取り出しは `render export --render-id --output-path`、削除は `render delete --render-id` で行う。
 
 各パートの比較は `render stems` でTrack別WAVを作る。全WAVで開始Tick、終了Tick、Sample Rate、フレーム数が揃い、個別の正規化とMasteringは行われない。共有する非線形Effectでは、Stemの合計と全体Mixが一致しない場合がある。StemとMasteringの設計上の扱いは[音声エンジンの設計](../../../docs/audio-engine.md)を参照。
 
-Job結果と `render.json` の `measurements` には完成WAVのSample Peakとラウドネス測定が含まれる。区間ごとの音量・ピーク位置・帯域バランスは `measurements.sections` で読む。
+現在のミックス経路を変えずに複数の出力を同時に取得するのは `render capture` である。Track・Group・Return・Masterを選んで同時に取得し、結果の `renderId` を `analysis levels` へ渡すと、各出力のRMSとSample Peakを同じ音楽座標で比較できる。`--wait` はRenderとCaptureの両方のJobで使える。Captureの外部コピーは `--output-directory`、保存済みCaptureの一括取り出しは `render export` で行う。
+
+音符ごとの音量変化を比べるときは `analysis levels` を使う。グリッド `1/16` は全音符の16分の1で、4/4の `20:1` の次は `20:1+1/4` となる。範囲の先頭と末尾は指定位置で切り詰められ、無音のRMSとPeakは `null` である。TimebaseはRender時点のものを使い、Tailは含めない。
+
+Job結果と `render.json` の `measurements` には完成WAVのSample Peakとラウドネス測定が含まれる。区間ごとの音量・ピーク位置・帯域バランスは、Marker区間は `measurements.sections`、Scoreのセクション出現は `measurements.scoreSections` で読む。
 
 | 項目                               | 読み方                                                                              |
 | ---------------------------------- | ----------------------------------------------------------------------------------- |
@@ -324,6 +385,8 @@ Job結果と `render.json` の `measurements` には完成WAVのSample Peakと�
 | `loudness.integratedLufs`          | 区間の統合ラウドネス。有効な400msブロックがない区間では`null`                       |
 | `loudness.truePeak`                | 最大True Peakの`db`・`seconds`・`position`。無音なら`null`。位置は100msフレーム単位 |
 | `bands.lowDb` / `midDb` / `highDb` | 250Hz未満・250Hz〜4kHz・4kHz超のRMSレベル(dBFS)。無音なら`null`。帯域間比較の目安   |
+
+ScoreにリンクしたProjectでは `measurements.scoreSections` も返る。`name`・`occurrence`・RegionのTick範囲・WAV先頭からの秒数・`complete` を持ち、`loudness`・`bands` の表現は `sections` と同じである。`complete: false` はRender範囲がRegionの一部だけを含むことを示す。Render範囲と交差する部分だけを測り、全曲用のテールは最終セクションへ含めない。Render結果の `sectionName` と `sectionOccurrence`、Render履歴の `rangeKind: "section"` でも指定したセクションを追跡できる。
 
 区間の切り分けは書き出し時点の正準Markerで決まる。`measurements.sectionLoudnessState.state` が `measured` なら無音・短区間の値が `null` でも測定は正常に完了しており、`unavailable` なら `reason` を確認する。
 
@@ -350,19 +413,19 @@ riffra --attach job wait --id job:analysis-measure:0 --timeout-ms 120000
 
 待機には開始応答のJob IDを使い、結果の `sources` のパス・Track情報を比較対象と照合する。区間True Peakの位置はWAV先頭からの秒数である。帯域値・測定状態の読み方はRenderと共通である。
 
-Mixdown設定は `mixdown get` / `mixdown set --settings-json` で参照・置換する。Masteringは目標ラウドネスへMix全体を一定のゲインで合わせ、True Peak上限を超えるときは上限に合わせてゲインを下げる。
+Mixdown設定は `render settings get` / `render settings set --settings-json` で参照・置換する。Masteringは目標ラウドネスへMix全体を一定のゲインで合わせ、True Peak上限を超えるときは上限に合わせてゲインを下げる。
 
 `mastering.deviation.integratedLufs` は最終ラウドネス − 目標で、負のときは目標に届いていない。`mastering.truePeakCorrectionDb` はTrue Peak上限のために下げたゲインで、0より大きいときは上限で止まったことを示す。
 
 ```powershell
-riffra --attach mixdown set --settings-json '{"musicalEndTick":0,"tailSeconds":2,"fadeOutSeconds":0.5,"mastering":{"integratedLufs":-14,"truePeakDb":-1,"loudnessRangeLu":11},"sampleRate":48000,"blockSize":1024}'
+riffra --attach render settings set --settings-json '{"musicalEndTick":0,"tailSeconds":2,"fadeOutSeconds":0.5,"mastering":{"integratedLufs":-14,"truePeakDb":-1,"loudnessRangeLu":11},"sampleRate":48000,"blockSize":1024}'
 ```
 
-### Library・解析・Preview
+### Asset・解析・Preview
 
-`library search` はAsset metadataへのfree-text検索である。短い語は全Assetがヒットして応答が膨らむため、具体語で絞る。
+`asset search` はAsset metadataへのfree-text検索である。短い語は全Assetがヒットして応答が膨らむため、具体語で絞る。
 
-素材の解析は `analysis start`、試聴は `asset preview` / `stop-preview`、Runtime projectionの状態は `runtime projection get` / `retry` で扱う。
+素材の解析は `analysis inspect`、試聴は `asset preview` / `stop-preview`、Audio projectionの状態は `audio projection get` / `retry` で扱う。
 
 ## 6. 共通の注意
 

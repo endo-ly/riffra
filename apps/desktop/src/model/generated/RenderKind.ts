@@ -3,4 +3,4 @@
 /**
  * Render kind represented by one managed Render directory.
  */
-export type RenderKind = "timeline" | "stems" | "unknown";
+export type RenderKind = "timeline" | "stems" | "capture" | "unknown";

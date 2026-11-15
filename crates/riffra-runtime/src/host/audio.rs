@@ -4,7 +4,6 @@ use crate::NativeAudioError;
 use crate::model::RuntimeStartupFinished;
 use serde_json::Value;
 use std::sync::Arc;
-use std::time::Duration;
 
 impl HostState {
     pub(super) fn set_audio_driver(
@@ -167,7 +166,6 @@ impl HostState {
                     sequence: snapshot.sequence,
                     session_revision: snapshot.session.arrangement.revision,
                 },
-                Duration::from_secs(30),
             )
             .map(|_| ())
             .map_err(|error| error.to_string())
@@ -177,10 +175,11 @@ impl HostState {
         &self,
         include_debug: bool,
     ) -> Result<crate::api::output::AudioDiagnosticsReport, ProtocolError> {
-        let status = self.audio.refresh_status().map_err(audio_error)?;
+        let status = self.audio.status().map_err(audio_error)?;
         let mut report = audio_diagnostics_report(&status);
+        let projection = self.runtime.status();
+        report.preparation = projection.load_progress.clone();
         if include_debug {
-            let projection = self.runtime.status();
             let debug = crate::api::output::AudioDiagnosticsDebug {
                 projection: crate::api::output::AudioDiagnosticsProjection {
                     state: projection.state,
@@ -285,6 +284,7 @@ impl HostState {
 
 fn audio_diagnostics_report(status: &AudioStatus) -> crate::api::output::AudioDiagnosticsReport {
     crate::api::output::AudioDiagnosticsReport {
+        preparation: None,
         automation_warnings: status.diagnostics.automation_warnings.clone(),
         device: crate::api::output::AudioDiagnosticsDevice {
             state: status.state,

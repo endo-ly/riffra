@@ -52,17 +52,19 @@ pub(super) fn handle_line(
             with_input_line(error, input_line),
         );
     }
-    let command =
-        match crate::paths::decode_command(&request.command, std::mem::take(&mut request.params)) {
-            Ok(command) => command,
-            Err(error) => {
-                return ControlResponse::failure(
-                    request.request_id,
-                    None,
-                    with_input_line(error, input_line),
-                );
-            }
-        };
+    let command = match riffra_runtime::api::client::decode_client_command(
+        &request.command,
+        std::mem::take(&mut request.params),
+    ) {
+        Ok(command) => command,
+        Err(error) => {
+            return ControlResponse::failure(
+                request.request_id,
+                None,
+                with_input_line(error, input_line),
+            );
+        }
+    };
     execute(request, command, input_line)
 }
 

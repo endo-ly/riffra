@@ -27,8 +27,12 @@ pub enum JobKind {
     Render,
     /// A single job that produces several aligned Track stems.
     RenderStems,
+    /// Captures multiple mix outputs in a single offline render.
+    RenderCapture,
     /// Measures existing WAV files without editing a Project.
     AnalysisMeasure,
+    /// Measures saved Render audio on a musical grid.
+    AnalysisLevels,
 }
 
 /// Typed view of a background job, produced from the job registry at the IPC
@@ -48,7 +52,7 @@ pub enum BackgroundJobStatus {
         state: JobState,
         progress: Option<f32>,
         message: String,
-        result: Option<RenderResult>,
+        result: Option<Box<RenderResult>>,
     },
     /// One job that produces a set of aligned Track stems.
     RenderStems {
@@ -58,6 +62,13 @@ pub enum BackgroundJobStatus {
         message: String,
         result: Option<RenderStemsResult>,
     },
+    RenderCapture {
+        id: String,
+        state: JobState,
+        progress: Option<f32>,
+        message: String,
+        result: Option<RenderCaptureResult>,
+    },
     AnalysisMeasure {
         id: String,
         state: JobState,
@@ -65,6 +76,48 @@ pub enum BackgroundJobStatus {
         message: String,
         result: Option<AnalysisMeasureResult>,
     },
+    AnalysisLevels {
+        id: String,
+        state: JobState,
+        progress: Option<f32>,
+        message: String,
+        result: Option<AnalysisLevelsResult>,
+    },
+}
+
+/// RMS and sample peak windows for every selected Render source.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalysisLevelsResult {
+    pub render_id: String,
+    pub grid: riffra_core::MusicalDuration,
+    pub sample_rate: u32,
+    pub start: riffra_core::MusicalPosition,
+    pub end: riffra_core::MusicalPosition,
+    pub start_tick: u64,
+    pub end_tick: u64,
+    pub sources: Vec<AnalysisLevelsSource>,
+}
+
+/// One Render source and its aligned measurement windows.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalysisLevelsSource {
+    pub source: crate::api::params::LevelSource,
+    pub windows: Vec<AnalysisLevelWindow>,
+}
+
+/// Measurements of one half-open musical window; silence is represented by null.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalysisLevelWindow {
+    pub start: riffra_core::MusicalPosition,
+    pub end: riffra_core::MusicalPosition,
+    pub start_tick: u64,
+    pub end_tick: u64,
+    pub frames: u64,
+    pub rms_dbfs: Option<f64>,
+    pub peak_dbfs: Option<f64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
@@ -89,10 +142,18 @@ pub struct RenderResult {
     pub frames: u64,
     pub duration_ms: u64,
     pub clip_count: usize,
+    /// Requested range kind: `entireArrangement`, `loopRange`, `timeSelection`, or `section`.
+    pub range_kind: String,
     pub range_start_ms: u64,
     pub range_end_ms: u64,
     pub normalized: bool,
     pub track_id: Option<String>,
+    /// Score section name for a section render.
+    #[serde(default)]
+    pub section_name: Option<String>,
+    /// One-based Score section occurrence for a section render.
+    #[serde(default)]
+    pub section_occurrence: Option<u32>,
     pub state: String,
     pub message: String,
 }
@@ -119,12 +180,49 @@ pub struct RenderStemsResult {
     pub start_tick: u64,
     /// Shared end Tick before render tail.
     pub end_tick: u64,
+    /// Requested range kind: `entireArrangement`, `loopRange`, `timeSelection`, or `section`.
+    pub range_kind: String,
     /// Shared frame count, including any render tail.
     pub frames: u64,
     /// Stems in canonical Track order.
     pub stems: Vec<RenderStem>,
     /// Tracks skipped by an all-Tracks request because they had no unmuted Clips.
     pub skipped_track_ids: Vec<String>,
+    /// Score section name for a section render.
+    #[serde(default)]
+    pub section_name: Option<String>,
+    /// One-based Score section occurrence for a section render.
+    #[serde(default)]
+    pub section_occurrence: Option<u32>,
+}
+
+/// One post-processing output captured from an offline render.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct RenderCapture {
+    pub target: crate::api::params::CaptureTarget,
+    pub name: String,
+    pub bus_kind: Option<riffra_core::MixBusKind>,
+    pub asset_id: AssetId,
+    pub path: String,
+    pub measurements: AudioMeasurements,
+    pub warnings: Vec<String>,
+}
+
+/// Aligned post-processing outputs from one canonical arrangement snapshot.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct RenderCaptureResult {
+    pub render_id: String,
+    pub project_id: String,
+    pub created_at_ms: u64,
+    pub source_sequence: u64,
+    pub sample_rate: u32,
+    pub start_tick: u64,
+    pub end_tick: u64,
+    pub frames: u64,
+    pub captures: Vec<RenderCapture>,
+    pub exported_directory: Option<String>,
 }
 
 /// Result of copying an existing Render without changing its internal files.
@@ -143,6 +241,7 @@ pub struct RenderExportResult {
 pub enum RenderKind {
     Timeline,
     Stems,
+    Capture,
     Unknown,
 }
 
@@ -163,6 +262,12 @@ pub struct RenderFileStatus {
 pub struct RenderHistoryEntry {
     pub render_id: String,
     pub kind: RenderKind,
+    /// Requested range kind recorded by the render that created this entry.
+    pub range_kind: Option<String>,
+    /// Score section name for a section render.
+    pub section_name: Option<String>,
+    /// One-based Score section occurrence for a section render.
+    pub section_occurrence: Option<u32>,
     pub project_id: Option<String>,
     pub created_at_ms: Option<u64>,
     pub files: Vec<RenderFileStatus>,
@@ -238,6 +343,31 @@ pub struct AudioMeasurements {
     pub section_loudness_state: MeasurementState,
     /// Per-marker sections; empty when the session has no marker.
     pub sections: Vec<SectionMeasurement>,
+    /// Per-Score section occurrences; empty when the Project is not linked to a Score.
+    #[serde(default)]
+    pub score_sections: Vec<ScoreSectionMeasurement>,
+}
+
+/// Measurements of one Score section occurrence inside the rendered WAV.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ScoreSectionMeasurement {
+    pub name: String,
+    /// One-based occurrence among Score regions with the same name.
+    pub occurrence: u32,
+    #[ts(type = "number")]
+    pub start_tick: u64,
+    #[ts(type = "number")]
+    pub end_tick: u64,
+    /// Seconds from the start of the WAV.
+    pub start_seconds: f64,
+    /// Seconds from the start of the WAV, excluding the render tail.
+    pub end_seconds: f64,
+    /// Whether the whole Score region was inside the rendered range.
+    pub complete: bool,
+    /// `None` when section loudness measurement is unavailable.
+    pub loudness: Option<SectionLoudness>,
+    pub bands: BandLevels,
 }
 
 /// FFmpeg loudness measurements, or the reason they could not be obtained.

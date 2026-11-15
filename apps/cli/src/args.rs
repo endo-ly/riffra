@@ -1,9 +1,10 @@
 use clap::{Args, Parser, Subcommand};
 use riffra_core::application::{SessionInspectionQuery, SessionSettingsPatch};
 use riffra_core::{
-    AudioClipMove, AudioClipPatch, FrameRange, MidiClipMove, MidiClipPatch, PhrasePattern,
-    PhrasePlacement, TimelineTick,
+    AudioClipPatch, FrameRange, MidiClipPatch, PhrasePattern, PhrasePlacement, TimelineTick,
 };
+use riffra_runtime::api::client;
+use riffra_runtime::api::output::PluginStateValue;
 use riffra_runtime::api::params::*;
 use riffra_runtime::api::{
     CanonicalCommand as Canonical, CommandDecodeError, ControlCommand, ProjectCommand as Project,
@@ -72,7 +73,7 @@ pub enum CliCommand {
         #[command(subcommand)]
         command: SessionCommand,
     },
-    /// Read the history stack of completed mutations.
+    /// Inspect mutation history and undo or redo changes.
     History {
         #[command(subcommand)]
         command: HistoryCommand,
@@ -82,87 +83,47 @@ pub enum CliCommand {
         #[command(subcommand)]
         command: TrackCommand,
     },
-    /// Create and edit Audio Clips on the arrangement timeline using raw ticks.
-    AudioClip {
-        #[command(subcommand)]
-        command: AudioClipCommand,
-    },
-    /// Create and edit MIDI Clips on the arrangement timeline using raw ticks.
-    MidiClip {
-        #[command(subcommand)]
-        command: MidiClipCommand,
-    },
-    /// Inspect and edit native precision instrument controls within MIDI Clips.
-    InstrumentEvent {
-        #[command(subcommand)]
-        command: InstrumentEventCommand,
-    },
     /// Inspect and edit Group, Return, and Send routing.
     Mixer {
         #[command(subcommand)]
         command: MixerCommand,
     },
-    /// Inspect or replace the Project's mixdown settings.
-    Mixdown {
-        #[command(subcommand)]
-        command: MixdownCommand,
-    },
-    /// Edit individual MIDI Notes by note ID using raw MIDI pitch and Clip-relative ticks.
-    MidiNote {
-        #[command(subcommand)]
-        command: MidiNoteCommand,
-    },
     /// Edit notes, clips, regions, harmony, and phrases in musical coordinates such as bar:beat positions and note names.
     ///
-    /// Use this command group for arrangement-absolute musical notation. Use midi-note for raw MIDI pitch and
-    /// Clip-relative tick editing, and midi-clip for raw-tick MIDI Clip placement.
+    /// Use this command group for arrangement-absolute musical notation. Use clip midi note for raw MIDI pitch and
+    /// Clip-relative tick editing, and clip midi for raw-tick MIDI Clip placement.
     Music {
         #[command(subcommand)]
         command: MusicCommand,
     },
-    /// Remove or paste whole Audio and MIDI Clips as a group.
+    /// Create and edit Audio and MIDI Clips, or remove and paste them as a group.
     Clip {
         #[command(subcommand)]
         command: ClipCommand,
-    },
-    /// Add, update, and remove named markers on the arrangement timeline.
-    Marker {
-        #[command(subcommand)]
-        command: MarkerCommand,
-    },
-    /// Update the project tempo and time signature.
-    Timebase {
-        #[command(subcommand)]
-        command: TimebaseCommand,
-    },
-    /// Set the loop playback range.
-    LoopRange {
-        #[command(subcommand)]
-        command: RangeCommand,
-    },
-    /// Set the punch-in recording range.
-    PunchRange {
-        #[command(subcommand)]
-        command: RangeCommand,
     },
     /// Edit timeline automation for mixer controls and VST3 parameters.
     Automation {
         #[command(subcommand)]
         command: AutomationCommand,
     },
-    /// Import MIDI files, preview Assets, and stop previews.
+    /// Import, preview, search, and update Assets.
     Asset {
         #[command(subcommand)]
         command: AssetCommand,
+    },
+    /// Validate or inspect a Score YAML file without changing any Project.
+    Score {
+        #[command(subcommand)]
+        command: ScoreCommand,
     },
     /// List, create, open, rename, export, and import projects.
     Project {
         #[command(subcommand)]
         command: ProjectCommand,
     },
-    /// Manage Instruments: list, save, export, apply to Tracks, and clear; init, validate, inspect, render, and audition forward to the bundled Sonalloy CLI.
+    /// Manage Instruments and their definitions, or assign VST3 instruments to Tracks.
     ///
-    /// For installing or configuring a VST3 instrument plugin on a Track, use `plugin instrument` instead.
+    /// Use `instrument vst3 set` to configure a VST3 instrument plugin.
     Instrument {
         #[command(subcommand)]
         command: InstrumentCommand,
@@ -176,11 +137,6 @@ pub enum CliCommand {
     Device {
         #[command(subcommand)]
         command: DeviceCommand,
-    },
-    /// Inspect and retry the audio runtime projection.
-    Runtime {
-        #[command(subcommand)]
-        command: RuntimeCommand,
     },
     /// Control transport playback: play, stop, return to start, and seek.
     Transport {
@@ -204,17 +160,12 @@ pub enum CliCommand {
         #[command(subcommand)]
         command: RecordCommand,
     },
-    /// Search the Asset library and read related Assets.
-    Library {
-        #[command(subcommand)]
-        command: LibraryCommand,
-    },
     /// Analyze WAV files or measure existing Render output.
     Analysis {
         #[command(subcommand)]
         command: AnalysisCommand,
     },
-    /// Discover VST3 plugins, manage presets and state, and load instrument or effect plugins onto Tracks.
+    /// Discover VST3 plugins and manage plugin presets and state.
     ///
     /// For built-in and User Instruments defined by Sonalloy definitions, use `instrument` instead.
     Plugin {
@@ -236,10 +187,6 @@ pub enum CliCommand {
         #[command(subcommand)]
         command: JobCommand,
     },
-    /// Revert the most recent mutation; requires --interactive in standalone mode because history is process-local, and works as a one-shot command with --attach.
-    Undo,
-    /// Reapply the most recently reverted mutation; requires --interactive in standalone mode because history is process-local, and works as a one-shot command with --attach.
-    Redo,
 }
 
 #[derive(Clone, Debug, Args)]
@@ -270,7 +217,7 @@ pub enum SessionCommand {
     Inspect(SessionInspectArgs),
     /// Apply a batch of operations from a JSON Lines file as one atomic mutation.
     ///
-    /// Each operation holds `command` and `params`; requestId and expectedSequence are not operation fields.
+    /// Each operation holds `command`, `params`, and an optional `bind`; requestId and expectedSequence are not operation fields.
     ///
     /// Operations run in order, and the project changes only if all succeed.
     /// Later operations can reference Tracks and Clips created earlier in the batch.
@@ -279,32 +226,35 @@ pub enum SessionCommand {
     /// Batch operations may resolve `trackName` instead of `trackId`, and `clipName` instead of
     /// `clipId`. Specifying both forms fails. Zero matches or multiple matches fail. `clipName`
     /// also requires `trackId` or `trackName` and resolves only within that Track.
+    /// An operation that creates exactly one device may bind its ID with `bind`; later device ID
+    /// fields can use `@name`. Device parameter changes in a batch use normalized `value`.
     ///
     /// Only these commands may appear in a batch: session.settings.update; track.add, track.update,
     /// track.remove, track.duplicate, track.reorder, track.audio-input.set, track.audio-input.clear,
     /// track.midi-input.set, track.midi-input.clear, track.external-audio-input.set,
-    /// track.external-audio-input.clear; audio-clip.update, audio-clip.move,
-    /// audio-clip.trim, audio-clip.split, audio-clip.duplicate, audio-clip.crossfade;
-    /// midi-clip.create, midi-clip.update, midi-clip.move, midi-clip.trim, midi-clip.split,
-    /// midi-clip.duplicate; midi-note.add, midi-note.insert, midi-note.update, midi-note.update-many,
-    /// midi-note.remove, midi-note.remove-many, midi-note.clear, midi-note.quantize,
-    /// midi-note.transform, midi-note.duplicate; music.midi-clip.create, music.midi-clip.resize,
+    /// track.external-audio-input.clear; clip.audio.update, clip.audio.move,
+    /// clip.audio.trim, clip.audio.split, clip.audio.duplicate, clip.audio.crossfade;
+    /// clip.midi.create, clip.midi.update, clip.midi.move, clip.midi.trim, clip.midi.split,
+    /// clip.midi.duplicate; clip.midi.note.add, clip.midi.note.insert, clip.midi.note.update, clip.midi.note.update-many,
+    /// clip.midi.note.remove-many, clip.midi.note.clear, clip.midi.note.quantize,
+    /// clip.midi.note.transform, clip.midi.note.duplicate; music.midi-clip.create, music.midi-clip.resize,
     /// music.note.insert, music.note.update, music.note.remove, music.note.transform,
     /// music.harmony.insert, music.harmony.update, music.harmony.remove, music.harmony.realize,
     /// music.phrase.insert, music.region.add, music.region.update, music.region.remove;
-    /// clip.remove, clip.paste; marker.add, marker.update, marker.remove; timebase.update,
-    /// timebase.set-map; mixdown.set; instrument-event.add, instrument-event.set,
-    /// instrument-event.update, instrument-event.remove;
-    /// loop-range.set, punch-range.set; automation.set, automation.clear; instrument.apply,
+    /// clip.remove, clip.paste; music.marker.add, music.marker.update, music.marker.remove; music.timebase.update,
+    /// music.timebase.set-map; render.settings.set; clip.midi.instrument-event.add, clip.midi.instrument-event.set,
+    /// clip.midi.instrument-event.update, clip.midi.instrument-event.remove; clip.audio.merge, clip.midi.merge;
+    /// transport.loop.set, record.punch.set; automation.set, automation.clear; instrument.apply,
     /// instrument.midi.set, instrument.vst3.set, plugin.state.import,
-    /// instrument.clear; effect.add, effect.remove, effect.reorder; device.bypass,
+    /// instrument.clear; mixer.bus.add, mixer.bus.update, mixer.bus.remove, mixer.output.set, mixer.send.add, mixer.send.update, mixer.send.remove,
+    /// mixer.sidechain.add, mixer.sidechain.update, mixer.sidechain.remove; effect.add, effect.remove, effect.reorder; device.bypass,
     /// device.parameter.set. instrument.apply accepts `builtin:` and `user:` instruments;
     /// User Instrument assignments create Project-owned package snapshots atomically with the batch.
     ///
     /// plugin.state.import requires exactly one of inline state or stateFile (read by the CLI).
     /// Example: {"command":"plugin.state.import","params":{"owner":{"kind":"track","name":"Drums"},"stateFile":"drums-state.json"}}.
     Apply(SessionApplyArgs),
-    /// Read or update session settings such as project name, master gain, loop, and metronome.
+    /// Read or update session settings such as master gain, loop, and metronome.
     Settings {
         #[command(subcommand)]
         command: SessionSettingsCommand,
@@ -345,9 +295,6 @@ pub enum SessionSettingsCommand {
 
 #[derive(Debug, Args)]
 pub struct SessionSettingsArgs {
-    /// New project display name.
-    #[arg(long)]
-    pub project_name: Option<String>,
     /// Master gain in dB; non-finite values are rejected and the value is clamped to -90..=0.
     #[arg(long, value_parser = finite_f64, allow_hyphen_values = true)]
     pub master_db: Option<f64>,
@@ -370,6 +317,11 @@ pub struct SessionSettingsArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum HistoryCommand {
+    /// Revert the latest mutation; standalone mode requires --interactive.
+    Undo,
+    /// Reapply the latest reverted mutation; standalone mode requires --interactive.
+    Redo,
+
     /// Return the undo and redo stacks of completed mutations.
     Get,
 }
@@ -497,8 +449,17 @@ pub enum MixerCommand {
         #[command(subcommand)]
         command: SidechainCommand,
     },
-    /// Set a Track's main output; omit --bus-id to route directly to Master.
+    /// Set a Track main output.
     Output {
+        #[command(subcommand)]
+        command: MixerOutputCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum MixerOutputCommand {
+    /// Set a Track's main output; omit --bus-id to route directly to Master.
+    Set {
         /// Track ID whose output or Send is edited.
         #[arg(long)]
         track_id: String,
@@ -728,14 +689,14 @@ pub enum AudioClipCommand {
     /// Gain is specified in dB and clamped to -90..=24; pan is clamped to -1.0..=1.0. --patch is
     /// mutually exclusive with the individual field flags.
     Update(AudioClipUpdateArgs),
-    /// Move one Audio Clip to a new arrangement tick and Track.
-    Move(ClipMoveArgs),
     /// Change where an Audio Clip starts on the arrangement and which source sample range it plays.
     Trim(AudioClipTrimArgs),
     /// Split one Audio Clip into two Clips at an arrangement tick.
     Split(ClipSplitArgs),
     /// Duplicate one Audio Clip under a new identity.
     Duplicate(ClipIdArg),
+    /// Merge contiguous Audio Clips with matching mix settings as one edit.
+    Merge(ClipMergeArgs),
     /// Create an equal-power crossfade across the time overlap of two Audio Clips on the same Track.
     ///
     /// The two Clips must be different, live on the same Track, and overlap in time. The earlier
@@ -792,19 +753,6 @@ pub struct AudioClipUpdateArgs {
 }
 
 #[derive(Debug, Args)]
-pub struct ClipMoveArgs {
-    /// Id of the Clip to move.
-    #[arg(long)]
-    pub clip_id: String,
-    /// Absolute arrangement start position in timeline ticks for the Clip after the move.
-    #[arg(long)]
-    pub start_tick: u64,
-    /// Destination Track id.
-    #[arg(long)]
-    pub track_id: String,
-}
-
-#[derive(Debug, Args)]
 pub struct AudioClipTrimArgs {
     /// Id of the Audio Clip to trim.
     #[arg(long)]
@@ -838,6 +786,16 @@ pub struct ClipIdArg {
 }
 
 #[derive(Debug, Args)]
+pub struct ClipMergeArgs {
+    /// Id of the earlier Clip.
+    #[arg(long)]
+    pub first_clip_id: String,
+    /// Id of the immediately following Clip.
+    #[arg(long)]
+    pub second_clip_id: String,
+}
+
+#[derive(Debug, Args)]
 pub struct AudioClipCrossfadeArgs {
     /// Id of one Clip in the crossfade pair.
     #[arg(long)]
@@ -849,6 +807,17 @@ pub struct AudioClipCrossfadeArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum MidiClipCommand {
+    /// Edit MIDI notes directly using MIDI values and Clip-relative ticks.
+    Note {
+        #[command(subcommand)]
+        command: MidiNoteCommand,
+    },
+    /// Edit instrument events.
+    InstrumentEvent {
+        #[command(subcommand)]
+        command: InstrumentEventCommand,
+    },
+
     /// List MIDI Clips with their arrangement positions and note counts.
     List,
     /// Create an empty MIDI Clip on a Track at an absolute arrangement tick.
@@ -859,12 +828,12 @@ pub enum MidiClipCommand {
     ///
     /// --patch is mutually exclusive with the individual field flags.
     Update(MidiClipUpdateArgs),
-    /// Move one MIDI Clip to a new arrangement tick and Track.
-    Move(ClipMoveArgs),
     /// Change a MIDI Clip's arrangement start and duration in timeline ticks.
     Trim(MidiClipTrimArgs),
     /// Split one MIDI Clip into two Clips at an arrangement tick.
     Split(ClipSplitArgs),
+    /// Merge adjacent MIDI Clips, including their notes and performance events.
+    Merge(ClipMergeArgs),
     /// Duplicate one MIDI Clip under a new identity.
     Duplicate(ClipIdArg),
 }
@@ -944,51 +913,18 @@ pub struct MidiClipTrimArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum MidiNoteCommand {
-    /// Add one MIDI Note to a Clip at a Clip-relative tick.
-    Add(MidiNoteAddArgs),
     /// Insert many MIDI Notes into a Clip from a JSON array in one mutation.
     Insert(MidiNoteBulkArgs),
-    /// Replace fields on one MIDI Note with a JSON patch object.
-    Update(MidiNoteUpdateArgs),
     /// Replace fields on many MIDI Notes in one mutation from a JSON array of updates.
     UpdateMany(MidiNoteUpdatesArgs),
-    /// Remove one MIDI Note from a Clip by note id.
-    Remove(MidiNoteIdArgs),
     /// Remove many MIDI Notes from a Clip by id list or JSON array.
     RemoveMany(MidiNoteIdsArgs),
-    /// Remove every MIDI Note from a Clip.
-    Clear(ClipIdArg),
     /// Move selected MIDI Notes onto a tick grid.
     Quantize(MidiNoteQuantizeArgs),
     /// Transpose and re-velocity selected MIDI Notes in one mutation.
     Transform(MidiNoteTransformArgs),
     /// Duplicate selected MIDI Notes by a tick offset.
     Duplicate(MidiNoteDuplicateArgs),
-}
-
-#[derive(Debug, Args)]
-pub struct MidiNoteAddArgs {
-    /// Lyric assigned to the Note.
-    #[arg(long)]
-    pub lyric: Option<String>,
-    /// Id of the MIDI Clip that receives the Note.
-    #[arg(long)]
-    pub clip_id: String,
-    /// MIDI pitch number 0..=127 where 60 is middle C.
-    #[arg(long)]
-    pub pitch: u8,
-    /// Note start relative to the Clip start in timeline ticks; the project timebase defines ticks per beat.
-    #[arg(long)]
-    pub start_tick: u64,
-    /// Note length in timeline ticks.
-    #[arg(long)]
-    pub duration_ticks: u64,
-    /// MIDI velocity 0..=127.
-    #[arg(long)]
-    pub velocity: u8,
-    /// MIDI channel number in the inclusive range 1..=16.
-    #[arg(long)]
-    pub channel: u8,
 }
 
 #[derive(Debug, Args)]
@@ -1009,11 +945,22 @@ pub struct MidiNoteBulkArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum MusicCommand {
+    /// Manage timeline markers.
+    Marker {
+        #[command(subcommand)]
+        command: MarkerCommand,
+    },
+    /// Manage tempo and time signature.
+    Timebase {
+        #[command(subcommand)]
+        command: TimebaseCommand,
+    },
+
     /// Export one MIDI Clip or Track as a Standard MIDI File.
     ExportMidi(MidiExportArgs),
     /// Create and resize MIDI Clips using absolute musical bar:beat positions rather than raw ticks.
     ///
-    /// Use this for arrangement-absolute placement in musical coordinates. Use `midi-clip` for
+    /// Use this for arrangement-absolute placement in musical coordinates. Use `clip midi` for
     /// Clip placement expressed directly in timeline ticks.
     MidiClip {
         #[command(subcommand)]
@@ -1022,7 +969,7 @@ pub enum MusicCommand {
     /// List, read, insert, update, remove, and transform Notes using note names and bar:beat positions.
     ///
     /// Use this for musical notation such as pitch C4, position 5:1, and duration 1/8. Use
-    /// `midi-note` for raw MIDI pitch numbers and Clip-relative ticks.
+    /// `clip midi note` for raw MIDI pitch numbers and Clip-relative ticks.
     Note {
         #[command(subcommand)]
         command: MusicNoteCommand,
@@ -1258,6 +1205,9 @@ pub struct MusicalNoteBulkArgs {
     /// Id of the MIDI Clip that receives the Notes.
     #[arg(long)]
     pub clip_id: String,
+    /// Shorten notes that extend past the clip end; notes must still start inside the clip.
+    #[arg(long)]
+    pub clip_to_end: bool,
     /// Inline JSON array of notes; each element is an object with pitch (note name such as C4), position (arrangement-absolute bar:beat), duration (whole-note fraction such as 1/8), and optional lyric, velocity (0..=127, default 100) and channel (1..=16, default 1). Mutually exclusive with --notes-file and --stdin.
     #[arg(long, alias = "notes")]
     pub notes_json: Option<String>,
@@ -1422,19 +1372,6 @@ pub struct MusicalRegionIdArgs {
 }
 
 #[derive(Debug, Args)]
-pub struct MidiNoteUpdateArgs {
-    /// Id of the MIDI Clip containing the Note.
-    #[arg(long)]
-    pub clip_id: String,
-    /// Id of the Note to update.
-    #[arg(long)]
-    pub note_id: String,
-    /// JSON object patch; allowed fields are note (MIDI pitch 0..=127), startTick (Clip-relative), durationTicks, velocity (0..=127), and channel (1..=16).
-    #[arg(long)]
-    pub patch: String,
-}
-
-#[derive(Debug, Args)]
 pub struct MidiNoteUpdatesArgs {
     /// Id of the MIDI Clip containing the Notes.
     #[arg(long)]
@@ -1442,16 +1379,6 @@ pub struct MidiNoteUpdatesArgs {
     /// JSON array of updates; each element is an object with noteId and a patch object of note, startTick, durationTicks, velocity, and channel.
     #[arg(long)]
     pub updates_json: String,
-}
-
-#[derive(Debug, Args)]
-pub struct MidiNoteIdArgs {
-    /// Id of the MIDI Clip containing the Note.
-    #[arg(long)]
-    pub clip_id: String,
-    /// Id of the Note.
-    #[arg(long)]
-    pub note_id: String,
 }
 
 #[derive(Debug, Args)]
@@ -1522,6 +1449,17 @@ pub struct MidiNoteDuplicateArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum ClipCommand {
+    /// Edit audio clips.
+    Audio {
+        #[command(subcommand)]
+        command: AudioClipCommand,
+    },
+    /// Edit MIDI clips and their contents.
+    Midi {
+        #[command(subcommand)]
+        command: MidiClipCommand,
+    },
+
     /// Remove Audio and MIDI Clips by id list or JSON array in one mutation.
     Remove(ClipRemoveArgs),
     /// Paste copied Audio and MIDI Clips at an absolute arrangement tick in one mutation.
@@ -1653,12 +1591,32 @@ pub struct RangeArgs {
 pub enum AutomationCommand {
     /// Read the lane for one canonical target.
     Get(AutomationTargetArgs),
+    /// Evaluate scheduled values at bar-aligned musical grid positions.
+    Evaluate(AutomationEvaluateArgs),
     /// Discover lanes across the project or a channel owner.
     List(AutomationListArgs),
     /// Replace a lane with absolute-tick points; values before/after points hold the endpoint.
     Set(AutomationSetArgs),
     /// Delete a target's lane and use its static value.
     Clear(AutomationTargetArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct AutomationEvaluateArgs {
+    #[command(flatten)]
+    pub target: AutomationTargetArgs,
+    /// Start position as bar:beat, with an optional beat-relative fraction.
+    #[arg(long)]
+    pub start: String,
+    /// Exclusive end position as bar:beat, with an optional beat-relative fraction.
+    #[arg(long)]
+    pub end: String,
+    /// Grid as a fraction of a whole note, for example 1/16.
+    #[arg(long)]
+    pub grid: String,
+    /// Sample rate used by the execution graph.
+    #[arg(long)]
+    pub sample_rate: u32,
 }
 
 #[derive(Debug, Args)]
@@ -1784,6 +1742,13 @@ pub struct AutomationSetArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum AssetCommand {
+    /// Search the Asset library by free text; requires a running Riffra Host accessed with --attach.
+    Search(LibrarySearchArgs),
+    /// Update the tag or note on a library Asset; requires a running Riffra Host accessed with --attach.
+    Update(LibraryAssetUpdateArgs),
+    /// List library Assets related to one Asset; requires a running Riffra Host accessed with --attach.
+    Related(LibraryIdArgs),
+
     /// Import a MIDI file from disk into the Asset library.
     ImportMidi(AssetImportMidiArgs),
     /// Start live playback of an imported Asset through the audio engine; requires a running Riffra Host accessed with --attach and is unavailable in Safe Mode.
@@ -1836,6 +1801,47 @@ pub enum ProjectCommand {
     Import(ProjectImportArgs),
     /// Create and activate an editable project from Score YAML.
     ImportScore(ProjectImportScoreArgs),
+    /// Synchronize the active Project with its linked Score YAML file.
+    RebuildScore(ProjectRebuildScoreArgs),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ScoreCommand {
+    /// Diagnose Score syntax, source references, and playable content without creating a project.
+    Validate(ScoreDocumentArgs),
+    /// Expand a Score into its sections, instruments, lanes, notes, and events.
+    Inspect(ScoreInspectArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct ScoreInspectArgs {
+    /// Score YAML file to read.
+    pub path: PathBuf,
+    /// External instrument binding, repeated as ID=DEFINITION.
+    #[arg(long = "bind", value_parser = parse_score_binding)]
+    pub bindings: Vec<(String, PathBuf)>,
+    /// Include every expanded event with its source location.
+    #[arg(long)]
+    pub events: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct ScoreDocumentArgs {
+    /// Score YAML file to read.
+    pub path: PathBuf,
+    /// External instrument binding, repeated as ID=DEFINITION.
+    #[arg(long = "bind", value_parser = parse_score_binding)]
+    pub bindings: Vec<(String, PathBuf)>,
+}
+
+#[derive(Debug, Args)]
+pub struct ProjectRebuildScoreArgs {
+    /// Score YAML file; omit to read the Project's linked file.
+    #[arg(long)]
+    pub path: Option<PathBuf>,
+    /// External instrument binding, repeated as ID=DEFINITION.
+    #[arg(long = "bind", value_parser = parse_score_binding)]
+    pub bindings: Vec<(String, PathBuf)>,
 }
 
 #[derive(Debug, Args)]
@@ -1889,6 +1895,57 @@ pub struct ProjectExportArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum InstrumentCommand {
+    /// Manage instrument definitions using Sonalloy.
+    Definition {
+        #[command(subcommand)]
+        command: InstrumentDefinitionCommand,
+    },
+    /// Set a VST3 instrument on a track.
+    Vst3 {
+        #[command(subcommand)]
+        command: InstrumentVst3Command,
+    },
+    /// List built-in and User Instruments available to apply to Tracks.
+    List,
+    /// Save a Sonalloy definition package as a User Instrument.
+    Save(InstrumentSaveArgs),
+    /// Export a User Instrument package to an output path.
+    Export(InstrumentExportArgs),
+    /// Create an Instrument Track and assign its instrument as one undoable edit.
+    CreateTrack(InstrumentTrackCreateArgs),
+    /// Apply a built-in or User Instrument to an Instrument Track.
+    Apply(InstrumentApplyArgs),
+    /// Read or update the assigned Instrument's MIDI note settings.
+    Midi {
+        #[command(subcommand)]
+        command: InstrumentMidiCommand,
+    },
+    /// Clear the Instrument assignment from an Instrument Track.
+    Clear(IdArg),
+}
+
+#[derive(Debug, Args)]
+pub struct InstrumentTrackCreateArgs {
+    /// Display name for the new Track.
+    #[arg(long)]
+    pub name: String,
+    #[command(flatten)]
+    pub source: InstrumentTrackSourceArgs,
+}
+
+#[derive(Debug, Args)]
+#[group(id = "instrument-source", required = true, multiple = false)]
+pub struct InstrumentTrackSourceArgs {
+    /// Built-in or User Instrument ID; mutually exclusive with --plugin-path.
+    #[arg(long)]
+    pub instrument_id: Option<String>,
+    /// VST3 instrument path; mutually exclusive with --instrument-id.
+    #[arg(long)]
+    pub plugin_path: Option<String>,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum InstrumentDefinitionCommand {
     /// Create a draft instrument definition, or forward all arguments to the bundled Sonalloy CLI when arguments are already supplied.
     ///
     /// Requires --data-root when creating a draft. Additional arguments and --help are forwarded
@@ -1902,21 +1959,12 @@ pub enum InstrumentCommand {
     Render(SonalloyArgs),
     /// Audition instrument audio through the bundled Sonalloy renderer; arguments are forwarded opaquely.
     Audition(SonalloyArgs),
-    /// List built-in and User Instruments available to apply to Tracks.
-    List,
-    /// Save a Sonalloy definition package as a User Instrument.
-    Save(InstrumentSaveArgs),
-    /// Export a User Instrument package to an output path.
-    Export(InstrumentExportArgs),
-    /// Apply a built-in or User Instrument to an Instrument Track.
-    Apply(InstrumentApplyArgs),
-    /// Read or update the assigned Instrument's MIDI note settings.
-    Midi {
-        #[command(subcommand)]
-        command: InstrumentMidiCommand,
-    },
-    /// Clear the Instrument assignment from an Instrument Track.
-    Clear(IdArg),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum InstrumentVst3Command {
+    /// Load or replace a VST3 instrument; Live Hosts require a validated plugin in the catalog.
+    Set(PluginPathArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -2103,6 +2151,9 @@ pub struct DeviceParameterSetArgs {
         required_unless_present = "value"
     )]
     pub display: Option<String>,
+    /// Use the closest numeric display value supported by the plugin.
+    #[arg(long, requires = "display", conflicts_with = "value")]
+    pub nearest: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -2146,15 +2197,6 @@ pub struct DeviceParameterGetArgs {
 }
 
 #[derive(Debug, Subcommand)]
-pub enum RuntimeCommand {
-    /// Read or retry the audio runtime projection state.
-    Projection {
-        #[command(subcommand)]
-        command: RuntimeProjectionCommand,
-    },
-}
-
-#[derive(Debug, Subcommand)]
 pub enum RuntimeProjectionCommand {
     /// Report the current runtime projection status; requires a running Riffra Host accessed with --attach.
     Get,
@@ -2164,6 +2206,12 @@ pub enum RuntimeProjectionCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum TransportCommand {
+    /// Set the playback loop range.
+    Loop {
+        #[command(subcommand)]
+        command: RangeCommand,
+    },
+
     /// Start transport playback from the current position; requires a running Riffra Host accessed with --attach and is unavailable in Safe Mode, which keeps playback offline.
     Play,
     /// Pause playback while retaining the current playhead and automation values.
@@ -2203,12 +2251,18 @@ pub struct LiveMidiSendArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum AudioCommand {
+    /// Inspect or retry the audio projection.
+    Projection {
+        #[command(subcommand)]
+        command: RuntimeProjectionCommand,
+    },
+
     /// Report the live audio engine status; requires a running Riffra Host accessed with --attach.
     Status,
     /// Probe available audio devices; requires a running Riffra Host accessed with --attach and is unavailable in Safe Mode, which keeps device probing offline.
     Probe,
     /// Probe channel counts for a specific driver and device pair; requires a running Riffra Host accessed with --attach and is unavailable in Safe Mode, which keeps channel probing offline.
-    ChannelsProbe(AudioChannelsProbeArgs),
+    ProbeChannels(AudioChannelsProbeArgs),
     /// Print audio engine diagnostics; requires a running Riffra Host accessed with --attach.
     ///
     /// A failure response from the Host is returned as structured JSON on stdout with a non-zero
@@ -2280,10 +2334,14 @@ pub struct AudioDriverArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum RecordCommand {
+    /// Set the recording punch range.
+    Punch {
+        #[command(subcommand)]
+        command: RangeCommand,
+    },
+
     /// Start recording into a new take; requires a running Riffra Host accessed with --attach and is unavailable in Safe Mode, which keeps recording input offline.
     Start(RecordStartArgs),
-    /// Start another take in the current recording session; requires a running Riffra Host accessed with --attach and is unavailable in Safe Mode, which keeps recording input offline.
-    AnotherTake(RecordStartArgs),
     /// Stop recording and finalize the current take; requires a running Riffra Host accessed with --attach.
     Stop,
     /// Report the current recording status; requires a running Riffra Host accessed with --attach.
@@ -2348,16 +2406,6 @@ pub struct RecordTagArgs {
     pub note: Option<String>,
 }
 
-#[derive(Debug, Subcommand)]
-pub enum LibraryCommand {
-    /// Search the Asset library by free text; requires a running Riffra Host accessed with --attach.
-    Search(LibrarySearchArgs),
-    /// Update the tag or note on a library Asset; requires a running Riffra Host accessed with --attach.
-    AssetUpdate(LibraryAssetUpdateArgs),
-    /// List library Assets related to one Asset; requires a running Riffra Host accessed with --attach.
-    Related(LibraryIdArgs),
-}
-
 #[derive(Debug, Args)]
 pub struct LibrarySearchArgs {
     /// Free-text search query matched against Asset metadata.
@@ -2388,9 +2436,33 @@ pub struct LibraryIdArgs {
 #[derive(Debug, Subcommand)]
 pub enum AnalysisCommand {
     /// Analyze WAV waveform, RMS, peak, and correlation synchronously; requires --attach.
-    Start(AnalysisStartArgs),
+    Inspect(AnalysisInspectArgs),
     /// Measure existing WAVs asynchronously; returns a Job for job wait (--attach required).
     Measure(AnalysisMeasureArgs),
+    /// Measure RMS and sample peak on a saved Render's musical grid.
+    Levels(AnalysisLevelsArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct AnalysisLevelsArgs {
+    /// Managed Render ID returned by render capture, start or stems.
+    #[arg(long)]
+    pub render_id: String,
+    /// Grid as a fraction of a whole note, for example 1/16.
+    #[arg(long)]
+    pub grid: String,
+    /// Optional start position in bar:beat notation.
+    #[arg(long)]
+    pub start: Option<String>,
+    /// Optional exclusive end position in bar:beat notation.
+    #[arg(long)]
+    pub end: Option<String>,
+    /// Select master, mixdown, track:<id>, or bus:<id>; omit to measure every source.
+    #[arg(long)]
+    pub source: Option<String>,
+    /// Wait for the background Job to finish.
+    #[arg(long)]
+    pub wait: bool,
 }
 
 #[derive(Debug, Args)]
@@ -2403,7 +2475,7 @@ pub struct AnalysisMeasureArgs {
 }
 
 #[derive(Debug, Args)]
-pub struct AnalysisStartArgs {
+pub struct AnalysisInspectArgs {
     /// Id of an already imported Asset to analyze; mutually exclusive with --path.
     #[arg(long)]
     pub asset_id: Option<String>,
@@ -2419,16 +2491,8 @@ pub enum PluginCommand {
         #[command(subcommand)]
         command: PluginCatalogCommand,
     },
-    /// Load or replace a VST3 instrument plugin on an Instrument Track.
-    ///
-    /// Live Hosts require a validated Instrument in this DataRoot's catalog, even with --plugin-path.
-    /// Run `riffra --attach plugin scan` first. Standalone --plugin-path only registers the path.
-    /// Available as instrument.vst3.set in session apply batches.
-    Instrument(PluginPathArgs),
-    /// Scan a directory for VST3 plugins and wait for the report; requires a running Riffra Host accessed with --attach and is unavailable in Safe Mode, which blocks VST3 discovery and load validation.
+    /// Scan VST3 plugins and return a report, or a Job with --background; requires --attach and is unavailable in Safe Mode.
     Scan(PluginScanArgs),
-    /// Start a background VST3 plugin scan as a Job; requires a running Riffra Host accessed with --attach and is unavailable in Safe Mode, which blocks VST3 discovery and load validation.
-    ScanStart(PluginScanArgs),
     /// List, read, and set presets on a plugin device.
     Preset {
         #[command(subcommand)]
@@ -2470,6 +2534,9 @@ pub struct PluginPathArgs {
 
 #[derive(Debug, Args)]
 pub struct PluginScanArgs {
+    /// Start a background Job instead of waiting for the scan report.
+    #[arg(long)]
+    pub background: bool,
     /// Directory to scan for VST3 plugins; omit to scan the platform default plugin root.
     #[arg(long)]
     pub path: Option<String>,
@@ -2496,6 +2563,12 @@ pub enum PluginStateCommand {
     /// The state must match the assigned VST3. Works in Standalone and Live Host modes.
     /// Batch command: plugin.state.import.
     Import(PluginStateImportArgs),
+    /// Show the decoded structure of a JUCE plugin's live state; requires --attach.
+    Inspect(PluginDeviceArgs),
+    /// Read one value from a JUCE plugin's live state; requires --attach.
+    Read(PluginStateReadArgs),
+    /// Edit values in a JUCE plugin's live state as one replacement; requires --attach.
+    Patch(PluginStatePatchArgs),
 }
 
 #[derive(Debug, Args)]
@@ -2558,6 +2631,60 @@ pub struct PluginStateImportArgs {
     pub file: PathBuf,
 }
 
+#[derive(Debug, Args)]
+pub struct PluginStateReadArgs {
+    #[command(flatten)]
+    pub owner: DeviceOwnerArgs,
+    /// Id of the plugin device to read.
+    #[arg(long)]
+    pub device_id: String,
+    /// ValueTree path such as PROJECT/Slot[1]/Level; omit for the whole state.
+    #[arg(long)]
+    pub path: Option<String>,
+    /// Path below the root of the XML held at --path, such as Part0/Name or Part0/@id.
+    #[arg(long)]
+    pub xml_path: Option<String>,
+    /// Write the text, XML, or tree JSON to this file instead of the response.
+    #[arg(long)]
+    pub output: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub struct PluginStatePatchArgs {
+    #[command(flatten)]
+    pub owner: DeviceOwnerArgs,
+    /// Id of the plugin device to edit.
+    #[arg(long)]
+    pub device_id: String,
+    /// Property holding the XML edited by --xml-set; omit for an XML component.
+    #[arg(long, requires = "xml_set")]
+    pub path: Option<String>,
+    /// PATH=VALUE property assignment; VALUE is converted to the property's type. Repeatable.
+    #[arg(
+        long = "set",
+        value_name = "PATH=VALUE",
+        conflicts_with = "operations_file"
+    )]
+    pub set: Vec<String>,
+    /// PATH=FILE replacement of the whole text or XML document held by a property. Repeatable.
+    #[arg(
+        long = "set-file",
+        value_name = "PATH=FILE",
+        conflicts_with = "operations_file"
+    )]
+    pub set_file: Vec<String>,
+    /// XMLPATH=VALUE assignment inside the XML at --path; a missing last element is appended. Repeatable.
+    #[arg(
+        long = "xml-set",
+        value_name = "XMLPATH=VALUE",
+        conflicts_with = "operations_file"
+    )]
+    pub xml_set: Vec<String>,
+    /// JSON array of plugin.state.patch operations, for setTree and multiple XML documents.
+    #[arg(long)]
+    pub operations_file: Option<PathBuf>,
+}
+
 #[derive(Debug, Subcommand)]
 pub enum MissingCommand {
     /// List missing Assets and plugins referenced by the project; requires a running Riffra Host accessed with --attach.
@@ -2599,6 +2726,12 @@ pub struct MissingPluginReplaceArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum RenderCommand {
+    /// Read or update render settings.
+    Settings {
+        #[command(subcommand)]
+        command: MixdownCommand,
+    },
+
     /// Render a range, the whole arrangement, or one Track stem to an audio Asset as a background Job; requires a running Riffra Host accessed with --attach.
     ///
     /// --range selects `entire-arrangement` (default) or `loop-range`. Supplying --start and --end
@@ -2606,10 +2739,9 @@ pub enum RenderCommand {
     /// cannot be combined with `loop-range`; --start and --end must be provided together. --track-id
     /// renders only that Track as a stem. --normalize applies peak normalization. --expected-sequence
     /// is the sequence precondition for the project state being rendered. Success returns a Job;
-    /// under an attached one-shot, use `job wait` to follow it to a terminal state. `job wait`
-    /// without --timeout-ms waits until a terminal state, and only a supplied --timeout-ms ends
-    /// the wait early.
-    /// --out copies the completed WAV to an absolute path without replacing an existing file.
+    /// use --wait to return its terminal state, or `job wait` to follow it later. `job wait`
+    /// without --timeout-ms waits until a terminal state.
+    /// --output-path copies the completed WAV to an absolute path without replacing an existing file.
     Start(RenderStartArgs),
     /// Render several Tracks to aligned WAV stems under one job and directory.
     ///
@@ -2617,16 +2749,21 @@ pub enum RenderCommand {
     /// skips Tracks without unmuted Clips; explicit IDs must be unique and
     /// refer to Tracks with renderable Clips. Range options match render start.
     Stems(RenderStemsArgs),
+    /// Capture selected Track, Bus and Master outputs together without changing routing.
+    Capture(RenderCaptureArgs),
     /// Copy a completed Render to a WAV path, or copy all stems to an existing directory.
     Export(RenderExportArgs),
     /// List Renders stored in the managed Render history.
     List,
     /// Delete a Render after checking every known project, recording, and Asset reference.
-    Clean(RenderCleanArgs),
+    Delete(RenderDeleteArgs),
 }
 
 #[derive(Debug, Args)]
 pub struct RenderStartArgs {
+    /// Wait for the Job to finish; failure or cancellation exits non-zero (requires --attach).
+    #[arg(long)]
+    pub wait: bool,
     /// Render range: `entire-arrangement` (default) or `loop-range`; supplying --start and --end switches to a time-selection render, which cannot be combined with `loop-range`.
     #[arg(long, default_value = "entire-arrangement", value_parser = ["entire-arrangement", "loop-range"])]
     pub range: String,
@@ -2636,6 +2773,12 @@ pub struct RenderStartArgs {
     /// Time-selection end as an arrangement-absolute musical position in bar:beat or bar:beat+fraction notation; must be provided together with --start.
     #[arg(long)]
     pub end: Option<String>,
+    /// Score section name to render; requires --occurrence and cannot be combined with --start, --end, or --range loop-range.
+    #[arg(long)]
+    pub section: Option<String>,
+    /// One-based occurrence of --section among Score regions with the same name.
+    #[arg(long)]
+    pub occurrence: Option<u32>,
     /// Apply peak normalization to the rendered audio; defaults to false when omitted.
     #[arg(long)]
     pub normalize: Option<bool>,
@@ -2644,11 +2787,14 @@ pub struct RenderStartArgs {
     pub track_id: Option<String>,
     /// Copy the completed WAV to this path without replacing an existing file.
     #[arg(long)]
-    pub out: Option<PathBuf>,
+    pub output_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
 pub struct RenderStemsArgs {
+    /// Wait for the Job to finish; failure or cancellation exits non-zero (requires --attach).
+    #[arg(long)]
+    pub wait: bool,
     /// Render each Track that contains at least one unmuted Clip.
     #[arg(long)]
     pub all_tracks: bool,
@@ -2664,32 +2810,66 @@ pub struct RenderStemsArgs {
     /// Time-selection end as an arrangement-absolute musical position; must be provided together with --start.
     #[arg(long)]
     pub end: Option<String>,
+    /// Score section name to render; requires --occurrence and cannot be combined with --start, --end, or --range loop-range.
+    #[arg(long)]
+    pub section: Option<String>,
+    /// One-based occurrence of --section among Score regions with the same name.
+    #[arg(long)]
+    pub occurrence: Option<u32>,
     /// Copy completed stem WAVs to this existing directory without replacing files.
     #[arg(long)]
-    pub out: Option<PathBuf>,
+    pub output_directory: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub struct RenderCaptureArgs {
+    /// Wait for the background Job to finish.
+    #[arg(long)]
+    pub wait: bool,
+    /// Track output to capture; may be repeated.
+    #[arg(long)]
+    pub track_id: Vec<String>,
+    /// Group or Return output to capture; may be repeated.
+    #[arg(long)]
+    pub bus_id: Vec<String>,
+    /// Include the final Master output.
+    #[arg(long)]
+    pub master: bool,
+    /// Render the entire arrangement or the enabled loop range.
+    #[arg(long, default_value = "entire-arrangement", value_parser = ["entire-arrangement", "loop-range"])]
+    pub range: String,
+    /// Inclusive time-selection start in bar:beat notation; requires --end.
+    #[arg(long)]
+    pub start: Option<String>,
+    /// Exclusive time-selection end in bar:beat notation; requires --start.
+    #[arg(long)]
+    pub end: Option<String>,
+    /// Copy completed WAVs to this existing directory without replacing files.
+    #[arg(long)]
+    pub output_directory: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
 pub struct RenderExportArgs {
     /// Render directory name returned by render list.
     #[arg(long)]
-    pub id: String,
+    pub render_id: String,
     /// Absolute or working-directory-relative WAV path, or an existing directory for stems.
     #[arg(long)]
-    pub out: PathBuf,
+    pub output_path: PathBuf,
 }
 
 #[derive(Debug, Args)]
-pub struct RenderCleanArgs {
+pub struct RenderDeleteArgs {
     /// Render directory name returned by render list.
     #[arg(long)]
-    pub id: String,
+    pub render_id: String,
 }
 
 #[derive(Debug, Subcommand)]
 pub enum JobCommand {
     /// Read one background Job's state by id; requires a running Riffra Host accessed with --attach.
-    Get(JobIdArgs),
+    Get(JobLookupArgs),
     /// Cancel one background Job by id; requires a running Riffra Host accessed with --attach.
     Cancel(JobIdArgs),
     /// Poll a background Job until it reaches a terminal state; requires --attach and cannot be combined with --data-root or --expected-sequence.
@@ -2707,10 +2887,36 @@ pub struct JobIdArgs {
 }
 
 #[derive(Debug, Args)]
+pub struct JobLookupArgs {
+    /// Id of the background Job (or use --id).
+    #[arg(
+        value_name = "JOB_ID",
+        required_unless_present = "id",
+        conflicts_with = "id"
+    )]
+    pub job_id: Option<String>,
+    /// Id of the background Job.
+    #[arg(long, required_unless_present = "job_id")]
+    pub id: Option<String>,
+}
+
+impl JobLookupArgs {
+    pub fn id(&self) -> &str {
+        self.job_id
+            .as_deref()
+            .or(self.id.as_deref())
+            .expect("clap requires a job ID")
+    }
+
+    pub fn into_id(self) -> String {
+        self.job_id.or(self.id).expect("clap requires a job ID")
+    }
+}
+
+#[derive(Debug, Args)]
 pub struct JobWaitArgs {
-    /// Id of the background Job to wait for.
-    #[arg(long)]
-    pub id: String,
+    #[command(flatten)]
+    pub job: JobLookupArgs,
     /// Maximum time to wait in milliseconds; omit to wait until the Job reaches a terminal state.
     #[arg(long)]
     pub timeout_ms: Option<u64>,
@@ -2750,7 +2956,7 @@ impl Cli {
             .command
             .ok_or_else(|| "a command is required unless --interactive is used".to_string())?;
         let mut command = command_request(command)?;
-        crate::paths::prepare_command(&mut command)?;
+        client::prepare_command(&mut command)?;
         Ok(command)
     }
 
@@ -2762,6 +2968,18 @@ impl Cli {
                         command: PluginStateCommand::Save(args),
                     },
             }) => Some(args.output.clone()),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn plugin_state_read_output(&self) -> Option<PathBuf> {
+        match self.command.as_ref() {
+            Some(CliCommand::Plugin {
+                command:
+                    PluginCommand::State {
+                        command: PluginStateCommand::Read(args),
+                    },
+            }) => args.output.clone(),
             _ => None,
         }
     }
@@ -2820,7 +3038,7 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
                 SessionSettingsCommand::Update(args) => {
                     Canonical::SessionSettingsUpdate(SessionSettingsPatch {
                         mixdown: None,
-                        project_name: args.project_name.map(Some),
+                        project_name: None,
                         master_db: args.master_db,
                         loop_enabled: args.loop_enabled,
                         count_in_beats: args.count_in_beats,
@@ -2834,6 +3052,8 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
         },
         CliCommand::History { command } => match command {
             HistoryCommand::Get => Canonical::HistoryGet(empty).into(),
+            HistoryCommand::Undo => Canonical::Undo(empty).into(),
+            HistoryCommand::Redo => Canonical::Redo(empty).into(),
         },
         CliCommand::Track { command } => match command {
             TrackCommand::ExternalAudioInput { command } => match command {
@@ -2897,54 +3117,11 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
                 }
             },
         },
-        CliCommand::AudioClip { command } => match command {
-            AudioClipCommand::List => Canonical::AudioClipList(empty).into(),
-            AudioClipCommand::AddAsset(args) => Canonical::AudioClipAddAsset(ClipAddAssetParams {
-                asset_id: args.asset_id,
-                name: args.name,
-                start_tick: args.start_tick,
-                track_id: args.track_id,
-            })
-            .into(),
-            AudioClipCommand::Update(args) => audio_clip_update(args)?,
-            AudioClipCommand::Move(args) => Canonical::AudioClipMove(AudioClipMoveParams {
-                moves: vec![AudioClipMove {
-                    clip_id: args.clip_id,
-                    start_tick: TimelineTick(args.start_tick),
-                    track_id: args.track_id,
-                }],
-            })
-            .into(),
-            AudioClipCommand::Trim(args) => Canonical::AudioClipTrim(AudioClipTrimParams {
-                clip_id: args.clip_id,
-                start_tick: args.start_tick,
-                source_range: FrameRange {
-                    start: args.source_start,
-                    end: args.source_end,
-                },
-            })
-            .into(),
-            AudioClipCommand::Split(args) => Canonical::AudioClipSplit(ClipSplitParams {
-                clip_id: args.clip_id,
-                split_tick: args.split_tick,
-            })
-            .into(),
-            AudioClipCommand::Duplicate(args) => {
-                Canonical::AudioClipDuplicate(clip_id(args)).into()
-            }
-            AudioClipCommand::Crossfade(args) => {
-                Canonical::AudioClipCrossfade(AudioClipCrossfadeParams {
-                    first_clip_id: args.first_clip_id,
-                    second_clip_id: args.second_clip_id,
-                })
-                .into()
-            }
-        },
         CliCommand::Mixer { command } => match command {
             MixerCommand::Get => Canonical::MixerGet(empty).into(),
-            MixerCommand::Output { track_id, bus_id } => {
-                Canonical::TrackOutputSet(TrackOutputParams { track_id, bus_id }).into()
-            }
+            MixerCommand::Output {
+                command: MixerOutputCommand::Set { track_id, bus_id },
+            } => Canonical::TrackOutputSet(TrackOutputParams { track_id, bus_id }).into(),
             MixerCommand::Bus { command } => match command {
                 MixBusCommand::List => Canonical::MixBusList(empty).into(),
                 MixBusCommand::Add { name, kind } => Canonical::MixBusAdd(MixBusAddParams {
@@ -3025,156 +3202,37 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
                 }
             },
         },
-        CliCommand::Mixdown { command } => match command {
-            MixdownCommand::Get => Canonical::MixdownGet(empty).into(),
-            MixdownCommand::Set { settings_json } => Canonical::MixdownSet(decode_params(
-                json_argument("settings-json", &settings_json)?,
-            )?)
-            .into(),
-        },
-        CliCommand::InstrumentEvent { command } => match command {
-            InstrumentEventCommand::List { clip_id } => {
-                Canonical::InstrumentEventList(InstrumentEventClipParams { clip_id }).into()
-            }
-            InstrumentEventCommand::Add {
-                clip_id,
-                tick,
-                kind_json,
-            } => Canonical::InstrumentEventAdd(InstrumentEventAddParams {
-                clip_id,
-                tick,
-                kind: decode_params(json_argument("kind-json", &kind_json)?)?,
-            })
-            .into(),
-            InstrumentEventCommand::Set {
-                clip_id,
-                events_json,
-            } => Canonical::InstrumentEventSet(InstrumentEventSetParams {
-                clip_id,
-                events: decode_params(json_argument("events-json", &events_json)?)?,
-            })
-            .into(),
-            InstrumentEventCommand::Update {
-                clip_id,
-                event_json,
-            } => Canonical::InstrumentEventUpdate(InstrumentEventUpdateParams {
-                clip_id,
-                event: decode_params(json_argument("event-json", &event_json)?)?,
-            })
-            .into(),
-            InstrumentEventCommand::Remove { clip_id, event_id } => {
-                Canonical::InstrumentEventRemove(InstrumentEventRemoveParams { clip_id, event_id })
-                    .into()
-            }
-        },
-        CliCommand::MidiClip { command } => match command {
-            MidiClipCommand::List => Canonical::MidiClipList(empty).into(),
-            MidiClipCommand::Create(args) => Canonical::MidiClipCreate(MidiClipCreateParams {
-                track_id: args.track_id,
-                start_tick: args.start_tick,
-                duration_ticks: args.duration_ticks,
-                name: args.name,
-            })
-            .into(),
-            MidiClipCommand::AddAsset(args) => Canonical::MidiClipAddAsset(ClipAddAssetParams {
-                asset_id: args.asset_id,
-                name: args.name,
-                start_tick: args.start_tick,
-                track_id: args.track_id,
-            })
-            .into(),
-            MidiClipCommand::Update(args) => midi_clip_update(args)?,
-            MidiClipCommand::Move(args) => Canonical::MidiClipMove(MidiClipMoveParams {
-                moves: vec![MidiClipMove {
-                    clip_id: args.clip_id,
-                    start_tick: TimelineTick(args.start_tick),
-                    track_id: args.track_id,
-                }],
-            })
-            .into(),
-            MidiClipCommand::Trim(args) => Canonical::MidiClipTrim(MidiClipTrimParams {
-                clip_id: args.clip_id,
-                start_tick: args.start_tick,
-                duration_ticks: args.duration_ticks,
-            })
-            .into(),
-            MidiClipCommand::Split(args) => Canonical::MidiClipSplit(ClipSplitParams {
-                clip_id: args.clip_id,
-                split_tick: args.split_tick,
-            })
-            .into(),
-            MidiClipCommand::Duplicate(args) => Canonical::MidiClipDuplicate(clip_id(args)).into(),
-        },
-        CliCommand::MidiNote { command } => match command {
-            MidiNoteCommand::Add(args) => Canonical::MidiNoteAdd(MidiNoteAddParams {
-                lyric: args.lyric,
-                clip_id: args.clip_id,
-                pitch: args.pitch,
-                start_tick: args.start_tick,
-                duration_ticks: args.duration_ticks,
-                velocity: args.velocity,
-                channel: args.channel,
-            })
-            .into(),
-            MidiNoteCommand::Insert(args) => Canonical::MidiNoteInsert(MidiNoteInsertParams {
-                clip_id: args.clip_id,
-                notes: note_input(args.notes_json, args.notes_file, args.stdin)?,
-            })
-            .into(),
-            MidiNoteCommand::Update(args) => Canonical::MidiNoteUpdate(MidiNoteUpdateParams {
-                clip_id: args.clip_id,
-                note_id: args.note_id,
-                patch: field("/patch", json_argument("patch", &args.patch)?)?,
-            })
-            .into(),
-            MidiNoteCommand::UpdateMany(args) => {
-                Canonical::MidiNoteUpdateMany(MidiNoteUpdateManyParams {
-                    clip_id: args.clip_id,
-                    updates: field(
-                        "/updates",
-                        json_argument("updates-json", &args.updates_json)?,
-                    )?,
-                })
-                .into()
-            }
-            MidiNoteCommand::Remove(args) => Canonical::MidiNoteRemove(NoteIdParams {
-                clip_id: args.clip_id,
-                note_id: args.note_id,
-            })
-            .into(),
-            MidiNoteCommand::RemoveMany(args) => Canonical::MidiNoteRemoveMany(NoteIdsParams {
-                clip_id: args.clip_id,
-                note_ids: id_list(args.note_ids, args.note_ids_json, "note-ids")?,
-            })
-            .into(),
-            MidiNoteCommand::Clear(args) => Canonical::MidiNoteClear(clip_id(args)).into(),
-            MidiNoteCommand::Quantize(args) => {
-                Canonical::MidiNoteQuantize(MidiNoteQuantizeParams {
-                    clip_id: args.clip_id,
-                    note_ids: id_list(args.note_ids, args.note_ids_json, "note-ids")?,
-                    grid_ticks: args.grid_ticks,
-                })
-                .into()
-            }
-            MidiNoteCommand::Transform(args) => {
-                Canonical::MidiNoteTransform(MidiNoteTransformParams {
-                    clip_id: args.clip_id,
-                    note_ids: id_list(args.note_ids, args.note_ids_json, "note-ids")?,
-                    transpose_semitones: args.transpose_semitones,
-                    velocity_offset: args.velocity_offset,
-                })
-                .into()
-            }
-            MidiNoteCommand::Duplicate(args) => {
-                Canonical::MidiNoteDuplicate(MidiNoteDuplicateParams {
-                    clip_id: args.clip_id,
-                    note_ids: id_list(args.note_ids, args.note_ids_json, "note-ids")?,
-                    offset_ticks: args.offset_ticks,
-                })
-                .into()
-            }
-        },
         CliCommand::Music { command } => match command {
+            MusicCommand::Marker { command } => match command {
+                MarkerCommand::Add(args) => Canonical::MarkerAdd(MarkerAddParams {
+                    name: args.name,
+                    position: text("/position", args.position)?,
+                })
+                .into(),
+                MarkerCommand::Update(args) => Canonical::MarkerUpdate(MarkerUpdateParams {
+                    marker_id: args.marker_id,
+                    name: args.name,
+                    position: optional_text("/position", args.position)?,
+                })
+                .into(),
+                MarkerCommand::Remove(args) => Canonical::MarkerRemove(MarkerIdParams {
+                    marker_id: args.marker_id,
+                })
+                .into(),
+            },
+            MusicCommand::Timebase { command } => match command {
+                TimebaseCommand::GetMap => Canonical::TimebaseGetMap(EmptyParams {}).into(),
+                TimebaseCommand::SetMap { map_json } => {
+                    Canonical::TimebaseSetMap(decode_params(json_argument("map-json", &map_json)?)?)
+                        .into()
+                }
+                TimebaseCommand::Update(args) => Canonical::TimebaseUpdate(TimebaseUpdateParams {
+                    bpm: args.bpm,
+                    time_signature_numerator: args.time_signature_numerator,
+                    time_signature_denominator: args.time_signature_denominator,
+                })
+                .into(),
+            },
             MusicCommand::ExportMidi(args) => Project::MusicExportMidi(MidiExportParams {
                 clip_id: args.clip_id,
                 track_id: args.track_id,
@@ -3221,6 +3279,7 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
                 MusicNoteCommand::Insert(args) => {
                     Canonical::MusicNoteInsert(MusicalNoteInsertParams {
                         clip_id: args.clip_id,
+                        clip_to_end: args.clip_to_end,
                         notes: note_input(args.notes_json, args.notes_file, args.stdin)?,
                     })
                     .into()
@@ -3325,6 +3384,176 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
             },
         },
         CliCommand::Clip { command } => match command {
+            ClipCommand::Audio { command } => match command {
+                AudioClipCommand::List => Canonical::AudioClipList(empty).into(),
+                AudioClipCommand::AddAsset(args) => {
+                    Canonical::AudioClipAddAsset(ClipAddAssetParams {
+                        asset_id: args.asset_id,
+                        name: args.name,
+                        start_tick: args.start_tick,
+                        track_id: args.track_id,
+                    })
+                    .into()
+                }
+                AudioClipCommand::Update(args) => audio_clip_update(args)?,
+                AudioClipCommand::Trim(args) => Canonical::AudioClipTrim(AudioClipTrimParams {
+                    clip_id: args.clip_id,
+                    start_tick: args.start_tick,
+                    source_range: FrameRange {
+                        start: args.source_start,
+                        end: args.source_end,
+                    },
+                })
+                .into(),
+                AudioClipCommand::Split(args) => Canonical::AudioClipSplit(ClipSplitParams {
+                    clip_id: args.clip_id,
+                    split_tick: args.split_tick,
+                })
+                .into(),
+                AudioClipCommand::Duplicate(args) => {
+                    Canonical::AudioClipDuplicate(clip_id(args)).into()
+                }
+                AudioClipCommand::Merge(args) => Canonical::AudioClipMerge(ClipMergeParams {
+                    first_clip_id: args.first_clip_id,
+                    second_clip_id: args.second_clip_id,
+                })
+                .into(),
+                AudioClipCommand::Crossfade(args) => {
+                    Canonical::AudioClipCrossfade(AudioClipCrossfadeParams {
+                        first_clip_id: args.first_clip_id,
+                        second_clip_id: args.second_clip_id,
+                    })
+                    .into()
+                }
+            },
+            ClipCommand::Midi { command } => match command {
+                MidiClipCommand::Note { command } => match command {
+                    MidiNoteCommand::Insert(args) => {
+                        Canonical::MidiNoteInsert(MidiNoteInsertParams {
+                            clip_id: args.clip_id,
+                            notes: note_input(args.notes_json, args.notes_file, args.stdin)?,
+                        })
+                        .into()
+                    }
+                    MidiNoteCommand::UpdateMany(args) => {
+                        Canonical::MidiNoteUpdateMany(MidiNoteUpdateManyParams {
+                            clip_id: args.clip_id,
+                            updates: field(
+                                "/updates",
+                                json_argument("updates-json", &args.updates_json)?,
+                            )?,
+                        })
+                        .into()
+                    }
+                    MidiNoteCommand::RemoveMany(args) => {
+                        Canonical::MidiNoteRemoveMany(NoteIdsParams {
+                            clip_id: args.clip_id,
+                            note_ids: id_list(args.note_ids, args.note_ids_json, "note-ids")?,
+                        })
+                        .into()
+                    }
+                    MidiNoteCommand::Quantize(args) => {
+                        Canonical::MidiNoteQuantize(MidiNoteQuantizeParams {
+                            clip_id: args.clip_id,
+                            note_ids: id_list(args.note_ids, args.note_ids_json, "note-ids")?,
+                            grid_ticks: args.grid_ticks,
+                        })
+                        .into()
+                    }
+                    MidiNoteCommand::Transform(args) => {
+                        Canonical::MidiNoteTransform(MidiNoteTransformParams {
+                            clip_id: args.clip_id,
+                            note_ids: id_list(args.note_ids, args.note_ids_json, "note-ids")?,
+                            transpose_semitones: args.transpose_semitones,
+                            velocity_offset: args.velocity_offset,
+                        })
+                        .into()
+                    }
+                    MidiNoteCommand::Duplicate(args) => {
+                        Canonical::MidiNoteDuplicate(MidiNoteDuplicateParams {
+                            clip_id: args.clip_id,
+                            note_ids: id_list(args.note_ids, args.note_ids_json, "note-ids")?,
+                            offset_ticks: args.offset_ticks,
+                        })
+                        .into()
+                    }
+                },
+                MidiClipCommand::InstrumentEvent { command } => match command {
+                    InstrumentEventCommand::List { clip_id } => {
+                        Canonical::InstrumentEventList(InstrumentEventClipParams { clip_id }).into()
+                    }
+                    InstrumentEventCommand::Add {
+                        clip_id,
+                        tick,
+                        kind_json,
+                    } => Canonical::InstrumentEventAdd(InstrumentEventAddParams {
+                        clip_id,
+                        tick,
+                        kind: decode_params(json_argument("kind-json", &kind_json)?)?,
+                    })
+                    .into(),
+                    InstrumentEventCommand::Set {
+                        clip_id,
+                        events_json,
+                    } => Canonical::InstrumentEventSet(InstrumentEventSetParams {
+                        clip_id,
+                        events: decode_params(json_argument("events-json", &events_json)?)?,
+                    })
+                    .into(),
+                    InstrumentEventCommand::Update {
+                        clip_id,
+                        event_json,
+                    } => Canonical::InstrumentEventUpdate(InstrumentEventUpdateParams {
+                        clip_id,
+                        event: decode_params(json_argument("event-json", &event_json)?)?,
+                    })
+                    .into(),
+                    InstrumentEventCommand::Remove { clip_id, event_id } => {
+                        Canonical::InstrumentEventRemove(InstrumentEventRemoveParams {
+                            clip_id,
+                            event_id,
+                        })
+                        .into()
+                    }
+                },
+                MidiClipCommand::Merge(args) => Canonical::MidiClipMerge(ClipMergeParams {
+                    first_clip_id: args.first_clip_id,
+                    second_clip_id: args.second_clip_id,
+                })
+                .into(),
+                MidiClipCommand::List => Canonical::MidiClipList(empty).into(),
+                MidiClipCommand::Create(args) => Canonical::MidiClipCreate(MidiClipCreateParams {
+                    track_id: args.track_id,
+                    start_tick: args.start_tick,
+                    duration_ticks: args.duration_ticks,
+                    name: args.name,
+                })
+                .into(),
+                MidiClipCommand::AddAsset(args) => {
+                    Canonical::MidiClipAddAsset(ClipAddAssetParams {
+                        asset_id: args.asset_id,
+                        name: args.name,
+                        start_tick: args.start_tick,
+                        track_id: args.track_id,
+                    })
+                    .into()
+                }
+                MidiClipCommand::Update(args) => midi_clip_update(args)?,
+                MidiClipCommand::Trim(args) => Canonical::MidiClipTrim(MidiClipTrimParams {
+                    clip_id: args.clip_id,
+                    start_tick: args.start_tick,
+                    duration_ticks: args.duration_ticks,
+                })
+                .into(),
+                MidiClipCommand::Split(args) => Canonical::MidiClipSplit(ClipSplitParams {
+                    clip_id: args.clip_id,
+                    split_tick: args.split_tick,
+                })
+                .into(),
+                MidiClipCommand::Duplicate(args) => {
+                    Canonical::MidiClipDuplicate(clip_id(args)).into()
+                }
+            },
             ClipCommand::Remove(args) => Canonical::ClipRemove(ClipRemoveParams {
                 audio_clip_ids: id_list(
                     args.audio_clip_ids,
@@ -3353,47 +3582,30 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
             })
             .into(),
         },
-        CliCommand::Marker { command } => match command {
-            MarkerCommand::Add(args) => Canonical::MarkerAdd(MarkerAddParams {
-                name: args.name,
-                position: text("/position", args.position)?,
-            })
-            .into(),
-            MarkerCommand::Update(args) => Canonical::MarkerUpdate(MarkerUpdateParams {
-                marker_id: args.marker_id,
-                name: args.name,
-                position: optional_text("/position", args.position)?,
-            })
-            .into(),
-            MarkerCommand::Remove(args) => Canonical::MarkerRemove(MarkerIdParams {
-                marker_id: args.marker_id,
-            })
-            .into(),
-        },
-        CliCommand::Timebase { command } => match command {
-            TimebaseCommand::GetMap => Canonical::TimebaseGetMap(EmptyParams {}).into(),
-            TimebaseCommand::SetMap { map_json } => {
-                Canonical::TimebaseSetMap(decode_params(json_argument("map-json", &map_json)?)?)
-                    .into()
-            }
-            TimebaseCommand::Update(args) => Canonical::TimebaseUpdate(TimebaseUpdateParams {
-                bpm: args.bpm,
-                time_signature_numerator: args.time_signature_numerator,
-                time_signature_denominator: args.time_signature_denominator,
-            })
-            .into(),
-        },
-        CliCommand::LoopRange { command } => match command {
-            RangeCommand::Set(args) => Canonical::LoopRangeSet(range(args)?).into(),
-        },
-        CliCommand::PunchRange { command } => match command {
-            RangeCommand::Set(args) => Canonical::PunchRangeSet(range(args)?).into(),
-        },
         CliCommand::Automation { command } => match command {
             AutomationCommand::Get(args) => Canonical::AutomationGet(AutomationGetParams {
                 target: args.into_target()?,
             })
             .into(),
+            AutomationCommand::Evaluate(args) => {
+                Canonical::AutomationEvaluate(AutomationEvaluateParams {
+                    target: args.target.into_target()?,
+                    start: args
+                        .start
+                        .parse()
+                        .map_err(|error: riffra_core::DomainError| error.to_string())?,
+                    end: args
+                        .end
+                        .parse()
+                        .map_err(|error: riffra_core::DomainError| error.to_string())?,
+                    grid: args
+                        .grid
+                        .parse()
+                        .map_err(|error: riffra_core::DomainError| error.to_string())?,
+                    sample_rate: args.sample_rate,
+                })
+                .into()
+            }
             AutomationCommand::List(args) => {
                 let owner = match (args.track_id, args.bus_id, args.master) {
                     (Some(id), None, false) => Some(riffra_core::EffectOwner::Track { id }),
@@ -3424,6 +3636,16 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
             .into(),
         },
         CliCommand::Asset { command } => match command {
+            AssetCommand::Search(args) => {
+                Runtime::LibrarySearch(LibrarySearchParams { query: args.query }).into()
+            }
+            AssetCommand::Update(args) => Runtime::LibraryAssetUpdate(LibraryTagParams {
+                id: args.id,
+                tag: args.tag,
+                note: args.note,
+            })
+            .into(),
+            AssetCommand::Related(args) => Runtime::LibraryRelated(IdParams { id: args.id }).into(),
             AssetCommand::ImportMidi(args) => Canonical::AssetImportMidi(AssetImportParams {
                 path: args.path,
                 name: args.name,
@@ -3439,6 +3661,26 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
             .into(),
             AssetCommand::StopPreview => Runtime::AssetPreviewStop(empty).into(),
         },
+        CliCommand::Score { command } => match command {
+            ScoreCommand::Validate(args) => ControlCommand::decode(
+                "score.validate",
+                serde_json::to_value(ScoreDocumentParams {
+                    path: args.path,
+                    bindings: args.bindings.into_iter().collect(),
+                })
+                .map_err(|error| RequestError::Usage(error.to_string()))?,
+            ),
+            ScoreCommand::Inspect(args) => ControlCommand::decode(
+                "score.inspect",
+                serde_json::to_value(ScoreInspectParams {
+                    path: args.path,
+                    bindings: args.bindings.into_iter().collect(),
+                    events: args.events,
+                })
+                .map_err(|error| RequestError::Usage(error.to_string()))?,
+            ),
+        }
+        .map_err(RequestError::from)?,
         CliCommand::Project { command } => match command {
             ProjectCommand::List => Project::ProjectList(empty).into(),
             ProjectCommand::Create(args) => {
@@ -3471,15 +3713,21 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
             ProjectCommand::Import(args) => {
                 Project::ProjectImport(ProjectImportParams { path: args.path }).into()
             }
+            ProjectCommand::RebuildScore(args) => {
+                Project::ProjectRebuildScore(ProjectRebuildScoreParams {
+                    path: args.path,
+                    bindings: args.bindings.into_iter().collect(),
+                })
+                .into()
+            }
         },
         CliCommand::Instrument { command } => match command {
-            InstrumentCommand::Init(_)
-            | InstrumentCommand::Validate(_)
-            | InstrumentCommand::Inspect(_)
-            | InstrumentCommand::Render(_)
-            | InstrumentCommand::Audition(_) => {
+            InstrumentCommand::Definition { .. } => {
                 unreachable!("Sonalloy instrument commands are handled directly by the CLI")
             }
+            InstrumentCommand::Vst3 {
+                command: InstrumentVst3Command::Set(args),
+            } => Canonical::InstrumentVst3Set(plugin_path(args)).into(),
             InstrumentCommand::List => Canonical::InstrumentList(empty).into(),
             InstrumentCommand::Save(args) => Canonical::InstrumentSave(InstrumentSaveParams {
                 definition_path: args.definition_path,
@@ -3490,6 +3738,18 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
                 Canonical::InstrumentExport(InstrumentExportParams {
                     instrument_id: args.instrument_id,
                     output: args.output,
+                })
+                .into()
+            }
+            InstrumentCommand::CreateTrack(args) => {
+                let source = match (args.source.instrument_id, args.source.plugin_path) {
+                    (Some(instrument_id), None) => InstrumentTrackSource::Library { instrument_id },
+                    (None, Some(plugin_path)) => InstrumentTrackSource::Vst3 { plugin_path },
+                    _ => unreachable!("clap requires exactly one instrument source"),
+                };
+                Canonical::InstrumentTrackCreate(InstrumentTrackCreateParams {
+                    name: args.name,
+                    source,
                 })
                 .into()
             }
@@ -3564,18 +3824,16 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
                         parameter_index: args.parameter_index,
                         value: args.value,
                         display: args.display,
+                        nearest: args.nearest,
                     })
                     .into()
                 }
             },
         },
-        CliCommand::Runtime { command } => match command {
-            RuntimeCommand::Projection { command } => match command {
-                RuntimeProjectionCommand::Get => Runtime::RuntimeProjectionGet(empty).into(),
-                RuntimeProjectionCommand::Retry => Runtime::RuntimeProjectionRetry(empty).into(),
-            },
-        },
         CliCommand::Transport { command } => match command {
+            TransportCommand::Loop { command } => match command {
+                RangeCommand::Set(args) => Canonical::LoopRangeSet(range(args)?).into(),
+            },
             TransportCommand::Play => Runtime::TransportPlay(empty).into(),
             TransportCommand::Pause => Runtime::TransportPause(empty).into(),
             TransportCommand::Stop => Runtime::TransportStop(empty).into(),
@@ -3593,9 +3851,13 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
             LiveMidiCommand::Panic(args) => Runtime::MidiPanic(track_id(args)).into(),
         },
         CliCommand::Audio { command } => match command {
+            AudioCommand::Projection { command } => match command {
+                RuntimeProjectionCommand::Get => Runtime::RuntimeProjectionGet(empty).into(),
+                RuntimeProjectionCommand::Retry => Runtime::RuntimeProjectionRetry(empty).into(),
+            },
             AudioCommand::Status => Runtime::AudioStatus(empty).into(),
             AudioCommand::Probe => Runtime::AudioProbe(empty).into(),
-            AudioCommand::ChannelsProbe(args) => {
+            AudioCommand::ProbeChannels(args) => {
                 Runtime::AudioChannelsProbe(AudioChannelsProbeParams {
                     driver: args.driver,
                     input_device: args.input_device,
@@ -3622,12 +3884,13 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
             AudioCommand::StartupRetry => Runtime::AudioStartupRetry(empty).into(),
         },
         CliCommand::Record { command } => match command {
-            RecordCommand::Start(args) | RecordCommand::AnotherTake(args) => {
-                Runtime::RecordStart(RecordStartParams {
-                    recording_session_id: args.recording_session_id,
-                })
-                .into()
-            }
+            RecordCommand::Punch { command } => match command {
+                RangeCommand::Set(args) => Canonical::PunchRangeSet(range(args)?).into(),
+            },
+            RecordCommand::Start(args) => Runtime::RecordStart(RecordStartParams {
+                recording_session_id: args.recording_session_id,
+            })
+            .into(),
             RecordCommand::Stop => Runtime::RecordStop(empty).into(),
             RecordCommand::Status => Runtime::RecordStatus(empty).into(),
             RecordCommand::List(args) => {
@@ -3649,21 +3912,40 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
             RecordCommand::Delete(args) => Runtime::RecordDelete(IdParams { id: args.id }).into(),
             RecordCommand::Duplicates => Runtime::RecordDuplicates(empty).into(),
         },
-        CliCommand::Library { command } => match command {
-            LibraryCommand::Search(args) => {
-                Runtime::LibrarySearch(LibrarySearchParams { query: args.query }).into()
-            }
-            LibraryCommand::AssetUpdate(args) => Runtime::LibraryAssetUpdate(LibraryTagParams {
-                id: args.id,
-                tag: args.tag,
-                note: args.note,
-            })
-            .into(),
-            LibraryCommand::Related(args) => {
-                Runtime::LibraryRelated(IdParams { id: args.id }).into()
-            }
-        },
         CliCommand::Analysis { command } => match command {
+            AnalysisCommand::Levels(args) => {
+                let source = args
+                    .source
+                    .map(|source| {
+                        if source == "master" {
+                            Ok(LevelSource::Master)
+                        } else if source == "mixdown" {
+                            Ok(LevelSource::Mixdown {
+                                rendered_track_id: None,
+                            })
+                        } else if let Some(id) =
+                            source.strip_prefix("track:").filter(|id| !id.is_empty())
+                        {
+                            Ok(LevelSource::Track { id: id.into() })
+                        } else if let Some(id) =
+                            source.strip_prefix("bus:").filter(|id| !id.is_empty())
+                        {
+                            Ok(LevelSource::Bus { id: id.into() })
+                        } else {
+                            Err("source must be master, mixdown, track:<id>, or bus:<id>"
+                                .to_string())
+                        }
+                    })
+                    .transpose()?;
+                Runtime::AnalysisLevels(AnalysisLevelsParams {
+                    render_id: args.render_id,
+                    grid: text("/grid", args.grid)?,
+                    start: args.start.map(|value| text("/start", value)).transpose()?,
+                    end: args.end.map(|value| text("/end", value)).transpose()?,
+                    source,
+                })
+                .into()
+            }
             AnalysisCommand::Measure(args) => {
                 let encoded = fs::read_to_string(&args.file).map_err(|error| {
                     format!("analysis measurement file could not be read: {error}")
@@ -3673,7 +3955,7 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
                 )?)?)
                 .into()
             }
-            AnalysisCommand::Start(args) => Runtime::AnalysisStart(AnalysisParams {
+            AnalysisCommand::Inspect(args) => Runtime::AnalysisInspect(AnalysisParams {
                 asset_id: args.asset_id,
                 path: args.path,
             })
@@ -3683,14 +3965,13 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
             PluginCommand::Catalog { command } => match command {
                 PluginCatalogCommand::List => Runtime::PluginCatalogList(empty).into(),
             },
-            PluginCommand::Instrument(args) => {
-                Canonical::InstrumentVst3Set(plugin_path(args)).into()
-            }
             PluginCommand::Scan(args) => {
-                Runtime::PluginScan(PluginScanParams { path: args.path }).into()
-            }
-            PluginCommand::ScanStart(args) => {
-                Runtime::PluginScanStart(PluginScanParams { path: args.path }).into()
+                let params = PluginScanParams { path: args.path };
+                if args.background {
+                    Runtime::PluginScanStart(params).into()
+                } else {
+                    Runtime::PluginScan(params).into()
+                }
             }
             PluginCommand::Preset { command } => match command {
                 PluginPresetCommand::List(args) => {
@@ -3726,10 +4007,29 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
                     Canonical::PluginStateImport(PluginStateImportParams {
                         owner: args.owner.into_owner()?,
                         device_id: args.device_id,
-                        state: crate::paths::read_plugin_state(&args.file)?,
+                        state: serde_json::from_value(client::read_json_file(&args.file)?)
+                            .map_err(|error| {
+                                format!(
+                                    "plugin state file {} is invalid: {error}",
+                                    args.file.display()
+                                )
+                            })?,
                     })
                     .into()
                 }
+                PluginStateCommand::Inspect(args) => Runtime::PluginStateInspect(DeviceParams {
+                    owner: args.owner.into_owner()?,
+                    device_id: args.device_id,
+                })
+                .into(),
+                PluginStateCommand::Read(args) => Runtime::PluginStateRead(PluginStateReadParams {
+                    owner: args.owner.into_owner()?,
+                    device_id: args.device_id,
+                    path: args.path,
+                    xml_path: args.xml_path,
+                })
+                .into(),
+                PluginStateCommand::Patch(args) => plugin_state_patch(args)?,
             },
         },
         CliCommand::Missing { command } => match command {
@@ -3756,25 +4056,53 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
         CliCommand::Render { command } => match command {
             RenderCommand::Start(args) => render_start(args)?,
             RenderCommand::Stems(args) => render_stems(args)?,
+            RenderCommand::Capture(args) => {
+                let mut targets = args
+                    .track_id
+                    .into_iter()
+                    .map(|id| CaptureTarget::Track { id })
+                    .chain(args.bus_id.into_iter().map(|id| CaptureTarget::Bus { id }))
+                    .collect::<Vec<_>>();
+                if args.master {
+                    targets.push(CaptureTarget::Master);
+                }
+                if !(1..=16).contains(&targets.len()) {
+                    return Err("capture requires 1 to 16 targets".into());
+                }
+                Runtime::RenderCapture(RenderCaptureParams {
+                    targets,
+                    range: render_range(args.range, args.start, args.end, None, None, "/range")?,
+                    output_directory: args
+                        .output_directory
+                        .map(|path| path.to_string_lossy().into_owned()),
+                })
+                .into()
+            }
             RenderCommand::Export(args) => Runtime::RenderExport(RenderExportParams {
-                render_id: args.id,
-                output_path: args.out.to_string_lossy().into_owned(),
+                render_id: args.render_id,
+                output_path: args.output_path.to_string_lossy().into_owned(),
             })
             .into(),
+            RenderCommand::Settings { command } => match command {
+                MixdownCommand::Get => Canonical::MixdownGet(empty).into(),
+                MixdownCommand::Set { settings_json } => Canonical::MixdownSet(decode_params(
+                    json_argument("settings-json", &settings_json)?,
+                )?)
+                .into(),
+            },
             RenderCommand::List => Runtime::RenderList(EmptyParams {}).into(),
-            RenderCommand::Clean(args) => {
-                Runtime::RenderClean(RenderCleanParams { render_id: args.id }).into()
-            }
+            RenderCommand::Delete(args) => Runtime::RenderDelete(RenderDeleteParams {
+                render_id: args.render_id,
+            })
+            .into(),
         },
         CliCommand::Job { command } => match command {
-            JobCommand::Get(args) => Runtime::JobGet(IdParams { id: args.id }).into(),
+            JobCommand::Get(args) => Runtime::JobGet(IdParams { id: args.into_id() }).into(),
             JobCommand::Cancel(args) => Runtime::JobCancel(IdParams { id: args.id }).into(),
             JobCommand::Wait(_) => {
                 return Err("job wait is handled locally by an attached one-shot CLI".into());
             }
         },
-        CliCommand::Undo => Canonical::Undo(empty).into(),
-        CliCommand::Redo => Canonical::Redo(empty).into(),
     })
 }
 
@@ -3857,13 +4185,22 @@ fn range(args: RangeArgs) -> Result<RangeParams, CommandDecodeError> {
 }
 
 fn render_start(args: RenderStartArgs) -> Result<ControlCommand, RequestError> {
-    let range = render_range(args.range, args.start, args.end, "/options/range")?;
+    let range = render_range(
+        args.range,
+        args.start,
+        args.end,
+        args.section,
+        args.occurrence,
+        "/options/range",
+    )?;
     Ok(Runtime::RenderStart(RenderStartParams {
         options: Some(RenderOptions {
             range,
             normalize: args.normalize.unwrap_or(false),
             track_id: args.track_id,
-            output_path: args.out.map(|path| path.to_string_lossy().into_owned()),
+            output_path: args
+                .output_path
+                .map(|path| path.to_string_lossy().into_owned()),
         }),
     })
     .into())
@@ -3876,8 +4213,17 @@ fn render_stems(args: RenderStemsArgs) -> Result<ControlCommand, RequestError> {
     Ok(Runtime::RenderStems(RenderStemsParams {
         all_tracks: args.all_tracks,
         track_ids: args.track_ids,
-        range: render_range(args.range, args.start, args.end, "/range")?,
-        output_directory: args.out.map(|path| path.to_string_lossy().into_owned()),
+        range: render_range(
+            args.range,
+            args.start,
+            args.end,
+            args.section,
+            args.occurrence,
+            "/range",
+        )?,
+        output_directory: args
+            .output_directory
+            .map(|path| path.to_string_lossy().into_owned()),
     })
     .into())
 }
@@ -3886,12 +4232,35 @@ fn render_range(
     range: String,
     start: Option<String>,
     end: Option<String>,
+    section: Option<String>,
+    occurrence: Option<u32>,
     pointer: &str,
 ) -> Result<RenderRange, RequestError> {
     let has_start = start.is_some();
     let has_end = end.is_some();
     if has_start != has_end {
         return Err("--start and --end must be provided together".into());
+    }
+    if section.is_some() != occurrence.is_some() {
+        return Err("--section and --occurrence must be provided together".into());
+    }
+    if let (Some(section), Some(occurrence)) = (section, occurrence) {
+        if range == "loop-range" {
+            return Err("--range loop-range cannot be combined with --section".into());
+        }
+        if has_start || has_end {
+            return Err("--section cannot be combined with --start or --end".into());
+        }
+        if section.is_empty() {
+            return Err("--section must not be empty".into());
+        }
+        if occurrence == 0 {
+            return Err("--occurrence must be positive".into());
+        }
+        return Ok(RenderRange::Section {
+            name: section,
+            occurrence,
+        });
     }
     Ok(match (range.as_str(), start, end) {
         ("entire-arrangement", None, None) => RenderRange::EntireArrangement,
@@ -3987,6 +4356,71 @@ fn plugin_state_load(args: PluginStateLoadArgs) -> Result<ControlCommand, Reques
         state: field("/state", state)?,
     })
     .into())
+}
+
+fn plugin_state_patch(args: PluginStatePatchArgs) -> Result<ControlCommand, RequestError> {
+    let operations = match &args.operations_file {
+        Some(file) => {
+            let encoded = std::fs::read_to_string(file)
+                .map_err(|error| format!("--operations-file could not be read: {error}"))?;
+            serde_json::from_str(&encoded)
+                .map_err(|error| format!("--operations-file is invalid: {error}"))?
+        }
+        None => plugin_state_patch_flags(&args)?,
+    };
+    if operations.is_empty() {
+        return Err("plugin state patch requires at least one edit"
+            .to_owned()
+            .into());
+    }
+    Ok(Runtime::PluginStatePatch(PluginStatePatchParams {
+        owner: args.owner.into_owner()?,
+        device_id: args.device_id,
+        operations,
+    })
+    .into())
+}
+
+fn plugin_state_patch_flags(
+    args: &PluginStatePatchArgs,
+) -> Result<Vec<PluginStatePatchOperation>, RequestError> {
+    let assignment = |flag: &str, text: &str| -> Result<(String, String), RequestError> {
+        text.split_once('=')
+            .map(|(name, value)| (name.to_owned(), value.to_owned()))
+            .ok_or_else(|| format!("{flag} must be NAME=VALUE: {text}").into())
+    };
+    let mut operations = Vec::new();
+    for text in &args.set {
+        let (path, value) = assignment("--set", text)?;
+        operations.push(PluginStatePatchOperation::Set {
+            path,
+            value: PluginStateValue::Text(value),
+        });
+    }
+    for text in &args.set_file {
+        let (path, file) = assignment("--set-file", text)?;
+        let value = std::fs::read_to_string(&file)
+            .map_err(|error| format!("--set-file {file} could not be read: {error}"))?;
+        operations.push(PluginStatePatchOperation::Set {
+            path,
+            value: PluginStateValue::Text(value),
+        });
+    }
+    if !args.xml_set.is_empty() {
+        let values = args
+            .xml_set
+            .iter()
+            .map(|text| {
+                let (xml_path, value) = assignment("--xml-set", text)?;
+                Ok(PluginStateXmlValue { xml_path, value })
+            })
+            .collect::<Result<Vec<_>, RequestError>>()?;
+        operations.push(PluginStatePatchOperation::SetXml {
+            path: args.path.clone().unwrap_or_default(),
+            values,
+        });
+    }
+    Ok(operations)
 }
 
 fn harmony_update(args: MusicalHarmonyUpdateArgs) -> Result<ControlCommand, RequestError> {
@@ -4183,6 +4617,26 @@ mod tests {
             .unwrap(),
         );
         let list = wire(Cli::try_parse_from(["riffra", "automation", "list"]).unwrap());
+        let evaluation = wire(
+            Cli::try_parse_from([
+                "riffra",
+                "automation",
+                "evaluate",
+                "--bus-id",
+                "bus:1",
+                "--parameter",
+                "gain",
+                "--start",
+                "20:1",
+                "--end",
+                "22:1",
+                "--grid",
+                "1/32",
+                "--sample-rate",
+                "48000",
+            ])
+            .unwrap(),
+        );
         let sidechain = wire(
             Cli::try_parse_from([
                 "riffra",
@@ -4216,6 +4670,11 @@ mod tests {
             json!({"kind":"sidechainSendLevel","sidechainSendId":"sidechain:1"})
         );
         assert_eq!(list.name, "automation.list");
+        assert_eq!(evaluation.name, "automation.evaluate");
+        assert_eq!(
+            evaluation.params,
+            json!({"target":{"kind":"busMix","busId":"bus:1","parameter":"gain"},"start":"20:1","end":"22:1","grid":"1/32","sampleRate":48000})
+        );
         assert!(
             Cli::try_parse_from([
                 "riffra",
@@ -4267,7 +4726,8 @@ mod tests {
             .unwrap(),
         );
         let master = wire(
-            Cli::try_parse_from(["riffra", "mixer", "output", "--track-id", "track:1"]).unwrap(),
+            Cli::try_parse_from(["riffra", "mixer", "output", "set", "--track-id", "track:1"])
+                .unwrap(),
         );
         let sidechain = wire(
             Cli::try_parse_from([
@@ -4387,12 +4847,79 @@ mod tests {
         .request();
         assert!(missing_selection.is_err());
         assert!(conflicting_selection.is_err());
+
+        let capture = wire(
+            Cli::try_parse_from([
+                "riffra",
+                "render",
+                "capture",
+                "--track-id",
+                "track:1",
+                "--track-id",
+                "track:2",
+                "--bus-id",
+                "bus:1",
+                "--master",
+                "--start",
+                "9:1",
+                "--end",
+                "13:1",
+            ])
+            .unwrap(),
+        );
+        assert_eq!(capture.name, "render.capture");
+        assert_eq!(
+            capture.params["targets"],
+            json!([
+                {"kind":"track","id":"track:1"}, {"kind":"track","id":"track:2"},
+                {"kind":"bus","id":"bus:1"}, {"kind":"master"}
+            ])
+        );
+        assert_eq!(
+            capture.params["range"],
+            json!({"kind":"timeSelection","start":"9:1","end":"13:1"})
+        );
+        assert!(
+            Cli::try_parse_from(["riffra", "render", "capture"])
+                .unwrap()
+                .request()
+                .is_err()
+        );
+        let levels = wire(
+            Cli::try_parse_from([
+                "riffra",
+                "analysis",
+                "levels",
+                "--render-id",
+                "render-example",
+                "--grid",
+                "1/16",
+                "--source",
+                "bus:bus:1",
+                "--start",
+                "9:1",
+                "--end",
+                "13:1",
+                "--wait",
+            ])
+            .unwrap(),
+        );
+        assert_eq!(levels.name, "analysis.levels");
+        assert_eq!(levels.params["source"], json!({"kind":"bus","id":"bus:1"}));
+        assert_eq!(levels.params["grid"], "1/16");
     }
 
     #[test]
     fn render_output_paths_are_absolute_and_export_is_a_runtime_command() {
         let render = wire(
-            Cli::try_parse_from(["riffra", "render", "start", "--out", "exports/mix.wav"]).unwrap(),
+            Cli::try_parse_from([
+                "riffra",
+                "render",
+                "start",
+                "--output-path",
+                "exports/mix.wav",
+            ])
+            .unwrap(),
         );
         assert_eq!(render.name, "render.start");
         assert!(
@@ -4412,9 +4939,9 @@ mod tests {
                 "riffra",
                 "render",
                 "export",
-                "--id",
+                "--render-id",
                 "render-123-abcd",
-                "--out",
+                "--output-path",
                 "exports/copy.wav",
             ])
             .unwrap(),
@@ -4428,9 +4955,16 @@ mod tests {
             "render.list"
         );
         let clean = wire(
-            Cli::try_parse_from(["riffra", "render", "clean", "--id", "render-123-abcd"]).unwrap(),
+            Cli::try_parse_from([
+                "riffra",
+                "render",
+                "delete",
+                "--render-id",
+                "render-123-abcd",
+            ])
+            .unwrap(),
         );
-        assert_eq!(clean.name, "render.clean");
+        assert_eq!(clean.name, "render.delete");
         assert_eq!(clean.params["renderId"], "render-123-abcd");
     }
 
@@ -4506,15 +5040,48 @@ mod tests {
             }
         }
 
-        Cli::command().debug_assert();
-        assert_help(&Cli::command(), "riffra");
+        fn leaves(command: &clap::Command) -> usize {
+            let children: Vec<_> = command.get_subcommands().collect();
+            if children.is_empty() {
+                1
+            } else {
+                children.into_iter().map(leaves).sum()
+            }
+        }
+
+        let command = Cli::command();
+        command.clone().debug_assert();
+        assert_help(&command, "riffra");
+        assert_eq!(command.get_subcommands().count(), 24);
+        assert_eq!(leaves(&command), 194);
+    }
+
+    #[test]
+    fn plugin_scan_selects_result_or_background_job() {
+        let synchronous =
+            wire(Cli::try_parse_from(["riffra", "plugin", "scan", "--path", "plugins"]).unwrap());
+        let background = wire(
+            Cli::try_parse_from([
+                "riffra",
+                "plugin",
+                "scan",
+                "--path",
+                "plugins",
+                "--background",
+            ])
+            .unwrap(),
+        );
+        assert_eq!(synchronous.name, "plugin.scan");
+        assert_eq!(background.name, "plugin.scan.start");
+        assert_eq!(synchronous.params, background.params);
     }
 
     #[test]
     fn clip_update_patch_conflicts_with_field_flags() {
         let audio = Cli::try_parse_from([
             "riffra",
-            "audio-clip",
+            "clip",
+            "audio",
             "update",
             "--clip-id",
             "clip:1",
@@ -4527,7 +5094,8 @@ mod tests {
 
         let midi = Cli::try_parse_from([
             "riffra",
-            "midi-clip",
+            "clip",
+            "midi",
             "update",
             "--clip-id",
             "clip:1",
@@ -4540,7 +5108,8 @@ mod tests {
 
         let fields_only = Cli::try_parse_from([
             "riffra",
-            "audio-clip",
+            "clip",
+            "audio",
             "update",
             "--clip-id",
             "clip:1",
@@ -4573,14 +5142,15 @@ mod tests {
             ],
             vec![
                 "riffra",
-                "audio-clip",
+                "clip",
+                "audio",
                 "update",
                 "--clip-id",
                 "clip:1",
                 "--pan",
                 "NaN",
             ],
-            vec!["riffra", "timebase", "update", "--bpm", "NaN"],
+            vec!["riffra", "music", "timebase", "update", "--bpm", "NaN"],
         ] {
             assert!(
                 Cli::try_parse_from(arguments).is_err(),
@@ -4606,6 +5176,55 @@ mod tests {
         let cli =
             Cli::try_parse_from(["riffra", "--data-root", "data", "instrument", "list"]).unwrap();
         assert_eq!(wire(cli).name, "instrument.list");
+
+        for (flag, value, expected_source) in [
+            (
+                "--instrument-id",
+                "builtin:01-clean-sub-bass",
+                json!({"kind":"library", "instrumentId":"builtin:01-clean-sub-bass"}),
+            ),
+            (
+                "--plugin-path",
+                "Keys.vst3",
+                json!({"kind":"vst3", "pluginPath":std::env::current_dir().unwrap().join("Keys.vst3")}),
+            ),
+        ] {
+            let request = wire(
+                Cli::try_parse_from([
+                    "riffra",
+                    "instrument",
+                    "create-track",
+                    "--name",
+                    "Keys",
+                    flag,
+                    value,
+                ])
+                .unwrap(),
+            );
+            assert_eq!(request.name, "instrument.track.create");
+            assert_eq!(
+                request.params,
+                json!({"name":"Keys", "source":expected_source})
+            );
+        }
+        assert!(
+            Cli::try_parse_from(["riffra", "instrument", "create-track", "--name", "Keys"])
+                .is_err()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "riffra",
+                "instrument",
+                "create-track",
+                "--name",
+                "Keys",
+                "--instrument-id",
+                "builtin:a",
+                "--plugin-path",
+                "Keys.vst3"
+            ])
+            .is_err()
+        );
 
         let cli = Cli::try_parse_from([
             "riffra",
@@ -4648,8 +5267,9 @@ mod tests {
             "riffra",
             "--data-root",
             "data",
-            "plugin",
             "instrument",
+            "vst3",
+            "set",
             "--track-id",
             "track:keys",
             "--plugin-path",
@@ -4688,8 +5308,60 @@ mod tests {
 
         let cli = Cli::try_parse_from([
             "riffra",
+            "plugin",
+            "state",
+            "read",
+            "--track-id",
+            "track:keys",
+            "--device-id",
+            "device:synth",
+            "--path",
+            "Plugin",
+            "--output",
+            "multi.xml",
+        ])
+        .unwrap();
+        assert_eq!(
+            cli.plugin_state_read_output(),
+            Some(PathBuf::from("multi.xml"))
+        );
+        let request = wire(cli);
+        assert_eq!(request.name, "plugin.state.read");
+        assert_eq!(request.params["path"], "Plugin");
+        assert!(request.params.get("output").is_none());
+
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "plugin",
+            "state",
+            "patch",
+            "--track-id",
+            "track:keys",
+            "--device-id",
+            "device:synth",
+            "--set",
+            "Gain=0.5",
+            "--path",
+            "Plugin",
+            "--xml-set",
+            "Part0/InstrumentPath=a=b",
+        ])
+        .unwrap();
+        let request = wire(cli);
+        assert_eq!(request.name, "plugin.state.patch");
+        assert_eq!(
+            request.params["operations"],
+            json!([
+                {"op":"set","path":"Gain","value":"0.5"},
+                {"op":"setXml","path":"Plugin","values":[{"xmlPath":"Part0/InstrumentPath","value":"a=b"}]}
+            ])
+        );
+
+        let cli = Cli::try_parse_from([
+            "riffra",
             "--data-root",
             "data",
+            "music",
             "timebase",
             "update",
             "--bpm",
@@ -4697,7 +5369,7 @@ mod tests {
         ])
         .unwrap();
         let request = wire(cli);
-        assert_eq!(request.name, "timebase.update");
+        assert_eq!(request.name, "music.timebase.update");
         assert_eq!(
             request.params,
             json!({"bpm": 140.0, "timeSignatureNumerator": null, "timeSignatureDenominator": null})
@@ -4804,15 +5476,30 @@ mod tests {
             request.params,
             json!({
                 "clipId":"midi-clip:1",
+                "clipToEnd":false,
                 "notes":[{"pitch":"C4","position":"5:1","duration":"1/8"}]
             })
         );
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "--attach",
+            "music",
+            "note",
+            "insert",
+            "--clip-id",
+            "midi-clip:1",
+            "--clip-to-end",
+            "--notes-json",
+            r#"[{"pitch":"C4","position":"5:1","duration":"1/8"}]"#,
+        ])
+        .unwrap();
+        assert_eq!(wire(cli).params["clipToEnd"], true);
 
         let cli = Cli::try_parse_from([
             "riffra",
             "--data-root",
             "data",
-            "midi-clip",
+            "clip", "midi",
             "update",
             "--clip-id",
             "midi-clip:1",
@@ -4821,7 +5508,7 @@ mod tests {
         ])
         .unwrap();
         let request = wire(cli);
-        assert_eq!(request.name, "midi-clip.update");
+        assert_eq!(request.name, "clip.midi.update");
         assert_eq!(
             request.params,
             json!({
@@ -5016,6 +5703,7 @@ mod tests {
 
         let cli = Cli::try_parse_from([
             "riffra",
+            "music",
             "marker",
             "add",
             "--name",
@@ -5027,14 +5715,15 @@ mod tests {
         assert_eq!(wire(cli).params, json!({"name":"Chorus","position":"17:1"}));
         assert!(
             Cli::try_parse_from([
-                "riffra", "marker", "add", "--name", "Chorus", "--tick", "960"
+                "riffra", "music", "marker", "add", "--name", "Chorus", "--tick", "960"
             ])
             .is_err()
         );
         assert!(
             Cli::try_parse_from([
                 "riffra",
-                "loop-range",
+                "transport",
+                "loop",
                 "set",
                 "--start-tick",
                 "960",
@@ -5232,7 +5921,9 @@ mod tests {
             "riffra",
             "--data-root",
             "data",
-            "midi-note",
+            "clip",
+            "midi",
+            "note",
             "remove-many",
             "--clip-id",
             "clip:1",
@@ -5276,7 +5967,7 @@ mod tests {
                 "vst3-amp",
             ),
             (
-                vec!["riffra", "plugin", "instrument", "--track-id", "track"],
+                vec!["riffra", "instrument", "vst3", "set", "--track-id", "track"],
                 "--plugin-path",
                 "Synth.vst3",
                 "--plugin-id",
@@ -5316,6 +6007,7 @@ mod tests {
     fn validates_musical_positions_and_command_boundaries() {
         let cli = Cli::try_parse_from([
             "riffra",
+            "music",
             "marker",
             "add",
             "--name",
@@ -5328,14 +6020,15 @@ mod tests {
 
         assert!(
             Cli::try_parse_from([
-                "riffra", "marker", "add", "--name", "Chorus", "--tick", "960",
+                "riffra", "music", "marker", "add", "--name", "Chorus", "--tick", "960",
             ])
             .is_err()
         );
         assert!(
             Cli::try_parse_from([
                 "riffra",
-                "loop-range",
+                "transport",
+                "loop",
                 "set",
                 "--start-tick",
                 "960",
@@ -5366,6 +6059,7 @@ mod tests {
                 "riffra",
                 "--data-root",
                 "data",
+                "music",
                 "timebase",
                 "update",
                 "--ppq",
@@ -5378,7 +6072,8 @@ mod tests {
             "riffra",
             "--data-root",
             "data",
-            "loop-range",
+            "transport",
+            "loop",
             "set",
             "--enabled",
             "true",
@@ -5398,7 +6093,8 @@ mod tests {
                 "riffra",
                 "--data-root",
                 "data",
-                "loop-range",
+                "transport",
+                "loop",
                 "set",
                 "--enabled",
                 "--start",
@@ -5423,21 +6119,192 @@ mod tests {
     }
 
     #[test]
-    fn midi_note_clear_maps_to_the_clip_command() {
-        let cli = Cli::try_parse_from([
-            "riffra",
-            "--data-root",
-            "data",
-            "midi-note",
-            "clear",
-            "--clip-id",
-            "midi-clip:1",
-        ])
-        .unwrap();
+    fn clip_edits_use_the_remaining_single_item_routes() {
+        for kind in ["audio", "midi"] {
+            let request = wire(
+                Cli::try_parse_from([
+                    "riffra",
+                    "clip",
+                    kind,
+                    "merge",
+                    "--first-clip-id",
+                    "left",
+                    "--second-clip-id",
+                    "right",
+                ])
+                .unwrap(),
+            );
+            assert_eq!(request.name, format!("clip.{kind}.merge"));
+            assert_eq!(
+                request.params,
+                json!({"firstClipId":"left", "secondClipId":"right"})
+            );
+        }
+        // Arrange / Act
+        let insert = wire(
+            Cli::try_parse_from([
+                "riffra",
+                "clip",
+                "midi",
+                "note",
+                "insert",
+                "--clip-id",
+                "midi-clip:1",
+                "--notes-json",
+                r#"[{"lyric":"la","pitch":60,"startTick":0,"durationTicks":480,"velocity":100,"channel":1}]"#,
+            ])
+            .unwrap(),
+        );
+        let update_many = wire(
+            Cli::try_parse_from([
+                "riffra",
+                "clip",
+                "midi",
+                "note",
+                "update-many",
+                "--clip-id",
+                "midi-clip:1",
+                "--updates-json",
+                r#"[{"noteId":"note:1","patch":{"velocity":90}}]"#,
+            ])
+            .unwrap(),
+        );
+        let audio_update = wire(
+            Cli::try_parse_from([
+                "riffra",
+                "clip",
+                "audio",
+                "update",
+                "--clip-id",
+                "audio-clip:1",
+                "--start-tick",
+                "960",
+                "--track-id",
+                "track:2",
+            ])
+            .unwrap(),
+        );
+        let midi_update = wire(
+            Cli::try_parse_from([
+                "riffra",
+                "clip",
+                "midi",
+                "update",
+                "--clip-id",
+                "midi-clip:1",
+                "--start-tick",
+                "960",
+                "--track-id",
+                "track:2",
+            ])
+            .unwrap(),
+        );
+        let clear = wire(
+            Cli::try_parse_from([
+                "riffra",
+                "clip",
+                "midi",
+                "update",
+                "--clip-id",
+                "midi-clip:1",
+                "--patch",
+                r#"{"notes":[]}"#,
+            ])
+            .unwrap(),
+        );
 
-        let request = wire(cli);
-        assert_eq!(request.name, "midi-note.clear");
-        assert_eq!(request.params, json!({"clipId":"midi-clip:1"}));
+        // Assert
+        assert_eq!(insert.name, "clip.midi.note.insert");
+        assert_eq!(
+            insert.params,
+            json!({
+                "clipId":"midi-clip:1",
+                "notes":[{"lyric":"la","pitch":60,"startTick":0,"durationTicks":480,"velocity":100,"channel":1}]
+            })
+        );
+        assert_eq!(update_many.name, "clip.midi.note.update-many");
+        assert_eq!(update_many.params["clipId"], "midi-clip:1");
+        assert_eq!(update_many.params["updates"][0]["noteId"], "note:1");
+        assert_eq!(update_many.params["updates"][0]["patch"]["velocity"], 90);
+        assert_eq!(audio_update.name, "clip.audio.update");
+        assert_eq!(
+            audio_update.params,
+            json!({"clipId":"audio-clip:1","patch":{"trackId":"track:2","startTick":960}})
+        );
+        assert_eq!(midi_update.name, "clip.midi.update");
+        assert_eq!(
+            midi_update.params,
+            json!({"clipId":"midi-clip:1","patch":{"trackId":"track:2","startTick":960}})
+        );
+        assert_eq!(clear.name, "clip.midi.update");
+        assert_eq!(
+            clear.params,
+            json!({"clipId":"midi-clip:1","patch":{"notes":[]}})
+        );
+    }
+
+    #[test]
+    fn removed_clip_commands_are_not_recognized() {
+        // Arrange / Act / Assert
+        for path in [
+            vec![
+                "clip",
+                "midi",
+                "note",
+                "add",
+                "--clip-id",
+                "midi-clip:1",
+                "--pitch",
+                "60",
+                "--start-tick",
+                "0",
+                "--duration-ticks",
+                "480",
+                "--velocity",
+                "100",
+                "--channel",
+                "1",
+            ],
+            vec![
+                "clip",
+                "midi",
+                "note",
+                "update",
+                "--clip-id",
+                "midi-clip:1",
+                "--note-id",
+                "note:1",
+                "--patch",
+                "{}",
+            ],
+            vec!["clip", "midi", "note", "clear", "--clip-id", "midi-clip:1"],
+            vec![
+                "clip",
+                "audio",
+                "move",
+                "--clip-id",
+                "audio-clip:1",
+                "--start-tick",
+                "960",
+                "--track-id",
+                "track:2",
+            ],
+            vec![
+                "clip",
+                "midi",
+                "move",
+                "--clip-id",
+                "midi-clip:1",
+                "--start-tick",
+                "960",
+                "--track-id",
+                "track:2",
+            ],
+        ] {
+            let mut argv = vec!["riffra"];
+            argv.extend(path);
+            assert!(Cli::try_parse_from(argv).is_err());
+        }
     }
 
     #[test]
@@ -5450,7 +6317,8 @@ mod tests {
             &path,
             br#"{"command":"track.add","params":{"name":"Lead","kind":"instrument"}}
 
-{"command":"music.midi-clip.create","params":{"trackName":"Lead","name":"Verse","start":"1:1","end":"5:1"}}"#,
+{"command":"music.midi-clip.create","params":{"trackName":"Lead","name":"Verse","start":"1:1","end":"5:1"}}
+{"command":"effect.add","params":{"owner":{"kind":"track","name":"Lead"},"pluginPath":"effect.vst3"},"bind":"fx"}"#,
         )
         .unwrap();
         let cli = Cli::try_parse_from([
@@ -5465,8 +6333,9 @@ mod tests {
         .unwrap();
         let request = wire(cli);
         assert_eq!(request.name, "session.apply");
-        assert_eq!(request.params["operations"].as_array().unwrap().len(), 2);
+        assert_eq!(request.params["operations"].as_array().unwrap().len(), 3);
         assert_eq!(request.params["operations"][0]["command"], "track.add");
+        assert_eq!(request.params["operations"][2]["bind"], "fx");
         assert_eq!(request.params["includeCreatedIds"], true);
         assert_eq!(request.params["replace"], true);
         let _ = std::fs::remove_file(path);
@@ -5618,9 +6487,28 @@ mod tests {
                 "1",
                 "--display",
                 "-60.00 dB",
+                "--nearest",
             ])
             .unwrap(),
         );
         assert_eq!(display.params["display"], "-60.00 dB");
+        assert_eq!(display.params["nearest"], true);
+        assert!(
+            Cli::try_parse_from([
+                "riffra",
+                "device",
+                "parameter",
+                "set",
+                "--master",
+                "--device-id",
+                "fx",
+                "--parameter-index",
+                "1",
+                "--value",
+                "0.5",
+                "--nearest"
+            ])
+            .is_err()
+        );
     }
 }

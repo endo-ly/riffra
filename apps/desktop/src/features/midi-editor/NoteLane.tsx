@@ -29,7 +29,7 @@ interface NoteLaneProps {
   setDrawPreview: Dispatch<SetStateAction<Rect | null>>;
   setMarquee: Dispatch<SetStateAction<Rect | null>>;
   setSelectedNoteIds: Dispatch<SetStateAction<string[]>>;
-  selectedNoteIds: string[];
+  selectedNoteIds: ReadonlySet<string>;
   placeTick: (tick: number, free: boolean) => number;
   newNoteLength: number;
   addNoteAt: (
@@ -158,7 +158,7 @@ export function NoteLane({
                 bottom: Math.max(originY, pointer.clientY),
               },
             );
-            setSelectedNoteIds(append ? [...new Set([...selectedNoteIds, ...ids])] : ids);
+            setSelectedNoteIds((current) => (append ? [...new Set([...current, ...ids])] : ids));
           }
           setMarquee(null);
           setDrawPreview(null);
@@ -170,6 +170,7 @@ export function NoteLane({
         startGesture(event, { onMove: move, onEnd: finish, onCancel: cancel });
       }}
       onDoubleClick={(event) => {
+        if (tool === 'draw') return;
         if ((event.target as HTMLElement).closest('[data-note-id]')) return;
         event.preventDefault();
         void Promise.resolve(
@@ -245,7 +246,7 @@ export function NoteLane({
               }
               data-note-id={note.id}
               data-midi-warning={warnedNoteIds.has(note.id) || undefined}
-              className={`${styles.note} ${preview ? styles.dragging : ''} ${selectedNoteIds.includes(note.id) ? styles.selected : ''}`}
+              className={`${styles.note} ${preview ? styles.dragging : ''} ${selectedNoteIds.has(note.id) ? styles.selected : ''}`}
               style={noteBox(visibleNote)}
               onPointerDown={(event) => handlePointerDown(event, note, 'move')}
               onClick={(event) => {
@@ -267,7 +268,7 @@ export function NoteLane({
                 event.preventDefault();
                 event.stopPropagation();
                 editorRef.current?.focus();
-                if (!selectedNoteIds.includes(note.id)) setSelectedNoteIds([note.id]);
+                if (!selectedNoteIds.has(note.id)) setSelectedNoteIds([note.id]);
                 setNoteContextMenu({ x: event.clientX, y: event.clientY, noteId: note.id });
               }}
             >

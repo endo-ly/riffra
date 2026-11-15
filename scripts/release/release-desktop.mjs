@@ -7,7 +7,11 @@ const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const tauriConfPath = join(repositoryRoot, 'apps/desktop/src-tauri/tauri.conf.json');
 const bundleDir = join(repositoryRoot, 'target/release/bundle/nsis');
 /** Rust manifests whose crate version tracks the release version of the distributed binaries. */
-const versionedManifestPaths = ['apps/desktop/src-tauri/Cargo.toml', 'apps/cli/Cargo.toml'];
+const versionedManifestPaths = [
+  'apps/desktop/src-tauri/Cargo.toml',
+  'apps/cli/Cargo.toml',
+  'apps/mcp/Cargo.toml',
+];
 
 function runGit(...arguments_) {
   return execFileSync('git', arguments_, { cwd: repositoryRoot, encoding: 'utf8' }).trim();

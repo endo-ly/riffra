@@ -67,7 +67,7 @@ export function MixerBusChannelStrip(props: Props) {
         />
       </label>
       <div className={styles.mixControl}>
-        <MixerMeter busId={bus.id} />
+        <MixerMeter owner={{ kind: 'bus', id: bus.id }} />
         <label className={styles.faderControl}>
           <span className={styles.faderLabel}>GAIN</span>
           <ValueSlider

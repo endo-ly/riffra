@@ -3,7 +3,11 @@ import type { PluginFormat } from "./PluginFormat";
 import type { PluginRole } from "./PluginRole";
 import type { PluginScanState } from "./PluginScanState";
 
-export type PluginEntry = { id: string, name: string, vendor: string | null, version: string | null, format: PluginFormat, 
+export type PluginEntry = { id: string, name: string, vendor: string | null, version: string | null, 
+/**
+ * Identifier reported by the plugin scanner after validation.
+ */
+identifier: string | null, format: PluginFormat, 
 /**
  * The plug-in role reported by the VST3 scanner, when available.
  */

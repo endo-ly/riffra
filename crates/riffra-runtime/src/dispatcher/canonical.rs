@@ -95,6 +95,9 @@ impl HostDispatcher<'_> {
             CanonicalCommand::AutomationGet(params) => Ok(ControlOutput::AutomationLanes(
                 automation_lane(session, params.target)?,
             )),
+            CanonicalCommand::AutomationEvaluate(params) => Ok(
+                ControlOutput::AutomationEvaluation(super::automation::evaluate(session, params)?),
+            ),
             CanonicalCommand::AutomationList(params) => Ok(ControlOutput::AutomationLanes(
                 automation_lanes(session, params.owner)?,
             )),
@@ -145,6 +148,30 @@ impl HostDispatcher<'_> {
                     &params.path.to_string_lossy(),
                     params.name.as_deref(),
                 )?,
+            )),
+            CanonicalCommand::ScoreValidate(params) => Ok(ControlOutput::ScoreValidation(
+                crate::score_yaml_import::validate(
+                    &params.path,
+                    &params.bindings,
+                    &self.data_root,
+                    &self.built_in_instruments,
+                    &self.plugin_scan,
+                    &self.sonalloy,
+                ),
+            )),
+            CanonicalCommand::ScoreInspect(params) => Ok(ControlOutput::ScoreInspection(
+                crate::score_yaml_import::inspect(
+                    &params.path,
+                    &params.bindings,
+                    params.events,
+                    &self.data_root,
+                    &self.built_in_instruments,
+                    &self.plugin_scan,
+                    &self.sonalloy,
+                )
+                .map_err(|error| {
+                    DispatchError::invalid_request_with_details(error.message, error.details)
+                })?,
             )),
             CanonicalCommand::InstrumentList(_) => self.list_instruments(),
             CanonicalCommand::InstrumentSave(params) => self.save_instrument(params),
@@ -588,6 +615,10 @@ impl HostDispatcher<'_> {
                 application.duplicate_audio_clip_with_created_ids(&params.clip_id)?,
                 application,
             ),
+            CanonicalCommand::AudioClipMerge(params) => self.edited(
+                application.merge_audio_clips(&params.first_clip_id, &params.second_clip_id)?,
+                application,
+            ),
             CanonicalCommand::AudioClipCrossfade(params) => self.edited(
                 application.crossfade_audio_clips(&params.first_clip_id, &params.second_clip_id)?,
                 application,
@@ -615,6 +646,10 @@ impl HostDispatcher<'_> {
                     TimelineTick(params.start_tick),
                     params.duration_ticks,
                 )?,
+                application,
+            ),
+            CanonicalCommand::MidiClipMerge(params) => self.edited(
+                application.merge_midi_clips(&params.first_clip_id, &params.second_clip_id)?,
                 application,
             ),
             CanonicalCommand::MidiClipSplit(params) => self.created(
@@ -658,10 +693,6 @@ impl HostDispatcher<'_> {
             ),
             CanonicalCommand::MidiNoteUpdateMany(params) => self.edited(
                 application.update_midi_notes(&params.clip_id, params.updates)?,
-                application,
-            ),
-            CanonicalCommand::MidiNoteRemove(params) => self.edited(
-                application.remove_midi_note(&params.clip_id, &params.note_id)?,
                 application,
             ),
             CanonicalCommand::MidiNoteRemoveMany(params) => self.edited(
@@ -734,7 +765,11 @@ impl HostDispatcher<'_> {
                 )
             }
             CanonicalCommand::MusicNoteInsert(params) => self.created(
-                application.insert_musical_notes_with_created_ids(&params.clip_id, params.notes)?,
+                application.insert_musical_notes_with_created_ids(
+                    &params.clip_id,
+                    params.clip_to_end,
+                    params.notes,
+                )?,
                 application,
             ),
             CanonicalCommand::MusicNoteUpdate(params) => {
@@ -847,6 +882,9 @@ impl HostDispatcher<'_> {
                 self.edited(application.remove_region(&params.region_id)?, application)
             }
 
+            CanonicalCommand::InstrumentTrackCreate(params) => {
+                self.create_instrument_track(application, canonical, params)
+            }
             CanonicalCommand::InstrumentApply(params) => self.apply_instrument(application, params),
             CanonicalCommand::InstrumentMidiSet(params) => self.edited(
                 application.set_track_instrument_midi(&params.track_id, params.settings)?,

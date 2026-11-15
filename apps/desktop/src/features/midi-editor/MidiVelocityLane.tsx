@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Ref } from 'react';
 import type { MidiNote } from '@/model/generated';
 import { midiNoteName } from '@/shared/midi';
@@ -8,8 +8,10 @@ import styles from './MidiEditorPanel.module.css';
 const VELOCITY_DRAG_THRESHOLD = 3;
 
 interface MidiVelocityLaneProps {
+  /** Identity of the Host, session and clip being edited. */
+  editScope: string;
   notes: MidiNote[];
-  selectedNoteIds: string[];
+  selectedNoteIds: ReadonlySet<string>;
   visibleTicks: number;
   pixelsPerTick: number;
   barLineTicks: number[];
@@ -30,17 +32,24 @@ export function MidiVelocityLane(props: MidiVelocityLaneProps) {
   const startGesture = usePointerGesture();
   const [preview, setPreview] = useState<Record<string, number>>({});
   const previewGestureRef = useRef(0);
+  useEffect(() => {
+    startGesture.cancel();
+    previewGestureRef.current += 1;
+    setPreview({});
+  }, [props.editScope, startGesture]);
 
   const beginGesture = (event: React.PointerEvent<HTMLButtonElement>, note: MidiNote) => {
     event.preventDefault();
     event.stopPropagation();
     props.onFocus?.();
-    const targetIds = props.selectedNoteIds.includes(note.id) ? props.selectedNoteIds : [note.id];
-    if (!props.selectedNoteIds.includes(note.id)) props.onSelectNoteIds([note.id]);
+    const targetIds = props.selectedNoteIds.has(note.id)
+      ? props.selectedNoteIds
+      : new Set([note.id]);
+    if (!props.selectedNoteIds.has(note.id)) props.onSelectNoteIds([note.id]);
     const originY = event.clientY;
     const originValues = new Map(
       props.notes
-        .filter((candidate) => targetIds.includes(candidate.id))
+        .filter((candidate) => targetIds.has(candidate.id))
         .map((candidate) => [candidate.id, candidate.velocity]),
     );
     const bounds = event.currentTarget.parentElement?.getBoundingClientRect();
@@ -129,7 +138,7 @@ export function MidiVelocityLane(props: MidiVelocityLaneProps) {
             key={note.id}
             type="button"
             data-velocity-note-id={note.id}
-            className={`${styles.velocityBar} ${props.selectedNoteIds.includes(note.id) ? styles.velocitySelected : ''}`}
+            className={`${styles.velocityBar} ${props.selectedNoteIds.has(note.id) ? styles.velocitySelected : ''}`}
             aria-label={`${midiNoteName(note.note)} velocity ${velocity}`}
             style={{
               left: note.startTick * props.pixelsPerTick,

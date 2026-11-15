@@ -1,3 +1,4 @@
+import type { RefObject } from 'react';
 import type {
   Marker,
   ProjectTimebase,
@@ -18,7 +19,7 @@ interface TimelineRulerProps {
   timelineWidth: number;
   pixelsPerTick: number;
   mode: 'bars' | 'time';
-  scrollTop: number;
+  rulerRef: RefObject<HTMLDivElement | null>;
   loopRange: TimelineLoopRange;
   punchRange?: TimelinePunchRange;
   markers: Marker[];
@@ -72,9 +73,10 @@ export function TimelineRuler(props: TimelineRulerProps) {
       </div>
       <div
         data-arrange-ruler
+        ref={props.rulerRef}
         className={styles.ruler}
         aria-label="Timeline ruler"
-        style={{ left: TRACK_HEADER_WIDTH, top: props.scrollTop, width: props.timelineWidth }}
+        style={{ left: TRACK_HEADER_WIDTH, width: props.timelineWidth }}
         onPointerDown={props.onPointerDown}
         onContextMenu={(event) => {
           if (

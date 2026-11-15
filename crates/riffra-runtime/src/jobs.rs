@@ -1,6 +1,6 @@
 use crate::api::output::{
-    AnalysisMeasureResult, BackgroundJobStatus, JobKind, JobState, RenderResult, RenderStemsResult,
-    ScanReport,
+    AnalysisLevelsResult, AnalysisMeasureResult, BackgroundJobStatus, JobKind, JobState,
+    RenderCaptureResult, RenderResult, RenderStemsResult, ScanReport,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -20,7 +20,9 @@ impl JobKind {
             Self::Scan => "scan",
             Self::Render => "render",
             Self::RenderStems => "render-stems",
+            Self::RenderCapture => "render-capture",
             Self::AnalysisMeasure => "analysis-measure",
+            Self::AnalysisLevels => "analysis-levels",
         }
     }
 }
@@ -72,7 +74,7 @@ pub fn to_background_status(status: JobStatus) -> Result<BackgroundJobStatus, St
             progress,
             message,
             result: result
-                .map(serde_json::from_value::<RenderResult>)
+                .map(|result| serde_json::from_value::<RenderResult>(result).map(Box::new))
                 .transpose()
                 .map_err(|error| format!("render result could not be decoded: {error}"))?,
         },
@@ -86,6 +88,16 @@ pub fn to_background_status(status: JobStatus) -> Result<BackgroundJobStatus, St
                 .transpose()
                 .map_err(|error| format!("render stems result could not be decoded: {error}"))?,
         },
+        JobKind::RenderCapture => BackgroundJobStatus::RenderCapture {
+            id,
+            state,
+            progress,
+            message,
+            result: result
+                .map(serde_json::from_value::<RenderCaptureResult>)
+                .transpose()
+                .map_err(|error| format!("render capture result could not be decoded: {error}"))?,
+        },
         JobKind::AnalysisMeasure => BackgroundJobStatus::AnalysisMeasure {
             id,
             state,
@@ -97,6 +109,16 @@ pub fn to_background_status(status: JobStatus) -> Result<BackgroundJobStatus, St
                 .map_err(|error| {
                     format!("analysis measure result could not be decoded: {error}")
                 })?,
+        },
+        JobKind::AnalysisLevels => BackgroundJobStatus::AnalysisLevels {
+            id,
+            state,
+            progress,
+            message,
+            result: result
+                .map(serde_json::from_value::<AnalysisLevelsResult>)
+                .transpose()
+                .map_err(|error| format!("analysis levels result could not be decoded: {error}"))?,
         },
     })
 }
@@ -129,6 +151,10 @@ impl JobRegistry {
 
     pub(crate) fn start_analysis_measure(&self, render_id: Option<String>) -> (String, JobStatus) {
         self.start_with_source(JobKind::AnalysisMeasure, render_id)
+    }
+
+    pub(crate) fn start_analysis_levels(&self, render_id: String) -> (String, JobStatus) {
+        self.start_with_source(JobKind::AnalysisLevels, Some(render_id))
     }
 
     fn start_with_source(
@@ -275,8 +301,10 @@ impl JobRegistry {
                 .status
                 .lock()
                 .map_err(|error| format!("render job {id} could not be inspected: {error}"))?;
-            if (matches!(status.kind, JobKind::Render | JobKind::RenderStems)
-                || record.source_render_id.as_deref() == Some(render_id))
+            if (matches!(
+                status.kind,
+                JobKind::Render | JobKind::RenderStems | JobKind::RenderCapture
+            ) || record.source_render_id.as_deref() == Some(render_id))
                 && matches!(
                     status.state,
                     JobState::Queued | JobState::Running | JobState::Cancelling
@@ -416,9 +444,16 @@ mod tests {
 
     #[test]
     fn render_sources_are_protected_until_the_worker_reaches_a_terminal_state() {
-        for terminal in [JobState::Completed, JobState::Failed, JobState::Cancelled] {
+        for (terminal, levels) in [JobState::Completed, JobState::Failed, JobState::Cancelled]
+            .into_iter()
+            .flat_map(|terminal| [(terminal, false), (terminal, true)])
+        {
             let jobs = JobRegistry::default();
-            let (id, _) = jobs.start_analysis_measure(Some("render-source".into()));
+            let (id, _) = if levels {
+                jobs.start_analysis_levels("render-source".into())
+            } else {
+                jobs.start_analysis_measure(Some("render-source".into()))
+            };
             jobs.start_analysis_measure(None);
             jobs.start_analysis_measure(Some("render-other".into()));
 
@@ -495,9 +530,12 @@ mod tests {
             sample_rate: 48_000,
             start_tick: 0,
             end_tick: 480,
+            range_kind: "entireArrangement".into(),
             frames: 1_024,
             stems: Vec::new(),
             skipped_track_ids: Vec::new(),
+            section_name: None,
+            section_occurrence: None,
         };
 
         assert!(registry.complete_if_not_cancelled(

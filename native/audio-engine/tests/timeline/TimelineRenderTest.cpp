@@ -1,8 +1,110 @@
 #include <gtest/gtest.h>
 
+#include <tuple>
+
 #include "TimelineTestSupport.h"
 
 namespace riffra {
+
+TEST(TimelineReadAheadSourceTest, ReportsReadFailures) {
+    class FailingReader final : public juce::AudioFormatReader {
+    public:
+        FailingReader() : AudioFormatReader(nullptr, "failing") {
+            lengthInSamples = 1024;
+            sampleRate = 48'000;
+            numChannels = 1;
+            bitsPerSample = 32;
+            usesFloatingPointData = true;
+        }
+        bool readSamples(int* const*, int, int, juce::int64, int) override { return false; }
+    };
+
+    juce::TimeSliceThread worker("test read ahead");
+    ASSERT_TRUE(worker.startThread());
+    TimelineReadAheadSource source(std::make_unique<FailingReader>(), worker, 4096);
+    source.prepareToPlay(128, 48'000);
+    for (int attempt = 0; attempt < 1000 && !source.failed(); ++attempt) juce::Thread::sleep(1);
+    EXPECT_TRUE(source.failed());
+    EXPECT_FALSE(source.ready(128));
+}
+
+TEST(TimelineReadAheadSourceTest, StreamsHighRateAudioWithoutDroppingBlocks) {
+    test::TemporaryDirectory directory;
+    const auto path = directory.get().getChildFile("high-rate.wav");
+    ASSERT_TRUE(writePcmWave(path, 384'000, 1, 384'000, 8'000));
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    auto reader = std::unique_ptr<juce::AudioFormatReader>(formats.createReaderFor(path));
+    ASSERT_NE(reader, nullptr);
+    juce::TimeSliceThread worker("test read ahead");
+    ASSERT_TRUE(worker.startThread());
+    TimelineReadAheadSource source(std::move(reader), worker, 32'768);
+    source.prepareToPlay(384, 384'000);
+    for (int attempt = 0; attempt < 1000 && !source.ready(32'000); ++attempt)
+        juce::Thread::sleep(1);
+    ASSERT_TRUE(source.ready(32'000));
+    juce::AudioBuffer<float> block(2, 384);
+    for (int index = 0; index < 200; ++index) {
+        source.getNextAudioBlock({&block, 0, 384});
+        EXPECT_GT(block.findMinMax(0, 0, 384).getStart(), 0.2f) << index;
+        juce::Thread::sleep(1);
+    }
+}
+
+TEST(TimelineReadAheadSourceTest, PreservesTheAvailablePartOfARead) {
+    test::TemporaryDirectory directory;
+    const auto path = directory.get().getChildFile("partial.wav");
+    ASSERT_TRUE(writePcmWave(path, 48'000, 1, 8192, 8'000));
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    auto reader = std::unique_ptr<juce::AudioFormatReader>(formats.createReaderFor(path));
+    ASSERT_NE(reader, nullptr);
+    juce::TimeSliceThread worker("test read ahead");
+    ASSERT_TRUE(worker.startThread());
+    TimelineReadAheadSource source(std::move(reader), worker, 4096);
+    source.prepareToPlay(128, 48'000);
+    for (int attempt = 0; attempt < 1000 && !source.ready(4096); ++attempt) {
+        juce::Thread::sleep(1);
+    }
+    ASSERT_TRUE(source.ready(4096));
+    ASSERT_TRUE(worker.stopThread(1000));
+    source.setNextReadPosition(4090);
+    juce::AudioBuffer<float> block(2, 16);
+    source.getNextAudioBlock({&block, 0, 16});
+    EXPECT_GT(block.findMinMax(0, 0, 6).getStart(), 0.2f);
+    EXPECT_FLOAT_EQ(block.getMagnitude(0, 6, 10), 0.0f);
+}
+
+TEST(TimelineReadAheadSourceTest, TreatsTheEndOfAShortFileAsSilence) {
+    test::TemporaryDirectory directory;
+    const auto path = directory.get().getChildFile("short-tail.wav");
+    ASSERT_TRUE(writePcmWave(path, 48'000, 1, 128, 8'000));
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    auto reader = std::unique_ptr<juce::AudioFormatReader>(formats.createReaderFor(path));
+    ASSERT_NE(reader, nullptr);
+    juce::TimeSliceThread worker("test read ahead");
+    ASSERT_TRUE(worker.startThread());
+    TimelineReadAheadSource source(std::move(reader), worker, 32'768);
+    source.prepareToPlay(512, 48'000);
+    for (int attempt = 0; attempt < 1000 && !source.ready(512); ++attempt) {
+        juce::Thread::sleep(1);
+    }
+    ASSERT_TRUE(source.ready(512));
+    ASSERT_TRUE(worker.stopThread(1000));
+    juce::AudioBuffer<float> block(2, 512);
+    source.getNextAudioBlock({&block, 0, 512});
+    EXPECT_GT(block.findMinMax(0, 0, 128).getStart(), 0.2f);
+    EXPECT_FLOAT_EQ(block.getMagnitude(0, 128, 384), 0.0f);
+    EXPECT_TRUE(source.ready(512));
+    source.getNextAudioBlock({&block, 0, 512});
+    EXPECT_FLOAT_EQ(block.getMagnitude(0, 0, 512), 0.0f);
+    source.setNextReadPosition(64);
+    EXPECT_TRUE(source.ready(512));
+    source.getNextAudioBlock({&block, 0, 512});
+    EXPECT_GT(block.findMinMax(0, 0, 64).getStart(), 0.2f);
+    EXPECT_FLOAT_EQ(block.getMagnitude(0, 64, 448), 0.0f);
+}
 
 TEST(TimelineEngineTest, FadeShapeEnvelopeMatchesTheRustContract) {
     // Arrange
@@ -14,6 +116,159 @@ TEST(TimelineEngineTest, FadeShapeEnvelopeMatchesTheRustContract) {
     for (const int shape : {0, 1, 2}) {
         EXPECT_NEAR(riffra::fadeEnvelope(1.0f, shape), 1.0f, 1e-6f);
         EXPECT_NEAR(riffra::fadeEnvelope(0.0f, shape), 0.0f, 1e-6f);
+    }
+}
+
+TEST(TimelineEngineTest, CapturesAlignedPostFaderStemsAcrossSplitBlocks) {
+    juce::ScopedJuceInitialiser_GUI initialiser;
+    test::TemporaryDirectory directory;
+    const auto source = directory.get().getChildFile("source.wav");
+    ASSERT_TRUE(writePcmWave(source, 48'000, 1, 128, 8'192));
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    auto snapshot = makeTestSnapshot();
+    snapshot.graph.timebase.tempoChanges.push_back({21, 100.0});
+    auto first = makeAudioTrack("first");
+    first.panLaw = "unityCenterStereo";
+    first.gainDb = -6.0;
+    AudioClipSpec clip;
+    clip.id = "clip:first";
+    clip.path = source.getFullPathName();
+    clip.startTick = 20;
+    clip.sourceSampleRate = 48'000;
+    clip.sourceEndFrame = 128;
+    clip.durationFrames = 128;
+    clip.durationSampleRate = 48'000;
+    first.audioClips.push_back(clip);
+    auto second = first;
+    second.id = "second";
+    second.gainDb = 0.0;
+    second.audioClips[0].id = "clip:second";
+    second.effects = {{"fx:one", RIFFRA_TEST_EFFECT_BUNDLE_PATH, {}},
+                      {"fx:two", RIFFRA_TEST_EFFECT_BUNDLE_PATH, {}}};
+    snapshot.graph.tracks = {first, second};
+    snapshot.graph.mixer.masterEffects = {{"fx:master", RIFFRA_TEST_EFFECT_BUNDLE_PATH, {}}};
+    TimelineEngine engine(true);
+    juce::String error;
+    ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, 48'000.0, 64, error)) << error;
+    ASSERT_TRUE(engine.prepareOutputCapture(
+        {{OfflineCaptureKind::track, "first"}, {OfflineCaptureKind::track, "second"}}, error))
+        << error;
+    ASSERT_TRUE(engine.play());
+    juce::AudioBuffer<float> mix(2, 64);
+    std::array<std::vector<float>, 2> stems;
+    for (int block = 0; block < 12; ++block) {
+        mix.clear();
+        engine.mix(mix.getArrayOfWritePointers(), 2, 64);
+        for (std::size_t i = 0; i < stems.size(); ++i) {
+            const auto& buffer = engine.captureBuffer(i);
+            stems[i].insert(stems[i].end(), buffer.getReadPointer(0),
+                            buffer.getReadPointer(0) + 64);
+        }
+    }
+    const auto firstSound = [](const std::vector<float>& samples) {
+        return std::find_if(samples.begin(), samples.end(),
+                            [](float sample) { return std::abs(sample) > 0.001f; }) -
+               samples.begin();
+    };
+    EXPECT_EQ(firstSound(stems[0]), firstSound(stems[1]));
+    EXPECT_LT(firstSound(stems[0]), 700);
+    EXPECT_GT(std::abs(stems[0][560]), 0.01f);
+    // Each test effect has a default gain of one half.
+    EXPECT_NEAR(stems[0][560] / stems[1][560], 4.0f * juce::Decibels::decibelsToGain(-6.0f), 0.01f);
+}
+
+TEST(TimelineEngineTest, OfflineCaptureWritesTrackBusesAndMasterFromOneGraph) {
+    juce::ScopedJuceInitialiser_GUI initialiser;
+    test::TemporaryDirectory directory;
+    const auto source = directory.get().getChildFile("capture-source.wav");
+    ASSERT_TRUE(writePcmWave(source, 48'000, 1, 8'192, 8'192));
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    auto snapshot = makeTestSnapshot();
+    auto track = makeAudioTrack("capture-track");
+    track.panLaw = "unityCenterStereo";
+    track.outputBusId = "group";
+    track.gainDb = -6.0;
+    AudioClipSpec clip;
+    clip.id = "clip:capture";
+    clip.path = source.getFullPathName();
+    clip.sourceSampleRate = 48'000;
+    clip.sourceEndFrame = 8'192;
+    clip.durationFrames = 8'192;
+    clip.durationSampleRate = 48'000;
+    track.audioClips.push_back(clip);
+    snapshot.graph.tracks = {track};
+    snapshot.graph.mixer.buses = {
+        {"group", MixBusKindSpec::group, -6.0, 0.0, "unityCenterStereo", false, false, {}},
+        {"return", MixBusKindSpec::returnBus, -12.0, 0.0, "unityCenterStereo", false, false, {}}};
+    snapshot.graph.mixer.sends = {
+        {"send", track.id, "return", 0.0, SendPositionSpec::postFader, true}};
+    snapshot.graph.masterGainDb = -6.0;
+    OfflineRenderRequestSpec request;
+    request.graph = snapshot.graph;
+    request.startTick = 0;
+    request.endTick = 960;
+    request.sampleRate = 48'000;
+    request.blockSize = 64;
+    for (const auto& [kind, id, name] :
+         std::vector<std::tuple<OfflineCaptureKind, juce::String, juce::String>>{
+             {OfflineCaptureKind::track, track.id, "track.wav"},
+             {OfflineCaptureKind::bus, "group", "group.wav"},
+             {OfflineCaptureKind::bus, "return", "return.wav"},
+             {OfflineCaptureKind::master, {}, "master.wav"}})
+        request.captures.push_back(
+            {{kind, id}, directory.get().getChildFile(name).getFullPathName()});
+    juce::String error;
+    auto renderer = OfflineRenderer::prepare(request, formats, error);
+    ASSERT_NE(renderer, nullptr) << error;
+    OfflineRenderer::Result result;
+    ASSERT_TRUE(renderer->render(formats, result, error)) << error;
+    std::vector<float> values;
+    for (const auto& capture : request.captures) {
+        auto reader = std::unique_ptr<juce::AudioFormatReader>(
+            formats.createReaderFor(juce::File(capture.destination)));
+        ASSERT_NE(reader, nullptr);
+        EXPECT_EQ(reader->lengthInSamples, static_cast<std::int64_t>(result.frames));
+        juce::AudioBuffer<float> samples(2, 1);
+        ASSERT_TRUE(reader->read(&samples, 0, 1, 256, true, true));
+        values.push_back(samples.getSample(0, 0));
+    }
+    ASSERT_GT(values[0], 0.01f);
+    const auto groupGain = juce::Decibels::decibelsToGain(-6.0f);
+    const auto returnGain = juce::Decibels::decibelsToGain(-12.0f);
+    EXPECT_NEAR(values[1], values[0] * groupGain, 1.0e-5f);
+    EXPECT_NEAR(values[2], values[0] * returnGain, 1.0e-5f);
+    EXPECT_NEAR(values[3], (values[1] + values[2]) * groupGain, 1.0e-5f);
+
+    auto mixdown = request;
+    mixdown.captures.clear();
+    mixdown.destination = directory.get().getChildFile("mixdown.wav").getFullPathName();
+    auto baseline = OfflineRenderer::prepare(mixdown, formats, error);
+    ASSERT_NE(baseline, nullptr) << error;
+    ASSERT_TRUE(baseline->render(formats, result, error)) << error;
+    auto reader = std::unique_ptr<juce::AudioFormatReader>(
+        formats.createReaderFor(juce::File(mixdown.destination)));
+    ASSERT_NE(reader, nullptr);
+    juce::AudioBuffer<float> sample(2, 1);
+    ASSERT_TRUE(reader->read(&sample, 0, 1, 256, true, true));
+    EXPECT_FLOAT_EQ(sample.getSample(0, 0), values[3]);
+
+    request.graph.tracks.front().muted = true;
+    for (auto& capture : request.captures)
+        capture.destination =
+            directory.get()
+                .getChildFile("muted-" + juce::File(capture.destination).getFileName())
+                .getFullPathName();
+    auto muted = OfflineRenderer::prepare(request, formats, error);
+    ASSERT_NE(muted, nullptr) << error;
+    ASSERT_TRUE(muted->render(formats, result, error)) << error;
+    for (const auto& capture : request.captures) {
+        auto mutedReader = std::unique_ptr<juce::AudioFormatReader>(
+            formats.createReaderFor(juce::File(capture.destination)));
+        ASSERT_NE(mutedReader, nullptr);
+        ASSERT_TRUE(mutedReader->read(&sample, 0, 1, 256, true, true));
+        EXPECT_FLOAT_EQ(sample.getSample(0, 0), 0.0f);
     }
 }
 
@@ -220,6 +475,26 @@ TEST(TimelineEngineTest, TrackAutomationOverridesStaticMixPreview) {
     EXPECT_GT(rampLeft[20], rampRight[20] * 2.0f);
     EXPECT_GT(rampRight[490], rampLeft[490] * 2.0f);
     EXPECT_GT(rampLeft[490] + rampRight[490], (rampLeft[20] + rampRight[20]) * 4.0f);
+}
+
+TEST(TimelineEngineTest, PreparedAmplitudeAutomationHandlesOverlappingTransitions) {
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    auto snapshot = makeAudioTrackSnapshot(1, false, false);
+    snapshot.graph.automation.push_back(
+        {AutomationTargetKind::trackVolume,
+         snapshot.graph.tracks.front().id,
+         {},
+         AutomationInterpolationSpec::linearAmplitude,
+         {{0, 0.0}, {960, -6.020599913279624}, {1440, -12.041199826559248}},
+         0.5});
+    TimelineEngine engine(true);
+    juce::String error;
+    ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, 100.0, 64, error)) << error;
+    const auto* graph = TimelineEngineTestPeer::committedGraph(engine);
+    ASSERT_NE(graph, nullptr);
+    auto cursor = graph->tracks.front()->runtime->volumeAutomation.cursorAt(100);
+    EXPECT_NEAR(cursor.valueAt(100, 0.0f), -8.519375f, 0.0001f);
 }
 
 TEST(TimelineEngineTest, TrackMetersExcludeNonAudibleSoloTracks) {
@@ -600,9 +875,9 @@ TEST(TimelineEngineTest, MixesMonoAndStereoSourcesAtDifferentSampleRates) {
     snapshot.revision = 7;
     auto track = makeAudioTrack("track:mixed");
     track.audioClips = {
-        {"mono-44100", mono.getFullPathName(), 44'100, 0, 44'100, 44'100, 44'100, 0, 0, 0,
+        {"mono-44100", mono.getFullPathName(), 44'100, 22'050, 44'100, 22'050, 44'100, 0, 0, 0,
          FadeShapeSpec::linear, 0.0, 0.0, TakeVariantSpec::raw, false, false},
-        {"stereo-48000", stereo.getFullPathName(), 48'000, 0, 48'000, 48'000, 48'000, 0, 0, 0,
+        {"stereo-48000", stereo.getFullPathName(), 48'000, 24'000, 48'000, 24'000, 48'000, 0, 0, 0,
          FadeShapeSpec::linear, 0.0, 0.0, TakeVariantSpec::raw, false, false},
     };
     snapshot.graph.tracks.push_back(std::move(track));
@@ -613,11 +888,86 @@ TEST(TimelineEngineTest, MixesMonoAndStereoSourcesAtDifferentSampleRates) {
     std::array<float, 512> left{};
     std::array<float, 512> right{};
     const std::array<float*, 2> outputs{left.data(), right.data()};
-    for (int block = 0; block < 8; ++block) engine.mix(outputs.data(), 2, 512);
+    engine.mix(outputs.data(), 2, 512);
 
-    // Assert: both sources contribute to the mix once they overlap.
+    // Assert: both sources contribute from the first block after preparation.
     EXPECT_GT(*std::max_element(left.begin(), left.end()), 0.1f);
     EXPECT_GT(*std::max_element(right.begin(), right.end()), 0.1f);
+}
+
+TEST(TimelineEngineTest, PreparesManyShortClips) {
+    test::TemporaryDirectory directory;
+    const auto source = directory.get().getChildFile("short.wav");
+    ASSERT_TRUE(writePcmWave(source, 48'000, 1, 128, 2'000));
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine engine;
+    juce::String error;
+    auto snapshot = makeTestSnapshot();
+    auto track = makeAudioTrack("track:short");
+    for (int index = 0; index < 20; ++index)
+        track.audioClips.push_back({"clip:" + juce::String(index), source.getFullPathName(), 48'000,
+                                    0, 128, 48'000, 48'000, 0, 0, 0, FadeShapeSpec::linear, 0.0,
+                                    0.0, TakeVariantSpec::raw, true, false});
+    snapshot.graph.tracks.push_back(std::move(track));
+    ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, 48'000, 128, error)) << error;
+    ASSERT_TRUE(engine.play());
+    std::array<float, 128> left{}, right{};
+    const std::array<float*, 2> outputs{left.data(), right.data()};
+    engine.mix(outputs.data(), 2, 128);
+    EXPECT_GT(*std::max_element(left.begin(), left.end()), 0.1f);
+}
+
+TEST(TimelineEngineTest, ReadsTheRequestedPositionAfterASeekOutsideReadAhead) {
+    test::TemporaryDirectory directory;
+    const auto source = directory.get().getChildFile("seek.wav");
+    ASSERT_TRUE(writePcmWave(source, 48'000, 1, 144'000, 4'000));
+    {
+        std::fstream stream(source.getFullPathName().toStdString(),
+                            std::ios::in | std::ios::out | std::ios::binary);
+        ASSERT_TRUE(stream.is_open());
+        stream.seekp(44 + 48'000 * sizeof(std::int16_t));
+        const std::int16_t sample = -8'000;
+        for (int index = 0; index < 96'000; ++index)
+            stream.write(reinterpret_cast<const char*>(&sample), sizeof(sample));
+        ASSERT_TRUE(stream.good());
+    }
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine engine;
+    juce::String error;
+    auto snapshot = makeTestSnapshot();
+    auto track = makeAudioTrack("track:seek");
+    track.audioClips.push_back({"clip:seek", source.getFullPathName(), 48'000, 0, 144'000, 288'000,
+                                48'000, 0, 0, 0, FadeShapeSpec::linear, 0.0, 0.0,
+                                TakeVariantSpec::raw, true, false});
+    snapshot.graph.tracks.push_back(std::move(track));
+    ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, 48'000, 128, error)) << error;
+    ASSERT_TRUE(engine.play());
+    std::array<float, 128> left{}, right{};
+    const std::array<float*, 2> outputs{left.data(), right.data()};
+    engine.mix(outputs.data(), 2, 128);
+    EXPECT_GT(*std::max_element(left.begin(), left.end()), 0.01f);
+    ASSERT_TRUE(engine.seekToTick(3840));
+    bool reached = false;
+    for (int attempt = 0; attempt < 200 && !reached; ++attempt) {
+        left.fill(0.0f);
+        right.fill(0.0f);
+        engine.mix(outputs.data(), 2, 128);
+        reached = *std::min_element(left.begin(), left.end()) < -0.1f;
+        if (!reached) juce::Thread::sleep(1);
+    }
+    EXPECT_TRUE(reached);
+    ASSERT_TRUE(engine.seekToTick(6720));
+    reached = false;
+    for (int attempt = 0; attempt < 200 && !reached; ++attempt) {
+        left.fill(0.0f);
+        right.fill(0.0f);
+        engine.mix(outputs.data(), 2, 128);
+        reached = *std::max_element(left.begin(), left.end()) > 0.05f;
+        if (!reached) juce::Thread::sleep(1);
+    }
+    EXPECT_TRUE(reached);
 }
 
 TEST(TimelineEngineTest, NormalizesAnOfflineRenderToTheTargetPeak) {
@@ -797,12 +1147,29 @@ TEST(MixerRoutingTest, AlignsRealVstPathsAndReusesDevicesOnlyWhenProjectedStateM
         ASSERT_NE(graph, nullptr);
         const auto latency = masterBypassed ? 16 : 24;
         EXPECT_EQ(graph->summary.maximumLatencySamples, latency);
+        ASSERT_TRUE(engine.prepareOutputCapture({{OfflineCaptureKind::track, "track:first"},
+                                                 {OfflineCaptureKind::bus, "bus:group"},
+                                                 {OfflineCaptureKind::bus, "bus:return"}},
+                                                error))
+            << error;
         ASSERT_TRUE(engine.play());
         juce::AudioBuffer<float> output(2, 704);
         output.clear();
+        std::array<std::vector<float>, 3> captures;
 
         // Act
-        engine.mix(output.getArrayOfWritePointers(), 2, 704);
+        juce::AudioBuffer<float> block(2, 64);
+        for (int offset = 0; offset < 704; offset += 64) {
+            block.clear();
+            engine.mix(block.getArrayOfWritePointers(), 2, 64);
+            for (int channel = 0; channel < 2; ++channel)
+                output.copyFrom(channel, offset, block, channel, 0, 64);
+            for (std::size_t i = 0; i < captures.size(); ++i) {
+                const auto& captured = engine.captureBuffer(i);
+                captures[i].insert(captures[i].end(), captured.getReadPointer(0),
+                                   captured.getReadPointer(0) + 64);
+            }
+        }
 
         // Assert: all dry and parallel paths arrive together, once.
         const auto signal = 0.25f / std::sqrt(2.0f);
@@ -810,6 +1177,10 @@ TEST(MixerRoutingTest, AlignsRealVstPathsAndReusesDevicesOnlyWhenProjectedStateM
         EXPECT_NEAR(output.getSample(0, 500 + latency - 1), 0.0f, 0.0001f);
         EXPECT_NEAR(output.getSample(0, 500 + latency), expected, 0.002f);
         EXPECT_NEAR(output.getSample(1, 500 + latency + 32), expected, 0.002f);
+        for (const auto& captured : captures) {
+            EXPECT_NEAR(captured[500 + latency - 1], 0.0f, 0.0001f);
+            EXPECT_GT(std::abs(captured[500 + latency]), 0.001f);
+        }
         const auto meters = engine.busMeterSnapshot();
         ASSERT_EQ(meters.size(), 2u);
         EXPECT_GT(meters[0].peakLeft, 0.01);
@@ -1310,6 +1681,29 @@ TEST(MixerRoutingTest, SidechainSendLevelFollowsAutomationInRealtimeAndOffline) 
     EXPECT_NEAR(rendered.getSample(0, 600), halved, 0.002f);
     EXPECT_NEAR(rendered.getSample(0, 599), output.getSample(0, 599), 0.00001f);
     EXPECT_NEAR(rendered.getSample(0, 600), output.getSample(0, 600), 0.00001f);
+
+    OfflineRenderRequestSpec captureRequest;
+    captureRequest.graph = snapshot.graph;
+    captureRequest.endTick = 48;
+    captureRequest.sampleRate = 48'000;
+    captureRequest.blockSize = 64;
+    captureRequest.captures = {
+        {{OfflineCaptureKind::track, "track:source"},
+         directory.get().getChildFile("sidechain-source.wav").getFullPathName()},
+        {{OfflineCaptureKind::track, "track:target"},
+         directory.get().getChildFile("sidechain-target.wav").getFullPathName()},
+        {{OfflineCaptureKind::master, {}},
+         directory.get().getChildFile("sidechain-master.wav").getFullPathName()}};
+    auto capture = OfflineRenderer::prepare(captureRequest, formats, error);
+    ASSERT_NE(capture, nullptr) << error;
+    ASSERT_TRUE(capture->render(formats, result, error)) << error;
+    auto capturedMaster = std::unique_ptr<juce::AudioFormatReader>(
+        formats.createReaderFor(juce::File(captureRequest.captures.back().destination)));
+    ASSERT_NE(capturedMaster, nullptr);
+    juce::AudioBuffer<float> captured(2, 601);
+    ASSERT_TRUE(capturedMaster->read(&captured, 0, captured.getNumSamples(), 0, true, true));
+    EXPECT_NEAR(captured.getSample(0, 599), rendered.getSample(0, 599), 0.00001f);
+    EXPECT_NEAR(captured.getSample(0, 600), rendered.getSample(0, 600), 0.00001f);
 
     // A stem isolates the target's main output by solo while preserving the
     // auxiliary source and its automation. The source's dry signal is absent.

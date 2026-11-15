@@ -46,6 +46,7 @@ function plugin(name: string, role: PluginEntry['role']): PluginEntry {
     name,
     vendor: 'Vendor',
     version: '1.0',
+    identifier: null,
     format: 'VST3',
     role,
     path: `C:\\VST3\\${name}.vst3`,

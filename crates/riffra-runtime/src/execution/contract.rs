@@ -265,12 +265,34 @@ pub(crate) struct OfflineRenderRequest {
     pub(crate) include_end_events: bool,
     pub(crate) tail_seconds: f64,
     pub(crate) graph: ExecutionGraph,
-    pub(crate) destination: String,
+    pub(crate) output: OfflineRenderOutput,
     pub(crate) start_tick: u64,
     pub(crate) end_tick: u64,
     pub(crate) sample_rate: u32,
     pub(crate) block_size: u32,
     pub(crate) normalize: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub(crate) enum OfflineRenderOutput {
+    Mixdown { destination: String },
+    Stems { outputs: Vec<OfflineStemOutput> },
+    Capture { outputs: Vec<OfflineCaptureOutput> },
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct OfflineStemOutput {
+    pub(crate) track_id: String,
+    pub(crate) destination: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct OfflineCaptureOutput {
+    pub(crate) target: crate::api::params::CaptureTarget,
+    pub(crate) destination: String,
 }
 
 #[cfg(test)]
@@ -457,6 +479,27 @@ mod tests {
             data1: 7,
             data2: 64,
         });
+        vst.midi_clips[0].instrument_control_events = vec![
+            riffra_core::InstrumentControlEvent {
+                id: "control-keyswitch".into(),
+                tick: riffra_core::TimelineTick(0),
+                source_order: 0,
+                kind: riffra_core::InstrumentControlEventKind::KeySwitch {
+                    note: 26,
+                    mode: riffra_core::KeySwitchMode::Latch,
+                    down: true,
+                },
+            },
+            riffra_core::InstrumentControlEvent {
+                id: "control-cc".into(),
+                tick: riffra_core::TimelineTick(0),
+                source_order: 1,
+                kind: riffra_core::InstrumentControlEventKind::ControlChange {
+                    number: 11,
+                    value: 96,
+                },
+            },
+        ];
         audio.output_bus_id = Some("bus:group".into());
         let mixer = GraphMixer {
             master_effects: vec![GraphPluginDevice {
@@ -628,13 +671,49 @@ mod tests {
                 serde_json::to_string_pretty(&OfflineRenderRequest {
                     include_end_events: false,
                     tail_seconds: 0.0,
-                    graph,
-                    destination: "renders/song.wav".into(),
+                    graph: graph.clone(),
+                    output: OfflineRenderOutput::Mixdown {
+                        destination: "renders/song.wav".into(),
+                    },
                     start_tick: 0,
                     end_tick: 7_680,
                     sample_rate: 48_000,
                     block_size: 512,
                     normalize: true,
+                })
+                .unwrap(),
+            ),
+            (
+                "offline-capture-request.json",
+                serde_json::to_string_pretty(&OfflineRenderRequest {
+                    include_end_events: false,
+                    tail_seconds: 0.0,
+                    graph,
+                    output: OfflineRenderOutput::Capture {
+                        outputs: vec![
+                            OfflineCaptureOutput {
+                                target: crate::api::params::CaptureTarget::Track {
+                                    id: "track-audio".into(),
+                                },
+                                destination: "renders/track.wav".into(),
+                            },
+                            OfflineCaptureOutput {
+                                target: crate::api::params::CaptureTarget::Bus {
+                                    id: "bus:group".into(),
+                                },
+                                destination: "renders/bus.wav".into(),
+                            },
+                            OfflineCaptureOutput {
+                                target: crate::api::params::CaptureTarget::Master,
+                                destination: "renders/master.wav".into(),
+                            },
+                        ],
+                    },
+                    start_tick: 0,
+                    end_tick: 7_680,
+                    sample_rate: 48_000,
+                    block_size: 512,
+                    normalize: false,
                 })
                 .unwrap(),
             ),

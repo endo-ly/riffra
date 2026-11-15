@@ -19,7 +19,7 @@ file(TO_CMAKE_PATH "${DESTINATION}" DESTINATION)
 set(request_template [=[
 {
   "type": "renderTimelineOffline",
-  "protocolVersion": 4,
+  "protocolVersion": 5,
   "request": {
     "graph": {
       "timebase": {"ppq": 960, "tempoChanges": [{"tick": 0, "bpm": 120.0}], "timeSignatureChanges": [{"tick": 0, "numerator": 4, "denominator": 4}]},
@@ -59,7 +59,7 @@ set(request_template [=[
         }
       ]
     },
-    "destination": "__DESTINATION__",
+    "output": { "kind": "mixdown", "destination": "__DESTINATION__" },
     "tailSeconds": 0.0,
     "includeEndEvents": false,
     "startTick": 0,

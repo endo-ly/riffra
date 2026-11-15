@@ -3,7 +3,7 @@
 /**
  * Copies a completed render to another path without creating a new render.
  */
-export type RenderExportParams = { renderId: string,
+export type RenderExportParams = { renderId: string, 
 /**
  * Absolute WAV path, or an existing directory for a stem render.
  */

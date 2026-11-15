@@ -30,25 +30,25 @@ async function addMarker(
   position: MusicalPosition,
   name: string,
 ): Promise<ArrangementMutationResult> {
-  return dispatchControl({ command: 'marker.add', params: { name, position } });
+  return dispatchControl({ command: 'music.marker.add', params: { name, position } });
 }
 
 async function updateMarker(
   markerId: string,
   patch: Omit<MarkerUpdateParams, 'markerId'>,
 ): Promise<ArrangementMutationResult> {
-  return dispatchControl({ command: 'marker.update', params: { markerId, ...patch } });
+  return dispatchControl({ command: 'music.marker.update', params: { markerId, ...patch } });
 }
 
 async function removeMarker(markerId: string): Promise<ArrangementMutationResult> {
-  return dispatchControl({ command: 'marker.remove', params: { markerId } });
+  return dispatchControl({ command: 'music.marker.remove', params: { markerId } });
 }
 
 async function updateArrangementTimebase(
   timebase: ProjectTimebase,
 ): Promise<ArrangementMutationResult> {
   return dispatchControl({
-    command: 'timebase.set-map',
+    command: 'music.timebase.set-map',
     params: {
       tempoChanges: timebase.tempoChanges,
       timeSignatureChanges: timebase.timeSignatureChanges,
@@ -61,7 +61,7 @@ async function updateTimelineLoopRange(
   start: MusicalPosition,
   end: MusicalPosition,
 ): Promise<ArrangementMutationResult> {
-  return dispatchControl({ command: 'loop-range.set', params: { enabled, start, end } });
+  return dispatchControl({ command: 'transport.loop.set', params: { enabled, start, end } });
 }
 
 async function updateTimelinePunchRange(
@@ -69,7 +69,7 @@ async function updateTimelinePunchRange(
   start: MusicalPosition,
   end: MusicalPosition,
 ): Promise<ArrangementMutationResult> {
-  return dispatchControl({ command: 'punch-range.set', params: { enabled, start, end } });
+  return dispatchControl({ command: 'record.punch.set', params: { enabled, start, end } });
 }
 
 export const timelineApi: TimelineApi = {

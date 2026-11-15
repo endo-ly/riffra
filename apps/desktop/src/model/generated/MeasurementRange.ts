@@ -3,4 +3,4 @@
 /**
  * A half-open time range measured from the WAV start.
  */
-export type MeasurementRange = { name?: string | null; startSeconds: number; endSeconds: number };
+export type MeasurementRange = { name?: string | null, startSeconds: number, endSeconds: number, };

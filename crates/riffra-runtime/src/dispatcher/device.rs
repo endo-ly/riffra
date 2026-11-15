@@ -42,7 +42,9 @@ impl HostDispatcher<'_> {
         let plugin = device
             .plugin()
             .ok_or("built-in instruments do not expose VST3 plugin state")?;
-        plugins::validate_plugin_state(&params.state, &plugin.path).map_err(
+        let catalog_plugin = plugins::validated_entry_at_path(&self.data_root, &plugin.path)
+            .map_err(DispatchError::CommandFailed)?;
+        plugins::validate_plugin_state(&params.state, &catalog_plugin).map_err(
             |error| match error {
                 plugins::PluginStateError::DifferentPlugin => {
                     DispatchError::CommandFailed(error.to_string())
@@ -236,20 +238,55 @@ fn plugin_name(path: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
+    use crate::api::output::{PluginEntry, PluginFormat, PluginRole, PluginScanState, ScanReport};
     use crate::dispatcher::Dispatcher;
     use crate::test_support::{command as request, mutated_session};
     use riffra_host::now_ms;
     use serde_json::json;
     use std::fs;
 
+    fn catalog(root: &std::path::Path) {
+        let report = ScanReport {
+            root: root.to_string_lossy().into_owned(),
+            started_at_ms: 0,
+            finished_at_ms: 0,
+            issues: Vec::new(),
+            plugins: [
+                (r"C:\Plugins\Synth.vst3", "synth-class"),
+                (r"C:\Plugins\Reverb.vst3", "reverb-class"),
+            ]
+            .into_iter()
+            .map(|(path, identifier)| PluginEntry {
+                id: identifier.into(),
+                name: path
+                    .rsplit_once('\\')
+                    .map_or(path, |(_, name)| name)
+                    .trim_end_matches(".vst3")
+                    .into(),
+                vendor: None,
+                version: None,
+                identifier: Some(identifier.into()),
+                format: PluginFormat::Vst3,
+                role: Some(PluginRole::Instrument),
+                path: path.into(),
+                bundle: true,
+                modified_at_ms: None,
+                scan_state: PluginScanState::Validated,
+            })
+            .collect(),
+        };
+        crate::plugins::catalog::save(root, &report).unwrap();
+    }
+
     #[test]
-    fn standalone_dispatcher_stores_plugin_paths_without_catalog_or_plugin_files() {
+    fn standalone_dispatcher_stores_plugin_paths_and_imports_state_by_identity() {
         let root = std::env::temp_dir().join(format!("riffra-dispatcher-plugins-{}", now_ms()));
         let dispatcher = Dispatcher::open(
             root.clone(),
             crate::test_support::prepare_built_in_resource_root(&root),
         )
         .unwrap();
+        catalog(&root);
         let instrument_path = r"C:\Plugins\Synth.vst3";
         let effect_path = r"C:\Plugins\Reverb.vst3";
         let track = dispatcher
@@ -300,7 +337,7 @@ mod tests {
             )
             .unwrap();
         dispatcher.dispatch(request("plugin.state.import", json!({"owner":owner,"deviceId":effect_id,"state":{
-            "schemaVersion":1,"pluginPath":effect_path,"parameterValues":[0.75],"stateData":"c3RhdGU="
+            "schemaVersion":2,"pluginIdentifier":"reverb-class","pluginPath":effect_path,"parameterValues":[0.75],"stateData":"c3RhdGU="
         }})), None).unwrap();
 
         let imported = dispatcher.core.cell().read().canonical.clone().session;

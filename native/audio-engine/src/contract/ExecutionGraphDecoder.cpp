@@ -502,6 +502,37 @@ bool decodeInstrumentControlEvent(const juce::var& value, const juce::String& pa
             return fail(error, kindPath, "invalid parameter ramp");
         return true;
     }
+    if (output.type == "keySwitch") {
+        ContractReader control(kind, kindPath, {"type", "note", "mode", "down"}, error);
+        juce::String mode;
+        juce::uint32 note = 0;
+        if (!control.string("type", type) || !control.unsigned32("note", note) ||
+            !control.string("mode", mode) || !control.boolean("down", output.down) ||
+            !control.finish())
+            return false;
+        if (note > 127) return fail(error, child(kindPath, "note"), "must be in 0..=127");
+        if (mode != "hold" && mode != "latch")
+            return fail(error, child(kindPath, "mode"), "must be hold or latch");
+        output.latch = mode == "latch";
+        if (output.latch && !output.down)
+            return fail(error, child(kindPath, "down"), "latch selection must press the key");
+        output.note = static_cast<std::uint8_t>(note);
+        return true;
+    }
+    if (output.type == "controlChange") {
+        ContractReader control(kind, kindPath, {"type", "number", "value"}, error);
+        juce::uint32 number = 0;
+        juce::uint32 controllerValue = 0;
+        if (!control.string("type", type) || !control.unsigned32("number", number) ||
+            !control.unsigned32("value", controllerValue) || !control.finish())
+            return false;
+        if (number > 127) return fail(error, child(kindPath, "number"), "must be in 0..=127");
+        if (controllerValue > 127)
+            return fail(error, child(kindPath, "value"), "must be in 0..=127");
+        output.controllerNumber = static_cast<std::uint8_t>(number);
+        output.controllerValue = static_cast<std::uint8_t>(controllerValue);
+        return true;
+    }
     if (output.type == "parameterChange") {
         ContractReader control(kind, kindPath, {"type", "parameter", "nativeValue"}, error);
         if (!control.string("type", type) || !control.string("parameter", output.parameter) ||
@@ -557,6 +588,10 @@ bool decodeMidiClip(const juce::var& value, const juce::String& path, MidiClipSp
             return false;
         if (control.tick > output.durationTicks)
             return fail(error, child(eventPath, "tick"), "exceeds clip durationTicks");
+        if (control.type == "keySwitch" && control.tick == output.durationTicks &&
+            (control.latch || control.down))
+            return fail(error, child(eventPath, "tick"),
+                        "key switch press requires a following tick");
         if (control.type == "parameterRamp" &&
             control.durationTicks > output.durationTicks - control.tick)
             return fail(error, child(eventPath, "durationTicks"),
@@ -849,11 +884,11 @@ bool decodeTimelineSnapshot(const juce::var& value, TimelineSnapshotSpec& output
 bool decodeOfflineRenderRequest(const juce::var& value, OfflineRenderRequestSpec& output,
                                 juce::String& error) {
     ContractReader reader(value, "request",
-                          {"graph", "destination", "startTick", "endTick", "sampleRate",
-                           "blockSize", "normalize", "tailSeconds", "includeEndEvents"},
+                          {"graph", "output", "startTick", "endTick", "sampleRate", "blockSize",
+                           "normalize", "tailSeconds", "includeEndEvents"},
                           error);
-    juce::var graph;
-    if (!reader.object("graph", graph) || !reader.string("destination", output.destination) ||
+    juce::var graph, target;
+    if (!reader.object("graph", graph) || !reader.object("output", target) ||
         !reader.unsignedInteger("startTick", output.startTick) ||
         !reader.unsignedInteger("endTick", output.endTick) ||
         !reader.unsigned32("sampleRate", output.sampleRate) ||
@@ -863,11 +898,88 @@ bool decodeOfflineRenderRequest(const juce::var& value, OfflineRenderRequestSpec
         !reader.boolean("normalize", output.normalize) || !reader.finish())
         return false;
     if (!decodeGraph(graph, "request.graph", output.graph, error)) return false;
+    output.destination.clear();
+    output.stems.clear();
+    output.captures.clear();
+    const auto kind = target.getProperty("kind", {}).toString();
+    if (kind == "mixdown") {
+        ContractReader targetReader(target, "request.output", {"kind", "destination"}, error);
+        juce::String ignored;
+        if (!targetReader.string("kind", ignored) ||
+            !targetReader.string("destination", output.destination) || !targetReader.finish())
+            return false;
+        if (output.destination.isEmpty())
+            return fail(error, "request.output.destination", "must not be empty");
+    } else if (kind == "stems") {
+        ContractReader targetReader(target, "request.output", {"kind", "outputs"}, error);
+        juce::String ignored;
+        juce::Array<juce::var> stems;
+        if (!targetReader.string("kind", ignored) || !targetReader.array("outputs", stems) ||
+            !targetReader.finish())
+            return false;
+        if (stems.isEmpty()) return fail(error, "request.output.outputs", "must not be empty");
+        std::set<juce::String> ids, paths;
+        for (int i = 0; i < stems.size(); ++i) {
+            const auto path = element("request.output.outputs", i);
+            ContractReader stem(stems[i], path, {"trackId", "destination"}, error);
+            OfflineStemOutputSpec entry;
+            if (!stem.string("trackId", entry.trackId) ||
+                !stem.string("destination", entry.destination) || !stem.finish())
+                return false;
+            if (entry.trackId.isEmpty() || entry.destination.isEmpty() ||
+                !ids.insert(entry.trackId).second || !paths.insert(entry.destination).second)
+                return fail(error, path, "track and destination must be nonempty and unique");
+            output.stems.push_back(std::move(entry));
+        }
+    } else if (kind == "capture") {
+        ContractReader targetReader(target, "request.output", {"kind", "outputs"}, error);
+        juce::String ignored;
+        juce::Array<juce::var> captures;
+        if (!targetReader.string("kind", ignored) || !targetReader.array("outputs", captures) ||
+            !targetReader.finish())
+            return false;
+        if (captures.isEmpty() || captures.size() > 16)
+            return fail(error, "request.output.outputs", "requires 1 to 16 targets");
+        if (output.normalize)
+            return fail(error, "request.normalize", "capture cannot be normalized");
+        std::set<std::pair<OfflineCaptureKind, juce::String>> targets;
+        std::set<juce::String> paths;
+        for (int i = 0; i < captures.size(); ++i) {
+            const auto path = element("request.output.outputs", i);
+            ContractReader entryReader(captures[i], path, {"target", "destination"}, error);
+            OfflineCaptureOutputSpec entry;
+            juce::var captureTarget;
+            if (!entryReader.object("target", captureTarget) ||
+                !entryReader.string("destination", entry.destination) || !entryReader.finish())
+                return false;
+            const auto targetKind = captureTarget.getProperty("kind", {}).toString();
+            if (targetKind == "master") {
+                ContractReader captureReader(captureTarget, path + ".target", {"kind"}, error);
+                if (!captureReader.string("kind", ignored) || !captureReader.finish()) return false;
+                entry.target.kind = OfflineCaptureKind::master;
+            } else if (targetKind == "track" || targetKind == "bus") {
+                ContractReader captureReader(captureTarget, path + ".target", {"kind", "id"},
+                                             error);
+                if (!captureReader.string("kind", ignored) ||
+                    !captureReader.string("id", entry.target.id) || !captureReader.finish())
+                    return false;
+                if (entry.target.id.trim().isEmpty())
+                    return fail(error, path + ".target.id", "must not be empty");
+                entry.target.kind =
+                    targetKind == "track" ? OfflineCaptureKind::track : OfflineCaptureKind::bus;
+            } else
+                return fail(error, path + ".target.kind", unknownValue(targetKind));
+            if (entry.destination.trim().isEmpty() || !paths.insert(entry.destination).second ||
+                !targets.emplace(entry.target.kind, entry.target.id).second)
+                return fail(error, path, "targets and destinations must be nonempty and unique");
+            output.captures.push_back(std::move(entry));
+        }
+    } else {
+        return fail(error, "request.output.kind", unknownValue(kind));
+    }
     if (output.tailSeconds < 0.0) return fail(error, "request.tailSeconds", "must be nonnegative");
     if (output.endTick <= output.startTick)
         return fail(error, "request.endTick", "must be greater than startTick");
-    if (output.destination.isEmpty())
-        return fail(error, "request.destination", "must not be empty");
     if (output.sampleRate == 0) return fail(error, "request.sampleRate", "must be greater than 0");
     if (output.blockSize == 0) return fail(error, "request.blockSize", "must be greater than 0");
     if (output.blockSize > static_cast<std::uint32_t>(std::numeric_limits<int>::max()))

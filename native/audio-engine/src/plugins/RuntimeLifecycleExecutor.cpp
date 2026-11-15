@@ -25,6 +25,10 @@ bool RuntimeLifecycleExecutor::submit(Task task, std::chrono::milliseconds timeo
     return enqueue(std::move(task), timeout, {}, false, true);
 }
 
+bool RuntimeLifecycleExecutor::submitLoad(Task task) {
+    return enqueue(std::move(task), std::nullopt, {}, false, true);
+}
+
 bool RuntimeLifecycleExecutor::submitWithQueueDeadline(Task task, std::chrono::milliseconds timeout,
                                                        std::chrono::milliseconds queueTimeout,
                                                        Task onExpired) {
@@ -39,11 +43,11 @@ bool RuntimeLifecycleExecutor::submitControl(Task task, std::chrono::millisecond
     return enqueue(std::move(task), timeout, queueTimeout, false, false, std::move(onExpired));
 }
 
-bool RuntimeLifecycleExecutor::enqueue(Task task, const std::chrono::milliseconds watchdogTimeout,
-                                       const std::chrono::milliseconds queueTimeout,
-                                       const bool usesProgressWatchdog, const bool dispatchToOwner,
-                                       Task onExpired) {
-    if (!task || watchdogTimeout <= std::chrono::milliseconds::zero() ||
+bool RuntimeLifecycleExecutor::enqueue(
+    Task task, const std::optional<std::chrono::milliseconds> watchdogTimeout,
+    const std::chrono::milliseconds queueTimeout, const bool usesProgressWatchdog,
+    const bool dispatchToOwner, Task onExpired) {
+    if (!task || (watchdogTimeout && *watchdogTimeout <= std::chrono::milliseconds::zero()) ||
         (onExpired && queueTimeout <= std::chrono::milliseconds::zero()))
         return false;
     {
@@ -133,8 +137,8 @@ void RuntimeLifecycleExecutor::join() noexcept {
     if (watchdog.joinable()) watchdog.join();
 }
 
-/// The watchdog thread is the only defense against a third-party VST that
-/// blocks forever inside a lifecycle task. It samples the running task's
+/// The watchdog protects bounded lifecycle commands from third-party VSTs that
+/// block forever. Rust manages graph loads separately. It samples the running task's
 /// elapsed time; on timeout it invokes the installed handler exactly once.
 /// The wedged worker thread is left to finish on its own — a blocked plugin
 /// cannot be interrupted safely — and the process is expected to terminate
@@ -146,10 +150,10 @@ void RuntimeLifecycleExecutor::watch() {
         {
             std::unique_lock lock(mutex);
             if (stopping) return;
-            if (!running || currentTaskTimedOut) continue;
+            if (!running || currentTaskTimedOut || !currentTaskTimeout) continue;
             const auto reference =
                 currentTaskUsesProgressWatchdog ? currentTaskLastProgress : currentTaskStarted;
-            if (std::chrono::steady_clock::now() - reference > currentTaskTimeout) {
+            if (std::chrono::steady_clock::now() - reference > *currentTaskTimeout) {
                 timedOut = true;
                 currentTaskTimedOut = true;
             }

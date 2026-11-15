@@ -142,10 +142,88 @@ macro_rules! control_commands {
             ];
             render_result_map(rows)
         }
+
+        /// Returns every Control Command wire name in table order.
+        pub fn command_names() -> &'static [&'static str] {
+            &[
+                $( $canonical_name, )*
+                $( $project_name, )*
+                $( $runtime_name, )*
+            ]
+        }
+
+        /// Generates the params schema for one Control Command into `generator`.
+        ///
+        /// Returns `None` for an unknown command. Sharing one generator across
+        /// several commands lets their `$defs` coexist at a single root.
+        pub fn command_params_subschema(
+            name: &str,
+            generator: &mut schemars::SchemaGenerator,
+        ) -> Option<schemars::Schema> {
+            match name {
+                $( $canonical_name => Some(generator.subschema_for::<$canonical_params>()), )*
+                $( $project_name => Some(generator.subschema_for::<$project_params>()), )*
+                $( $runtime_name => Some(generator.subschema_for::<$runtime_params>()), )*
+                _ => None,
+            }
+        }
+
+        /// Generates a standalone params schema for one Control Command.
+        ///
+        /// Returns `None` for an unknown command.
+        pub fn command_params_schema(name: &str) -> Option<schemars::Schema> {
+            let mut generator = schemars::SchemaGenerator::default();
+            let mut schema = command_params_subschema(name, &mut generator)?;
+            let definitions = generator.take_definitions(false);
+            if !definitions.is_empty() {
+                schema
+                    .ensure_object()
+                    .insert("$defs".into(), serde_json::Value::Object(definitions));
+            }
+            Some(schema)
+        }
+
+        /// Returns the names of canonical commands accepted by `session.apply`.
+        pub fn batchable_command_names() -> impl Iterator<Item = &'static str> {
+            [
+                $( control_commands!(@batchable_name $canonical_name $access $(($batch))?), )*
+            ]
+            .into_iter()
+            .flatten()
+        }
+
+        /// Reports whether a command accepts an omitted `params` object.
+        ///
+        /// Returns `None` for an unknown command.
+        pub fn command_params_allow_omitted(name: &str) -> Option<bool> {
+            match name {
+                $(
+                    $canonical_name => Some(
+                        std::any::TypeId::of::<$canonical_params>()
+                            == std::any::TypeId::of::<EmptyParams>(),
+                    ),
+                )*
+                $(
+                    $project_name => Some(
+                        std::any::TypeId::of::<$project_params>()
+                            == std::any::TypeId::of::<EmptyParams>(),
+                    ),
+                )*
+                $(
+                    $runtime_name => Some(
+                        std::any::TypeId::of::<$runtime_params>()
+                            == std::any::TypeId::of::<EmptyParams>(),
+                    ),
+                )*
+                _ => None,
+            }
+        }
     };
     (@access read) => { CanonicalAccess::Read };
     (@access mutation) => { CanonicalAccess::Mutation { batchable: false } };
     (@access mutation (batch)) => { CanonicalAccess::Mutation { batchable: true } };
+    (@batchable_name $name:literal mutation (batch)) => { Some($name) };
+    (@batchable_name $name:literal $access:ident) => { None };
     (@scope host) => { CommandScope::Host };
     (@scope project) => { CommandScope::Project { long_running: false } };
     (@scope project (long)) => { CommandScope::Project { long_running: true } };
@@ -220,8 +298,8 @@ control_commands! {
         SessionApply = "session.apply" (SessionApplyParams) -> BatchMutation, mutation, project;
         SessionSettingsUpdate = "session.settings.update" (SessionSettingsPatch) -> ArrangementMutation, mutation(batch), project;
         HistoryGet = "history.get" (EmptyParams) -> History, read, project;
-        Undo = "undo" (EmptyParams) -> ArrangementMutation, mutation, project;
-        Redo = "redo" (EmptyParams) -> ArrangementMutation, mutation, project;
+        Undo = "history.undo" (EmptyParams) -> ArrangementMutation, mutation, project;
+        Redo = "history.redo" (EmptyParams) -> ArrangementMutation, mutation, project;
         MasterGainSet = "audio.master-gain.set" (MasterGainParams) -> ArrangementMutation, mutation, project;
 
         MixerGet = "mixer.get" (EmptyParams) -> Mixer, read, project;
@@ -248,54 +326,56 @@ control_commands! {
         TrackAudioInputClear = "track.audio-input.clear" (TrackIdParams) -> ArrangementMutation, mutation(batch), project;
         TrackMidiInputSet = "track.midi-input.set" (MidiInputParams) -> ArrangementMutation, mutation(batch), project;
         TrackMidiInputClear = "track.midi-input.clear" (TrackIdParams) -> ArrangementMutation, mutation(batch), project;
-        MarkerAdd = "marker.add" (MarkerAddParams) -> ArrangementMutation, mutation(batch), project;
-        MarkerUpdate = "marker.update" (MarkerUpdateParams) -> ArrangementMutation, mutation(batch), project;
-        MarkerRemove = "marker.remove" (MarkerIdParams) -> ArrangementMutation, mutation(batch), project;
-        TimebaseUpdate = "timebase.update" (TimebaseUpdateParams) -> ArrangementMutation, mutation(batch), project;
-        TimebaseGetMap = "timebase.get-map" (EmptyParams) -> Timebase, read, project;
-        MixdownGet = "mixdown.get" (EmptyParams) -> Mixdown, read, project;
-        MixdownSet = "mixdown.set" (riffra_core::MixdownSettings) -> ArrangementMutation, mutation(batch), project;
+        MarkerAdd = "music.marker.add" (MarkerAddParams) -> ArrangementMutation, mutation(batch), project;
+        MarkerUpdate = "music.marker.update" (MarkerUpdateParams) -> ArrangementMutation, mutation(batch), project;
+        MarkerRemove = "music.marker.remove" (MarkerIdParams) -> ArrangementMutation, mutation(batch), project;
+        TimebaseUpdate = "music.timebase.update" (TimebaseUpdateParams) -> ArrangementMutation, mutation(batch), project;
+        TimebaseGetMap = "music.timebase.get-map" (EmptyParams) -> Timebase, read, project;
+        MixdownGet = "render.settings.get" (EmptyParams) -> Mixdown, read, project;
+        MixdownSet = "render.settings.set" (riffra_core::MixdownSettings) -> ArrangementMutation, mutation(batch), project;
         TrackExternalAudioInputSet = "track.external-audio-input.set" (TrackExternalAudioInputSetParams) -> ArrangementMutation, mutation(batch), project;
         TrackExternalAudioInputClear = "track.external-audio-input.clear" (TrackIdParams) -> ArrangementMutation, mutation(batch), project;
-        InstrumentEventList = "instrument-event.list" (InstrumentEventClipParams) -> InstrumentEvents, read, project;
-        InstrumentEventAdd = "instrument-event.add" (InstrumentEventAddParams) -> ArrangementMutation, mutation(batch), project;
-        InstrumentEventSet = "instrument-event.set" (InstrumentEventSetParams) -> ArrangementMutation, mutation(batch), project;
-        InstrumentEventUpdate = "instrument-event.update" (InstrumentEventUpdateParams) -> ArrangementMutation, mutation(batch), project;
-        InstrumentEventRemove = "instrument-event.remove" (InstrumentEventRemoveParams) -> ArrangementMutation, mutation(batch), project;
-        TimebaseSetMap = "timebase.set-map" (TimebaseSetMapParams) -> ArrangementMutation, mutation(batch), project;
-        LoopRangeSet = "loop-range.set" (RangeParams) -> ArrangementMutation, mutation(batch), project;
-        PunchRangeSet = "punch-range.set" (RangeParams) -> ArrangementMutation, mutation(batch), project;
+        InstrumentEventList = "clip.midi.instrument-event.list" (InstrumentEventClipParams) -> InstrumentEvents, read, project;
+        InstrumentEventAdd = "clip.midi.instrument-event.add" (InstrumentEventAddParams) -> ArrangementMutation, mutation(batch), project;
+        InstrumentEventSet = "clip.midi.instrument-event.set" (InstrumentEventSetParams) -> ArrangementMutation, mutation(batch), project;
+        InstrumentEventUpdate = "clip.midi.instrument-event.update" (InstrumentEventUpdateParams) -> ArrangementMutation, mutation(batch), project;
+        InstrumentEventRemove = "clip.midi.instrument-event.remove" (InstrumentEventRemoveParams) -> ArrangementMutation, mutation(batch), project;
+        TimebaseSetMap = "music.timebase.set-map" (TimebaseSetMapParams) -> ArrangementMutation, mutation(batch), project;
+        LoopRangeSet = "transport.loop.set" (RangeParams) -> ArrangementMutation, mutation(batch), project;
+        PunchRangeSet = "record.punch.set" (RangeParams) -> ArrangementMutation, mutation(batch), project;
         AutomationList = "automation.list" (AutomationListParams) -> AutomationLanes, read, project;
         AutomationGet = "automation.get" (AutomationGetParams) -> AutomationLanes, read, project;
+        AutomationEvaluate = "automation.evaluate" (AutomationEvaluateParams) -> AutomationEvaluation, read, project;
         AutomationSet = "automation.set" (AutomationSetParams) -> ArrangementMutation, mutation(batch), project;
         AutomationClear = "automation.clear" (AutomationClearParams) -> ArrangementMutation, mutation(batch), project;
 
-        AudioClipList = "audio-clip.list" (EmptyParams) -> AudioClips, read, project;
-        AudioClipAddAsset = "audio-clip.add-asset" (ClipAddAssetParams) -> ArrangementMutation, mutation, project;
-        AudioClipUpdate = "audio-clip.update" (AudioClipUpdateParams) -> ArrangementMutation, mutation(batch), project;
-        AudioClipMove = "audio-clip.move" (AudioClipMoveParams) -> ArrangementMutation, mutation(batch), project;
-        AudioClipTrim = "audio-clip.trim" (AudioClipTrimParams) -> ArrangementMutation, mutation(batch), project;
-        AudioClipSplit = "audio-clip.split" (ClipSplitParams) -> ArrangementMutation, mutation(batch), project;
-        AudioClipDuplicate = "audio-clip.duplicate" (ClipIdParams) -> ArrangementMutation, mutation(batch), project;
-        AudioClipCrossfade = "audio-clip.crossfade" (AudioClipCrossfadeParams) -> ArrangementMutation, mutation(batch), project;
-        MidiClipList = "midi-clip.list" (EmptyParams) -> MidiClips, read, project;
-        MidiClipCreate = "midi-clip.create" (MidiClipCreateParams) -> ArrangementMutation, mutation(batch), project;
-        MidiClipAddAsset = "midi-clip.add-asset" (ClipAddAssetParams) -> ArrangementMutation, mutation, project;
-        MidiClipUpdate = "midi-clip.update" (MidiClipUpdateParams) -> ArrangementMutation, mutation(batch), project;
-        MidiClipMove = "midi-clip.move" (MidiClipMoveParams) -> ArrangementMutation, mutation(batch), project;
-        MidiClipTrim = "midi-clip.trim" (MidiClipTrimParams) -> ArrangementMutation, mutation(batch), project;
-        MidiClipSplit = "midi-clip.split" (ClipSplitParams) -> ArrangementMutation, mutation(batch), project;
-        MidiClipDuplicate = "midi-clip.duplicate" (ClipIdParams) -> ArrangementMutation, mutation(batch), project;
-        MidiNoteAdd = "midi-note.add" (MidiNoteAddParams) -> ArrangementMutation, mutation(batch), project;
-        MidiNoteInsert = "midi-note.insert" (MidiNoteInsertParams) -> ArrangementMutation, mutation(batch), project;
-        MidiNoteUpdate = "midi-note.update" (MidiNoteUpdateParams) -> ArrangementMutation, mutation(batch), project;
-        MidiNoteUpdateMany = "midi-note.update-many" (MidiNoteUpdateManyParams) -> ArrangementMutation, mutation(batch), project;
-        MidiNoteRemove = "midi-note.remove" (NoteIdParams) -> ArrangementMutation, mutation(batch), project;
-        MidiNoteRemoveMany = "midi-note.remove-many" (NoteIdsParams) -> ArrangementMutation, mutation(batch), project;
-        MidiNoteClear = "midi-note.clear" (ClipIdParams) -> ArrangementMutation, mutation(batch), project;
-        MidiNoteQuantize = "midi-note.quantize" (MidiNoteQuantizeParams) -> ArrangementMutation, mutation(batch), project;
-        MidiNoteTransform = "midi-note.transform" (MidiNoteTransformParams) -> ArrangementMutation, mutation(batch), project;
-        MidiNoteDuplicate = "midi-note.duplicate" (MidiNoteDuplicateParams) -> ArrangementMutation, mutation(batch), project;
+        AudioClipList = "clip.audio.list" (EmptyParams) -> AudioClips, read, project;
+        AudioClipAddAsset = "clip.audio.add-asset" (ClipAddAssetParams) -> ArrangementMutation, mutation, project;
+        AudioClipUpdate = "clip.audio.update" (AudioClipUpdateParams) -> ArrangementMutation, mutation(batch), project;
+        AudioClipMove = "clip.audio.move" (AudioClipMoveParams) -> ArrangementMutation, mutation(batch), project;
+        AudioClipTrim = "clip.audio.trim" (AudioClipTrimParams) -> ArrangementMutation, mutation(batch), project;
+        AudioClipSplit = "clip.audio.split" (ClipSplitParams) -> ArrangementMutation, mutation(batch), project;
+        AudioClipDuplicate = "clip.audio.duplicate" (ClipIdParams) -> ArrangementMutation, mutation(batch), project;
+        AudioClipMerge = "clip.audio.merge" (ClipMergeParams) -> ArrangementMutation, mutation(batch), project;
+        AudioClipCrossfade = "clip.audio.crossfade" (AudioClipCrossfadeParams) -> ArrangementMutation, mutation(batch), project;
+        MidiClipList = "clip.midi.list" (EmptyParams) -> MidiClips, read, project;
+        MidiClipCreate = "clip.midi.create" (MidiClipCreateParams) -> ArrangementMutation, mutation(batch), project;
+        MidiClipAddAsset = "clip.midi.add-asset" (ClipAddAssetParams) -> ArrangementMutation, mutation, project;
+        MidiClipUpdate = "clip.midi.update" (MidiClipUpdateParams) -> ArrangementMutation, mutation(batch), project;
+        MidiClipMove = "clip.midi.move" (MidiClipMoveParams) -> ArrangementMutation, mutation(batch), project;
+        MidiClipTrim = "clip.midi.trim" (MidiClipTrimParams) -> ArrangementMutation, mutation(batch), project;
+        MidiClipMerge = "clip.midi.merge" (ClipMergeParams) -> ArrangementMutation, mutation(batch), project;
+        MidiClipSplit = "clip.midi.split" (ClipSplitParams) -> ArrangementMutation, mutation(batch), project;
+        MidiClipDuplicate = "clip.midi.duplicate" (ClipIdParams) -> ArrangementMutation, mutation(batch), project;
+        MidiNoteAdd = "clip.midi.note.add" (MidiNoteAddParams) -> ArrangementMutation, mutation(batch), project;
+        MidiNoteInsert = "clip.midi.note.insert" (MidiNoteInsertParams) -> ArrangementMutation, mutation(batch), project;
+        MidiNoteUpdate = "clip.midi.note.update" (MidiNoteUpdateParams) -> ArrangementMutation, mutation(batch), project;
+        MidiNoteUpdateMany = "clip.midi.note.update-many" (MidiNoteUpdateManyParams) -> ArrangementMutation, mutation(batch), project;
+        MidiNoteRemoveMany = "clip.midi.note.remove-many" (NoteIdsParams) -> ArrangementMutation, mutation(batch), project;
+        MidiNoteClear = "clip.midi.note.clear" (ClipIdParams) -> ArrangementMutation, mutation(batch), project;
+        MidiNoteQuantize = "clip.midi.note.quantize" (MidiNoteQuantizeParams) -> ArrangementMutation, mutation(batch), project;
+        MidiNoteTransform = "clip.midi.note.transform" (MidiNoteTransformParams) -> ArrangementMutation, mutation(batch), project;
+        MidiNoteDuplicate = "clip.midi.note.duplicate" (MidiNoteDuplicateParams) -> ArrangementMutation, mutation(batch), project;
         ClipRemove = "clip.remove" (ClipRemoveParams) -> ArrangementMutation, mutation(batch), project;
         ClipPaste = "clip.paste" (ClipPasteParams) -> ArrangementMutation, mutation(batch), project;
 
@@ -320,10 +400,14 @@ control_commands! {
         MusicRegionUpdate = "music.region.update" (RegionUpdateParams) -> ArrangementMutation, mutation(batch), project;
         MusicRegionRemove = "music.region.remove" (RegionIdParams) -> ArrangementMutation, mutation(batch), project;
 
+        ScoreValidate = "score.validate" (ScoreDocumentParams) -> ScoreValidation, read, host;
+        ScoreInspect = "score.inspect" (ScoreInspectParams) -> ScoreInspection, read, host;
+
         AssetImportMidi = "asset.import-midi" (AssetImportParams) -> AssetId, read, project;
         InstrumentList = "instrument.list" (EmptyParams) -> InstrumentLibrary, read, host;
         InstrumentSave = "instrument.save" (InstrumentSaveParams) -> InstrumentLibraryItem, read, host;
         InstrumentExport = "instrument.export" (InstrumentExportParams) -> InstrumentExport, read, host;
+        InstrumentTrackCreate = "instrument.track.create" (InstrumentTrackCreateParams) -> ArrangementMutation, mutation, project;
         InstrumentApply = "instrument.apply" (InstrumentApplyParams) -> ArrangementMutation, mutation(batch), project;
         InstrumentMidiGet = "instrument.midi.get" (TrackIdParams) -> InstrumentMidi, read, project;
         InstrumentMidiSet = "instrument.midi.set" (InstrumentMidiSetParams) -> ArrangementMutation, mutation(batch), project;
@@ -346,6 +430,7 @@ control_commands! {
         ProjectRename = "project.rename" (ProjectRenameParams) -> ProjectState, project;
         ProjectImport = "project.import" (ProjectImportParams) -> ProjectActivation, project;
         ProjectImportScore = "project.import-score" (ProjectImportScoreParams) -> ProjectActivation, project;
+        ProjectRebuildScore = "project.rebuild-score" (ProjectRebuildScoreParams) -> ScoreRebuild, project;
         MusicExportMidi = "music.export-midi" (MidiExportParams) -> MidiExport, project;
         ProjectExport = "project.export" (ProjectExportParams) -> ProjectExport, project;
     }
@@ -355,8 +440,8 @@ control_commands! {
         HostBootstrap = "host.bootstrap" (EmptyParams) -> HostBootstrap, host;
         HostShutdown = "host.shutdown" (EmptyParams) -> Ok, host;
 
-        RuntimeProjectionGet = "runtime.projection.get" (EmptyParams) -> RuntimeProjection, project;
-        RuntimeProjectionRetry = "runtime.projection.retry" (EmptyParams) -> RuntimeProjection, project;
+        RuntimeProjectionGet = "audio.projection.get" (EmptyParams) -> RuntimeProjection, project;
+        RuntimeProjectionRetry = "audio.projection.retry" (EmptyParams) -> RuntimeProjection, project;
         TransportPlay = "transport.play" (EmptyParams) -> Ok, project;
         TransportPause = "transport.pause" (EmptyParams) -> Ok, project;
         TransportStop = "transport.stop" (EmptyParams) -> Ok, project;
@@ -371,15 +456,15 @@ control_commands! {
         AudioStatus = "audio.status" (EmptyParams) -> AudioStatus, host;
         AudioDiagnostics = "audio.diagnostics" (AudioDiagnosticsParams) -> AudioDiagnostics, host;
         AudioProbe = "audio.probe" (EmptyParams) -> AudioProbe, host;
-        AudioChannelsProbe = "audio.channels.probe" (AudioChannelsProbeParams) -> DeviceChannels, host;
+        AudioChannelsProbe = "audio.probe-channels" (AudioChannelsProbeParams) -> DeviceChannels, host;
         AudioRecover = "audio.recover" (EmptyParams) -> AudioStatus, host;
-        AudioStartupRetry = "audio.startup.retry" (EmptyParams) -> AudioStatus, host;
+        AudioStartupRetry = "audio.startup-retry" (EmptyParams) -> AudioStatus, host;
         AudioDriverGet = "audio.driver.get" (EmptyParams) -> AudioDriver, host;
         AudioDriverSet = "audio.driver.set" (AudioDriverConfig) -> AudioStatus, host;
         EmergencyMute = "audio.emergency-mute" (MuteParams) -> AudioStatus, host;
         FeedbackProtectionReset = "audio.feedback-protection.reset" (EmptyParams) -> AudioStatus, project;
         AssetPreview = "asset.preview" (AssetPreviewParams) -> AudioStatus, host;
-        AssetPreviewStop = "asset.preview.stop" (EmptyParams) -> AudioStatus, host;
+        AssetPreviewStop = "asset.stop-preview" (EmptyParams) -> AudioStatus, host;
         InstrumentPreview = "instrument.preview" (InstrumentIdParams) -> AudioStatus, host;
         InstrumentPreviewStop = "instrument.preview.stop" (EmptyParams) -> AudioStatus, host;
 
@@ -403,6 +488,9 @@ control_commands! {
         PluginPresetSet = "plugin.preset.set" (PluginPresetSetParams) -> ArrangementMutation, project;
         PluginStateGet = "plugin.state.get" (DeviceParams) -> PluginState, project;
         PluginStateSet = "plugin.state.set" (PluginStateSetParams) -> ArrangementMutation, project;
+        PluginStateInspect = "plugin.state.inspect" (DeviceParams) -> PluginStateInspection, project;
+        PluginStateRead = "plugin.state.read" (PluginStateReadParams) -> PluginStateRead, project;
+        PluginStatePatch = "plugin.state.patch" (PluginStatePatchParams) -> ArrangementMutation, project;
         MissingList = "missing.list" (EmptyParams) -> Missing, project;
 
         RecordStart = "record.start" (RecordStartParams) -> AudioStatus, project;
@@ -417,7 +505,7 @@ control_commands! {
         RecordDuplicates = "record.duplicates" (EmptyParams) -> RecordingDuplicates, project;
         TakeActivate = "take.activate" (TakeActivateParams) -> ArrangementMutation, project;
         TakePlaceSeparateClip = "take.place-separate-clip" (TakeIdParams) -> ArrangementMutation, project;
-        TakeVariantSet = "audio-clip.take-variant.set" (TakeVariantParams) -> ArrangementMutation, project;
+        TakeVariantSet = "clip.audio.take-variant.set" (TakeVariantParams) -> ArrangementMutation, project;
         TakeComparisonStart = "take.comparison.start" (TakeIdParams) -> AudioStatus, project;
         TakeComparisonSwitch = "take.comparison.switch" (TakeComparisonParams) -> AudioStatus, project;
         TakeComparisonStop = "take.comparison.stop" (EmptyParams) -> AudioStatus, project;
@@ -425,17 +513,19 @@ control_commands! {
 
         RenderStart = "render.start" (RenderStartParams) -> Job, project;
         RenderStems = "render.stems" (RenderStemsParams) -> Job, project;
+        RenderCapture = "render.capture" (RenderCaptureParams) -> Job, project(long);
         RenderExport = "render.export" (RenderExportParams) -> RenderExport, host;
         RenderList = "render.list" (EmptyParams) -> RenderList, host;
-        RenderClean = "render.clean" (RenderCleanParams) -> RenderDelete, project;
+        RenderDelete = "render.delete" (RenderDeleteParams) -> RenderDelete, project;
         JobGet = "job.get" (IdParams) -> Job, host;
         JobCancel = "job.cancel" (IdParams) -> Job, host;
         AnalysisMeasure = "analysis.measure" (AnalysisMeasureParams) -> Job, host;
-        AnalysisStart = "analysis.start" (AnalysisParams) -> Analysis, host;
+        AnalysisLevels = "analysis.levels" (AnalysisLevelsParams) -> Job, host;
+        AnalysisInspect = "analysis.inspect" (AnalysisParams) -> Analysis, host;
 
-        LibrarySearch = "library.search" (LibrarySearchParams) -> Library, host;
-        LibraryAssetUpdate = "library.asset.update" (LibraryTagParams) -> LibraryAsset, host;
-        LibraryRelated = "library.related" (IdParams) -> Library, host;
+        LibrarySearch = "asset.search" (LibrarySearchParams) -> Library, host;
+        LibraryAssetUpdate = "asset.update" (LibraryTagParams) -> LibraryAsset, host;
+        LibraryRelated = "asset.related" (IdParams) -> Library, host;
         LibraryInstrumentList = "library.instrument.list" (EmptyParams) -> InstrumentLibrary, host;
         LibraryInstrumentFavoriteSet = "library.instrument.favorite.set" (InstrumentFavoriteParams) -> InstrumentLibraryItem, host;
         LibraryInstrumentCategoryList = "library.instrument.category.list" (EmptyParams) -> InstrumentCategories, host;
@@ -452,7 +542,291 @@ control_commands! {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use serde_json::{Value, json};
+
+    fn schema_value(name: &str) -> serde_json::Value {
+        command_params_schema(name)
+            .unwrap_or_else(|| panic!("missing params schema for {name}"))
+            .to_value()
+    }
+
+    fn assert_schema(name: &str, params: serde_json::Value, expected: bool) {
+        let schema = schema_value(name);
+        assert_eq!(
+            jsonschema::is_valid(&schema, &params),
+            expected,
+            "{name} params: {params}\nschema: {schema}"
+        );
+    }
+
+    #[test]
+    fn every_command_exposes_a_deterministic_params_schema() {
+        // Arrange
+        let names = command_names();
+
+        // Act / Assert
+        assert_eq!(names.len(), 227);
+        let unique: std::collections::HashSet<_> = names.iter().copied().collect();
+        assert_eq!(unique.len(), names.len());
+        for name in names {
+            let first = schema_value(name);
+            let second = schema_value(name);
+            assert_eq!(first, second, "{name}");
+            assert!(command_params_allow_omitted(name).is_some(), "{name}");
+            assert_ne!(
+                first,
+                serde_json::json!(true),
+                "{name} must not fall back to an unconstrained schema"
+            );
+        }
+        assert_eq!(command_params_schema("unknown.command"), None);
+        assert_eq!(command_params_allow_omitted("unknown.command"), None);
+    }
+
+    #[test]
+    fn batchable_names_follow_canonical_batch_access() {
+        // Arrange
+        let names: Vec<_> = batchable_command_names().collect();
+        let all: std::collections::HashSet<_> = command_names().iter().copied().collect();
+
+        // Act / Assert
+        assert!(names.contains(&"track.add"));
+        assert!(names.contains(&"clip.midi.create"));
+        assert!(names.contains(&"music.note.insert"));
+        assert!(!names.contains(&"session.apply"));
+        assert!(!names.contains(&"track.list"));
+        assert!(!names.contains(&"clip.audio.add-asset"));
+        assert!(!names.contains(&"render.start"));
+        assert!(!names.contains(&"project.create"));
+        assert!(!names.contains(&"instrument.save"));
+        assert!(!names.contains(&"host.status"));
+        assert!(names.iter().all(|name| all.contains(name)));
+        let unique: std::collections::HashSet<_> = names.iter().copied().collect();
+        assert_eq!(unique.len(), names.len());
+    }
+
+    #[test]
+    fn params_schemas_follow_the_serde_input_shape() {
+        // Arrange / Act / Assert
+        assert_schema(
+            "music.note.insert",
+            json!({
+                "clipId": "midi-clip:1",
+                "notes": [{
+                    "pitch": "C4",
+                    "position": "1:1",
+                    "duration": "1/8",
+                    "velocity": 100,
+                    "channel": 1
+                }],
+                "clipToEnd": false
+            }),
+            true,
+        );
+        assert_schema(
+            "music.note.insert",
+            json!({"clipId": "midi-clip:1", "notes": [{"pitch": 60, "position": "1:1", "duration": "1/8"}]}),
+            false,
+        );
+        assert_schema(
+            "music.note.insert",
+            json!({"clipId": "midi-clip:1", "notes": [{"pitch": "C4", "position": 1, "duration": "1/8"}]}),
+            false,
+        );
+        assert_schema(
+            "music.note.insert",
+            json!({"clipId": "midi-clip:1", "notes": [], "unknown": true}),
+            false,
+        );
+        assert_schema(
+            "music.note.update",
+            json!({"clipId": "midi-clip:1", "noteId": "note:1", "lyric": null}),
+            true,
+        );
+        assert_schema(
+            "music.note.insert",
+            json!({"clipId": "midi-clip:1", "notes": [{"pitch": "C4", "position": "1:1", "duration": "1/8", "velocity": null}]}),
+            false,
+        );
+        assert_schema(
+            "session.settings.update",
+            json!({"projectName": null}),
+            true,
+        );
+        assert_schema("clip.audio.list", json!({}), true);
+        assert_schema("clip.audio.list", json!({"unexpected": 1}), false);
+        assert_schema(
+            "project.import",
+            json!({"path": "C:/tmp/project.riffra"}),
+            true,
+        );
+        assert_schema("job.get", json!({"id": "job:1"}), true);
+        assert_schema("job.get", json!({}), false);
+        assert_schema(
+            "plugin.state.set",
+            json!({
+                "owner": {"kind": "track", "id": "track:1"},
+                "deviceId": "device:1",
+                "state": {"schemaVersion": 2, "pluginIdentifier": "reverb-class", "pluginPath": "Reverb.vst3", "parameterValues": [0.5]}
+            }),
+            true,
+        );
+        assert_schema(
+            "audio.driver.set",
+            json!({
+                "driver": "WASAPI",
+                "inputChannel": 0,
+                "inputDevice": null,
+                "outputDevice": null,
+                "sampleRate": null,
+                "bufferSize": null
+            }),
+            true,
+        );
+        assert_schema(
+            "clip.audio.trim",
+            json!({
+                "clipId": "clip:1",
+                "startTick": 0,
+                "sourceRange": {"start": 0, "end": 44100}
+            }),
+            true,
+        );
+        assert_schema(
+            "clip.audio.trim",
+            json!({
+                "clipId": "clip:1",
+                "startTick": "0",
+                "sourceRange": {"start": 0, "end": 44100}
+            }),
+            false,
+        );
+        assert_schema(
+            "automation.set",
+            json!({
+                "target": {"kind": "trackMix", "trackId": "track:1", "parameter": "volume"},
+                "interpolation": "linear",
+                "points": [{"id": "point:1", "tick": 0, "value": -6.0}]
+            }),
+            true,
+        );
+        assert_schema(
+            "automation.set",
+            json!({
+                "target": {"kind": "trackMix", "trackId": "track:1", "parameter": "Volume"},
+                "interpolation": "linear",
+                "points": []
+            }),
+            false,
+        );
+        assert_schema(
+            "clip.midi.update",
+            json!({"clipId": "midi-clip:1", "patch": {"notes": []}}),
+            true,
+        );
+        assert_schema(
+            "music.timebase.set-map",
+            json!({
+                "tempoChanges": [{"tick": 0, "bpm": 120.0}],
+                "timeSignatureChanges": [{"tick": 0, "numerator": 4, "denominator": 4}]
+            }),
+            true,
+        );
+        assert_schema(
+            "track.add",
+            json!({"name": "Lead", "kind": "instrument"}),
+            true,
+        );
+        assert_schema(
+            "track.add",
+            json!({"name": "Lead", "kind": "instrument", "__unexpected": true}),
+            false,
+        );
+        assert_schema("track.add", json!({"kind": "instrument"}), false);
+        assert_schema("session.apply", json!({"operations": []}), true);
+        assert_schema(
+            "session.apply",
+            json!({"operations": [], "__unexpected": true}),
+            false,
+        );
+        assert_schema(
+            "session.apply",
+            json!({"operations": [{"command": "track.add"}]}),
+            false,
+        );
+    }
+
+    #[test]
+    fn every_command_schema_reference_resolves_inside_its_own_definitions() {
+        // Arrange / Act / Assert
+        for name in command_names() {
+            let schema = schema_value(name);
+            let mut references = Vec::new();
+            collect_schema_references(&schema, &mut references);
+            for reference in references {
+                let pointer = reference
+                    .strip_prefix('#')
+                    .unwrap_or_else(|| panic!("{name} has a non-local reference {reference}"));
+                assert!(
+                    schema.pointer(pointer).is_some(),
+                    "{name} has an unresolved reference {reference}"
+                );
+            }
+        }
+    }
+
+    fn collect_schema_references(value: &Value, references: &mut Vec<String>) {
+        match value {
+            Value::Object(object) => {
+                if let Some(reference) = object.get("$ref").and_then(Value::as_str) {
+                    references.push(reference.to_owned());
+                }
+                for value in object.values() {
+                    collect_schema_references(value, references);
+                }
+            }
+            Value::Array(values) => {
+                for value in values {
+                    collect_schema_references(value, references);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn command_names_and_policies_match_the_wire_contract() {
+        let map = typescript_result_map();
+        let names: Vec<_> = map
+            .lines()
+            .filter_map(|line| line.trim().strip_prefix('\''))
+            .filter_map(|line| line.split_once('\'').map(|(name, _)| name))
+            .collect();
+        let unique: std::collections::HashSet<_> = names.iter().copied().collect();
+        assert_eq!(names.len(), 227);
+        assert_eq!(unique.len(), names.len());
+
+        for (name, params) in [
+            ("clip.audio.list", json!({})),
+            (
+                "clip.midi.merge",
+                json!({"firstClipId":"left", "secondClipId":"right"}),
+            ),
+            (
+                "music.note.remove",
+                json!({"clipId":"clip:1", "noteId":"note:1"}),
+            ),
+            ("audio.projection.get", json!({})),
+            ("history.undo", json!({})),
+        ] {
+            let command = ControlCommand::decode(name, params).unwrap();
+            assert_eq!(command.name(), name);
+            assert!(unique.contains(name));
+            let serialized = serde_json::to_value(&command).unwrap();
+            let decoded = ControlCommand::decode(name, serialized["params"].clone()).unwrap();
+            assert_eq!(decoded.policy(), command.policy());
+        }
+    }
 
     #[test]
     fn scope_follows_active_project_dependency() {
@@ -460,6 +834,8 @@ mod tests {
         let cases = [
             ("project.list", CommandScope::Host),
             ("instrument.list", CommandScope::Host),
+            ("score.validate", CommandScope::Host),
+            ("score.inspect", CommandScope::Host),
             ("audio.emergency-mute", CommandScope::Host),
             ("instrument.preview", CommandScope::Host),
             (
@@ -482,6 +858,7 @@ mod tests {
             "effect.add" => {
                 json!({"owner":{"kind":"track","id":"track:1"}, "pluginPath": "Reverb.vst3"})
             }
+            "score.validate" | "score.inspect" => json!({"path": "score.yaml"}),
             _ => json!({}),
         };
 

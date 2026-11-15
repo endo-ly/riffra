@@ -32,7 +32,7 @@ function dropApi(overrides: { importMidiBytes?: () => Promise<AssetId> } = {}) {
       importMidiBytes: overrides.importMidiBytes ?? (() => toAssetId('asset:midi')),
       addAudioClipToArrangement: () => mutation(),
       addMidiClipToArrangement: () => mutation(),
-      addTrack: () => mutation({ tracks: ['track:new'] }),
+      createInstrumentTrack: () => mutation({ tracks: ['track:new'] }),
       applyInstrument: () => mutation(),
       setTrackVst3Instrument: () => mutation(),
       addEffect: () => mutation(),
@@ -42,7 +42,7 @@ function dropApi(overrides: { importMidiBytes?: () => Promise<AssetId> } = {}) {
     'importMidiBytes',
     'addAudioClipToArrangement',
     'addMidiClipToArrangement',
-    'addTrack',
+    'createInstrumentTrack',
     'applyInstrument',
     'setTrackVst3Instrument',
     'addEffect',
@@ -215,11 +215,13 @@ describe('useArrangeDrop', () => {
     });
 
     await waitFor(() =>
-      expect(api.applyInstrument).toHaveBeenCalledWith('track:new', 'builtin:01-clean-sub-bass'),
+      expect(api.createInstrumentTrack).toHaveBeenCalledWith('Clean Sub Bass', {
+        kind: 'library',
+        instrumentId: 'builtin:01-clean-sub-bass',
+      }),
     );
-    expect(api.addTrack).toHaveBeenCalledWith('Clean Sub Bass', 'instrument');
-    // The created Track and the applied instrument each commit once.
-    expect(commit).toHaveBeenCalledTimes(3);
+    // Each placement commits once.
+    expect(commit).toHaveBeenCalledTimes(2);
 
     act(() => {
       result.current.handleDrop(
@@ -231,7 +233,7 @@ describe('useArrangeDrop', () => {
     await waitFor(() =>
       expect(screen.getByText('Instruments load on an Instrument Track.')).toBeInTheDocument(),
     );
-    expect(api.applyInstrument).toHaveBeenCalledTimes(2);
+    expect(api.applyInstrument).toHaveBeenCalledTimes(1);
   });
 
   it('rejects a MIDI Asset on an Audio Track without invoking placement', async () => {

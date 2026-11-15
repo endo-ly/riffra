@@ -3,7 +3,6 @@ mod attached;
 mod instrument;
 mod interactive;
 mod output;
-mod paths;
 mod resources;
 mod serve;
 
@@ -11,14 +10,17 @@ use args::{Cli, CliCommand, RequestError};
 use attached::AttachedBackend;
 use clap::Parser;
 use interactive::with_input_line;
-use output::{compact_agent_response, write_audio_diagnostics};
+use output::write_audio_diagnostics;
 use riffra_control::{
     CommandResult, ControlRequest, ControlResponse, ErrorCode, LocalHostDiscovery,
     LocalHostRegistry,
 };
 use riffra_runtime::Dispatcher;
+use riffra_runtime::api::output::{BackgroundJobStatus, ControlOutput};
 use riffra_runtime::api::params::EmptyParams;
-use riffra_runtime::api::{CanonicalCommand, ControlCommand, RuntimeCommand};
+use riffra_runtime::api::{
+    CanonicalCommand, ControlCommand, RuntimeCommand, compact_agent_response,
+};
 use std::io;
 use std::path::Path;
 use std::thread;
@@ -109,6 +111,7 @@ fn run(cli: Cli) -> Result<(), RunFailure> {
     let attach = cli.attach;
     let data_root = cli.data_root.clone();
     let plugin_state_output = cli.plugin_state_save_output();
+    let plugin_state_read_output = cli.plugin_state_read_output();
     let audio_diagnostics_options = cli.audio_diagnostics_options();
     let host_id = cli.host.clone();
     let expected_sequence = cli.expected_sequence;
@@ -122,9 +125,27 @@ fn run(cli: Cli) -> Result<(), RunFailure> {
     let job_wait = match cli.command.as_ref() {
         Some(CliCommand::Job {
             command: args::JobCommand::Wait(args),
-        }) => Some((args.id.clone(), args.timeout_ms)),
+        }) => Some((args.job.id().to_owned(), args.timeout_ms)),
         _ => None,
     };
+    let job_auto_wait = match cli.command.as_ref() {
+        Some(CliCommand::Render {
+            command: args::RenderCommand::Start(args),
+        }) => args.wait,
+        Some(CliCommand::Render {
+            command: args::RenderCommand::Stems(args),
+        }) => args.wait,
+        Some(CliCommand::Render {
+            command: args::RenderCommand::Capture(args),
+        }) => args.wait,
+        Some(CliCommand::Analysis {
+            command: args::AnalysisCommand::Levels(args),
+        }) => args.wait,
+        _ => false,
+    };
+    if job_auto_wait && !attach {
+        return Err("--wait requires --attach".into());
+    }
     if is_host_list {
         if interactive {
             return Err("host list cannot be combined with --interactive".into());
@@ -176,14 +197,7 @@ fn run(cli: Cli) -> Result<(), RunFailure> {
             return Err("job wait cannot be combined with --expected-sequence".into());
         }
         let attached = AttachedBackend::from_discovery(select_host(host_id.as_deref())?);
-        let waited = attached.wait_for_job(&job_id, timeout_ms)?;
-        if !waited.response.ok {
-            return Err(RunFailure::Protocol(Box::new(waited.response)));
-        }
-        if !waited.completed {
-            return Err(RunFailure::Job(Box::new(waited.response)));
-        }
-        return write_response(&waited.response).map_err(RunFailure::Local);
+        return wait_and_write_job(&attached, &job_id, timeout_ms);
     }
     let command = if interactive {
         if expected_sequence.is_some() {
@@ -199,7 +213,8 @@ fn run(cli: Cli) -> Result<(), RunFailure> {
             )
         {
             return Err(
-                "undo and redo require --interactive because history is process-local".into(),
+                "history undo and redo require --interactive because history is process-local"
+                    .into(),
             );
         }
         Some(command)
@@ -218,8 +233,25 @@ fn run(cli: Cli) -> Result<(), RunFailure> {
             expected_sequence,
             None,
         )?;
+        if job_auto_wait && response.ok {
+            let job_id = match response
+                .result
+                .clone()
+                .and_then(|result| ControlOutput::try_from(result).ok())
+            {
+                Some(ControlOutput::Job(Some(
+                    BackgroundJobStatus::Render { id, .. }
+                    | BackgroundJobStatus::RenderStems { id, .. }
+                    | BackgroundJobStatus::RenderCapture { id, .. }
+                    | BackgroundJobStatus::AnalysisLevels { id, .. },
+                ))) => id,
+                _ => return Err("response did not contain the expected job".into()),
+            };
+            return wait_and_write_job(&attached, &job_id, None);
+        }
         let response = annotate_batch_error(response, batch_operation_lines.as_deref());
         let response = save_plugin_state_response(plugin_state_output.as_deref(), response)?;
+        let response = save_plugin_state_read(plugin_state_read_output.as_deref(), response)?;
         let response = compact_agent_response(response);
         if let Some((json, _)) = audio_diagnostics_options {
             if !response.ok {
@@ -266,6 +298,21 @@ fn run(cli: Cli) -> Result<(), RunFailure> {
         return write_audio_diagnostics(&response, json).map_err(RunFailure::Local);
     }
     write_response(&compact_agent_response(response)).map_err(RunFailure::Local)
+}
+
+fn wait_and_write_job(
+    attached: &AttachedBackend,
+    job_id: &str,
+    timeout_ms: Option<u64>,
+) -> Result<(), RunFailure> {
+    let waited = attached.wait_for_job(job_id, timeout_ms)?;
+    if !waited.response.ok {
+        return Err(RunFailure::Protocol(Box::new(waited.response)));
+    }
+    if !waited.completed {
+        return Err(RunFailure::Job(Box::new(waited.response)));
+    }
+    write_response(&waited.response).map_err(RunFailure::Local)
 }
 
 fn annotate_batch_error(
@@ -320,6 +367,39 @@ fn save_plugin_state_response(
         .map_err(|error| format!("plugin state file could not be written: {error}"))?;
     response.result = Some(CommandResult {
         result_type: "pluginStateSaved".into(),
+        value: serde_json::json!({"output": output.to_string_lossy()}),
+    });
+    Ok(response)
+}
+
+fn save_plugin_state_read(
+    output: Option<&Path>,
+    mut response: ControlResponse,
+) -> Result<ControlResponse, String> {
+    let Some(output) = output else {
+        return Ok(response);
+    };
+    if !response.ok {
+        return Ok(response);
+    }
+    let result = response
+        .result
+        .take()
+        .ok_or_else(|| "plugin state response did not contain a result".to_string())?;
+    let encoded = match result.value.get("kind").and_then(serde_json::Value::as_str) {
+        Some("xml") => result.value["text"].as_str().map(str::to_owned),
+        Some("value") => result.value["value"].as_str().map(str::to_owned),
+        _ => None,
+    };
+    let encoded = match encoded {
+        Some(text) => text.into_bytes(),
+        None => serde_json::to_vec_pretty(&result.value)
+            .map_err(|error| format!("plugin state value could not be encoded: {error}"))?,
+    };
+    std::fs::write(output, encoded)
+        .map_err(|error| format!("plugin state value could not be written: {error}"))?;
+    response.result = Some(CommandResult {
+        result_type: "pluginStateValueSaved".into(),
         value: serde_json::json!({"output": output.to_string_lossy()}),
     });
     Ok(response)
@@ -511,7 +591,7 @@ mod tests {
             &dispatcher,
             &json!({
                 "requestId": "clip",
-                "command": "midi-clip.create",
+                "command": "clip.midi.create",
                 "expectedSequence": 1,
                 "params": {
                     "trackId": track_id,
@@ -529,7 +609,7 @@ mod tests {
             &dispatcher,
             &json!({
                 "requestId": "note-1",
-                "command": "midi-note.add",
+                "command": "clip.midi.note.add",
                 "expectedSequence": 2,
                 "params": {
                     "clipId": clip_id,
@@ -551,7 +631,7 @@ mod tests {
             &dispatcher,
             &json!({
                 "requestId": "note-2",
-                "command": "midi-note.add",
+                "command": "clip.midi.note.add",
                 "expectedSequence": 3,
                 "params": {
                     "clipId": clip_id,
@@ -574,7 +654,7 @@ mod tests {
             &dispatcher,
             &json!({
                 "requestId": "duplicate",
-                "command": "midi-note.duplicate",
+                "command": "clip.midi.note.duplicate",
                 "expectedSequence": 4,
                 "params": {
                     "clipId": clip_id,
@@ -601,7 +681,7 @@ mod tests {
             &dispatcher,
             &json!({
                 "requestId": "invalid-duplicate",
-                "command": "midi-note.duplicate",
+                "command": "clip.midi.note.duplicate",
                 "expectedSequence": 5,
                 "params": {
                     "clipId": clip_id,
@@ -645,7 +725,7 @@ mod tests {
 
         let response = handle_request(
             &dispatcher,
-            r#"{"requestId":"undo","command":"undo","expectedSequence":0,"params":{}}"#,
+            r#"{"requestId":"undo","command":"history.undo","expectedSequence":0,"params":{}}"#,
         );
         assert!(!response.ok);
         assert_eq!(
@@ -821,7 +901,7 @@ mod tests {
         let dispatcher = open_test_dispatcher(root.clone());
         let response = handle_request(
             &dispatcher,
-            r#"{"requestId":"44","command":"audio-clip.split","params":{"clipId":"clip:missing"}}"#,
+            r#"{"requestId":"44","command":"clip.audio.split","params":{"clipId":"clip:missing"}}"#,
         );
         assert!(!response.ok);
         assert_eq!(

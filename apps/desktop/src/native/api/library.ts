@@ -49,7 +49,7 @@ async function detectDuplicateRecordings(): Promise<string[][]> {
 
 async function searchLibrary(query: string): Promise<LibraryAsset[]> {
   if (!query.trim()) return [];
-  return dispatchControl({ command: 'library.search', params: { query } });
+  return dispatchControl({ command: 'asset.search', params: { query } });
 }
 
 async function updateLibraryAsset(
@@ -57,7 +57,7 @@ async function updateLibraryAsset(
   tag: string | null,
   note: string | null,
 ): Promise<LibraryAsset> {
-  return dispatchControl({ command: 'library.asset.update', params: { id, tag, note } });
+  return dispatchControl({ command: 'asset.update', params: { id, tag, note } });
 }
 
 async function importMidiFile(path: string, name?: string): Promise<AssetId> {

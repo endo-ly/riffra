@@ -3,4 +3,4 @@
 /**
  * RMS level per band in dBFS; `None` for silence.
  */
-export type BandLevels = { lowDb: number | null; midDb: number | null; highDb: number | null };
+export type BandLevels = { lowDb: number | null, midDb: number | null, highDb: number | null, };

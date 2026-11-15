@@ -1,9 +1,9 @@
-import { Fragment, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import type { AudioAnalysis, AutomationTarget } from '@/model/generated';
 import { useSession, useSessionContext } from '@/shared/session/session-context';
 import { AutomationLaneEditor } from './AutomationLaneEditor';
 import { TimelineTrack } from './TimelineTrack';
-import { buildTrackTimeline, type TrackSize } from './model/timeline-layout';
+import { buildTrackTimelines, type TrackSize, type TrackTimeline } from './model/timeline-layout';
 import { isBrowserItemDrag, type useTimelineDrop } from './hooks/useTimelineDrop';
 import type { useTimelineEditor } from './hooks/useTimelineEditor';
 import type { useTimelineContextMenus } from './hooks/useTimelineContextMenus';
@@ -25,6 +25,7 @@ interface TimelineTrackListProps {
   trackSizes: Record<string, TrackSize>;
   onSetTrackSize(trackId: string, size: TrackSize): void;
 }
+const EMPTY_TIMELINE: TrackTimeline = { items: [], lanes: new Map(), laneCount: 1 };
 
 /** Track rows, automation lanes, and the two drop regions of the arrangement. */
 export function TimelineTrackList(props: TimelineTrackListProps) {
@@ -51,6 +52,11 @@ export function TimelineTrackList(props: TimelineTrackListProps) {
   const [newTrackDragOver, setNewTrackDragOver] = useState(false);
   const { sessionId } = session;
   const { timebase } = arrangement;
+  const clipsByTrack = useSession((state) => state.readModel!.clipsByTrack);
+  const trackTimelines = useMemo(
+    () => buildTrackTimelines(clipsByTrack, timebase),
+    [clipsByTrack, timebase],
+  );
   const { pixelsPerTick, timelineWidth, analyses, unavailableClipIds } = props;
   const selectedClipIds = selection.kind === 'clips' ? selection.clipIds : [];
   const soloActive = arrangement.tracks.some((track) => track.solo);
@@ -114,12 +120,7 @@ export function TimelineTrackList(props: TimelineTrackListProps) {
               track={track}
               soloActive={soloActive}
               trackIndex={trackIndex}
-              timeline={buildTrackTimeline(
-                track.id,
-                arrangement.audioClips,
-                arrangement.midiClips,
-                timebase,
-              )}
+              timeline={trackTimelines.get(track.id) ?? EMPTY_TIMELINE}
               timebase={timebase}
               analyses={analyses}
               selectedClipIds={selectedClipIds}

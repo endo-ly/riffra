@@ -8,7 +8,7 @@ use std::fmt;
 use std::str::FromStr;
 
 /// A non-negative normalized fraction.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, schemars::JsonSchema)]
 pub struct MusicalFraction {
     pub numerator: u32,
     pub denominator: u32,
@@ -175,6 +175,20 @@ impl<'de> Deserialize<'de> for MusicalPosition {
     }
 }
 
+impl schemars::JsonSchema for MusicalPosition {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "MusicalPosition".into()
+    }
+
+    fn json_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "type": "string",
+            "pattern": r"^\s*\+?[0-9]+\s*:\s*[0-9]+\s*(?:\+\s*\+?[0-9]+\s*/\s*\+?[0-9]+\s*)?$",
+            "description": "One-origin bar:beat position with an optional beat-relative fraction."
+        })
+    }
+}
+
 /// A positive duration expressed as a fraction of a whole note.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ts_rs::TS)]
 #[ts(type = "string")]
@@ -236,6 +250,20 @@ impl<'de> Deserialize<'de> for MusicalDuration {
     }
 }
 
+impl schemars::JsonSchema for MusicalDuration {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "MusicalDuration".into()
+    }
+
+    fn json_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "type": "string",
+            "pattern": r"^\s*\+?[0-9]+\s*/\s*\+?[0-9]+\s*$",
+            "description": "A positive duration expressed as a fraction of a whole note."
+        })
+    }
+}
+
 /// A non-negative offset expressed as a fraction of a whole note.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ts_rs::TS)]
 #[ts(type = "string")]
@@ -291,6 +319,20 @@ impl<'de> Deserialize<'de> for MusicalOffset {
         String::deserialize(deserializer)?
             .parse()
             .map_err(D::Error::custom)
+    }
+}
+
+impl schemars::JsonSchema for MusicalOffset {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "MusicalOffset".into()
+    }
+
+    fn json_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "type": "string",
+            "pattern": r"^\s*\+?[0-9]+\s*/\s*\+?[0-9]+\s*$",
+            "description": "A non-negative offset expressed as a fraction of a whole note."
+        })
     }
 }
 
@@ -380,7 +422,129 @@ impl<'de> Deserialize<'de> for MusicalTimeDelta {
     }
 }
 
+impl schemars::JsonSchema for MusicalTimeDelta {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "MusicalTimeDelta".into()
+    }
+
+    fn json_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "type": "string",
+            "pattern": r"^\s*[+-]?[0-9]+\s*/\s*\+?[0-9]+\s*$",
+            "description": "A signed whole-note fraction used to move musical events."
+        })
+    }
+}
+
 impl ProjectTimebase {
+    /// Generates bar-aligned grid boundaries for a half-open tick range.
+    ///
+    /// The first and last boundaries are the supplied range endpoints. Interior
+    /// boundaries are rounded independently so fractional tick widths do not
+    /// accumulate error. A meter change starts a new bar and grid.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid input, grid cells shorter than one tick,
+    /// arithmetic overflow, or more than `max_cells` cells.
+    pub fn musical_grid_boundaries(
+        &self,
+        start: TimelineTick,
+        end: TimelineTick,
+        grid: MusicalDuration,
+        max_cells: usize,
+    ) -> Result<Vec<TimelineTick>, DomainError> {
+        self.validate_musical_clock()?;
+        let grid = MusicalDuration::new(grid.numerator, grid.denominator)?;
+        if end.0 <= start.0 || max_cells == 0 {
+            return Err(invalid_value("grid range must be positive"));
+        }
+        let whole = u128::from(self.ppq) * 4;
+        let grid_numerator = whole * u128::from(grid.numerator);
+        let grid_denominator = u128::from(grid.denominator);
+        if grid_numerator < grid_denominator {
+            return Err(invalid_value("grid resolves to zero-width ticks"));
+        }
+
+        let mut boundaries = vec![start];
+        let mut cursor = start.0;
+        while cursor < end.0 {
+            let (segment_start, _, signature, segment_end) =
+                self.signature_segment(Some(cursor), None)?;
+            let meter_denominator = u128::from(signature.denominator);
+            let bar_numerator = whole * u128::from(signature.numerator);
+            let denominator = meter_denominator * grid_denominator;
+            let bar_units = bar_numerator * grid_denominator;
+            let step_units = grid_numerator * meter_denominator;
+            let local_cursor = u128::from(cursor - segment_start);
+            // Include the preceding bar when its rounded end coincides with
+            // the cursor, then advance using exact rational boundaries.
+            let mut bar = (local_cursor * meter_denominator / bar_numerator).saturating_sub(1);
+            loop {
+                let bar_start = bar
+                    .checked_mul(bar_units)
+                    .ok_or_else(|| invalid_value("grid position is too large"))?;
+                let bar_end = bar_start
+                    .checked_add(bar_units)
+                    .ok_or_else(|| invalid_value("grid position is too large"))?;
+                let segment_limit = segment_end.unwrap_or(end.0).min(end.0);
+                let limit_units = u128::from(segment_limit - segment_start) * denominator;
+                if bar_start >= limit_units {
+                    break;
+                }
+                let cursor_units = local_cursor * denominator;
+                let mut index = cursor_units.saturating_sub(bar_start) / step_units;
+                index = index.saturating_sub(1);
+                loop {
+                    let point = index
+                        .checked_mul(step_units)
+                        .and_then(|offset| bar_start.checked_add(offset))
+                        .ok_or_else(|| invalid_value("grid position is too large"))?;
+                    if point >= bar_end || point >= limit_units {
+                        break;
+                    }
+                    let tick = u128::from(segment_start) + round_fraction(point, denominator);
+                    let tick = u64::try_from(tick)
+                        .map_err(|_| invalid_value("grid position is too large"))?;
+                    if tick == segment_limit && segment_limit < end.0 {
+                        return Err(invalid_value("grid resolves to zero-width ticks"));
+                    }
+                    if tick > cursor && tick < segment_limit {
+                        if boundaries.last().is_some_and(|last| last.0 == tick) {
+                            return Err(invalid_value("grid resolves to zero-width ticks"));
+                        }
+                        boundaries.push(TimelineTick(tick));
+                        if boundaries.len() > max_cells {
+                            return Err(invalid_value(
+                                "grid has too many cells; shorten the range or use a coarser grid",
+                            ));
+                        }
+                    }
+                    index += 1;
+                }
+                bar += 1;
+            }
+            if let Some(next) = segment_end.filter(|next| *next < end.0) {
+                if next > start.0 {
+                    if boundaries.last().is_some_and(|last| last.0 == next) {
+                        return Err(invalid_value("grid resolves to zero-width ticks"));
+                    }
+                    boundaries.push(TimelineTick(next));
+                    if boundaries.len() > max_cells {
+                        return Err(invalid_value(
+                            "grid has too many cells; shorten the range or use a coarser grid",
+                        ));
+                    }
+                }
+                cursor = next;
+            } else {
+                break;
+            }
+        }
+        boundaries.push(end);
+        Ok(boundaries)
+    }
+
     /// Converts a project-wide bar/beat position to an absolute timeline tick.
     ///
     /// # Errors
@@ -784,6 +948,84 @@ mod tests {
     }
 
     #[test]
+    fn grid_aligns_each_bar_and_meter_change_without_rounding_drift() {
+        let timebase = ProjectTimebase {
+            ppq: 5,
+            tempo_changes: vec![
+                crate::TempoChange {
+                    tick: 0,
+                    bpm: 120.0,
+                },
+                crate::TempoChange {
+                    tick: 11,
+                    bpm: 90.0,
+                },
+            ],
+            time_signature_changes: vec![
+                crate::TimeSignatureChange {
+                    tick: 0,
+                    numerator: 3,
+                    denominator: 8,
+                },
+                crate::TimeSignatureChange {
+                    tick: 20,
+                    numerator: 4,
+                    denominator: 4,
+                },
+            ],
+        };
+        let grid = "1/8".parse().unwrap();
+        let boundaries = timebase
+            .musical_grid_boundaries(TimelineTick(3), TimelineTick(27), grid, 20)
+            .unwrap();
+        assert_eq!(
+            boundaries.iter().map(|tick| tick.0).collect::<Vec<_>>(),
+            [3, 5, 8, 10, 13, 15, 18, 20, 23, 25, 27]
+        );
+        assert!(
+            timebase
+                .musical_grid_boundaries(TimelineTick(3), TimelineTick(27), grid, 9)
+                .is_err()
+        );
+        assert!(
+            timebase
+                .musical_grid_boundaries(
+                    TimelineTick(0),
+                    TimelineTick(10),
+                    "1/21".parse().unwrap(),
+                    100
+                )
+                .is_err()
+        );
+        let coarse = timebase
+            .musical_grid_boundaries(
+                TimelineTick(0),
+                TimelineTick(20),
+                "1/4".parse().unwrap(),
+                20,
+            )
+            .unwrap();
+        assert_eq!(
+            coarse.iter().map(|tick| tick.0).collect::<Vec<_>>(),
+            [0, 5, 8, 13, 15, 20]
+        );
+        let standard = ProjectTimebase::default();
+        let start = standard
+            .musical_position_to_tick("20:1".parse().unwrap())
+            .unwrap();
+        let end = standard
+            .musical_position_to_tick("20:2".parse().unwrap())
+            .unwrap();
+        let sixteenths = standard
+            .musical_grid_boundaries(start, end, "1/16".parse().unwrap(), 4)
+            .unwrap();
+        assert_eq!(
+            standard.tick_to_musical_position(sixteenths[1]).to_string(),
+            "20:1+1/4"
+        );
+    }
+
+    #[test]
     fn duration_conversion_rounds_only_at_the_tick_boundary() {
         let timebase = ProjectTimebase::default();
         assert_eq!(
@@ -833,5 +1075,67 @@ mod tests {
                 })
                 .is_err()
         );
+    }
+
+    #[test]
+    fn schemas_accept_the_musical_time_strings_serde_accepts() {
+        // Arrange
+        assert_schema_matches_serde::<MusicalPosition>(&[
+            ("5:3+1/2", true),
+            (" 5 : 3 + 1 / 2 ", true),
+            ("+5:3++1/+2", true),
+            ("5:+3", false),
+            ("+5:+3++1/+2", false),
+            ("1:1", true),
+            ("5:3+", false),
+            ("5:3+1/2/3", false),
+            ("5-3", false),
+            ("a:b", false),
+        ]);
+        assert_schema_matches_serde::<MusicalDuration>(&[
+            ("1/8", true),
+            (" 1 / 8 ", true),
+            ("+1/+8", true),
+            ("01/08", true),
+            ("1", false),
+            ("1/8/2", false),
+            ("a/8", false),
+        ]);
+        assert_schema_matches_serde::<MusicalOffset>(&[
+            ("0/1", true),
+            (" 1 / 4 ", true),
+            ("1/8x", false),
+            ("-1/8", false),
+        ]);
+        assert_schema_matches_serde::<MusicalTimeDelta>(&[
+            ("-1/4", true),
+            ("+1/4", true),
+            (" 1 / 4 ", true),
+            ("-1/+4", true),
+            ("1", false),
+            ("- 1/4", false),
+            ("1/-4", false),
+            ("--1/4", false),
+        ]);
+    }
+
+    fn assert_schema_matches_serde<T>(cases: &[(&str, bool)])
+    where
+        T: serde::de::DeserializeOwned + schemars::JsonSchema,
+    {
+        let schema = schemars::schema_for!(T).to_value();
+        for (value, expected) in cases {
+            let value = serde_json::json!(value);
+            assert_eq!(
+                serde_json::from_value::<T>(value.clone()).is_ok(),
+                *expected,
+                "serde result for {value}: {schema}"
+            );
+            assert_eq!(
+                jsonschema::is_valid(&schema, &value),
+                *expected,
+                "schema result for {value}: {schema}"
+            );
+        }
     }
 }

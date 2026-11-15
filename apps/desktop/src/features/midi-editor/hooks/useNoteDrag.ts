@@ -14,7 +14,7 @@ import type { NoteEdit } from './useNoteEditing';
 
 interface Options {
   clip: MidiClip | null;
-  selectedNoteIds: string[];
+  selectedNoteIds: ReadonlySet<string>;
   pixelsPerTick: number;
   rowHeight: number;
   placeTick: (tick: number, free: boolean) => number;
@@ -95,9 +95,8 @@ export function useNoteDrag({
     const originX = event.clientX;
     const originY = event.clientY;
     const copying = mode === 'move' && (event.ctrlKey || event.metaKey);
-    const movingNoteIds =
-      selectedNoteIds.includes(note.id) && selectedNoteIds.length > 1 ? selectedNoteIds : [note.id];
-    const originNotes = clip!.notes.filter((candidate) => movingNoteIds.includes(candidate.id));
+    const movingNoteIds = selectedNoteIds.has(note.id) ? selectedNoteIds : new Set([note.id]);
+    const originNotes = clip!.notes.filter((candidate) => movingNoteIds.has(candidate.id));
     let preview = note;
     let previewNotes = Object.fromEntries(
       originNotes.map((candidate) => [candidate.id, candidate]),

@@ -19,6 +19,7 @@ use crate::storage::now_ms;
 use riffra_core::CreativeSession;
 use riffra_core::{Asset, AssetId, AssetKind, Provenance, ProvenanceOperation};
 use rusqlite::{Connection, OptionalExtension, params};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -643,6 +644,43 @@ pub fn resolve_content_location(data_root: &Path, id: &AssetId) -> Result<Option
     }
 }
 
+/// Resolves the registered content locations for a set of assets.
+///
+/// # Errors
+/// Returns an error if the database or a saved location cannot be read.
+pub fn resolve_content_locations(
+    data_root: &Path,
+    ids: &std::collections::HashSet<AssetId>,
+) -> Result<HashMap<AssetId, String>, String> {
+    if ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let mut connection = open(data_root)?;
+    let transaction = connection
+        .transaction()
+        .map_err(|error| error.to_string())?;
+    let mut result = HashMap::new();
+    {
+        let mut statement = transaction
+            .prepare("SELECT content_location FROM assets WHERE id = ?1")
+            .map_err(|error| error.to_string())?;
+        for id in ids {
+            let location: Option<String> = statement
+                .query_row(params![id.as_str()], |row| row.get(0))
+                .optional()
+                .map_err(|error| format!("asset content location could not be read: {error}"))?;
+            if let Some(location) = location {
+                if location.is_empty() {
+                    return Err("asset content location is empty".into());
+                }
+                result.insert(id.clone(), location);
+            }
+        }
+    }
+    transaction.commit().map_err(|error| error.to_string())?;
+    Ok(result)
+}
+
 /// Resolves a string AssetId (any form accepted by [`AssetId::from_normalized`])
 /// to a validated on-disk audio file path. Shared by background jobs that need
 /// to hand a path to a worker without exposing Asset storage internals to the
@@ -770,6 +808,62 @@ pub(crate) fn unique_import_destination_with_ext(
         suffix = suffix.saturating_add(1);
     }
     Ok(destination)
+}
+
+/// Copies an external WAV into the canonical import folder and registers it as
+/// a new Audio Asset. The caller owns the returned registration until it is
+/// retained by a committed Session; use [`discard_staged_audio_import`] to roll
+/// it back without touching existing Assets.
+///
+/// # Errors
+/// Returns an error when the source cannot be copied or registration fails. A
+/// failed registration removes the copied file again.
+pub fn stage_audio_import(
+    data_root: &Path,
+    source: &Path,
+    name: &str,
+) -> Result<(AssetId, String), String> {
+    let destination = unique_import_destination(data_root, name, source)?;
+    if let Err(error) = fs::copy(source, &destination) {
+        let _ = fs::remove_file(&destination);
+        return Err(format!("audio file could not be imported: {error}"));
+    }
+    let location = destination.to_string_lossy().into_owned();
+    match register(
+        data_root,
+        AssetKind::Audio,
+        name,
+        &location,
+        Some(Provenance::imported()),
+    ) {
+        Ok(id) => Ok((id, location)),
+        Err(error) => {
+            let _ = fs::remove_file(&destination);
+            Err(error)
+        }
+    }
+}
+
+/// Discards an Audio Asset registration staged by [`stage_audio_import`] and
+/// removes its copied content file. Existing Assets with other references are
+/// never removed.
+///
+/// # Errors
+/// Returns an error when the registration cannot be discarded. A missing file
+/// is treated as already removed.
+pub fn discard_staged_audio_import(
+    data_root: &Path,
+    id: &AssetId,
+    content_location: &str,
+) -> Result<(), String> {
+    discard_output_registration(data_root, id, content_location)?;
+    match fs::remove_file(content_location) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!(
+            "staged audio file could not be removed: {content_location}: {error}"
+        )),
+    }
 }
 
 /// Imports a Standard MIDI File as an immutable canonical Asset.
@@ -996,7 +1090,25 @@ mod tests {
         )
         .unwrap();
         assert!(load(&root, &id).unwrap().unwrap().provenance.is_none());
+        let missing = mint_asset_id();
+        let ids = [id.clone(), missing].into_iter().collect();
+        let locations = resolve_content_locations(&root, &ids).unwrap();
+        assert_eq!(locations.len(), 1);
+        assert_eq!(
+            locations.get(&id),
+            Some(&location.to_string_lossy().into_owned())
+        );
         let connection = open(&root).unwrap();
+        connection
+            .execute("UPDATE assets SET content_location = ''", [])
+            .unwrap();
+        assert!(resolve_content_locations(&root, &ids).is_err());
+        connection
+            .execute(
+                "UPDATE assets SET content_location = ?1",
+                [location.to_string_lossy().as_ref()],
+            )
+            .unwrap();
         for (column, value) in [
             ("kind", "invalid"),
             ("provenance_operation", "invalid"),

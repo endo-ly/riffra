@@ -1,11 +1,12 @@
 //! Marker ranges and measurements of the completed WAV.
 
-use crate::api::output::{BandLevels, SectionMeasurement};
-use riffra_core::{Marker, ProjectTimebase};
+use crate::api::output::{BandLevels, ScoreSectionMeasurement, SectionMeasurement};
+use riffra_core::{Marker, ProjectTimebase, TimelineRegion};
 use std::collections::BTreeMap;
 
 pub(super) struct SectionPlan<'a> {
     pub(super) ranges: Vec<SectionMeasurement>,
+    pub(super) score_sections: Vec<ScoreSectionMeasurement>,
     pub(super) timebase: &'a ProjectTimebase,
     pub(super) start_tick: u64,
 }
@@ -13,6 +14,7 @@ pub(super) struct SectionPlan<'a> {
 impl<'a> SectionPlan<'a> {
     pub(super) fn new(
         markers: &[Marker],
+        score_regions: Option<&[TimelineRegion]>,
         timebase: &'a ProjectTimebase,
         start_tick: u64,
         end_tick: u64,
@@ -20,10 +22,58 @@ impl<'a> SectionPlan<'a> {
     ) -> Self {
         Self {
             ranges: ranges(markers, timebase, start_tick, end_tick, duration),
+            score_sections: score_regions.map_or_else(Vec::new, |regions| {
+                score_ranges(regions, timebase, start_tick, end_tick, duration)
+            }),
             timebase,
             start_tick,
         }
     }
+}
+
+fn score_ranges(
+    regions: &[TimelineRegion],
+    timebase: &ProjectTimebase,
+    start_tick: u64,
+    end_tick: u64,
+    duration: f64,
+) -> Vec<ScoreSectionMeasurement> {
+    let origin = timebase.ticks_to_seconds(start_tick);
+    let mut occurrences = BTreeMap::new();
+    let mut measured = Vec::new();
+    for region in regions {
+        let occurrence = occurrences.entry(region.name.clone()).or_insert(0_u32);
+        *occurrence += 1;
+        let start = region.start_tick.0.max(start_tick);
+        let end = region.end_tick.0.min(end_tick);
+        if end <= start {
+            continue;
+        }
+        let start_seconds = timebase.ticks_to_seconds(start) - origin;
+        let region_end_seconds = timebase.ticks_to_seconds(end) - origin;
+        let end_seconds = region_end_seconds.min(duration);
+        if end_seconds <= start_seconds {
+            continue;
+        }
+        measured.push(ScoreSectionMeasurement {
+            name: region.name.clone(),
+            occurrence: *occurrence,
+            start_tick: region.start_tick.0,
+            end_tick: region.end_tick.0,
+            start_seconds,
+            end_seconds,
+            complete: region.start_tick.0 >= start_tick
+                && region.end_tick.0 <= end_tick
+                && region_end_seconds <= duration,
+            loudness: None,
+            bands: BandLevels {
+                low_db: None,
+                mid_db: None,
+                high_db: None,
+            },
+        });
+    }
+    measured
 }
 
 fn ranges(
@@ -87,6 +137,42 @@ mod tests {
             name: name.into(),
             tick,
         }
+    }
+
+    fn region(name: &str, start: u64, end: u64) -> TimelineRegion {
+        TimelineRegion {
+            id: format!("{name}:{start}"),
+            name: name.into(),
+            start_tick: riffra_core::TimelineTick(start),
+            end_tick: riffra_core::TimelineTick(end),
+        }
+    }
+
+    #[test]
+    fn score_ranges_keep_occurrences_and_exclude_the_render_tail() {
+        let timebase = ProjectTimebase::default();
+        let regions = [
+            region("walk", 0, 3840),
+            region("walk", 3840, 7680),
+            region("verse", 7680, 11520),
+        ];
+
+        let sections = score_ranges(&regions, &timebase, 1920, 9600, 5.0);
+
+        assert_eq!(
+            sections
+                .iter()
+                .map(|section| (section.name.as_str(), section.occurrence))
+                .collect::<Vec<_>>(),
+            [("walk", 1), ("walk", 2), ("verse", 1)]
+        );
+        assert_eq!(
+            sections
+                .iter()
+                .map(|section| (section.start_seconds, section.end_seconds, section.complete))
+                .collect::<Vec<_>>(),
+            [(0.0, 1.0, false), (1.0, 3.0, true), (3.0, 4.0, false)]
+        );
     }
 
     #[test]

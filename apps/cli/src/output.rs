@@ -1,5 +1,5 @@
-use riffra_control::{CommandResult, ControlResponse};
-use serde_json::{Map, Value, json};
+use riffra_control::ControlResponse;
+use serde_json::Value;
 
 pub(crate) fn write_audio_diagnostics(
     response: &ControlResponse,
@@ -29,6 +29,22 @@ pub(crate) fn write_audio_diagnostics(
 
 fn print_audio_diagnostics(value: &Value) -> Result<(), String> {
     println!("Audio Engine");
+    if value
+        .get("preparation")
+        .is_some_and(|preparation| !preparation.is_null())
+    {
+        println!("Preparation");
+        field(value, &["preparation", "stage", "phase"]).print_line("  Phase");
+        field(value, &["preparation", "stage", "ownerId"]).print_line("  Owner");
+        field(value, &["preparation", "stage", "pluginPath"]).print_line("  Plugin");
+        field(value, &["preparation", "stage", "completedDevices"])
+            .print_line("  Completed Devices");
+        field(value, &["preparation", "stage", "totalDevices"]).print_line("  Total Devices");
+        field(value, &["preparation", "elapsedMs"]).print_line("  Elapsed ms");
+        field(value, &["preparation", "phaseElapsedMs"]).print_line("  Current Phase ms");
+        field(value, &["preparation", "stalled"]).print_line("  Waiting for Progress");
+        println!();
+    }
     field(value, &["device", "state"]).print_line("  State");
     field(value, &["device", "driver"]).print_line("  Driver");
     field(value, &["device", "inputDevice"]).print_line("  Input Device");
@@ -155,72 +171,5 @@ fn display(value: Option<&Value>) -> String {
         Some(Value::Number(value)) => value.to_string(),
         Some(Value::Array(value)) => serde_json::to_string(value).unwrap_or_else(|_| "-".into()),
         Some(Value::Object(value)) => serde_json::to_string(value).unwrap_or_else(|_| "-".into()),
-    }
-}
-
-/// Removes heavyweight canonical session data from successful CLI mutation
-/// responses while preserving the explicit mutation receipt.
-///
-/// Results that exist to deliver the canonical state (`session` and
-/// `hostBootstrap`) are returned unchanged.
-pub(crate) fn compact_agent_response(mut response: ControlResponse) -> ControlResponse {
-    let Some(result) = response.result.take() else {
-        return response;
-    };
-    if !response.ok
-        || matches!(result.result_type.as_str(), "session" | "hostBootstrap")
-        || !carries_canonical_session(&result.value)
-    {
-        response.result = Some(result);
-        return response;
-    }
-    let mut receipt = match result.value {
-        Value::Object(mut value) => {
-            value.remove("canonical");
-            value
-        }
-        _ => Map::new(),
-    };
-    let created_entity_ids = receipt
-        .remove("createdEntityIds")
-        .unwrap_or_else(|| json!({}));
-    receipt.insert("createdEntityIds".into(), created_entity_ids);
-    receipt.insert(
-        "sequence".into(),
-        response
-            .sequence
-            .map_or(Value::Null, |sequence| json!(sequence)),
-    );
-    response.result = Some(CommandResult {
-        result_type: "mutation".into(),
-        value: Value::Object(receipt),
-    });
-    response
-}
-
-fn carries_canonical_session(value: &Value) -> bool {
-    value
-        .get("canonical")
-        .and_then(|canonical| canonical.get("session"))
-        .is_some_and(|session| session.get("arrangement").is_some())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use riffra_control::CommandResult;
-
-    #[test]
-    fn canonical_state_deliveries_are_not_compacted() {
-        let original = ControlResponse::success(
-            "request-1",
-            7,
-            CommandResult {
-                result_type: "hostBootstrap".into(),
-                value: json!({"canonical": {"session": {"arrangement": {"tracks": []}}}}),
-            },
-        );
-
-        assert_eq!(compact_agent_response(original.clone()), original);
     }
 }

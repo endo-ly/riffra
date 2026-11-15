@@ -18,7 +18,9 @@ pub struct TrackInstrument {
 }
 
 /// MIDI note transformation and playability settings for one Instrument.
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[derive(
+    Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, TS, schemars::JsonSchema,
+)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct InstrumentMidiSettings {
     pub transpose_semitones: i16,
@@ -27,7 +29,7 @@ pub struct InstrumentMidiSettings {
 }
 
 /// Notes an Instrument can play, either as an inclusive range or an explicit set.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[serde(tag = "type", deny_unknown_fields, rename_all = "camelCase")]
 #[ts(rename_all_fields = "camelCase")]
 pub enum PlayableNotes {
@@ -36,7 +38,7 @@ pub enum PlayableNotes {
 }
 
 /// A MIDI note reserved for a named Instrument articulation.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct InstrumentKeyswitch {
     pub note: u8,

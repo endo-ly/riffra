@@ -1,18 +1,10 @@
-import { useAudioMeters } from '@/shared/audio/audio-meters';
+import { useAudioChannelMeter } from '@/shared/audio/audio-meters';
+import type { EffectOwner } from '@/model/generated';
 import styles from './Mixer.module.css';
 
 interface MixerMeterProps {
-  trackId?: string;
-  busId?: string;
-  master?: boolean;
+  owner: EffectOwner;
   mode?: 'peak' | 'peak-rms';
-}
-
-interface MeterValues {
-  peakLeft: number;
-  peakRight: number;
-  rmsLeft?: number;
-  rmsRight?: number;
 }
 
 function dbfs(value: number): number {
@@ -38,29 +30,9 @@ function formatDb(value: number): string {
   return `${db >= 0 ? '+' : ''}${db.toFixed(1)}`;
 }
 
-function meterValues(
-  meters: ReturnType<typeof useAudioMeters>,
-  trackId?: string,
-  master?: boolean,
-  busId?: string,
-): MeterValues | null {
-  if (!meters.available) return null;
-  if (master) {
-    return {
-      peakLeft: meters.outputPeakLeft,
-      peakRight: meters.outputPeakRight,
-    };
-  }
-  if (busId) return meters.busMeters.find((meter) => meter.busId === busId) ?? null;
-  return meters.trackMeters.find((meter) => meter.trackId === trackId) ?? null;
-}
-
-export function MixerMeter({ mode = 'peak-rms', ...props }: MixerMeterProps) {
-  const meters = useAudioMeters();
-  const meter = meterValues(meters, props.trackId, props.master, props.busId);
-  const label = props.master
-    ? 'Master stereo meter'
-    : `${props.busId ?? props.trackId ?? 'Channel'} stereo meter`;
+export function MixerMeter({ mode = 'peak-rms', owner }: MixerMeterProps) {
+  const meter = useAudioChannelMeter(owner);
+  const label = owner.kind === 'master' ? 'Master stereo meter' : `${owner.id} stereo meter`;
   return (
     <div className={styles.meterGroup} aria-label={label} data-unavailable={meter === null}>
       {(['left', 'right'] as const).map((channel) => {

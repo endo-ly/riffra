@@ -43,6 +43,7 @@ const reads: BrowserPreviewReads = {
     nativeAvailable: false,
     dataRoot: 'Browser preview — native persistence is unavailable',
     vst3Root: 'C:\\Program Files\\Common Files\\VST3',
+    scoreSync: { state: 'unlinked' },
     hostConnection,
   }),
   getHostConnectionState: async () => hostConnection,
@@ -65,6 +66,7 @@ const reads: BrowserPreviewReads = {
   onRuntimeProjectionStatus: noop,
   onRuntimeRestarted: noop,
   onRecordingFinalized: noop,
+  onScoreSyncStatusChanged: noop,
 };
 
 export function createBrowserPreviewApi(): NativeApi {

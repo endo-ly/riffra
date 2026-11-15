@@ -56,6 +56,17 @@ TEST(AutomationRuntimeTest, LinearAmplitudeTransitionAndBalanceRemainContinuousA
     auto end = second.next();
     EXPECT_NEAR(end.left, 0.25f, 1.0e-6f);
     EXPECT_NEAR(end.right, 0.5f, 1.0e-6f);
+
+    gain.setPoints({{0, 1.0f}, {50, 1.0f}, {75, 0.5f}, {125, 0.25f}}, false, true);
+    auto overlap = gain.cursorAt(100);
+    EXPECT_NEAR(overlap.valueAt(100, 0.0f), -8.519375f, 0.0001f);
+    gain.setPoints({{0, -3.0f}, {50, -9.0f}});
+    auto linear = gain.cursorAt(25);
+    EXPECT_FLOAT_EQ(linear.valueAt(25, 0.0f), -6.0f);
+    gain.setPoints({{0, -3.0f}, {50, -9.0f}}, true);
+    auto step = gain.cursorAt(25);
+    EXPECT_FLOAT_EQ(step.valueAt(25, 0.0f), -3.0f);
+    EXPECT_FLOAT_EQ(step.valueAt(50, 0.0f), -9.0f);
 }
 
 }  // namespace

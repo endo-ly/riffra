@@ -264,7 +264,7 @@ describe('recording', () => {
       await result.current.toggleRecording();
     });
 
-    expect(result.current.session).toBe(committedSession);
+    expect(result.current.session).toStrictEqual(committedSession);
     expect(result.current.error).toBe('projection failed');
   });
 
@@ -323,7 +323,7 @@ describe('recording', () => {
     });
 
     expect(result.current.audio.recording.active).toBe(false);
-    expect(result.current.session).toBe(stoppedSession);
+    expect(result.current.session).toStrictEqual(stoppedSession);
     expect(result.current.finalizationError).toBe('manifest invalid');
   });
 

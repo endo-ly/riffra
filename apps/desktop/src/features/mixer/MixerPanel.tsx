@@ -1,3 +1,4 @@
+import { useSessionCommand } from '@/shared/session/useSessionCommand';
 import type {
   ArrangementMutationResult,
   AutomationTarget,
@@ -58,7 +59,8 @@ export function MixerPanel() {
 }
 
 export function MixerPanelView(props: MixerPanelProps) {
-  const { api, commit: sessionCommit } = useSessionContext();
+  const { api } = useSessionContext();
+  const sessionCommit = useSessionCommand();
   const { arrangement } = props.session;
   const [routingTrackId, setRoutingTrackId] = useState<string | null>(null);
   const [newName, setNewName] = useState('');

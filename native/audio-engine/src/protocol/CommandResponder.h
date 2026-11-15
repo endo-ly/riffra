@@ -26,6 +26,7 @@ public:
     CommandResponder& operator=(const CommandResponder&) = delete;
 
     void respond(const SidecarResponseSpec& response);
+    void progress(const LoadProgressSpec& progress) const;
     void fail(const juce::String& kind, const juce::String& message, const juce::String& operation,
               const juce::var& details = {});
 

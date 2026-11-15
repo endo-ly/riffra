@@ -214,7 +214,8 @@ void TimelineEngine::scheduleMidi(const PreparedTimeline& prepared, Track& track
     runtime.midiBuffer.clear();
     const auto pdcDelay = runtime.lowLatencyPdcBypassActive() ? runtime.timelinePdcDelaySamples : 0;
     const auto midiRangeStart = rangeStart - pdcDelay;
-    MidiScheduler::schedule(runtime.midiClips, midiRangeStart, sampleCount, runtime.midiBuffer);
+    MidiScheduler::schedule(runtime.midiClips, midiRangeStart, sampleCount, runtime.midiBuffer,
+                            runtime.midiScheduleRefs, runtime.restoreInstrumentControls);
     runtime.instrumentEventCount = MidiScheduler::scheduleInstrumentEvents(
         runtime.midiClips, midiRangeStart, sampleCount, runtime.instrumentEvents.data(),
         runtime.instrumentEventOrdering.data(), runtime.instrumentEvents.size(),
@@ -237,6 +238,15 @@ void TimelineEngine::processTracks(PreparedTimeline& prepared,
                   {TrackStageKind::playback, &prepared, rangeStart, destinationStart, sampleCount,
                    transportGainStart, transportGainStep, true});
         mixSidechainStage(prepared, static_cast<int>(stageIndex), rangeStart, sampleCount, true);
+    }
+    for (auto& capture : outputCaptures) {
+        if (capture->track == nullptr) continue;
+        capture->scratch.clear(0, sampleCount);
+        capture->delay.add(capture->track->trackOutputBuffer, capture->scratch, sampleCount, 1.0f,
+                           !capture->track->muted, false);
+        for (int channel = 0; channel < 2; ++channel)
+            capture->output.copyFrom(channel, destinationStart, capture->scratch, channel, 0,
+                                     sampleCount);
     }
     mixProductionOutput(prepared, outputChannels, channelCount, rangeStart, destinationStart,
                         sampleCount, true);
@@ -545,6 +555,14 @@ void TimelineEngine::mixProductionOutput(PreparedTimeline& prepared, float* cons
     for (auto& bus : mixer.buses) bus->input.clear(0, sampleCount);
     for (auto& route : mixer.trackRoutes) route->mix(sampleCount, rangeStart, playing);
     pool->runMixer(mixer.parallelChannels, sampleCount, rangeStart, playing, prepared);
+    for (auto& capture : outputCaptures) {
+        if (capture->bus == nullptr) continue;
+        capture->scratch.clear(0, sampleCount);
+        capture->delay.add(capture->bus->output, capture->scratch, sampleCount, 1.0f, true, false);
+        for (int channel = 0; channel < 2; ++channel)
+            capture->output.copyFrom(channel, destinationStart, capture->scratch, channel, 0,
+                                     sampleCount);
+    }
     for (auto& route : mixer.busRoutes) route->mix(sampleCount, rangeStart, playing);
     const auto position = prepared.transportAt(rangeStart - mixer.masterInputLatency, playing);
     mixer.masterEffects->process(
@@ -677,6 +695,7 @@ void TimelineEngine::mix(float* const* outputChannels, const int channelCount,
 void TimelineEngine::mix(const float* const* inputChannels, const int inputChannelCount,
                          float* const* outputChannels, const int channelCount,
                          const int sampleCount) noexcept {
+    for (auto& capture : outputCaptures) capture->output.clear(0, sampleCount);
     mixActiveGraph(inputChannels, inputChannelCount, outputChannels, channelCount, sampleCount);
     publishFrame(realtime);
 }

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <thread>
 #include <utility>
 
@@ -86,15 +87,67 @@ InstrumentProcessContext TimelineEngine::instrumentProcessContext(const Prepared
 bool TimelineEngine::loadSnapshot(const TimelineSnapshotSpec& snapshot,
                                   juce::AudioFormatManager& formats, const double outputSampleRate,
                                   const int maximumBlockSize, juce::String& error,
-                                  const bool commitImmediately) {
+                                  const bool commitImmediately, const LoadObserver& observer) {
     std::unique_ptr<PreparedTimeline> prepared;
-    TimelineSnapshotBuilder builder(*this);
-    if (!builder.build(snapshot, formats, outputSampleRate, maximumBlockSize, prepared, error))
+    TimelineSnapshotBuilder builder(*this, observer);
+    if (!builder.build(snapshot, formats, outputSampleRate, maximumBlockSize, prepared, error)) {
+        prepared.reset();
+        instrumentCache.trim();
         return false;
+    }
     graphRegistry.access(
         [&prepared](ControlGraphRegistry::State& graphs) { graphs.pending = std::move(prepared); });
     if (!commitImmediately) return true;
     return commitPreparedSnapshot(error) == RealtimeRequest::accepted;
+}
+
+bool TimelineEngine::prepareOutputCapture(const std::vector<OfflineCaptureTarget>& targets,
+                                          juce::String& error) {
+    auto* graph = realtime.graph;
+    if (!offlineMode || graph == nullptr || !outputCaptures.empty()) {
+        error = "Output capture requires a prepared offline graph.";
+        return false;
+    }
+    std::vector<std::unique_ptr<OutputCapture>> captures;
+    for (const auto& target : targets) {
+        auto capture = std::make_unique<OutputCapture>();
+        std::int64_t latency = static_cast<std::int64_t>(graph->summary.maximumLatencySamples);
+        if (target.kind == OfflineCaptureKind::track) {
+            auto* track = graph->findTrack(target.id);
+            if (track == nullptr) {
+                error = "Capture track is missing: " + target.id;
+                return false;
+            }
+            capture->track = track->runtime.get();
+            latency = capture->track->routeLatencySamples;
+        } else if (target.kind == OfflineCaptureKind::bus) {
+            const auto found = std::find_if(graph->mixer.buses.begin(), graph->mixer.buses.end(),
+                                            [&](const auto& bus) { return bus->id == target.id; });
+            if (found == graph->mixer.buses.end()) {
+                error = "Capture bus is missing: " + target.id;
+                return false;
+            }
+            capture->bus = found->get();
+            latency = capture->bus->outputLatency;
+        }
+        const auto delay =
+            static_cast<std::int64_t>(graph->summary.maximumLatencySamples) - latency;
+        if (delay < 0 || delay >= std::numeric_limits<int>::max()) {
+            error = "Capture latency is invalid: " + target.id;
+            return false;
+        }
+        capture->delay.prepare(static_cast<int>(delay));
+        capture->scratch.setSize(2, graph->preparedBlockSize);
+        capture->output.setSize(2, graph->preparedBlockSize);
+        captures.push_back(std::move(capture));
+    }
+    outputCaptures = std::move(captures);
+    return true;
+}
+
+const juce::AudioBuffer<float>& TimelineEngine::captureBuffer(
+    const std::size_t index) const noexcept {
+    return outputCaptures[index]->output;
 }
 
 RealtimeRequest TimelineEngine::commitPreparedSnapshot(juce::String& error) {
@@ -138,6 +191,8 @@ void TimelineEngine::discardPreparedSnapshot() noexcept {
     graphRegistry.access([&discarded](ControlGraphRegistry::State& graphs) {
         discarded = std::move(graphs.pending);
     });
+    discarded.reset();
+    instrumentCache.trim();
 }
 
 bool TimelineEngine::preparedOwnerReusesRuntimeDevices(const EffectOwnerSpec& deviceOwner) const {
@@ -164,7 +219,11 @@ bool TimelineEngine::hasPreparedSnapshot() const {
         [](const ControlGraphRegistry::State& graphs) { return graphs.pending != nullptr; });
 }
 
-std::size_t TimelineEngine::reclaimRetiredGraphs() { return graphRegistry.reclaim(retiredGraphs); }
+std::size_t TimelineEngine::reclaimRetiredGraphs() {
+    const auto count = graphRegistry.reclaim(retiredGraphs);
+    if (count != 0) instrumentCache.trim();
+    return count;
+}
 
 std::optional<std::uint64_t> TimelineEngine::submit(RealtimeCommand command) noexcept {
     const std::lock_guard lock(ownerMutex);

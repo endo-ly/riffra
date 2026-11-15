@@ -24,6 +24,11 @@ use windows_sys::Win32::System::Pipes::{
 };
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
+/// Kernel buffer requested for each direction of one pipe instance. Frames
+/// larger than the buffer stream through it, so it only sizes the transfer
+/// chunks and does not bound a frame.
+const PIPE_BUFFER_SIZE: u32 = 64 * 1024;
+
 /// Blocking listener for one user-scoped Windows Named Pipe.
 pub struct NamedPipeListener {
     pipe_name: Vec<u16>,
@@ -67,8 +72,8 @@ impl NamedPipeListener {
                 PIPE_ACCESS_DUPLEX,
                 PIPE_TYPE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
                 255,
-                super::MAX_FRAME_SIZE as u32,
-                super::MAX_FRAME_SIZE as u32,
+                PIPE_BUFFER_SIZE,
+                PIPE_BUFFER_SIZE,
                 0,
                 &security.attributes,
             )

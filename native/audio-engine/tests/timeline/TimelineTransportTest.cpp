@@ -345,6 +345,69 @@ TEST(TimelineEngineTest, TransportBoundariesConvergeWithoutAOneSampleCut) {
     EXPECT_GT(*std::max_element(left.begin(), left.end()), 0.005f);
 }
 
+TEST(TimelineEngineTest, SeekRestoresVst3KeyswitchAndControllerState) {
+    // Arrange
+    auto snapshot = makeInstrumentSnapshot("track:controls");
+    MidiClipSpec clip;
+    clip.id = "midi:controls";
+    clip.durationTicks = 3840;
+    InstrumentControlEventSpec latch;
+    latch.id = "latch";
+    latch.tick = 0;
+    latch.type = "keySwitch";
+    latch.note = 26;
+    latch.latch = true;
+    latch.down = true;
+    clip.instrumentControlEvents.push_back(latch);
+    InstrumentControlEventSpec cc;
+    cc.id = "cc";
+    cc.tick = 0;
+    cc.type = "controlChange";
+    cc.controllerNumber = 11;
+    cc.controllerValue = 96;
+    clip.instrumentControlEvents.push_back(cc);
+    snapshot.graph.tracks.front().midiClips.push_back(std::move(clip));
+
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine engine;
+    juce::String error;
+    constexpr int kBlockSamples = 64;
+    ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, 48'000.0, kBlockSamples, error))
+        << error.toStdString();
+    InstrumentTrace trace;
+    auto instrument = PluginRackTestPeer::installInstrument(
+        std::make_unique<TestInstrumentProcessor>(trace), 48'000.0, kBlockSamples, error);
+    ASSERT_NE(instrument, nullptr) << error.toStdString();
+    ASSERT_TRUE(TimelineEngineTestPeer::installTrackInstrument(
+        engine, "track:controls", "instrument:controls", std::move(instrument)));
+    std::array<float, kBlockSamples> left{};
+    std::array<float, kBlockSamples> right{};
+    const std::array<float*, 2> outputs{left.data(), right.data()};
+
+    // Act
+    ASSERT_TRUE(engine.seekToTick(100));
+    ASSERT_TRUE(engine.play());
+    engine.mix(outputs.data(), 2, kBlockSamples);
+
+    // Assert: the latch pulse and the last controller are restored exactly once.
+    std::vector<juce::MidiMessage> restored;
+    for (const auto& message : trace.midiMessages)
+        if ((message.isNoteOnOrOff() && message.getNoteNumber() == 26) ||
+            (message.isController() && message.getControllerNumber() == 11))
+            restored.push_back(message);
+    ASSERT_EQ(restored.size(), 3u);
+    EXPECT_TRUE(std::any_of(restored.begin(), restored.end(),
+                            [](const auto& message) { return message.isNoteOn(); }));
+    EXPECT_TRUE(std::any_of(restored.begin(), restored.end(),
+                            [](const auto& message) { return message.isNoteOff(); }));
+    const auto controller = std::find_if(restored.begin(), restored.end(), [](const auto& message) {
+        return message.isController();
+    });
+    ASSERT_NE(controller, restored.end());
+    EXPECT_EQ(controller->getControllerValue(), 96);
+}
+
 TEST(TimelineEngineTest, StopAdvancesThePlayheadOnlyThroughTheFadeBoundary) {
     // Arrange
     auto snapshot = makeTestSnapshot();

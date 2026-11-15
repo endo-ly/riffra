@@ -337,6 +337,15 @@ private:
 
 class PluginRackTestPeer final {
 public:
+    static std::optional<float> parameterValueForText(const PluginRack& rack, int index,
+                                                      const juce::String& text, bool nearest,
+                                                      juce::String& error) {
+        return rack.parameterValueForText(index, text, error, nearest);
+    }
+    static std::optional<juce::String> parameterDisplayValue(const PluginRack& rack, int index,
+                                                             float value, juce::String& error) {
+        return rack.parameterDisplayValue(index, value, error);
+    }
     static void addParameterAndPublishCount(PluginRack& rack,
                                             juce::AudioProcessorParameter* parameter) {
         rack.plugin->addParameter(parameter);

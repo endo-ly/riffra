@@ -96,6 +96,15 @@
   flex-wrap: wrap;
   gap: var(--space-1) var(--space-2-5);
 }
+.scoreDiagnostics {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding-inline-start: var(--space-4);
+  font-family: var(--font-family-mono);
+  overflow-wrap: anywhere;
+}
+
 .dangerBanner {
   color: var(--color-status-danger);
   background: color-mix(in srgb, var(--color-status-danger) 16%, var(--color-bg-panel));

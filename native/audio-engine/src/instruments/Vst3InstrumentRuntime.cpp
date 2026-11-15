@@ -9,9 +9,10 @@ Vst3InstrumentRuntime::Vst3InstrumentRuntime(std::unique_ptr<PluginRack> rack) n
 
 std::unique_ptr<Vst3InstrumentRuntime> Vst3InstrumentRuntime::create(
     const juce::String& path, const double sampleRate, const int blockSize,
-    const PluginProcessingMode mode, const PluginStateSpec& persistedState, juce::String& error) {
+    const PluginProcessingMode mode, const PluginStateSpec& persistedState, juce::String& error,
+    const PluginLoadObserver& observer) {
     auto rack = std::make_unique<PluginRack>();
-    if (const auto loadError = rack->load(path, sampleRate, blockSize, mode, false)) {
+    if (const auto loadError = rack->load(path, sampleRate, blockSize, mode, false, observer)) {
         error = loadError->scope + ": " + loadError->message;
         return nullptr;
     }
@@ -19,7 +20,8 @@ std::unique_ptr<Vst3InstrumentRuntime> Vst3InstrumentRuntime::create(
         error = "The selected VST3 is not an instrument.";
         return nullptr;
     }
-    if (!rack->applyPersistedState(persistedState, error)) return nullptr;
+    if (!rack->applyPersistedState(persistedState, error, observer)) return nullptr;
+    if (observer) observer(LoadPhase::deviceReady);
     return std::unique_ptr<Vst3InstrumentRuntime>(new Vst3InstrumentRuntime(std::move(rack)));
 }
 

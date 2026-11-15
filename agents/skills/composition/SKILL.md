@@ -80,13 +80,12 @@ Riffraへ和声を入力するときは `music harmony resolve` でコード記�
 
 判断の内容に応じて参照する。各ファイルは必要になった時点で読む。
 
-| 観点                                                             | 参照                                                                             |
-| ---------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| コード進行の体系と辞典                                           | [references/chord-progressions.md](references/chord-progressions.md)             |
-| メロディ：モチーフ、フレーズ、コードに対する旋律音               | [references/melody.md](references/melody.md)                                     |
-| リズムセクション：リズム構造、ドラム、ベース、パート間のグルーヴ | [references/rhythm-section.md](references/rhythm-section.md)                     |
-| 編曲・音作り・ミックス：構成、密度、音域、音色、空間、診断       | [references/arrangement-mix.md](references/arrangement-mix.md)                   |
-| Ample Sound Liteのベース・アコギ奏法とMIDI指定                   | [references/ample-lite-articulations.md](references/ample-lite-articulations.md) |
+| 観点                                                             | 参照                                                                 |
+| ---------------------------------------------------------------- | -------------------------------------------------------------------- |
+| コード進行の体系と辞典                                           | [references/chord-progressions.md](references/chord-progressions.md) |
+| メロディ：モチーフ、フレーズ、コードに対する旋律音               | [references/melody.md](references/melody.md)                         |
+| リズムセクション：リズム構造、ドラム、ベース、パート間のグルーヴ | [references/rhythm-section.md](references/rhythm-section.md)         |
+| 編曲・音作り・ミックス：構成、密度、音域、音色、空間、診断       | [references/arrangement-mix.md](references/arrangement-mix.md)       |
 
 ## 表記
 

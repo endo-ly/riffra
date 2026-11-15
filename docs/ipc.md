@@ -117,6 +117,7 @@ DesktopのActive Projectは初期bootstrapと `ProjectActivationResult` で確�
 | `recording-finalized`       | `RecordingFinalized`      | Native処理後の録音Asset登録とArrangement確定の完了結果                                                                      |
 | `project-state-changed`     | `ProjectState`            | Projectの作成・改名・Importによる一覧の変更                                                                                 |
 | `project-activated`         | `ProjectActivationResult` | Project切替の完了。Active Projectの一覧、CanonicalState、RecoveryStateを一括で通知する                                      |
+| `score-sync-status-changed` | `ScoreSyncStatus`         | リンクされたScore YAMLの同期状態(未リンク / 正常 / 読み込み中 / 失敗)、対象Projectとパス、受理したsequence、最新の診断      |
 
 `audio-meters` はRuntime投影が属する `projectId`、`outputPeakLeft` / `outputPeakRight`、`trackMeters` と `busMeters`(チャンネルID、左右Peak/RMS)を含む。Desktopは現在のActive Projectと `projectId` が一致するframeだけを採用し、Project切替後は旧Projectの値が描画状態へ戻ることがない。高頻度メーターのTrackデータは、低頻度 `audio-status` の到着でも保持される。
 
@@ -146,14 +147,14 @@ Desktopのイベントゲートは現在の接続世代のイベントだけをW
 {"kind": "event", "event": {"type": "audioMeters", ...}}
 ```
 
-- `response` と `error` は必ず `requestId` を持ち、`event` は持たない。Transportの応答はキューへの受け付けを示し、状態は独立した `transportStatus` eventで送る。要求に紐づかない失敗は `fault` イベントで送る
+- `response` と `error` は必ず `requestId` を持つ。ロードの受付・進捗イベント `timelineLoadProgress` も対応する `requestId` を持つ。Transportの応答はキューへの受け付けを示し、状態は独立した `transportStatus` eventで送る。要求に紐づかない失敗は `fault` イベントで送る
 - 1つの要求に対する応答は `response` か `error` のちょうど1回である。応答のないまま要求が破棄された場合は `noResponse` の `error` を送る
-- 命令ごとの応答型は1つに決まる。`requestId` で要求を相関し、期待と異なる型の応答はその要求をプロトコルエラーで即座に失敗させ、Hostの状態へ反映しない。取り違えは型の不一致として検出するため、中身を持たない完了応答も命令の分類ごとに別の型とする
-- 期限: 通常は `COMMAND_ACK_TIMEOUT`、デバイス操作は `AUDIO_DEVICE_COMMAND_TIMEOUT`、`prepareTimelineSnapshot` は `TIMELINE_PREPARE_TIMEOUT` と呼び出し側の残り時間の短い方、`waitForTimelineIdle` は呼び出し側の残り時間を使う。期限切れは失敗報告で確定する
+- 命令ごとの応答型は1つに決まる。`requestId` で要求を相関し、期待と異なる型の応答はその要求をプロトコルエラーで即座に失敗させ、Hostの状態へ反映しない。中身を持たない完了応答も命令の分類ごとに別の型とし、取り違えを型の不一致として検出する
+- 通常の応答は `COMMAND_ACK_TIMEOUT`、デバイス操作は `AUDIO_DEVICE_COMMAND_TIMEOUT` で待機を制限する。`prepareTimelineSnapshot` に全体の固定期限はなく、Rustが操作ID・世代・工程を管理し、nativeの完了応答後に音声構成を切り替える。呼び出し元の待機終了はロードを取り消さない
 
 ### 4.3 起動とプロトコル版
 
-- サイドカーはデバイスの接続後、最初のメッセージとして `ready` イベント(`protocolVersion` と初期 `AudioStatus`)を1回だけ送る。版は両言語の `SIDECAR_PROTOCOL_VERSION`(`4`)で一致させる
+- サイドカーはデバイスの接続後、最初のメッセージとして `ready` イベント(`protocolVersion` と初期 `AudioStatus`)を1回だけ送る。版は両言語の `SIDECAR_PROTOCOL_VERSION`(`5`)で一致させる
 - Rustは `ready` を受けたときだけその世代をreadyにする。版が異なる世代と、`ready` の前に終了したプロセスは起動失敗として扱う
 - 版の確認は `ready` に一本化され、個々の命令は版を持たない
 
@@ -250,14 +251,14 @@ C++の出力は3つのレーンに分かれる。`control` は順序を保つバ
 
 ## 5. 境界D: オフラインレンダリング(riffra-render)
 
-Hostのrender.start / render.stems JobがWAVごとにriffra-renderを起動し、Realtimeと同じExecution Graphを渡す。GraphはMixerのMaster Effects・Bus・SendとTrackのoutputBusId、解決済みのプラグインパス・保存状態・接続先IDを含む。Nativeは必須フィールドと実行可能な参照を厳密に検証する。
+Hostのrender.start / render.stems Jobはそれぞれ一つのriffra-renderを起動し、Realtimeと同じExecution Graphを渡す。GraphはMixerのMaster Effects・Bus・SendとTrackのoutputBusId、解決済みのプラグインパス・保存状態・接続先IDを含む。Nativeは必須フィールドと実行可能な参照を厳密に検証する。Graphの共有フィクスチャは contracts/execution-graph に置く。
 
-| 項目 | 契約                                                                                                                                                                               |
-| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 起動 | RuntimeBinariesの実行ファイルを使用。配置規則はDesktopとHeadlessで共通                                                                                                             |
-| 要求 | stdinへJSON 1行。renderTimelineOffline、protocolVersion: 4、requestにgraph、destination、startTick、endTick、sampleRate、blockSize、tailSeconds、includeEndEvents、normalizeを含む |
-| 応答 | 成功はofflineRenderCompleteのframes・sampleRate、失敗はerror。contracts/sidecar/messages/render.*.jsonで形を固定                                                                   |
-| 異常 | プロセス異常終了・応答不一致・デコード失敗はJob失敗として扱い、部分的なWAVを破棄する                                                                                               |
+| 項目 | 契約                                                                                                                                                                            |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 起動 | RuntimeBinariesの実行ファイルを使用。配置規則はDesktopとHeadlessで共通                                                                                                          |
+| 要求 | stdinへJSON 1行。renderTimelineOffline、protocolVersion: 4、requestにgraph、出力先、時間範囲、音声形式と処理設定を含む。出力先は単一のMixdownまたはTrack IDと保存先の組のリスト |
+| 応答 | 成功はofflineRenderCompleteのframes・sampleRate、失敗はerror。contracts/sidecar/messages/render.*.jsonで形を固定                                                                |
+| 異常 | プロセス異常終了・応答不一致・デコード失敗はJob失敗として扱い、部分的なWAVを破棄する                                                                                            |
 
 Hostが範囲・保存先・Asset登録・Manifestを管理し、Native workerはGraphの実行を担当する。`measurements` と `warnings` の意味、ステムとマスタリングの扱いは audio-engine.md「オフラインレンダリング」を参照する。
 
@@ -341,7 +342,7 @@ riffra --attach --interactive
 }
 ```
 
-- AttachedではCLIがstdin各行をフレームへ変換して送る。Hostは1接続内を受信順に処理し、CLIは応答を1行ずつflushする。フレームは8 MiB以下のUTF-8 JSONとする
+- AttachedではCLIがstdin各行をフレームへ変換して送る。Hostは1接続内を受信順に処理し、CLIは応答を1行ずつflushする。フレームは256 MiB以下のUTF-8 JSONとする。正準Sessionは不透明なPlugin Stateを丸ごと含むため、上限は実在のProjectではなく壊れた長さ表記を弾くための値である。応答がこれを超えた場合、Hostは接続を閉じずに `commandFailed` を返し、`sequence` には命令の結果の正準シーケンスを残す
 
 ### 7.2 応答とエラー
 
@@ -380,7 +381,7 @@ riffra --attach --interactive
 }
 ```
 
-`undo` / `redo` の履歴は、Standaloneが自プロセスのもの、serve / Attachedが接続先Hostのものを共有する。Mixerの一時プレビューはHostの現行sequenceを応答へ含めるが、Canonical sequence、履歴、保存、Projectの世代は進まない。所有者と値の契約はサイドカー命令の節(§4.4)を参照する。
+`history.undo` / `history.redo` の履歴は、Standaloneが自プロセスのもの、serve / Attachedが接続先Hostのものを共有する。Mixerの一時プレビューはHostの現行sequenceを応答へ含めるが、Canonical sequence、履歴、保存、Projectの世代は進まない。所有者と値の契約はサイドカー命令の節(§4.4)を参照する。
 
 ### 7.3 制作操作
 
@@ -390,22 +391,24 @@ Mixerの正準状態は `mixer.get`、Bus一覧は `mixer.bus.list`、Send一覧
 
 Sidechain接続は `mixer.sidechain.list` が `sidechainSends` を返す。`mixer.sidechain.add/update/remove` は同じ正準Mutation・Batch契約を使い、新しいIDは `createdEntityIds.sidechainSends` へ記録される。PreviewはRuntime操作であり、Batchには含まれない。
 
-| 分類                   | コマンド                                                                                                                                                                                                                                                                                                                                                                          |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Session / History      | `session inspect`、`session get`、`session settings update`、`history get`、`undo`、`redo`                                                                                                                                                                                                                                                                                        |
-| Track / Routing        | `track list`、`add`、`update`、`remove`、`duplicate`、`reorder`、`audio-input`、`midi-input`                                                                                                                                                                                                                                                                                      |
-| Audio Clip             | `audio-clip list`、`add-asset`、`update`、`move`、`trim`、`split`、`duplicate`、`crossfade`                                                                                                                                                                                                                                                                                       |
-| MIDI Clip / Note       | `midi-clip list`、`create`、`add-asset`、`update`、`move`、`trim`、`split`、`duplicate`、`midi-note add/insert/update/update-many/remove/remove-many/clear/quantize/transform/duplicate`                                                                                                                                                                                          |
-| Music Operations       | `music.midi-clip.create/resize`、`music.note.list/get/insert/update/remove`、`music.region.list`、`music.region.add`、`music.region.update`、`music.region.remove`、`music.harmony.resolve`、`music.harmony.list`、`music.harmony.insert`、`music.harmony.update`、`music.harmony.remove`、`music.harmony.realize`、`music.phrase.insert`                                         |
-| Timeline / Arrangement | `clip remove`、`clip paste`、`marker add/update/remove`、`timebase update`、`loop-range set`、`punch-range set`                                                                                                                                                                                                                                                                   |
-| Automation             | `automation get/list`(Canonical read)、`automation set`、`automation clear`                                                                                                                                                                                                                                                                                                       |
-| Asset / Project        | `asset import-midi`、`asset preview`、`project list/create/open/rename/export/import`                                                                                                                                                                                                                                                                                             |
-| Instrument / Effect    | `plugin catalog list`、`instrument list/apply`、`instrument midi get/set`、`plugin instrument`、`plugin scan/scan-start`、`instrument clear`、`effect add/remove/reorder`、`device bypass`、`device inspect`、`device parameter list/get/set`、`plugin preset list/get/set`、`plugin state get/set`                                                                               |
-| Runtime services       | `audio status/diagnostics/probe/channels-probe`、`audio driver get/set`、`audio recover/startup-retry`、`record start/another-take/stop/status/list/rename/archive/promote/tag/delete/duplicates`、`render start/stems/list/export/clean`、`job get/cancel`、`library search/asset-update/related`、`analysis start/measure`、`missing list/relink/disable-plugin/replace-plugin` |
+| 分類                   | コマンド                                                                                                                                                                                                                                                                                                                                                        |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Session / History      | `session inspect`、`session get`、`session settings update`、`history get`、`history undo`、`history redo`                                                                                                                                                                                                                                                      |
+| Track / Routing        | `track list`、`add`、`update`、`remove`、`duplicate`、`reorder`、`audio-input`、`midi-input`                                                                                                                                                                                                                                                                    |
+| Audio Clip             | `clip audio list`、`add-asset`、`update`、`trim`、`split`、`duplicate`、`crossfade`                                                                                                                                                                                                                                                                             |
+| MIDI Clip / Note       | `clip midi list`、`create`、`add-asset`、`update`、`trim`、`split`、`duplicate`、`clip midi note insert/update-many/remove-many/quantize/transform/duplicate`                                                                                                                                                                                                   |
+| Music Operations       | `music.midi-clip.create/resize`、`music.note.list/get/insert/update/remove`、`music.region.list`、`music.region.add`、`music.region.update`、`music.region.remove`、`music.harmony.resolve`、`music.harmony.list`、`music.harmony.insert`、`music.harmony.update`、`music.harmony.remove`、`music.harmony.realize`、`music.phrase.insert`                       |
+| Timeline / Arrangement | `clip remove`、`clip paste`、`music marker add/update/remove`、`music timebase update`、`transport loop set`、`record punch set`                                                                                                                                                                                                                                |
+| Automation             | `automation get/list`(Canonical read)、`automation set`、`automation clear`                                                                                                                                                                                                                                                                                     |
+| Asset / Project        | `asset import-midi`、`asset preview`、`project list/create/open/rename/export/import`                                                                                                                                                                                                                                                                           |
+| Instrument / Effect    | `plugin catalog list`、`instrument list/apply`、`instrument midi get/set`、`instrument vst3 set`、`plugin scan`、`instrument clear`、`effect add/remove/reorder`、`device bypass`、`device inspect`、`device parameter list/get/set`、`plugin preset list/get/set`、`plugin state save/load/import/inspect/read/patch`                                          |
+| Runtime services       | `audio status/diagnostics/probe/probe-channels`、`audio driver get/set`、`audio recover/startup-retry`、`record start/stop/status/list/rename/archive/promote/tag/delete/duplicates`、`render start/stems/list/export/delete`、`job get/cancel`、`asset search/update/related`、`analysis inspect/measure`、`missing list/relink/disable-plugin/replace-plugin` |
 
 軽量投影の約束: `session inspect`、`track list`、`device inspect`、`music.note.*` は構造把握用であり、本文の取得は `session get`、`plugin.state.get` に委譲する。`device inspect` の応答範囲はmetadataとcapabilityである。
 
 Agent向けCLIの正準Mutation応答は `mutation` receipt(sequence・投影状態・構造IDのみ)へ変換する。Desktop同期の共有プロトコルではCanonical結果を維持する。`plugin state save` は結果をファイルへ保存し、標準出力には保存先のみ返す。
+
+Plugin Stateは不透明なデータとして運ぶ。JUCE製Pluginでは `plugin.state.inspect/read/patch` でValueTreeや埋め込みXMLを扱う。`patch` は全編集を1回で適用する。復元したState本体はPlugin内部の編集まで保持し、公開パラメータは適用後の値を保存する。
 
 DesktopのTauri command境界とLive HostのControl Serverの機能分担は次の通りである。
 
@@ -419,17 +422,17 @@ DesktopのTauri command境界とLive HostのControl Serverの機能分担は次�
 | レンダー・ジョブ                                                     | HostのRenderWorker                | `runtimeUnavailable`                                                                 |
 | ライブラリ・解析・Asset preview                                      | Hostのshared service              | `runtimeUnavailable`                                                                 |
 
-| 対象                | 契約                                                                                                                                                                                                                                                                             |
-| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 機能分担            | エディタ窓・ダイアログ・窓管理はDesktop shellに残り、open / 録音 / プレビュー / スキャン / ライブラリ・解析の実行はHost側を使う。エディタ由来の永続化はHost内の正準コミットで完結する                                                                                            |
-| Automation 読み取り | `automation.get`(0または1件のLane配列)・`automation.list`(任意 `owner` で絞り込み、省略時は全LaneをID順)・`automation.clear` は `target` を指定し、Canonical sequenceを変えない                                                                                                  |
-| Automation 書き込み | `automation.set` は `target`、`interpolation`、`points` でLane全体を置き換える。Pointの `value` は数値またはDevice用の表示文字列で、表示文字列はLive Hostが数値へ変換して正準状態には数値のみ保存する。`session.apply` も同じ契約で、変換・検証の失敗はBatch全体をコミットしない |
-| Render開始          | `render start` と `render.stems` は接続先Hostの `RenderWorker` でJobを開始しIDを返す。部分指定は音楽座標 `start` / `end` と任意 `trackId`、Stemsは `allTracks` または `trackIds` と共有 `range`(不正IDは開始前に拒否)。任意の出力先を指定でき、既存ファイルは上書きしない        |
-| Stems結果           | 全Stem生成後にだけJobへ設定される。共通開始・終了Tick、Sample Rate、フレーム数、各TrackのAsset ID・パスを含み、同じ内容を出力ディレクトリの `render.json` へ保存する。キャンセル・失敗が先に確定した場合は作成済みファイルとAsset登録を破棄する                                  |
-| Render管理          | `render.export` は完了済みRenderを指定先へコピー、`render.list` / `render.clean` は管理対象の一覧と、ほかから参照されていないものだけの削除(外部Export済みファイルは残す)。状態照会と停止は `job get` / `job cancel`                                                             |
-| 解析                | `analysis.start` は波形・RMS等を同期的に返し、`analysis.measure` は保存済みWAVの区間測定を非同期Jobで実行する(進捗・中止はJob契約)                                                                                                                                               |
-| Instrument MIDI     | `instrument.midi.get` はMIDI設定と現在のClip Noteへの警告を返し、`set` はBatch・Undo・Redoで扱える。演奏可能音域外でもMIDI 0〜127内のNoteは再生し、範囲外は送信しない                                                                                                            |
-| 同時実行制御        | `expectedSequence` は `render.start`、`render.stems`、`undo`、`redo` にも適用し、Conflict時は再Inspectしてやり直す。Revision tokenは同一 `AppCore` の有効期間内でのみ有効                                                                                                        |
+| 対象                | 契約                                                                                                                                                                                                                                                                                                                                                                            |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 機能分担            | エディタ窓・ダイアログ・窓管理はDesktop shellに残り、open / 録音 / プレビュー / スキャン / ライブラリ・解析の実行はHost側を使う。エディタ由来の永続化はHost内の正準コミットで完結する                                                                                                                                                                                           |
+| Automation 読み取り | `automation.get`(0または1件のLane配列)・`automation.list`(任意 `owner` で絞り込み、省略時は全LaneをID順)・`automation.clear` は `target` を指定し、Canonical sequenceを変えない                                                                                                                                                                                                 |
+| Automation 書き込み | `automation.set` は `target`、`interpolation`、`points` でLane全体を置き換える。Pointの `value` は数値またはDevice用の表示文字列で、表示文字列はLive Hostが数値へ変換して正準状態には数値のみ保存する。`session.apply` も同じ契約で、変換・検証の失敗はBatch全体をコミットしない                                                                                                |
+| Render開始          | `render start` と `render.stems` は接続先Hostの `RenderWorker` でJobを開始しIDを返す。部分指定は音楽座標 `start` / `end`、Scoreセクションの `section` / `occurrence`(1始まりの出現番号、保存済み `TimelineRegion` を範囲にする)、任意 `trackId`。Stemsは `allTracks` または `trackIds` と共有 `range`(不正IDは開始前に拒否)。任意の出力先を指定でき、既存ファイルは上書きしない |
+| Stems結果           | 全Stem生成後にだけJobへ設定される。共通開始・終了Tick、Sample Rate、フレーム数、各TrackのAsset ID・パスを含み、同じ内容を出力ディレクトリの `render.json` へ保存する。キャンセル・失敗が先に確定した場合は作成済みファイルとAsset登録を破棄する                                                                                                                                 |
+| Render管理          | `render.export` は完了済みRenderを指定先へコピー、`render.list` / `render.delete` は管理対象の一覧と、ほかから参照されていないものだけの削除(外部Export済みファイルは残す)。`render.json` は所有ファイル(Asset ID・パス)と基本情報だけを根拠とし、測定形式が合わない `measurements` は空にして `diagnostics` で知らせる。状態照会と停止は `job get` / `job cancel`              |
+| 解析                | `analysis.inspect` は波形・RMS等を同期的に返し、`analysis.measure` は保存済みWAVの区間測定を非同期Jobで実行する(進捗・中止はJob契約)                                                                                                                                                                                                                                            |
+| Instrument MIDI     | `instrument.midi.get` はMIDI設定と現在のClip Noteへの警告を返し、`set` はBatch・Undo・Redoで扱える。演奏可能音域外でもMIDI 0〜127内のNoteは再生し、範囲外は送信しない                                                                                                                                                                                                           |
+| 同時実行制御        | `expectedSequence` は `render.start`、`render.stems`、`history.undo`、`history.redo` にも適用し、Conflict時は再Inspectしてやり直す。Revision tokenは同一 `AppCore` の有効期間内でのみ有効                                                                                                                                                                                       |
 
 ---
 

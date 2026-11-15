@@ -53,6 +53,7 @@ jobs:
               - 'Cargo.lock'
               - 'crates/**'
               - 'apps/cli/**'
+              - 'apps/mcp/**'
               - '.github/workflows/ci.yml'
             tauri:
               - 'Cargo.toml'
