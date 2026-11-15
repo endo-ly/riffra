@@ -64,9 +64,9 @@ struct MidiEventRef final {
     const CompiledMidiEvent* event = nullptr;
     std::int64_t absoluteSample = 0;
     std::uint64_t absoluteTick = 0;
-    std::size_t clipOrder = 0;
+    std::uint64_t clipOrder = 0;
     std::uint64_t iteration = 0;
-    std::size_t eventOrder = 0;
+    std::uint64_t eventOrder = 0;
 };
 
 /// Compiles timeline MIDI once during graph preparation and schedules only the

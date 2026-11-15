@@ -21,8 +21,8 @@ void appendEvent(CompiledMidiClip& destination, const juce::MidiMessage& message
 // Playback and seek restoration share this order. Absolute time comes first, then the
 // prepared event type, absolute musical time, canonical clip order, loop iteration,
 // source order, and compiled order. No controller value or note number decides priority.
-using MidiOrderKey = std::tuple<std::int64_t, int, std::uint64_t, std::size_t, std::uint64_t,
-                                std::uint32_t, std::size_t>;
+using MidiOrderKey = std::tuple<std::int64_t, int, std::uint64_t, std::uint64_t, std::uint64_t,
+                                std::uint32_t, std::uint64_t>;
 
 MidiOrderKey midiOrderKey(const MidiEventRef& ref) noexcept {
     return {ref.absoluteSample, ref.event->ordering,    ref.absoluteTick, ref.clipOrder,
@@ -490,8 +490,10 @@ void MidiScheduler::schedule(const std::vector<CompiledMidiClip>& clips,
                         clip.startTick +
                         static_cast<std::uint64_t>(currentIteration) * clip.durationTicks +
                         event.originalTick;
-                    consider({&event, absoluteSample, absoluteTick, clipOrder,
-                              static_cast<std::uint64_t>(currentIteration), eventOrder});
+                    consider({&event, absoluteSample, absoluteTick,
+                              static_cast<std::uint64_t>(clipOrder),
+                              static_cast<std::uint64_t>(currentIteration),
+                              static_cast<std::uint64_t>(eventOrder)});
                 }
             };
             if (clip.loop) {
@@ -571,8 +573,10 @@ void MidiScheduler::schedule(const std::vector<CompiledMidiClip>& clips,
                     event->originalTick;
                 const auto offset = static_cast<int>(absoluteSample - rangeStart);
                 if (!event->instrumentEvent && offset >= 0 && offset < sampleCount)
-                    eventRefs.push_back({&*event, absoluteSample, absoluteTick, clipOrder,
-                                         static_cast<std::uint64_t>(iteration), eventOrder});
+                    eventRefs.push_back({&*event, absoluteSample, absoluteTick,
+                                         static_cast<std::uint64_t>(clipOrder),
+                                         static_cast<std::uint64_t>(iteration),
+                                         static_cast<std::uint64_t>(eventOrder)});
             }
             if (!clip.loop) break;
         }
