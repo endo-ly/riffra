@@ -1,11 +1,11 @@
-mod emit;
+pub(crate) mod emit;
 pub(crate) mod events;
 mod lower;
 mod parse;
 pub(super) mod production;
 mod resolve;
 pub(super) mod syntax;
-mod time;
+pub(crate) mod time;
 
 use std::collections::BTreeMap;
 
@@ -390,6 +390,18 @@ impl ScorePlan {
         section.bar_start_ticks[bar - 1]
             + time::tick(&position.offset, self.ticks_per_beat).expect("validated position")
     }
+}
+
+/// Parses a Score document into its YAML value without compiling it.
+///
+/// The value keeps the document's own text forms, including quantities that
+/// the reader stores as strings. Callers use it to retain declarations that
+/// the expanded plan does not carry.
+///
+/// # Errors
+/// Returns a source-located error for invalid syntax or structure.
+pub(crate) fn parse_document(text: &str) -> Result<Value> {
+    parse::parse(text, &mut Source::default())
 }
 
 /// Parse, validate, and expand Score YAML into a musical plan.

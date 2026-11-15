@@ -65,7 +65,7 @@ pub(super) fn note(token: &str) -> Result<NoteToken<'_>> {
     })
 }
 
-pub(super) fn degree(token: &str) -> Result<i32> {
+pub(crate) fn degree(token: &str) -> Result<i32> {
     let bytes = token.as_bytes();
     let mut index = 0;
     let mut accidental = 0;
