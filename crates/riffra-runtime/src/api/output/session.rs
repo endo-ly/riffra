@@ -9,6 +9,49 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use ts_rs::TS;
 
+/// Scheduled canonical control values at musical grid positions.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct AutomationEvaluation {
+    pub target: riffra_core::AutomationTarget,
+    pub unit: AutomationValueUnit,
+    pub sample_rate: u32,
+    pub interpolation: AutomationEvaluationInterpolation,
+    pub points: Vec<AutomationEvaluationPoint>,
+}
+
+/// Unit of a scheduled control value.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, TS)]
+#[serde(rename_all = "lowercase")]
+pub enum AutomationValueUnit {
+    Db,
+    Pan,
+    Normalized,
+}
+
+/// Interpolation applied to the scheduled values.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum AutomationEvaluationInterpolation {
+    Static,
+    Step,
+    Linear,
+    LinearAmplitude {
+        #[serde(rename = "durationSeconds")]
+        duration_seconds: f64,
+    },
+}
+
+/// One scheduled value at an absolute musical and sample position.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct AutomationEvaluationPoint {
+    pub position: MusicalPosition,
+    pub tick: u64,
+    pub sample: u64,
+    pub value: f64,
+}
+
 /// Result of a canonical Arrangement mutation and its best-effort runtime
 /// projection.
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]

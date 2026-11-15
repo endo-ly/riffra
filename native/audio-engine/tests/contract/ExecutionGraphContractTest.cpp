@@ -116,6 +116,39 @@ TEST(ExecutionGraphContractTest, ValidatesDistinctStemOutputs) {
     EXPECT_TRUE(error.contains("unique")) << error;
 }
 
+TEST(ExecutionGraphContractTest, ValidatesCaptureTargetsAndDestinations) {
+    OfflineRenderRequestSpec shared;
+    juce::String sharedError;
+    ASSERT_TRUE(
+        decodeOfflineRenderRequest(fixture("offline-capture-request.json"), shared, sharedError))
+        << sharedError;
+    ASSERT_EQ(shared.captures.size(), 3u);
+    EXPECT_EQ(shared.captures[0].target.id, "track-audio");
+    auto request = fixture("offline-render-request.json");
+    request.getDynamicObject()->setProperty("normalize", false);
+    request.getDynamicObject()->setProperty(
+        "output",
+        juce::JSON::parse(
+            R"({"kind":"capture","outputs":[{"target":{"kind":"track","id":"a"},"destination":"a.wav"},{"target":{"kind":"bus","id":"b"},"destination":"b.wav"},{"target":{"kind":"master"},"destination":"master.wav"}]})"));
+    OfflineRenderRequestSpec decoded;
+    juce::String error;
+    ASSERT_TRUE(decodeOfflineRenderRequest(request, decoded, error)) << error;
+    ASSERT_EQ(decoded.captures.size(), 3u);
+    EXPECT_EQ(decoded.captures[1].target.kind, OfflineCaptureKind::bus);
+    request.getDynamicObject()->setProperty(
+        "output",
+        juce::JSON::parse(
+            R"({"kind":"capture","outputs":[{"target":{"kind":"master","id":"invalid"},"destination":"master.wav"}]})"));
+    error.clear();
+    EXPECT_FALSE(decodeOfflineRenderRequest(request, decoded, error));
+    request.getDynamicObject()->setProperty(
+        "output",
+        juce::JSON::parse(
+            R"({"kind":"capture","outputs":[{"target":{"kind":"bus","id":"b"},"destination":"a.wav"},{"target":{"kind":"bus","id":"b"},"destination":"b.wav"}]})"));
+    error.clear();
+    EXPECT_FALSE(decodeOfflineRenderRequest(request, decoded, error));
+}
+
 TEST(ExecutionGraphContractTest, RejectsMissingAndUnknownKeysAtEveryObjectDepth) {
     const auto full = fixture("timeline-snapshot-full.json");
     const std::vector<JsonPath> objects{

@@ -128,17 +128,23 @@ fn run(cli: Cli) -> Result<(), RunFailure> {
         }) => Some((args.job.id().to_owned(), args.timeout_ms)),
         _ => None,
     };
-    let render_wait = match cli.command.as_ref() {
+    let job_auto_wait = match cli.command.as_ref() {
         Some(CliCommand::Render {
             command: args::RenderCommand::Start(args),
         }) => args.wait,
         Some(CliCommand::Render {
             command: args::RenderCommand::Stems(args),
         }) => args.wait,
+        Some(CliCommand::Render {
+            command: args::RenderCommand::Capture(args),
+        }) => args.wait,
+        Some(CliCommand::Analysis {
+            command: args::AnalysisCommand::Levels(args),
+        }) => args.wait,
         _ => false,
     };
-    if render_wait && !attach {
-        return Err("render --wait requires --attach".into());
+    if job_auto_wait && !attach {
+        return Err("--wait requires --attach".into());
     }
     if is_host_list {
         if interactive {
@@ -227,7 +233,7 @@ fn run(cli: Cli) -> Result<(), RunFailure> {
             expected_sequence,
             None,
         )?;
-        if render_wait && response.ok {
+        if job_auto_wait && response.ok {
             let job_id = match response
                 .result
                 .clone()
@@ -235,9 +241,11 @@ fn run(cli: Cli) -> Result<(), RunFailure> {
             {
                 Some(ControlOutput::Job(Some(
                     BackgroundJobStatus::Render { id, .. }
-                    | BackgroundJobStatus::RenderStems { id, .. },
+                    | BackgroundJobStatus::RenderStems { id, .. }
+                    | BackgroundJobStatus::RenderCapture { id, .. }
+                    | BackgroundJobStatus::AnalysisLevels { id, .. },
                 ))) => id,
-                _ => return Err("render response did not contain a job".into()),
+                _ => return Err("response did not contain the expected job".into()),
             };
             return wait_and_write_job(&attached, &job_id, None);
         }

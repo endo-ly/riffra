@@ -27,8 +27,12 @@ pub enum JobKind {
     Render,
     /// A single job that produces several aligned Track stems.
     RenderStems,
+    /// Captures multiple mix outputs in a single offline render.
+    RenderCapture,
     /// Measures existing WAV files without editing a Project.
     AnalysisMeasure,
+    /// Measures saved Render audio on a musical grid.
+    AnalysisLevels,
 }
 
 /// Typed view of a background job, produced from the job registry at the IPC
@@ -58,6 +62,13 @@ pub enum BackgroundJobStatus {
         message: String,
         result: Option<RenderStemsResult>,
     },
+    RenderCapture {
+        id: String,
+        state: JobState,
+        progress: Option<f32>,
+        message: String,
+        result: Option<RenderCaptureResult>,
+    },
     AnalysisMeasure {
         id: String,
         state: JobState,
@@ -65,6 +76,48 @@ pub enum BackgroundJobStatus {
         message: String,
         result: Option<AnalysisMeasureResult>,
     },
+    AnalysisLevels {
+        id: String,
+        state: JobState,
+        progress: Option<f32>,
+        message: String,
+        result: Option<AnalysisLevelsResult>,
+    },
+}
+
+/// RMS and sample peak windows for every selected Render source.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalysisLevelsResult {
+    pub render_id: String,
+    pub grid: riffra_core::MusicalDuration,
+    pub sample_rate: u32,
+    pub start: riffra_core::MusicalPosition,
+    pub end: riffra_core::MusicalPosition,
+    pub start_tick: u64,
+    pub end_tick: u64,
+    pub sources: Vec<AnalysisLevelsSource>,
+}
+
+/// One Render source and its aligned measurement windows.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalysisLevelsSource {
+    pub source: crate::api::params::LevelSource,
+    pub windows: Vec<AnalysisLevelWindow>,
+}
+
+/// Measurements of one half-open musical window; silence is represented by null.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalysisLevelWindow {
+    pub start: riffra_core::MusicalPosition,
+    pub end: riffra_core::MusicalPosition,
+    pub start_tick: u64,
+    pub end_tick: u64,
+    pub frames: u64,
+    pub rms_dbfs: Option<f64>,
+    pub peak_dbfs: Option<f64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
@@ -127,6 +180,35 @@ pub struct RenderStemsResult {
     pub skipped_track_ids: Vec<String>,
 }
 
+/// One post-processing output captured from an offline render.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct RenderCapture {
+    pub target: crate::api::params::CaptureTarget,
+    pub name: String,
+    pub bus_kind: Option<riffra_core::MixBusKind>,
+    pub asset_id: AssetId,
+    pub path: String,
+    pub measurements: AudioMeasurements,
+    pub warnings: Vec<String>,
+}
+
+/// Aligned post-processing outputs from one canonical arrangement snapshot.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct RenderCaptureResult {
+    pub render_id: String,
+    pub project_id: String,
+    pub created_at_ms: u64,
+    pub source_sequence: u64,
+    pub sample_rate: u32,
+    pub start_tick: u64,
+    pub end_tick: u64,
+    pub frames: u64,
+    pub captures: Vec<RenderCapture>,
+    pub exported_directory: Option<String>,
+}
+
 /// Result of copying an existing Render without changing its internal files.
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -143,6 +225,7 @@ pub struct RenderExportResult {
 pub enum RenderKind {
     Timeline,
     Stems,
+    Capture,
     Unknown,
 }
 

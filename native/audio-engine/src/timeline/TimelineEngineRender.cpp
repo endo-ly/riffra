@@ -238,7 +238,8 @@ void TimelineEngine::processTracks(PreparedTimeline& prepared,
                    transportGainStart, transportGainStep, true});
         mixSidechainStage(prepared, static_cast<int>(stageIndex), rangeStart, sampleCount, true);
     }
-    for (auto& capture : stemCaptures) {
+    for (auto& capture : outputCaptures) {
+        if (capture->track == nullptr) continue;
         capture->scratch.clear(0, sampleCount);
         capture->delay.add(capture->track->trackOutputBuffer, capture->scratch, sampleCount, 1.0f,
                            !capture->track->muted, false);
@@ -553,6 +554,14 @@ void TimelineEngine::mixProductionOutput(PreparedTimeline& prepared, float* cons
     for (auto& bus : mixer.buses) bus->input.clear(0, sampleCount);
     for (auto& route : mixer.trackRoutes) route->mix(sampleCount, rangeStart, playing);
     pool->runMixer(mixer.parallelChannels, sampleCount, rangeStart, playing, prepared);
+    for (auto& capture : outputCaptures) {
+        if (capture->bus == nullptr) continue;
+        capture->scratch.clear(0, sampleCount);
+        capture->delay.add(capture->bus->output, capture->scratch, sampleCount, 1.0f, true, false);
+        for (int channel = 0; channel < 2; ++channel)
+            capture->output.copyFrom(channel, destinationStart, capture->scratch, channel, 0,
+                                     sampleCount);
+    }
     for (auto& route : mixer.busRoutes) route->mix(sampleCount, rangeStart, playing);
     const auto position = prepared.transportAt(rangeStart - mixer.masterInputLatency, playing);
     mixer.masterEffects->process(
@@ -685,7 +694,7 @@ void TimelineEngine::mix(float* const* outputChannels, const int channelCount,
 void TimelineEngine::mix(const float* const* inputChannels, const int inputChannelCount,
                          float* const* outputChannels, const int channelCount,
                          const int sampleCount) noexcept {
-    for (auto& capture : stemCaptures) capture->output.clear(0, sampleCount);
+    for (auto& capture : outputCaptures) capture->output.clear(0, sampleCount);
     mixActiveGraph(inputChannels, inputChannelCount, outputChannels, channelCount, sampleCount);
     publishFrame(realtime);
 }

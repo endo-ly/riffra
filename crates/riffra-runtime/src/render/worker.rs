@@ -2,7 +2,8 @@
 
 use crate::audio::wire::{OfflineRenderEnvelope, RenderMessage, SIDECAR_PROTOCOL_VERSION};
 use crate::execution::{
-    OfflineRenderOutput, OfflineRenderRequest as OfflineRenderRequestSpec, OfflineStemOutput,
+    OfflineCaptureOutput, OfflineRenderOutput, OfflineRenderRequest as OfflineRenderRequestSpec,
+    OfflineStemOutput,
 };
 use crate::render::{OfflineRenderRequest, OfflineRenderTarget};
 use std::{
@@ -98,6 +99,15 @@ impl RenderWorker {
                             .into_iter()
                             .map(|(track_id, destination)| OfflineStemOutput {
                                 track_id,
+                                destination: destination.to_string_lossy().into_owned(),
+                            })
+                            .collect(),
+                    },
+                    OfflineRenderTarget::Captures(outputs) => OfflineRenderOutput::Capture {
+                        outputs: outputs
+                            .into_iter()
+                            .map(|(target, destination)| OfflineCaptureOutput {
+                                target,
                                 destination: destination.to_string_lossy().into_owned(),
                             })
                             .collect(),
