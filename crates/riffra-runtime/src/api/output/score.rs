@@ -349,3 +349,27 @@ pub struct ScoreSyncStatus {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub diagnostics: Vec<ScoreDiagnostic>,
 }
+
+/// One part of a Session that the exported Score cannot express.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ScoreExportOmission {
+    /// Session object that was not exported, such as `track "Lead" / clip "Verse"`.
+    pub subject: String,
+    /// Why the Score cannot express it.
+    pub message: String,
+}
+
+/// Result of writing the active Project as a Score song folder.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ScoreExport {
+    /// Absolute path of the written `score.yaml`.
+    pub path: String,
+    /// Session content the Score cannot express.
+    pub omissions: Vec<ScoreExportOmission>,
+    /// Synchronization result when linking was requested.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub link: Option<ScoreRebuild>,
+}

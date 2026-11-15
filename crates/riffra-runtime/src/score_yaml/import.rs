@@ -1032,18 +1032,57 @@ pub(crate) fn rebuild(
     scanner: &Path,
     sonalloy: &Path,
 ) -> Result<ScoreOutcome, ImportError> {
-    rebuild_with_probe(
-        RebuildInput {
-            previous,
-            path,
-            bindings,
-            data_root,
-            catalog,
-            scanner,
-            sonalloy,
-        },
-        &crate::plugins::validation::describe_parameters,
-    )
+    rebuild_input(RebuildInput {
+        previous,
+        path,
+        bindings,
+        data_root,
+        catalog,
+        scanner,
+        sonalloy,
+        allow_unlinked: false,
+    })
+}
+
+/// Links a Project to a Score file that becomes its new source of truth.
+///
+/// A Project that already links a Score file is refused because that file owns
+/// the Score-determined state.
+///
+/// # Errors
+/// Returns structured diagnostics for Score, source, and instrument failures.
+pub(crate) fn link(
+    previous: &CreativeSession,
+    path: &Path,
+    data_root: &Path,
+    catalog: &BuiltInInstrumentCatalog,
+    scanner: &Path,
+    sonalloy: &Path,
+) -> Result<ScoreOutcome, ImportError> {
+    if previous
+        .score_source
+        .as_ref()
+        .is_some_and(|source| source.path.is_some())
+    {
+        return Err(ImportError::from(
+            "the active Project is already linked to a Score file".to_string(),
+        ));
+    }
+    let bindings = BTreeMap::new();
+    rebuild_input(RebuildInput {
+        previous,
+        path: Some(path),
+        bindings: &bindings,
+        data_root,
+        catalog,
+        scanner,
+        sonalloy,
+        allow_unlinked: true,
+    })
+}
+
+fn rebuild_input(input: RebuildInput<'_>) -> Result<ScoreOutcome, ImportError> {
+    rebuild_with_probe(input, &crate::plugins::validation::describe_parameters)
 }
 
 struct RebuildInput<'a> {
@@ -1054,6 +1093,7 @@ struct RebuildInput<'a> {
     catalog: &'a BuiltInInstrumentCatalog,
     scanner: &'a Path,
     sonalloy: &'a Path,
+    allow_unlinked: bool,
 }
 
 fn rebuild_with_probe(
@@ -1068,23 +1108,38 @@ fn rebuild_with_probe(
         catalog,
         scanner,
         sonalloy,
+        allow_unlinked,
     } = input;
-    let source = previous.score_source.as_ref().ok_or_else(|| {
-        ImportError::from("the active Project is not linked to a Score".to_string())
-    })?;
+    let source = match previous.score_source.as_ref() {
+        Some(source) => Some(source),
+        None if allow_unlinked => None,
+        None => {
+            return Err(ImportError::from(
+                "the active Project is not linked to a Score".to_string(),
+            ));
+        }
+    };
     let path = match path {
         Some(path) => path.to_path_buf(),
-        None => source.path.as_ref().map(PathBuf::from).ok_or_else(|| {
-            ImportError::from(
-                "the active Project has no linked Score file; rebuild it with --path".to_string(),
-            )
-        })?,
+        None => source
+            .and_then(|source| source.path.as_ref())
+            .map(PathBuf::from)
+            .ok_or_else(|| {
+                ImportError::from(
+                    "the active Project has no linked Score file; rebuild it with --path"
+                        .to_string(),
+                )
+            })?,
     };
     let mut effective: BTreeMap<String, PathBuf> = source
-        .bindings
-        .iter()
-        .map(|(id, path)| (id.clone(), PathBuf::from(path)))
-        .collect();
+        .map(|source| {
+            source
+                .bindings
+                .iter()
+                .map(|(id, path)| (id.clone(), PathBuf::from(path)))
+                .collect()
+        })
+        .unwrap_or_default();
     effective.extend(bindings.iter().map(|(id, path)| (id.clone(), path.clone())));
     let mut document = read_with_probe(
         ReadInput {
@@ -1119,7 +1174,7 @@ fn rebuild_with_probe(
         .as_ref()
         .is_none_or(|source| source.production_inputs != document.production_inputs);
     Ok(ScoreOutcome {
-        changed: !previous.score_performance_equals(&session),
+        changed: allow_unlinked || !previous.score_performance_equals(&session),
         link_changed: link_changed(previous, &session),
         inputs_changed,
         session,
@@ -2003,6 +2058,48 @@ fn read_with_probe(
         production_inputs,
         dependencies,
     })
+}
+
+/// Builds a Session from a Score file for tests that do not probe plugins.
+#[cfg(test)]
+pub(super) fn session_from_score(
+    yaml: &str,
+    directory: &Path,
+    data_root: &Path,
+    catalog: &BuiltInInstrumentCatalog,
+) -> CreativeSession {
+    std::fs::create_dir_all(directory).unwrap();
+    let path = directory.join("score.yaml");
+    std::fs::write(&path, yaml).unwrap();
+    let bindings = BTreeMap::new();
+    let explicit = BTreeSet::new();
+    let mut document = read_with_probe(
+        ReadInput {
+            path: &path,
+            bindings: &bindings,
+            explicit: &explicit,
+            data_root,
+            catalog,
+            scanner: Path::new("unused"),
+            sonalloy: Path::new("unused"),
+            previous: None,
+        },
+        &|_, plugin, displays| {
+            assert!(displays.is_empty());
+            Ok(serde_json::from_value(json!({
+                "type": "pluginParameters",
+                "path": plugin.path,
+                "parameters": [],
+                "parameterValues": [],
+                "conversions": []
+            }))
+            .unwrap())
+        },
+    )
+    .unwrap();
+    let store = UserInstrumentStore::new(data_root, Path::new("unused"));
+    let mut staged = StagedResources::new(data_root);
+    build(&mut document, None, &store, &mut staged, BuildMode::Stage).unwrap()
 }
 
 /// How a Score build treats resources that outlive the candidate Session.
@@ -5400,6 +5497,7 @@ mod tests {
                 catalog,
                 scanner: Path::new("unused"),
                 sonalloy: Path::new("unused"),
+                allow_unlinked: false,
             },
             &describe,
         )
