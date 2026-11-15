@@ -458,6 +458,15 @@ TEST(MidiSchedulerTest, RestoresVst3ControlStateAfterSeek) {
     juce::MidiBuffer resumed;
     MidiScheduler::schedule({compiled}, 5, 1, resumed, false);
     EXPECT_EQ(resumed.getNumEvents(), 0);
+
+    juce::MidiBuffer afterEnd;
+    MidiScheduler::schedule({compiled}, 16, 1, afterEnd, true);
+    std::vector<juce::MidiMessage> afterEndMessages;
+    for (const auto metadata : afterEnd) afterEndMessages.push_back(metadata.getMessage());
+    EXPECT_FALSE(
+        std::any_of(afterEndMessages.begin(), afterEndMessages.end(), [](const auto& message) {
+            return message.isNoteOnOrOff() && message.getNoteNumber() == 24;
+        }));
 }
 
 TEST(MidiSchedulerTest, RestoresMidiControlsByAbsoluteTimeAcrossOverlappingClips) {

@@ -463,7 +463,6 @@ void MidiScheduler::schedule(const std::vector<CompiledMidiClip>& clips,
                 const auto start = clip.startSample + currentIteration * clip.lengthSamples;
                 for (const auto& event : clip.events) {
                     if (prefix && event.sampleOffset >= phase) break;
-                    if (!prefix && phase == 0 && event.sampleOffset == clip.lengthSamples) break;
                     const auto absoluteSample = start + event.sampleOffset;
                     if (absoluteSample >= rangeStart) break;
                     const auto absoluteTick =
