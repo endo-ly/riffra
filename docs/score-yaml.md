@@ -813,7 +813,7 @@ riffra score inspect ./song.yaml
 ```
 
 `score validate` は文法・構造・楽器参照・VST3・State・Patch・パラメーター・キット・音声・ミックス・オートメーションを診断し、`valid` と展開サマリーを返す。`valid` は error が 0 件のときに true となり、warning だけでは import / rebuild を止めない。
-`score inspect` は展開済みのセクション・楽器・レーン・トラック・キット・エフェクト・バス・Send・Sidechain・オートメーション・音声クリップを返す。`--events` を指定すると、各イベントと奏法・CC制御を来源位置つきで返す。
+`score inspect` は展開済みのセクション・楽器・レーン・トラック・キット・エフェクト・バス・Send・Sidechain・オートメーション・音声クリップを返す。`--events` を指定すると、各イベントと奏法・CC制御を来源位置つきで返す。奏法・CC制御の`section`・`occurrence`・`bar`・`step`は宣言元イベントの位置、`tick`・`atQuarters`はキースイッチの先行送信を含む実際の送信位置である。
 
 どちらも Project・Session・音源スナップショット・永続 Audio Asset を作らない。参照ファイルの読み込みと、分離された plugin-scanner による一時的なパラメーター照会は行う。プラグイン未インストール、State の不正、音声範囲超過、ミックスの循環、オートメーションの不正はエラーになる。
 診断は `error` / `warning` の severity、YAML の項目パス、行・列、根拠のファイルを持つ。通常 VST3 の楽器で追加ゲインレーンが増える場合は warning を出し、演奏は止めない。
