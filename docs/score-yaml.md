@@ -146,6 +146,8 @@ instruments:
 
 `voicing_floor_midi` / `voicing_ceiling_midi` は和音の配置に使う**技術的な範囲**であり、旋律の音符記法ではない。コード構成音は度数から決め、その音域配置だけをMIDIノート番号で指定する。
 
+内蔵音源の`preset`が推奨音域を持つ場合、`score validate`と`score inspect`は展開後の音楽ノートがその範囲を外れたときにwarningを返す。音符の音高は変更しない。同じ楽器の複数音符は1件のwarningへまとめ、範囲と代表音高・件数を示す。ドラムのTrigger Note、キースイッチ、音声トラック、VST3音源、推奨音域を持たない音源は対象外である。
+
 ### 基準音・音域の選択・主音の上書き
 
 旋律素材と`placements`の度数は、**基準音**からの度数として音高になる。
@@ -505,13 +507,15 @@ form:
 | `mod_wheel`        | `instrument`, `value`                                                                                                             | 0～1。                                                                                                      |
 | `aftertouch`       | `instrument`, `value`                                                                                                             | 0～1。                                                                                                      |
 | `parameter_change` | `instrument`, `parameter`, `native_value`                                                                                         | 音源ParameterのNative値に設定。                                                                             |
+| `articulation`     | `instrument`, `name`, `duration_steps`または`duration_quarters`                                                                   | `source.articulations`で宣言した奏法の区間。VST3へキースイッチまたはCCを送る。                              |
+| `cc`               | `instrument`, `number`, `value`                                                                                                   | VST3へ送る単発のMIDI Control Change。`number`と`value`は0～127。                                            |
 | `automation`       | `instrument`, `parameter`または`control`, `from_value`, `to_value`, `duration_steps`または`duration_quarters`                     | 音源Parameterまたは演奏コントロールの線形変化。                                                             |
 
 - `silence`は指定した小節区間のNote Onを抑制し、境界にまたがるNoteの音価を切断する。演奏制御とParameter Rampには作用しない。Release音・Reverb・External Audioの残響まで完全ミュートする意味ではない。
 - `part_window`の`bars: [start, end]`は**1始まりの小節番号**であり、`start`と`end`の両小節を含む。`bars: [2, 3]`は2小節目と3小節目の両方を対象とし、`last`は最後の小節、端数小節（`last_bar_quarters`で短くなった小節）も通常の1小節として数える。内部では、開始小節の先頭から終了小節の末尾までを`[開始時刻, 終了時刻)`の半開区間として扱う。
 - `part_window`は対象楽器の、そのセクション内で始まるNote Onと点の演奏制御を半開区間`[start,end)`に限定する。前のセクションで始まり当該セクションへ持続するNoteは、このセクションの窓では変更しない。窓に含まれるNoteの音価が終端を越える場合は境界で切断し、点の演奏制御は区間内のイベントだけを残す。区間開始では以前の状態をニュートラル値またはParameter定義の既定値へ戻し、区間終端でも同じ既定状態へ戻して状態を後続セクションへ漏らさない。窓をまたぐParameter Rampは許可区間との交差部分へ切り詰め、両端値を元の線形Rampから補間する。窓が空の場合はセクション中に制御を残さない。同じ楽器・セクションへ複数の窓を指定した場合は許可区間の共通部分を使う。
 - `dynamics`は強弱の流れを書く。`from`と`to`は-126～126の整数で、区間`[at, at+長さ)`で始まる対象楽器の全音符（全Lane、ドラム・ロールを含む）に、開始時刻で線形補間した値を加算する。区間の終端で`to`となる直線を使い、整数への丸めは`round half away from zero`とする。加算後のVelocityが1～127の外になればエラー。区間はセクション内に収め、同じ楽器への`dynamics`の区間が重なればエラー。音符ごとのVelocityの差（`@`、アクセント）は保たれる。
-- `automation`は`parameter`と`control`のどちらか一方を指定する。`parameter`は音源Parameterの既存Parameter Rampと同じ正規化空間で線形補間する。`control`は`mod_wheel`・`aftertouch`（値0～1）、`pitch_bend`（値−1～1）のいずれかで、`at`から1/64四分音符ごとと区間終端に、線形補間した点の制御イベントを生成する。音源側でこれらのコントロールを音量や音色に割り当てると、長い音の中の息のふくらみなど、音符の中の変化を書ける。区間内に同じ楽器・同じコントロールの別の制御があればエラー。
+- `automation`は`parameter`と`control`のどちらか一方を指定する。`parameter`は音源Parameterの既存Parameter Rampと同じ正規化空間で線形補間する。`control`は`mod_wheel`・`aftertouch`（値0～1）、`pitch_bend`（値−1～1）、または`cc:N`（Nは0～127、値は0～127の整数）である。`at`から1/64四分音符ごとと区間終端に、線形補間した点の制御イベントを生成し、整数へ丸めたうえで同じ値の連続送信を省く。`cc:N`はVST3音源・キットだけを対象とし、それ以外の`control`は従来どおり内蔵音源の演奏制御として扱う。区間内に同じ楽器・同じコントロールの別の制御があればエラー。
 - 同一楽器・同時刻の`drum_roll`/`step_roll`と通常ドラム打撃が衝突すればロールが勝つ。**ロール同士**、同一Parameterへの異なる値・重複矛盾、複数の同一楽器Overrideが重なればエラー。
 - Note、Sustain、Bend、Wheel、Aftertouch、ParameterなどのEventが同時刻に起きる場合は、ソース定義順を保持し、Note Off→Control→Note Onの基本優先順位を適用する。
 - 展開は、パターン・旋律・配置・イベントの生成、ロールの優先、`silence`と`part_window`、`dynamics`、楽器ごとの`timing_offset_steps`の順に行う。
@@ -523,6 +527,7 @@ form:
 
 - MIDI Noteは0～127、Velocityは1～127。内蔵音源は Generator の Key / Velocity Trigger と照合し、発音可能な Layer がなければエラーにする。VST3 はプラグイン自体が発音範囲を決める。シンセによっては音程と無関係の Trigger Note が必要になる。
 - 内蔵音源に対する `parameter_change` / `automation` の Parameter ID はその音源定義に存在し、Native 値は範囲内の有限数とする。Mod Wheelなどのレンダラー標準演奏操作と、音源固有Parameterの対象は区別する。
+- `sustain_pedal`、`pitch_bend`、`mod_wheel`、`aftertouch`、`parameter_change`、および`control`が`mod_wheel`・`aftertouch`・`pitch_bend`の`automation`は内蔵音源の演奏制御である。VST3音源・キットではこれらを実行せず、Score検証時にエラーにする。VST3には`articulation`、`cc`、`automation.control: "cc:N"`だけを送る。
 
 ## 制作の記述
 
@@ -550,7 +555,7 @@ instruments:
       velocity: [[1, 18], [64, 68], [127, 120]]
 ```
 
-`source` の有効フィールドは `vst3` と `velocity`。`vst3` は必須の `plugin` と、任意の `identifier`、`state`、`patch`、`params` を持つ。
+`source` の有効フィールドは `vst3`、`velocity`、`articulations`。`vst3` は必須の `plugin` と、任意の `identifier`、`state`、`patch`、`params` を持つ。
 
 - `plugin` は検証済み VST3 カタログ上の正確なプラグイン名。`identifier` は同じ VST3 クラスへ絞り込む
 - `state` は `PluginStateSnapshot` 形式の JSON。`schemaVersion: 2`、`pluginIdentifier`、`pluginPath`、`parameterValues`、`stateData` を持つ。識別は `pluginIdentifier` で行い、`pluginPath` は取得時の実行パスとして扱う。現在のカタログで同じ識別子のプラグインを選び、その実行パスを使う
@@ -582,6 +587,48 @@ kits:
 部品の演奏は 1 つの Kit Track、1 つの MIDI クリップ、1 つの VST3 インスタンスへ集約する。部品ごとに Instrument Device やトラックを作らない。`trigger_note_midi` は部品が送る出力 MIDI ノートであり、部品にはドラムなどのトリガー由来の Note だけを書ける。音高付きの旋律・和音や、ParameterChange などの制御イベントはエラーになる。複数の部品が同じトリガー番号を使うことは許容する。
 
 部品の `gain_db` / `pan` は Sonalloy の音作りに残し、Riffra の個別音量には適用しない。キット全体のゲイン・パンは `mix.tracks.<kit>` に書く。部品ごとの追加ゲインレーン（`part_gains`、`lines.*.gain_db`、`placements[].gain_db` など）はエラーになる。キットの `source.velocity` は集約後のノートへ共通適用する。
+
+### 奏法制御
+
+本番音源の`source.articulations`は、Score上の奏法名を1つのVST3制御へ対応付ける。製品名や固定の奏法語彙へ依存せず、曲ごとに定義する。`instruments.<id>.articulations`の`^`・`!`・`_`による音価・Velocity調整とは別の指定である。
+
+```yaml
+instruments:
+  bass:
+    source:
+      vst3: { plugin: Example Instrument }
+      articulations:
+        default: { keyswitch: 24, mode: latch }
+        mute: { keyswitch: 26, mode: latch }
+        dead: { keyswitch: 27, mode: hold }
+        harmonic: { cc: { number: 68, value: 127, reset: 0 } }
+
+sections:
+  verse:
+    events:
+      - {
+          kind: articulation,
+          instrument: bass,
+          name: mute,
+          at: { bar: 1, step: 1 },
+          duration_quarters: 2,
+        }
+      - { kind: cc, instrument: bass, number: 11, value: 96, at: { bar: 1, step: 9 } }
+```
+
+奏法名は`source.articulations`で宣言した名前だけを受理し、`default`は復帰先としてのみ使う。各定義は`keyswitch`と`mode`、または`cc`のどちらか一方を持つ。
+
+- `keyswitch`は0～127のMIDIノート。`mode: hold`は区間中押し続けて終端でNote Off、`mode: latch`は短いNote On/Off（常にNote On→Note Offの順で、サンプル上も正の長さ）で選択し、次のキースイッチが選択を置き換えない区間終端で`default`を選び直す。同じTickに`default`復帰と次のキースイッチ選択が重なる場合は、復帰を先に送る
+- `cc`は`number`・`value`・`reset`を0～127で持ち、区間開始時に`value`、終端に`reset`を送る
+- `default`は`latch`のキースイッチ定義に限る。`latch`の奏法を1つでも定義する場合は必須
+- 奏法区間は`[開始, 終端)`の半開区間で、正の長さを持つ。キースイッチは区間開始の1/32四分音符前（曲頭ではTick 0）に送り、通常のNote Onより先に届くようにする。ただし同じ実体音源の直前の奏法区間の終了が開始の1/32前より後なら、その終了Tickまで押下を遅らせ、前区間の末尾のNoteを先取りしない。完全隣接では境界Tickに送る。`hold`は境界で解除する
+- 同じ実体音源の異なる奏法区間が重なればエラー、隣接は有効とする。隣接する区間では、後続が同じキースイッチ選択を継続する場合は再押下と`default`復帰を挟まない。後続が異なるキースイッチなら先行を解除して次の選択へ切り替え、後続がCCなら`latch`を`default`へ戻す。同じCC番号が連続する場合はリセットを挟まず次の値を送る
+- 複数のゲインレーンを持つ楽器は、すべての既存レーンへ同じ制御を送る。制御のためだけの追加TrackやVST3は作らない
+- キットは1つのVST3インスタンスを共有するため、制御イベントの`instrument`にはキットIDを指定する。部品IDを指定した制御はエラー
+- 音声トラック、内蔵音源だけの楽器、キット部品への`articulation`・`cc`・`control: "cc:N"`はエラー。キット部品への`mod_wheel`・`sustain_pedal`などの従来の演奏制御も、同じVST3実体を共有するため解析時に拒否する
+- `latch`を使う音源は、曲頭で別のキースイッチ奏法が始まらない限り`default`を選択してから始める
+- 曲末に終端が一致する場合は、復帰のためだけに曲やMIDIクリップの長さを延ばさない。後続演奏のない曲末の`default`パルスは省略し、次回の再生は既定状態から始める
+- 途中からの再生・シークでは、押下中の`hold`、最後に選択した`latch`、最後のCC値をPrepared MIDIから再構成して1回だけ送る
 
 ### エフェクト
 
@@ -715,6 +762,47 @@ sections:
 
 State と WAV は Score のある曲フォルダ内に置き、Score から相対パスで指定する。上位ディレクトリへの参照やシンボリックリンクによる曲フォルダ外への参照は使えない。
 
+## セクションのレンダーと測定
+
+Score から取り込んだ Project は、`form`の各出現を`TimelineRegion`として保持する。Renderではこの保存済みRegionを使い、リンクされたYAMLを読み直さない。同じ名前のRegionを曲順に数え、`occurrence`は1始まりで指定する。
+
+```bash
+riffra --attach render start --section walk --occurrence 2 --wait
+riffra --attach render stems --all-tracks --section walk --occurrence 2 --wait
+```
+
+MCPの`render`も同じ`RenderRange`を使う。
+
+```json
+{ "range": { "kind": "section", "name": "walk", "occurrence": 2 } }
+```
+
+`--section`は`--occurrence`と組み合わせ、`--start`・`--end`・`--range loop-range`とは併用しない。`--track-id`や`--track-ids`との併用はできる。セクション名が存在しない場合、出現番号が過大な場合、ScoreにリンクしていないProjectではエラーになる。
+
+選択区間は`[start_tick, end_tick)`。セクション末尾より後の別セクションや全曲用のテールをWAVへ含めない。Render履歴の`rangeKind`は`section`となり、結果の`sectionName`と`sectionOccurrence`に指定内容を残す。
+
+完成WAVの`measurements`は、既存Marker区間の`sections`を変更せず、Score由来の出現を`scoreSections`へ返す。
+
+```json
+{
+  "scoreSections": [
+    {
+      "name": "walk",
+      "occurrence": 2,
+      "startTick": 7680,
+      "endTick": 11520,
+      "startSeconds": 4.0,
+      "endSeconds": 6.0,
+      "complete": true,
+      "loudness": { "integratedLufs": -16.8, "truePeak": null },
+      "bands": { "lowDb": null, "midDb": null, "highDb": null }
+    }
+  ]
+}
+```
+
+`startTick`と`endTick`はScore Regionの範囲、`startSeconds`と`endSeconds`はWAV先頭からの相対秒数である。Render範囲とRegionの交差だけを測定し、`complete`はRegion全体がRender範囲に収まったことを示す。テールは最終セクションの測定範囲へ含めない。Stemも同じ`scoreSections`を各StemのWAVに対して返す。
+
 ## 展開前の検証
 
 Project を作らずに Score を確認する。
@@ -725,7 +813,7 @@ riffra score inspect ./song.yaml
 ```
 
 `score validate` は文法・構造・楽器参照・VST3・State・Patch・パラメーター・キット・音声・ミックス・オートメーションを診断し、`valid` と展開サマリーを返す。`valid` は error が 0 件のときに true となり、warning だけでは import / rebuild を止めない。
-`score inspect` は展開済みのセクション・楽器・レーン・トラック・キット・エフェクト・バス・Send・Sidechain・オートメーション・音声クリップを返す。`--events` を指定すると、各イベントを来源位置つきで返す。
+`score inspect` は展開済みのセクション・楽器・レーン・トラック・キット・エフェクト・バス・Send・Sidechain・オートメーション・音声クリップを返す。`--events` を指定すると、各イベントと奏法・CC制御を来源位置つきで返す。奏法・CC制御の`section`・`occurrence`・`bar`・`step`は宣言元イベントの位置、`tick`・`atQuarters`はキースイッチの先行送信を含む実際の送信位置である。
 
 どちらも Project・Session・音源スナップショット・永続 Audio Asset を作らない。参照ファイルの読み込みと、分離された plugin-scanner による一時的なパラメーター照会は行う。プラグイン未インストール、State の不正、音声範囲超過、ミックスの循環、オートメーションの不正はエラーになる。
 診断は `error` / `warning` の severity、YAML の項目パス、行・列、根拠のファイルを持つ。通常 VST3 の楽器で追加ゲインレーンが増える場合は warning を出し、演奏は止めない。
@@ -736,14 +824,12 @@ riffra score inspect ./song.yaml
 
 次の指定は既知の拡張として明示的に拒否する。未知のキーや未知のイベント種別は、Sonalloy と Riffra の両方で文法エラーになる。
 
-| 位置                                                        | 内容                          |
-| ----------------------------------------------------------- | ----------------------------- |
-| `source.voisona`                                            | VoiSona の歌声制御            |
-| `source.articulations` / `kind: articulation`               | 奏法ごとの keyswitch・CC 出力 |
-| `sections.<name>.lines.<name>.lyrics`                       | 旋律へ当てる歌詞              |
-| イベント `cc` / `breath` / `voice_dynamics` / `voice_style` | 奏法制御・歌の表現            |
-| GUI 操作の YAML 書き戻し                                    | GUI で加えた編集の正本反映    |
-| 音域外警告・セクション単位レンダー・セクション LUFS         | 後続の制作支援                |
+| 位置                                                 | 内容                       |
+| ---------------------------------------------------- | -------------------------- |
+| `source.voisona`                                     | VoiSona の歌声制御         |
+| `sections.<name>.lines.<name>.lyrics`                | 旋律へ当てる歌詞           |
+| イベント `breath` / `voice_dynamics` / `voice_style` | 歌の表現                   |
+| GUI 操作の YAML 書き戻し                             | GUI で加えた編集の正本反映 |
 
 表示用の項目 `instruments.<id>.sound` と `sections.<name>.notes` は共通の項目であり、文字列として検証するが展開・演奏には影響させない。
 
@@ -752,29 +838,30 @@ riffra score inspect ./song.yaml
 Score の解析と展開は Runtime の `score/` が行い、`score_yaml_import.rs` が正準データへ変換する。
 下表の演奏に関わる情報は保存後も Native Audio Engine へ投影される。
 
-| Score の情報                                               | Riffra での表現と動作                                                                                                                       |
-| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| PPQ・分数拍                                                | Score の PPQ と整数 Tick を保持する。既定の新規プロジェクトは 960 PPQ                                                                       |
-| テンポ・拍子の変更                                         | ProjectTimebase の変更点として保持し、表示・スナップ・サンプル位置の変換で共有する                                                          |
-| メロディ・ドラム・コード・反復                             | Score の展開結果を MidiNote に変換する。音高・開始位置・長さ・ベロシティを保持する                                                          |
-| 複数レーン                                                 | レーンごとに Instrument Track と楽曲全体を覆う MIDI クリップを生成する。同じ楽器のレーンも独立した音源インスタンスで演奏する                |
-| サステイン・ピッチベンド・モジュレーション・アフタータッチ | InstrumentControlEvent として精度を保ち、同 Tick の優先順位とソース順で実行する                                                             |
-| ParameterChange・ParameterRamp                             | 内蔵音源では音源のパラメータ定義で検証する。VST3 の音源では使用せず、音色変化は `mix.automation` で指定する                                 |
-| PartWindow                                                 | 内蔵音源の展開済み音符範囲を保持し、区間境界に演奏制御のリセットを追加する                                                                  |
-| Preset・Definition・External・Sample                       | 内蔵音源の参照ファイルを解決する。保存リソースは共有し、演奏状態はトラックごとに分離する                                                    |
-| VST3 音源・State・Patch・Params                            | カタログから選んだ実パスへ State を組み直し、Patch とパラメーターを適用する。音符だけの変更では同じ Device と Native インスタンスを維持する |
-| キット                                                     | 部品のトリガーノートを 1 つの Kit Track と 1 つの VST3 インスタンスへ集約する                                                               |
-| ベロシティ補正                                             | `source.velocity` を MIDI Note の生成時に一度だけ適用する。Score の音楽イベントと Sonalloy の展開結果は変更しない                           |
-| ゲイン・パン                                               | レーンゲインを維持し、パンには中央の左右ゲインを保つ線形バランス方式を使う。編集用フェーダーの操作範囲は保存値を制限しない                  |
-| セクション別ゲイン                                         | Track Volume Automation に実効音量を保持し、境界から指定秒数で振幅を線形補間する。Score では 5 ms の遷移を使う                              |
-| エフェクト・ミックス                                       | トラック・Bus・Master の Effect Device、Bus、Send、Sidechain、Master Gain を正準 Mixer へ変換する                                           |
-| オートメーション                                           | セクションの出現ごとに絶対 Tick へ変換し、対象ごとに 1 本の AutomationLane へ統合する                                                       |
-| 音声クリップ                                               | Audio Track と AudioClip を作り、WAV の frame range・実時間長・フェードを保持する                                                           |
-| 外部音声入力                                               | 内蔵音源の参照パートの全レーンを入力元として登録する。ゲイン・パン適用後の音声を遅延補正して合算する                                        |
-| マスタリング・フェード                                     | MixdownSettings にラウドネス・True Peak の目標とフェード時間を保持する。LRA 目標は任意の測定・警告条件として扱う                            |
-| セクション                                                 | 各出現を独立した TimelineRegion として保持する                                                                                              |
-| 和声                                                       | Score の主音とコード構成音を HarmonyEvent に投影する。和声イベントは編集・参照用であり、展開済みの音符を再生成しない                        |
-| 元 Score                                                   | ScoreSource にファイル名・絶対パス・Definition の対応・最後に確定した元 YAML 全文を保持する                                                 |
+| Score の情報                                               | Riffra での表現と動作                                                                                                                         |
+| ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| PPQ・分数拍                                                | Score の PPQ と整数 Tick を保持する。既定の新規プロジェクトは 960 PPQ                                                                         |
+| テンポ・拍子の変更                                         | ProjectTimebase の変更点として保持し、表示・スナップ・サンプル位置の変換で共有する                                                            |
+| メロディ・ドラム・コード・反復                             | Score の展開結果を MidiNote に変換する。音高・開始位置・長さ・ベロシティを保持する                                                            |
+| 複数レーン                                                 | レーンごとに Instrument Track と楽曲全体を覆う MIDI クリップを生成する。同じ楽器のレーンも独立した音源インスタンスで演奏する                  |
+| サステイン・ピッチベンド・モジュレーション・アフタータッチ | 内蔵音源のInstrumentControlEventとして精度を保ち、同 Tick の優先順位とソース順で実行する                                                      |
+| 奏法・MIDI CC                                              | InstrumentControlEvent として保持し、VST3 へキースイッチのNote On/OffとControl Changeを送る。通常の音符の移調・音域・Velocity補正には混ぜない |
+| ParameterChange・ParameterRamp                             | 内蔵音源では音源のパラメータ定義で検証する。VST3 の音源では使用せず、音色変化は `mix.automation` で指定する                                   |
+| PartWindow                                                 | 内蔵音源の展開済み音符範囲を保持し、区間境界に演奏制御のリセットを追加する                                                                    |
+| Preset・Definition・External・Sample                       | 内蔵音源の参照ファイルを解決する。保存リソースは共有し、演奏状態はトラックごとに分離する                                                      |
+| VST3 音源・State・Patch・Params                            | カタログから選んだ実パスへ State を組み直し、Patch とパラメーターを適用する。音符だけの変更では同じ Device と Native インスタンスを維持する   |
+| キット                                                     | 部品のトリガーノートを 1 つの Kit Track と 1 つの VST3 インスタンスへ集約する                                                                 |
+| ベロシティ補正                                             | `source.velocity` を MIDI Note の生成時に一度だけ適用する。Score の音楽イベントと Sonalloy の展開結果は変更しない                             |
+| ゲイン・パン                                               | レーンゲインを維持し、パンには中央の左右ゲインを保つ線形バランス方式を使う。編集用フェーダーの操作範囲は保存値を制限しない                    |
+| セクション別ゲイン                                         | Track Volume Automation に実効音量を保持し、境界から指定秒数で振幅を線形補間する。Score では 5 ms の遷移を使う                                |
+| エフェクト・ミックス                                       | トラック・Bus・Master の Effect Device、Bus、Send、Sidechain、Master Gain を正準 Mixer へ変換する                                             |
+| オートメーション                                           | セクションの出現ごとに絶対 Tick へ変換し、対象ごとに 1 本の AutomationLane へ統合する                                                         |
+| 音声クリップ                                               | Audio Track と AudioClip を作り、WAV の frame range・実時間長・フェードを保持する                                                             |
+| 外部音声入力                                               | 内蔵音源の参照パートの全レーンを入力元として登録する。ゲイン・パン適用後の音声を遅延補正して合算する                                          |
+| マスタリング・フェード                                     | MixdownSettings にラウドネス・True Peak の目標とフェード時間を保持する。LRA 目標は任意の測定・警告条件として扱う                              |
+| セクション                                                 | 各出現を独立した TimelineRegion として保持する                                                                                                |
+| 和声                                                       | Score の主音とコード構成音を HarmonyEvent に投影する。和声イベントは編集・参照用であり、展開済みの音符を再生成しない                          |
+| 元 Score                                                   | ScoreSource にファイル名・絶対パス・Definition の対応・最後に確定した元 YAML 全文を保持する                                                   |
 
 ## 保存と再利用
 

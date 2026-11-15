@@ -268,13 +268,20 @@ riffra --data-root ./riffra-data serve --safe-mode
 
 `render start` の `--expected-sequence` はRender対象のCanonical snapshotを固定する。ConflictならWAVを作成せず、最新状態をInspectしてからRenderし直す。ワンショットでは `render start --wait` または `render stems --wait` で完了結果を待てる。非同期の応答は `type: "job"` のジョブIDを返し、ワンショットは `job wait JOB_ID`、interactiveは `job get` の繰り返しで追跡する。待機のタイムアウトは `job wait --timeout-ms` で指定でき、無指定なら終了まで待つ。停止には `job cancel` を使う。出力はDataRootの `renders/` 配下へ書き出される。`plugin scan --background` と `analysis measure` も同じ非同期ジョブである。`ok: true` は状態取得の成功を表し、Job自体の成功は `state: "completed"` で判断する。
 
+Scoreから取り込んだProjectは`--section <name> --occurrence <n>`でセクションの出現を指定できる。`--occurrence`は同名セクションの1始まりの出現番号で、`--section`と必ず組み合わせる。`--start`/`--end`/`--range loop-range`とは併用せず、`--track-id`や`--track-ids`とは併用できる。`--range entire-arrangement`のままセクションを指定するか、単に`--section`と`--occurrence`を渡す。`render start`と`render stems`は同じ指定を受ける。
+
+```bash
+riffra --attach render start --section walk --occurrence 2 --wait
+riffra --attach render stems --all-tracks --section walk --occurrence 2 --wait
+```
+
 完成WAVをDataRootの外へ複製するときは、Mixが `render start --output-path`、Stemが `render stems --output-directory` で出力先を指定する。保存済みRenderの取り出しは `render export --render-id --output-path`、削除は `render delete --render-id` で行う。
 
 Stem Render(`render stems`)は一度の要求で複数Trackを同じ時間基準のWAVへ書き出す。全WAVで開始Tick、終了Tick、Sample Rate、フレーム数を揃え、個別の正規化とMasteringは行わない。共有する非線形Effectでは、Stemの合計と全体Mixが一致しない場合がある。StemとMasteringの設計上の扱いは[音声エンジンの設計](../../../../docs/audio-engine.md)を参照。
 
 `render capture` は現在のミックス経路を変えず、選んだTrack・Group・Return・Masterを同時に取得する。結果の `renderId` を `analysis levels` に渡すと、各出力のRMSとSample Peakを同じ音楽座標で比較できる。`--wait` は両方のJobで利用できる。Captureの外部コピーは `--output-directory`、保存済みCaptureの一括取り出しは `render export` を使う。
 
-Job結果と`render.json`の`measurements`には完成WAVのSample Peakとラウドネス測定を含む。通常Renderで測定器(FFmpeg)を利用できない場合は成功結果のラウドネス測定に`unavailable`と理由を返し、Masteringを要求したJobでの測定失敗はJob失敗になる。区間ごとの音量や帯域バランスの判断には`measurements.sections`を使う。
+Job結果と`render.json`の`measurements`には完成WAVのSample Peakとラウドネス測定を含む。通常Renderで測定器(FFmpeg)を利用できない場合は成功結果のラウドネス測定に`unavailable`と理由を返し、Masteringを要求したJobでの測定失敗はJob失敗になる。Marker区間の判断には`measurements.sections`、Scoreのセクション出現の判断には`measurements.scoreSections`を使う。`scoreSections`はScoreにリンクしたProjectだけで返り、`name`・`occurrence`・RegionのTick範囲・WAV先頭からの秒数・`complete`を持つ。Render範囲と交差する部分だけを測り、全曲用のテールは最終セクションへ含めない。Render結果の`sectionName`と`sectionOccurrence`、Render履歴の`rangeKind: "section"`でも指定したセクションを追跡できる。
 
 | 項目                               | 読み方                                                                              |
 | ---------------------------------- | ----------------------------------------------------------------------------------- |
@@ -282,6 +289,8 @@ Job結果と`render.json`の`measurements`には完成WAVのSample Peakとラウ
 | `loudness.integratedLufs`          | 区間の統合ラウドネス。有効な400msブロックがない区間では`null`                       |
 | `loudness.truePeak`                | 最大True Peakの`db`・`seconds`・`position`。無音なら`null`。位置は100msフレーム単位 |
 | `bands.lowDb` / `midDb` / `highDb` | 250Hz未満・250Hz〜4kHz・4kHz超のRMSレベル(dBFS)。無音なら`null`。帯域間比較の目安   |
+
+`scoreSections`はMarkerの`sections`と同じ`loudness`・`bands`表現を使う。`complete: false`はRender範囲がRegionの一部だけを含むことを示す。
 
 区間の切り分けは書き出し時点の正準Markerで決まる。`measurements.sectionLoudnessState.state` が `measured` なら無音・短区間の値が `null` でも測定は正常に完了している。`unavailable` なら `reason` を確認する。全体と区間のラウドネスは独立して測定し、区間ラウドネスの測定が失敗してもWAVと帯域値は保持する。
 

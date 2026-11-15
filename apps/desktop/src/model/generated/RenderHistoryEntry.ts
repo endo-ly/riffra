@@ -6,4 +6,16 @@ import type { RenderKind } from "./RenderKind";
 /**
  * One item in the Render history, including diagnostics for damaged output.
  */
-export type RenderHistoryEntry = { renderId: string, kind: RenderKind, projectId: string | null, createdAtMs: number | null, files: Array<RenderFileStatus>, fileCount: number, fileSizeBytes: number | null, sampleRate: number | null, durationMs: number | null, measurements: Array<AudioMeasurements>, diagnostics: Array<string>, };
+export type RenderHistoryEntry = { renderId: string, kind: RenderKind, 
+/**
+ * Requested range kind recorded by the render that created this entry.
+ */
+rangeKind: string | null, 
+/**
+ * Score section name for a section render.
+ */
+sectionName: string | null, 
+/**
+ * One-based Score section occurrence for a section render.
+ */
+sectionOccurrence: number | null, projectId: string | null, createdAtMs: number | null, files: Array<RenderFileStatus>, fileCount: number, fileSizeBytes: number | null, sampleRate: number | null, durationMs: number | null, measurements: Array<AudioMeasurements>, diagnostics: Array<string>, };

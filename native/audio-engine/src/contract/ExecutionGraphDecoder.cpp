@@ -502,6 +502,37 @@ bool decodeInstrumentControlEvent(const juce::var& value, const juce::String& pa
             return fail(error, kindPath, "invalid parameter ramp");
         return true;
     }
+    if (output.type == "keySwitch") {
+        ContractReader control(kind, kindPath, {"type", "note", "mode", "down"}, error);
+        juce::String mode;
+        juce::uint32 note = 0;
+        if (!control.string("type", type) || !control.unsigned32("note", note) ||
+            !control.string("mode", mode) || !control.boolean("down", output.down) ||
+            !control.finish())
+            return false;
+        if (note > 127) return fail(error, child(kindPath, "note"), "must be in 0..=127");
+        if (mode != "hold" && mode != "latch")
+            return fail(error, child(kindPath, "mode"), "must be hold or latch");
+        output.latch = mode == "latch";
+        if (output.latch && !output.down)
+            return fail(error, child(kindPath, "down"), "latch selection must press the key");
+        output.note = static_cast<std::uint8_t>(note);
+        return true;
+    }
+    if (output.type == "controlChange") {
+        ContractReader control(kind, kindPath, {"type", "number", "value"}, error);
+        juce::uint32 number = 0;
+        juce::uint32 controllerValue = 0;
+        if (!control.string("type", type) || !control.unsigned32("number", number) ||
+            !control.unsigned32("value", controllerValue) || !control.finish())
+            return false;
+        if (number > 127) return fail(error, child(kindPath, "number"), "must be in 0..=127");
+        if (controllerValue > 127)
+            return fail(error, child(kindPath, "value"), "must be in 0..=127");
+        output.controllerNumber = static_cast<std::uint8_t>(number);
+        output.controllerValue = static_cast<std::uint8_t>(controllerValue);
+        return true;
+    }
     if (output.type == "parameterChange") {
         ContractReader control(kind, kindPath, {"type", "parameter", "nativeValue"}, error);
         if (!control.string("type", type) || !control.string("parameter", output.parameter) ||
@@ -557,6 +588,10 @@ bool decodeMidiClip(const juce::var& value, const juce::String& path, MidiClipSp
             return false;
         if (control.tick > output.durationTicks)
             return fail(error, child(eventPath, "tick"), "exceeds clip durationTicks");
+        if (control.type == "keySwitch" && control.tick == output.durationTicks &&
+            (control.latch || control.down))
+            return fail(error, child(eventPath, "tick"),
+                        "key switch press requires a following tick");
         if (control.type == "parameterRamp" &&
             control.durationTicks > output.durationTicks - control.tick)
             return fail(error, child(eventPath, "durationTicks"),

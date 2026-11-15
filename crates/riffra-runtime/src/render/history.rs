@@ -70,6 +70,12 @@ struct StoredTimeline {
     #[serde(default)]
     measurements: Option<serde_json::Value>,
     #[serde(default)]
+    range_kind: Option<String>,
+    #[serde(default)]
+    section_name: Option<String>,
+    #[serde(default)]
+    section_occurrence: Option<u32>,
+    #[serde(default)]
     musical_range: Option<StoredMusicalRange>,
 }
 
@@ -81,6 +87,12 @@ struct StoredStems {
     created_at_ms: Option<u64>,
     sample_rate: u32,
     frames: u64,
+    #[serde(default)]
+    range_kind: Option<String>,
+    #[serde(default)]
+    section_name: Option<String>,
+    #[serde(default)]
+    section_occurrence: Option<u32>,
     stems: Vec<StoredStem>,
     #[serde(default)]
     musical_range: Option<StoredMusicalRange>,
@@ -396,6 +408,9 @@ fn damaged_render_history_entry(render_id: &str, diagnostic: &str) -> RenderHist
     RenderHistoryEntry {
         render_id: render_id.to_owned(),
         kind: RenderKind::Unknown,
+        range_kind: None,
+        section_name: None,
+        section_occurrence: None,
         project_id: None,
         created_at_ms: render_timestamp(render_id),
         files: Vec::new(),
@@ -418,6 +433,9 @@ fn read_render_history_entry(
     let mut entry = RenderHistoryEntry {
         render_id: render_id.to_owned(),
         kind: RenderKind::Unknown,
+        range_kind: None,
+        section_name: None,
+        section_occurrence: None,
         project_id: None,
         created_at_ms: render_timestamp(render_id),
         files: Vec::new(),
@@ -435,59 +453,81 @@ fn read_render_history_entry(
             return entry;
         }
     };
-    let (kind, project_id, created_at_ms, sample_rate, duration_ms, measurements, file_assets) =
-        match manifest {
-            StoredRender::Timeline(render) => (
-                RenderKind::Timeline,
-                render.project_id,
+    let (
+        kind,
+        range_kind,
+        section_name,
+        section_occurrence,
+        project_id,
+        created_at_ms,
+        sample_rate,
+        duration_ms,
+        measurements,
+        file_assets,
+    ) = match manifest {
+        StoredRender::Timeline(render) => (
+            RenderKind::Timeline,
+            render.range_kind,
+            render.section_name,
+            render.section_occurrence,
+            render.project_id,
+            render.created_at_ms,
+            Some(render.sample_rate),
+            Some(render.duration_ms),
+            vec![render.measurements],
+            vec![(render.path, render.asset_id)],
+        ),
+        StoredRender::Stems(render) => {
+            let duration_ms = (render.sample_rate != 0).then(|| {
+                (u128::from(render.frames) * 1_000 / u128::from(render.sample_rate))
+                    .min(u128::from(u64::MAX)) as u64
+            });
+            let (measurements, file_assets): (Vec<_>, Vec<_>) = render
+                .stems
+                .into_iter()
+                .map(|stem| (stem.measurements, (stem.path, stem.asset_id)))
+                .unzip();
+            (
+                RenderKind::Stems,
+                render.range_kind,
+                render.section_name,
+                render.section_occurrence,
+                Some(render.project_id),
                 render.created_at_ms,
                 Some(render.sample_rate),
-                Some(render.duration_ms),
-                vec![render.measurements],
-                vec![(render.path, render.asset_id)],
-            ),
-            StoredRender::Stems(render) => {
-                let duration_ms = (render.sample_rate != 0).then(|| {
-                    (u128::from(render.frames) * 1_000 / u128::from(render.sample_rate))
-                        .min(u128::from(u64::MAX)) as u64
-                });
-                let (measurements, file_assets): (Vec<_>, Vec<_>) = render
-                    .stems
-                    .into_iter()
-                    .map(|stem| (stem.measurements, (stem.path, stem.asset_id)))
-                    .unzip();
-                (
-                    RenderKind::Stems,
-                    Some(render.project_id),
-                    render.created_at_ms,
-                    Some(render.sample_rate),
-                    duration_ms,
-                    measurements,
-                    file_assets,
-                )
-            }
-            StoredRender::Capture(render) => {
-                let duration_ms = (render.sample_rate != 0).then(|| {
-                    (u128::from(render.frames) * 1_000 / u128::from(render.sample_rate))
-                        .min(u128::from(u64::MAX)) as u64
-                });
-                let (measurements, file_assets): (Vec<_>, Vec<_>) = render
-                    .captures
-                    .into_iter()
-                    .map(|capture| (capture.measurements, (capture.path, capture.asset_id)))
-                    .unzip();
-                (
-                    RenderKind::Capture,
-                    Some(render.project_id),
-                    render.created_at_ms,
-                    Some(render.sample_rate),
-                    duration_ms,
-                    measurements,
-                    file_assets,
-                )
-            }
-        };
+                duration_ms,
+                measurements,
+                file_assets,
+            )
+        }
+        StoredRender::Capture(render) => {
+            let duration_ms = (render.sample_rate != 0).then(|| {
+                (u128::from(render.frames) * 1_000 / u128::from(render.sample_rate))
+                    .min(u128::from(u64::MAX)) as u64
+            });
+            let (measurements, file_assets): (Vec<_>, Vec<_>) = render
+                .captures
+                .into_iter()
+                .map(|capture| (capture.measurements, (capture.path, capture.asset_id)))
+                .unzip();
+            (
+                RenderKind::Capture,
+                None,
+                None,
+                None,
+                Some(render.project_id),
+                render.created_at_ms,
+                Some(render.sample_rate),
+                duration_ms,
+                measurements,
+                file_assets,
+            )
+        }
+    };
     entry.kind = kind;
+    entry.range_kind = range_kind;
+    entry.section_name = section_name;
+    entry.section_occurrence = section_occurrence;
     entry.project_id = project_id;
     entry.created_at_ms = created_at_ms.or(entry.created_at_ms);
     entry.sample_rate = sample_rate;

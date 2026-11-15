@@ -18,10 +18,16 @@ MidiClipSpec makeClip() {
     return clip;
 }
 
+void schedule(const std::vector<CompiledMidiClip>& clips, const std::int64_t start,
+              const int sampleCount, juce::MidiBuffer& buffer, const bool restoreControls = false) {
+    std::vector<MidiEventRef> refs;
+    MidiScheduler::schedule(clips, start, sampleCount, buffer, refs, restoreControls);
+}
+
 std::vector<juce::MidiMessage> scheduledMessages(const CompiledMidiClip& clip,
                                                  const std::int64_t start, const int sampleCount) {
     juce::MidiBuffer buffer;
-    MidiScheduler::schedule({clip}, start, sampleCount, buffer);
+    schedule({clip}, start, sampleCount, buffer);
     std::vector<juce::MidiMessage> messages;
     for (const auto metadata : buffer) messages.push_back(metadata.getMessage());
     return messages;
@@ -169,7 +175,7 @@ TEST(MidiSchedulerTest, PreservesDenseBlocksAfterPrepareCapacityIsCalculated) {
     juce::MidiBuffer buffer;
     const auto capacity = MidiScheduler::maximumEventsPerBlock({compiled}, 512);
     ASSERT_TRUE(MidiScheduler::prepareBuffer(buffer, capacity));
-    MidiScheduler::schedule({compiled}, 0, 512, buffer);
+    schedule({compiled}, 0, 512, buffer);
 
     std::size_t eventCount = 0;
     for (const auto metadata : buffer) ++eventCount;
@@ -358,6 +364,448 @@ TEST(MidiSchedulerTest, RestoresLatestParameterAcrossClipsByTimePriorityAndSourc
                                                       events.size(), true),
               1u);
     EXPECT_FLOAT_EQ(events[0].value, 0.6f);
+}
+
+TEST(MidiSchedulerTest, CompilesVst3KeyswitchesAndCcBeforeNormalNotes) {
+    MidiClipSpec source;
+    source.durationTicks = 4;
+    source.notes.push_back({0, 4, 60, 100, 1});
+    InstrumentControlEventSpec hold;
+    hold.id = "hold";
+    hold.tick = 0;
+    hold.type = "keySwitch";
+    hold.note = 24;
+    hold.down = true;
+    source.instrumentControlEvents.push_back(hold);
+    InstrumentControlEventSpec latch;
+    latch.id = "latch";
+    latch.tick = 0;
+    latch.type = "keySwitch";
+    latch.note = 26;
+    latch.latch = true;
+    latch.down = true;
+    source.instrumentControlEvents.push_back(latch);
+    InstrumentControlEventSpec cc;
+    cc.id = "cc";
+    cc.tick = 0;
+    cc.type = "controlChange";
+    cc.controllerNumber = 11;
+    cc.controllerValue = 96;
+    source.instrumentControlEvents.push_back(cc);
+
+    CompiledMidiClip compiled;
+    juce::String error;
+    ASSERT_TRUE(MidiScheduler::compile(source, {}, TimelineTimebase{10, {{0, 60.0}}, {{0, 4, 4}}},
+                                       10.0, compiled, error))
+        << error.toStdString();
+    ASSERT_EQ(compiled.events.size(), 6u);
+    const auto& events = compiled.events;
+    EXPECT_TRUE(events[0].message.isNoteOn() && events[0].message.getNoteNumber() == 24);
+    EXPECT_TRUE(events[1].message.isNoteOn() && events[1].message.getNoteNumber() == 26);
+    EXPECT_TRUE(events[2].message.isController() && events[2].message.getControllerNumber() == 11 &&
+                events[2].message.getControllerValue() == 96);
+    EXPECT_TRUE(events[3].message.isNoteOn() && events[3].message.getNoteNumber() == 60);
+    EXPECT_TRUE(events[4].message.isNoteOff() && events[4].message.getNoteNumber() == 26);
+    EXPECT_EQ(events[4].sampleOffset, 1);
+    EXPECT_TRUE(events[5].message.isNoteOff() && events[5].message.getNoteNumber() == 60);
+
+    CompiledMidiClip highPpq;
+    ASSERT_TRUE(MidiScheduler::compile(
+        source, {}, TimelineTimebase{30720, {{0, 240.0}}, {{0, 4, 4}}}, 48000.0, highPpq, error))
+        << error.toStdString();
+    juce::MidiBuffer highPpqBuffer;
+    schedule({highPpq}, 0, 2, highPpqBuffer);
+    std::vector<std::pair<int, bool>> latchPulse;
+    for (const auto metadata : highPpqBuffer) {
+        const auto message = metadata.getMessage();
+        if (message.isNoteOnOrOff() && message.getNoteNumber() == 26)
+            latchPulse.emplace_back(metadata.samplePosition, message.isNoteOn());
+    }
+    EXPECT_EQ(latchPulse, (std::vector<std::pair<int, bool>>{{0, true}, {1, false}}));
+}
+
+TEST(MidiSchedulerTest, RestoresVst3ControlStateAfterSeek) {
+    MidiClipSpec source;
+    source.durationTicks = 8;
+    const auto control = [](const std::uint64_t tick, const char* id) {
+        InstrumentControlEventSpec event;
+        event.id = id;
+        event.tick = tick;
+        return event;
+    };
+    auto hold = control(0, "hold");
+    hold.type = "keySwitch";
+    hold.note = 24;
+    hold.down = true;
+    source.instrumentControlEvents.push_back(hold);
+    auto release = control(8, "release");
+    release.type = "keySwitch";
+    release.note = 24;
+    source.instrumentControlEvents.push_back(release);
+    auto latch = control(1, "latch");
+    latch.type = "keySwitch";
+    latch.note = 26;
+    latch.latch = true;
+    latch.down = true;
+    source.instrumentControlEvents.push_back(latch);
+    auto first = control(2, "first");
+    first.type = "controlChange";
+    first.controllerNumber = 11;
+    first.controllerValue = 96;
+    source.instrumentControlEvents.push_back(first);
+    auto second = control(4, "second");
+    second.type = "controlChange";
+    second.controllerNumber = 11;
+    second.controllerValue = 40;
+    source.instrumentControlEvents.push_back(second);
+
+    CompiledMidiClip compiled;
+    juce::String error;
+    ASSERT_TRUE(MidiScheduler::compile(source, {}, TimelineTimebase{10, {{0, 60.0}}, {{0, 4, 4}}},
+                                       10.0, compiled, error))
+        << error.toStdString();
+    juce::MidiBuffer buffer;
+    schedule({compiled}, 5, 1, buffer, true);
+    std::vector<juce::MidiMessage> messages;
+    for (const auto metadata : buffer) messages.push_back(metadata.getMessage());
+    ASSERT_EQ(messages.size(), 4u);
+    EXPECT_TRUE(messages[0].isNoteOn() && messages[0].getNoteNumber() == 24);
+    EXPECT_TRUE(messages[1].isNoteOn() && messages[1].getNoteNumber() == 26);
+    EXPECT_TRUE(messages[2].isNoteOff() && messages[2].getNoteNumber() == 26);
+    EXPECT_TRUE(messages[3].isController() && messages[3].getControllerNumber() == 11 &&
+                messages[3].getControllerValue() == 40);
+
+    juce::MidiBuffer resumed;
+    schedule({compiled}, 5, 1, resumed, false);
+    EXPECT_EQ(resumed.getNumEvents(), 0);
+
+    juce::MidiBuffer afterEnd;
+    schedule({compiled}, 16, 1, afterEnd, true);
+    std::vector<juce::MidiMessage> afterEndMessages;
+    for (const auto metadata : afterEnd) afterEndMessages.push_back(metadata.getMessage());
+    EXPECT_FALSE(
+        std::any_of(afterEndMessages.begin(), afterEndMessages.end(), [](const auto& message) {
+            return message.isNoteOnOrOff() && message.getNoteNumber() == 24;
+        }));
+}
+
+TEST(MidiSchedulerTest, RestoresMidiControlsByAbsoluteTimeAcrossOverlappingClips) {
+    const TimelineTimebase timebase{10, {{0, 60.0}}, {{0, 4, 4}}};
+    const auto compile = [&](const std::uint64_t start, MidiClipSpec source) {
+        MidiCompileOptions options;
+        options.startTick = start;
+        CompiledMidiClip compiled;
+        juce::String error;
+        EXPECT_TRUE(MidiScheduler::compile(source, options, timebase, 10.0, compiled, error))
+            << error.toStdString();
+        return compiled;
+    };
+    const auto control = [](const std::uint64_t tick, const char* id) {
+        InstrumentControlEventSpec event;
+        event.id = id;
+        event.tick = tick;
+        return event;
+    };
+
+    MidiClipSpec later;
+    later.durationTicks = 20;
+    auto laterCc = control(0, "later-cc");
+    laterCc.type = "controlChange";
+    laterCc.controllerNumber = 11;
+    laterCc.controllerValue = 30;
+    later.instrumentControlEvents.push_back(laterCc);
+    auto laterRelease = control(0, "later-release");
+    laterRelease.type = "keySwitch";
+    laterRelease.note = 24;
+    laterRelease.down = false;
+    later.instrumentControlEvents.push_back(laterRelease);
+    auto laterLatch = control(5, "later-latch");
+    laterLatch.type = "keySwitch";
+    laterLatch.note = 26;
+    laterLatch.latch = true;
+    laterLatch.down = true;
+    later.instrumentControlEvents.push_back(laterLatch);
+
+    MidiClipSpec earlier;
+    earlier.durationTicks = 40;
+    auto earlierCc = control(0, "earlier-cc");
+    earlierCc.type = "controlChange";
+    earlierCc.controllerNumber = 11;
+    earlierCc.controllerValue = 70;
+    earlier.instrumentControlEvents.push_back(earlierCc);
+    auto earlierHold = control(0, "earlier-hold");
+    earlierHold.type = "keySwitch";
+    earlierHold.note = 24;
+    earlierHold.down = true;
+    earlier.instrumentControlEvents.push_back(earlierHold);
+    auto earlierLatch = control(0, "earlier-latch");
+    earlierLatch.type = "keySwitch";
+    earlierLatch.note = 25;
+    earlierLatch.latch = true;
+    earlierLatch.down = true;
+    earlier.instrumentControlEvents.push_back(earlierLatch);
+
+    MidiClipSpec sameTickDown;
+    sameTickDown.durationTicks = 40;
+    auto down = control(0, "same-tick-down");
+    down.type = "keySwitch";
+    down.note = 30;
+    down.down = true;
+    sameTickDown.instrumentControlEvents.push_back(down);
+
+    MidiClipSpec sameTickUp;
+    sameTickUp.durationTicks = 40;
+    auto up = control(0, "same-tick-up");
+    up.type = "keySwitch";
+    up.note = 30;
+    up.down = false;
+    sameTickUp.instrumentControlEvents.push_back(up);
+
+    const auto laterClip = compile(90, later);
+    const auto earlierClip = compile(60, earlier);
+    const auto downClip = compile(60, sameTickDown);
+    const auto upClip = compile(60, sameTickUp);
+
+    juce::MidiBuffer buffer;
+    schedule({laterClip, earlierClip, downClip, upClip}, 100, 1, buffer, true);
+    std::vector<juce::MidiMessage> messages;
+    for (const auto metadata : buffer) messages.push_back(metadata.getMessage());
+    EXPECT_TRUE(std::any_of(messages.begin(), messages.end(), [](const auto& message) {
+        return message.isController() && message.getControllerNumber() == 11 &&
+               message.getControllerValue() == 30;
+    }));
+    EXPECT_TRUE(std::any_of(messages.begin(), messages.end(), [](const auto& message) {
+        return message.isNoteOn() && message.getNoteNumber() == 30;
+    }));
+    EXPECT_TRUE(std::any_of(messages.begin(), messages.end(), [](const auto& message) {
+        return message.isNoteOn() && message.getNoteNumber() == 26;
+    }));
+    EXPECT_FALSE(std::any_of(messages.begin(), messages.end(), [](const auto& message) {
+        return message.isNoteOnOrOff() && message.getNoteNumber() == 24;
+    }));
+    EXPECT_FALSE(std::any_of(messages.begin(), messages.end(), [](const auto& message) {
+        return message.isNoteOn() && message.getNoteNumber() == 25;
+    }));
+}
+
+TEST(MidiSchedulerTest, OrdersMidiControlsAcrossOverlappingClipsByAbsoluteTime) {
+    const TimelineTimebase timebase{10, {{0, 60.0}}, {{0, 4, 4}}};
+    const auto compile = [&](const std::uint64_t start, const std::uint64_t duration,
+                             MidiClipSpec source) {
+        MidiCompileOptions options;
+        options.startTick = start;
+        source.durationTicks = duration;
+        CompiledMidiClip compiled;
+        juce::String error;
+        EXPECT_TRUE(MidiScheduler::compile(source, options, timebase, 10.0, compiled, error))
+            << error.toStdString();
+        return compiled;
+    };
+    const auto control = [](const std::uint64_t tick, const char* id,
+                            const std::uint32_t sourceOrder) {
+        InstrumentControlEventSpec event;
+        event.id = id;
+        event.tick = tick;
+        event.sourceOrder = sourceOrder;
+        return event;
+    };
+
+    MidiClipSpec earlier;
+    auto reset = control(10, "reset", 0);
+    reset.type = "controlChange";
+    reset.controllerNumber = 68;
+    reset.controllerValue = 0;
+    earlier.instrumentControlEvents.push_back(reset);
+    auto release = control(10, "release", 0);
+    release.type = "keySwitch";
+    release.note = 24;
+    release.down = false;
+    earlier.instrumentControlEvents.push_back(release);
+
+    MidiClipSpec later;
+    auto value = control(20, "value", 1);
+    value.type = "controlChange";
+    value.controllerNumber = 68;
+    value.controllerValue = 64;
+    later.instrumentControlEvents.push_back(value);
+    auto press = control(20, "press", 2);
+    press.type = "keySwitch";
+    press.note = 24;
+    press.down = true;
+    later.instrumentControlEvents.push_back(press);
+    later.notes.push_back({20, 10, 60, 100, 1});
+
+    const auto earlierClip = compile(100, 20, earlier);
+    const auto laterClip = compile(90, 40, later);
+
+    const auto messagesFor = [&](const std::vector<CompiledMidiClip>& clips) {
+        juce::MidiBuffer buffer;
+        schedule(clips, 110, 1, buffer);
+        std::vector<juce::MidiMessage> messages;
+        for (const auto metadata : buffer) messages.push_back(metadata.getMessage());
+        return messages;
+    };
+    const auto forward = messagesFor({earlierClip, laterClip});
+    ASSERT_EQ(forward.size(), 5u);
+    EXPECT_TRUE(forward[0].isNoteOff() && forward[0].getNoteNumber() == 24);
+    EXPECT_TRUE(forward[1].isController() && forward[1].getControllerNumber() == 68 &&
+                forward[1].getControllerValue() == 0);
+    EXPECT_TRUE(forward[2].isController() && forward[2].getControllerNumber() == 68 &&
+                forward[2].getControllerValue() == 64);
+    EXPECT_TRUE(forward[3].isNoteOn() && forward[3].getNoteNumber() == 24);
+    EXPECT_TRUE(forward[4].isNoteOn() && forward[4].getNoteNumber() == 60);
+
+    const auto reversed = messagesFor({laterClip, earlierClip});
+    ASSERT_EQ(reversed.size(), 5u);
+    EXPECT_TRUE(reversed[0].isNoteOff() && reversed[0].getNoteNumber() == 24);
+    EXPECT_TRUE(reversed[1].isController() && reversed[1].getControllerNumber() == 68 &&
+                reversed[1].getControllerValue() == 64);
+    EXPECT_TRUE(reversed[2].isNoteOn() && reversed[2].getNoteNumber() == 24);
+    EXPECT_TRUE(reversed[3].isController() && reversed[3].getControllerNumber() == 68 &&
+                reversed[3].getControllerValue() == 0);
+    EXPECT_TRUE(reversed[4].isNoteOn() && reversed[4].getNoteNumber() == 60);
+
+    juce::MidiBuffer restored;
+    schedule({laterClip, earlierClip}, 111, 1, restored, true);
+    std::vector<juce::MidiMessage> restoredMessages;
+    for (const auto metadata : restored) restoredMessages.push_back(metadata.getMessage());
+    EXPECT_TRUE(std::any_of(
+        restoredMessages.begin(), restoredMessages.end(),
+        [](const auto& message) { return message.isNoteOn() && message.getNoteNumber() == 24; }));
+    EXPECT_TRUE(
+        std::any_of(restoredMessages.begin(), restoredMessages.end(), [](const auto& message) {
+            return message.isController() && message.getControllerNumber() == 68 &&
+                   message.getControllerValue() == 0;
+        }));
+    EXPECT_FALSE(std::any_of(
+        restoredMessages.begin(), restoredMessages.end(),
+        [](const auto& message) { return message.isNoteOff() && message.getNoteNumber() == 24; }));
+
+    MidiClipSpec firstExact;
+    auto firstExactValue = control(0, "first-exact", 0);
+    firstExactValue.type = "controlChange";
+    firstExactValue.controllerNumber = 68;
+    firstExactValue.controllerValue = 12;
+    firstExact.instrumentControlEvents.push_back(firstExactValue);
+
+    MidiClipSpec secondExact;
+    auto secondExactValue = control(0, "second-exact", 0);
+    secondExactValue.type = "controlChange";
+    secondExactValue.controllerNumber = 68;
+    secondExactValue.controllerValue = 34;
+    secondExact.instrumentControlEvents.push_back(secondExactValue);
+
+    const auto firstExactClip = compile(110, 20, firstExact);
+    const auto secondExactClip = compile(110, 20, secondExact);
+    const auto forwardExact = messagesFor({firstExactClip, secondExactClip});
+    const auto reversedExact = messagesFor({secondExactClip, firstExactClip});
+    ASSERT_EQ(forwardExact.size(), 2u);
+    ASSERT_EQ(reversedExact.size(), 2u);
+    EXPECT_EQ(forwardExact[0].getControllerValue(), 12);
+    EXPECT_EQ(forwardExact[1].getControllerValue(), 34);
+    EXPECT_EQ(reversedExact[0].getControllerValue(), 34);
+    EXPECT_EQ(reversedExact[1].getControllerValue(), 12);
+
+    juce::MidiBuffer restoredExact;
+    schedule({secondExactClip, firstExactClip}, 111, 1, restoredExact, true);
+    std::vector<juce::MidiMessage> restoredExactMessages;
+    for (const auto metadata : restoredExact)
+        restoredExactMessages.push_back(metadata.getMessage());
+    ASSERT_EQ(restoredExactMessages.size(), 1u);
+    EXPECT_TRUE(restoredExactMessages[0].isController());
+    EXPECT_EQ(restoredExactMessages[0].getControllerNumber(), 68);
+    EXPECT_EQ(restoredExactMessages[0].getControllerValue(), 12);
+}
+
+TEST(MidiSchedulerTest, RestoresLoopControlStateFromThePreviousIteration) {
+    MidiClipSpec source;
+    source.durationTicks = 4;
+    const auto control = [](const std::uint64_t tick, const char* id) {
+        InstrumentControlEventSpec event;
+        event.id = id;
+        event.tick = tick;
+        return event;
+    };
+    auto down = control(0, "down");
+    down.type = "keySwitch";
+    down.note = 24;
+    down.down = true;
+    source.instrumentControlEvents.push_back(down);
+    auto up = control(2, "up");
+    up.type = "keySwitch";
+    up.note = 24;
+    source.instrumentControlEvents.push_back(up);
+    auto first = control(1, "first");
+    first.type = "controlChange";
+    first.controllerNumber = 7;
+    first.controllerValue = 10;
+    source.instrumentControlEvents.push_back(first);
+    auto last = control(3, "last");
+    last.type = "controlChange";
+    last.controllerNumber = 7;
+    last.controllerValue = 20;
+    source.instrumentControlEvents.push_back(last);
+    auto initial = control(0, "initial");
+    initial.type = "controlChange";
+    initial.controllerNumber = 11;
+    initial.controllerValue = 96;
+    source.instrumentControlEvents.push_back(initial);
+    auto reset = control(4, "reset");
+    reset.type = "controlChange";
+    reset.controllerNumber = 11;
+    reset.controllerValue = 0;
+    source.instrumentControlEvents.push_back(reset);
+
+    CompiledMidiClip compiled;
+    juce::String error;
+    ASSERT_TRUE(MidiScheduler::compile(source, {.loop = true},
+                                       TimelineTimebase{10, {{0, 60.0}}, {{0, 4, 4}}}, 10.0,
+                                       compiled, error))
+        << error.toStdString();
+    juce::MidiBuffer buffer;
+    schedule({compiled}, 6, 1, buffer, true);
+    std::vector<juce::MidiMessage> messages;
+    for (const auto metadata : buffer) messages.push_back(metadata.getMessage());
+    ASSERT_EQ(messages.size(), 4u);
+    EXPECT_TRUE(messages[0].isNoteOn() && messages[0].getNoteNumber() == 24);
+    EXPECT_TRUE(messages[1].isController() && messages[1].getControllerNumber() == 7 &&
+                messages[1].getControllerValue() == 10);
+    EXPECT_TRUE(messages[2].isController() && messages[2].getControllerNumber() == 11 &&
+                messages[2].getControllerValue() == 96);
+    EXPECT_TRUE(messages[3].isNoteOff() && messages[3].getNoteNumber() == 24);
+
+    juce::MidiBuffer boundary;
+    schedule({compiled}, 4, 1, boundary, false);
+    std::vector<int> boundaryValues;
+    for (const auto metadata : boundary) {
+        const auto message = metadata.getMessage();
+        if (message.isController() && message.getControllerNumber() == 11)
+            boundaryValues.push_back(message.getControllerValue());
+    }
+    EXPECT_EQ(boundaryValues, (std::vector<int>{0, 96}));
+
+    juce::MidiBuffer afterBoundary;
+    schedule({compiled}, 5, 1, afterBoundary, true);
+    std::vector<juce::MidiMessage> afterBoundaryMessages;
+    for (const auto metadata : afterBoundary)
+        afterBoundaryMessages.push_back(metadata.getMessage());
+    const auto boundaryController = std::find_if(
+        afterBoundaryMessages.begin(), afterBoundaryMessages.end(), [](const auto& message) {
+            return message.isController() && message.getControllerNumber() == 11;
+        });
+    ASSERT_NE(boundaryController, afterBoundaryMessages.end());
+    EXPECT_EQ(boundaryController->getControllerValue(), 96);
+
+    juce::MidiBuffer early;
+    schedule({compiled}, 2, 1, early, true);
+    std::vector<juce::MidiMessage> earlyMessages;
+    for (const auto metadata : early) earlyMessages.push_back(metadata.getMessage());
+    const auto earlyController =
+        std::find_if(earlyMessages.begin(), earlyMessages.end(), [](const auto& message) {
+            return message.isController() && message.getControllerNumber() == 7;
+        });
+    ASSERT_NE(earlyController, earlyMessages.end());
+    EXPECT_EQ(earlyController->getControllerValue(), 10);
 }
 
 }  // namespace

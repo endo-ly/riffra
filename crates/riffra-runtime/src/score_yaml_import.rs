@@ -1009,7 +1009,7 @@ pub(crate) fn import(
         changed: true,
         link_changed: true,
         inputs_changed: true,
-        diagnostics: warnings(&document.plan),
+        diagnostics: warnings(&document.plan, catalog),
         dependencies: std::mem::take(&mut document.dependencies),
         staged,
     })
@@ -1107,7 +1107,7 @@ fn rebuild_with_probe(
         &mut staged,
         BuildMode::Stage,
     )?;
-    let diagnostics = warnings(&document.plan);
+    let diagnostics = warnings(&document.plan, catalog);
     let dependencies = std::mem::take(&mut document.dependencies);
     let yaml_changed = previous
         .score_source
@@ -1180,7 +1180,7 @@ pub(crate) fn validate(
     ) {
         Ok(_) => ScoreValidation {
             valid: true,
-            diagnostics: warnings(&document.plan),
+            diagnostics: warnings(&document.plan, catalog),
             summary: Some(summary(&document.plan)),
         },
         Err(error) => ScoreValidation {
@@ -1443,7 +1443,7 @@ pub(crate) fn inspect(
         effects: effect_inspections,
         automation,
         summary: summary(plan),
-        diagnostics: warnings(plan),
+        diagnostics: warnings(plan, catalog),
         buses,
         sends,
         sidechains,
@@ -1559,6 +1559,41 @@ pub(crate) fn inspect(
                 },
             })
             .collect(),
+        performance_controls: if events {
+            plan.performance_controls
+                .iter()
+                .map(|control| {
+                    json!({
+                        "source": control.source,
+                        "tick": control.tick,
+                        "atQuarters": control.at_quarters,
+                        "event": match control.kind {
+                            score::PerformanceControlKind::KeySwitch { note, mode, down } => json!({
+                                "type": "keySwitch",
+                                "note": note,
+                                "mode": match mode {
+                                    KeySwitchMode::Hold => "hold",
+                                    KeySwitchMode::Latch => "latch",
+                                },
+                                "down": down,
+                            }),
+                            score::PerformanceControlKind::ControlChange { number, value } => {
+                                json!({"type": "controlChange", "number": number, "value": value})
+                            }
+                        },
+                        "path": control.path,
+                        "line": control.line,
+                        "column": control.column,
+                        "section": control.section,
+                        "occurrence": control.occurrence,
+                        "bar": control.bar,
+                        "step": control.step,
+                    })
+                })
+                .collect()
+        } else {
+            Vec::new()
+        },
     })
 }
 
@@ -1731,8 +1766,9 @@ fn diagnostic(error: &ImportError) -> ScoreDiagnostic {
     }
 }
 
-fn warnings(plan: &ScorePlan) -> Vec<ScoreDiagnostic> {
-    plan.production_sources
+fn warnings(plan: &ScorePlan, catalog: &BuiltInInstrumentCatalog) -> Vec<ScoreDiagnostic> {
+    let mut diagnostics = plan
+        .production_sources
         .keys()
         .filter(|id| plan.lanes.iter().filter(|lane| &lane.id == *id).count() > 1)
         .map(|id| {
@@ -1747,6 +1783,59 @@ fn warnings(plan: &ScorePlan) -> Vec<ScoreDiagnostic> {
                 message,
                 detail: Some(detail),
             }
+        })
+        .collect::<Vec<_>>();
+    diagnostics.extend(recommended_range_warnings(plan, catalog));
+    diagnostics
+}
+
+fn recommended_range_warnings(
+    plan: &ScorePlan,
+    catalog: &BuiltInInstrumentCatalog,
+) -> Vec<ScoreDiagnostic> {
+    plan.instruments
+        .iter()
+        .filter(|(id, _)| {
+            !plan.kit_members.contains_key(*id)
+                && !plan.audio_instruments.contains(*id)
+                && !plan.production_sources.contains_key(*id)
+        })
+        .filter_map(|(id, spec)| {
+            let preset = spec.get("preset").and_then(Value::as_str)?;
+            let definition = catalog.resolve(&preset_id(preset)).ok()?;
+            let range = &definition.summary.recommended_range;
+            let notes = plan
+                .lanes
+                .iter()
+                .filter(|lane| lane.id == *id)
+                .flat_map(|lane| &lane.pattern.events)
+                .filter_map(|event| match event {
+                    MusicalEvent::Note { note, .. } => Some(*note),
+                    _ => None,
+                })
+                .filter(|note| *note < range.min_midi || *note > range.max_midi)
+                .collect::<Vec<_>>();
+            if notes.is_empty() {
+                return None;
+            }
+            let lowest = notes.iter().copied().min().expect("notes are not empty");
+            let highest = notes.iter().copied().max().expect("notes are not empty");
+            let path = format!("instruments.{id}.preset");
+            let message = format!(
+                "{} notes outside the recommended MIDI range {}..={} (lowest {lowest}, highest {highest})",
+                notes.len(),
+                range.min_midi,
+                range.max_midi
+            );
+            let detail = plan.source_detail(&path, &message);
+            Some(ScoreDiagnostic {
+                severity: ScoreDiagnosticSeverity::Warning,
+                path,
+                line: detail["line"].as_u64().unwrap_or(0) as usize,
+                column: detail["column"].as_u64().unwrap_or(0) as usize,
+                message,
+                detail: Some(detail),
+            })
         })
         .collect()
 }
@@ -1770,7 +1859,8 @@ fn summary(plan: &ScorePlan) -> ScoreSummary {
             .iter()
             .flat_map(|lane| &lane.pattern.events)
             .filter(|event| !matches!(event, MusicalEvent::Note { .. }))
-            .count(),
+            .count()
+            + plan.performance_controls.len(),
     }
 }
 
@@ -2109,7 +2199,7 @@ fn build(
         } else {
             reset_events(lane, plan, &sources[&lane.id].report)?
         };
-        let clip = midi_clip(
+        let mut clip = midi_clip(
             previous_clip,
             &lane.id,
             &track.id,
@@ -2117,6 +2207,15 @@ fn build(
             &events,
             velocity,
         )?;
+        let order_base = clip.instrument_control_events.len();
+        clip.instrument_control_events
+            .extend(performance_control_events(
+                &clip.id,
+                plan.performance_controls
+                    .iter()
+                    .filter(|control| control.source == lane.id),
+                order_base,
+            )?);
         instrument_tracks
             .entry(lane.id.clone())
             .or_default()
@@ -2188,7 +2287,7 @@ fn build(
                     .find(|clip| clip.track_id == claimed.id)
             })
         });
-        let clip = midi_clip(
+        let mut clip = midi_clip(
             previous_clip,
             kit_id,
             &track.id,
@@ -2196,6 +2295,15 @@ fn build(
             &events,
             velocity.as_deref(),
         )?;
+        let order_base = clip.instrument_control_events.len();
+        clip.instrument_control_events
+            .extend(performance_control_events(
+                &clip.id,
+                plan.performance_controls
+                    .iter()
+                    .filter(|control| control.source == *kit_id),
+                order_base,
+            )?);
         kit_tracks.insert(kit_id.clone(), track.id.clone());
         tracks.push(track);
         clips.push(clip);
@@ -3161,6 +3269,33 @@ fn midi_clip(
         });
     }
     Ok(clip)
+}
+
+/// Converts logical Score performance controls into clip-relative MIDI controls.
+fn performance_control_events<'a>(
+    clip_id: &str,
+    controls: impl Iterator<Item = &'a score::PerformanceControl>,
+    order_base: usize,
+) -> Result<Vec<InstrumentControlEvent>, ImportError> {
+    controls
+        .enumerate()
+        .map(|(order, control)| {
+            Ok(InstrumentControlEvent {
+                id: format!("{clip_id}:control:{order}"),
+                tick: TimelineTick(control.tick),
+                source_order: u32::try_from(order_base + order)
+                    .map_err(|_| "too many score performance controls".to_string())?,
+                kind: match control.kind {
+                    score::PerformanceControlKind::KeySwitch { note, mode, down } => {
+                        InstrumentControlEventKind::KeySwitch { note, mode, down }
+                    }
+                    score::PerformanceControlKind::ControlChange { number, value } => {
+                        InstrumentControlEventKind::ControlChange { number, value }
+                    }
+                },
+            })
+        })
+        .collect()
 }
 
 /// Applies a monotonic Score velocity map once to one expanded note.
@@ -4275,6 +4410,73 @@ mod tests {
     }
 
     #[test]
+    fn recommended_ranges_warn_once_per_built_in_instrument_and_skip_kit_members() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-score-range-{}",
+            riffra_control::new_instance_id()
+        ));
+        std::fs::create_dir_all(root.join("resources")).unwrap();
+        std::fs::write(root.join("definition.json"), "{}").unwrap();
+        std::fs::write(
+            root.join("manifest.json"),
+            serde_json::json!({
+                "sourceRelease": "vtest",
+                "presets": [{
+                    "id": "BASS-001",
+                    "name": "Bass",
+                    "author": "Riffra",
+                    "category": "Bass",
+                    "tags": ["test"],
+                    "recommendedRange": {"minMidi": 60, "maxMidi": 72},
+                    "preview": {
+                        "tempoBpm": 120.0,
+                        "ticksPerBeat": 480,
+                        "timeSignature": {"numerator": 4, "denominator": 4},
+                        "lengthTicks": 1920,
+                        "notes": [{"tick": 0, "durationTicks": 480, "note": 60, "velocity": 100}]
+                    },
+                    "definitionPath": "definition.json",
+                    "resourceBasePath": "resources"
+                }]
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let catalog = BuiltInInstrumentCatalog::load(&root).unwrap();
+        let plan = score::compile(
+            r#"{
+                "meta":{"title":"Range","bpm":120,"meter":"4/4","tuning":"12edo","reference_octave":4,"gate":1},
+                "form":[{"section":"phrase","bars":2,"tonic":"C","scale":"ionian"}],
+                "sections":{"phrase":{
+                    "placements":[
+                        {"instrument":"bass","degree":"1,","at":{"bar":1,"step":1},"duration_steps":1},
+                        {"instrument":"bass","degree":"1''","at":{"bar":2,"step":1},"duration_steps":1},
+                        {"instrument":"vst","degree":"1,","at":{"bar":1,"step":9},"duration_steps":1}
+                    ],
+                    "events":[{"kind":"hit","instrument":"kick","at":{"bar":1,"step":1}}]
+                }},
+                "instruments":{
+                    "bass":{"preset":"BASS/001-test"},
+                    "vst":{"preset":"BASS/001-test","source":{"vst3":{"plugin":"Synth"}}},
+                    "kick":{"kit":"drums","trigger_note_midi":30}
+                },
+                "kits":{"drums":{"source":{"vst3":{"plugin":"Drums"}}}}
+            }"#,
+        )
+        .unwrap();
+
+        let warnings = recommended_range_warnings(&plan, &catalog);
+
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].path, "instruments.bass.preset");
+        assert!(warnings[0].message.contains("2 notes outside"));
+        assert!(warnings[0].message.contains("60..=72"));
+        assert!(warnings[0].message.contains("lowest 48"));
+        assert!(warnings[0].message.contains("highest 84"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn production_diagnostics_identify_plugin_state_and_patch_fields() {
         use crate::api::output::{
             PluginEntry, PluginFormat, PluginRole, PluginScanState, ScanReport,
@@ -4424,6 +4626,246 @@ mod tests {
         assert_eq!(mapped_velocity(Some(&map), 64), 68);
         assert_eq!(mapped_velocity(Some(&map), 96), 94);
         assert_eq!(mapped_velocity(Some(&map), 127), 120);
+    }
+
+    #[test]
+    fn production_build_attaches_performance_controls_to_every_lane_and_kit() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-score-performance-controls-{}",
+            riffra_control::new_instance_id()
+        ));
+        let store = store(&root);
+        let score = r#"{
+            "meta":{"title":"Controls","bpm":120,"meter":"4/4","tuning":"12edo","gate":1},
+            "form":[{"section":"verse","bars":1,"tonic":"C","scale":"ionian"}],
+            "instruments":{
+                "bass":{"source":{
+                    "vst3":{"plugin":"Bass"},
+                    "articulations":{
+                        "default":{"keyswitch":24,"mode":"latch"},
+                        "mute":{"keyswitch":26,"mode":"latch"},
+                        "open":{"keyswitch":27,"mode":"hold"},
+                        "expression":{"cc":{"number":11,"value":96,"reset":64}}
+                    }
+                }},
+                "kick":{"kit":"drums","trigger_note_midi":36}
+            },
+            "kits":{"drums":{
+                "source":{
+                    "vst3":{"plugin":"Drums"},
+                    "articulations":{
+                        "default":{"keyswitch":24,"mode":"latch"},
+                        "mute":{"keyswitch":26,"mode":"latch"}
+                    }
+                }
+            }},
+            "sections":{"verse":{
+                "lines":{"main":{"instrument":"bass","melody":"theme"}},
+                "placements":[{"instrument":"bass","degree":"1","at":{"bar":1,"step":1},"duration_steps":1,"gain_db":-3}],
+                "events":[
+                    {"kind":"articulation","instrument":"bass","name":"open","at":{"bar":1,"offset_quarters":1},"duration_quarters":1},
+                    {"kind":"articulation","instrument":"bass","name":"mute","at":{"bar":1,"step":1},"duration_quarters":"63/64"},
+                    {"kind":"articulation","instrument":"bass","name":"expression","at":{"bar":1,"step":9},"duration_quarters":1},
+                    {"kind":"articulation","instrument":"bass","name":"open","at":{"bar":1,"step":13},"duration_quarters":1},
+                    {"kind":"cc","instrument":"bass","number":1,"value":100,"at":{"bar":1,"step":15}},
+                    {"kind":"articulation","instrument":"drums","name":"mute","at":{"bar":1,"step":1},"duration_quarters":2},
+                    {"kind":"cc","instrument":"drums","number":74,"value":96,"at":{"bar":1,"step":9}},
+                    {"kind":"hit","instrument":"kick","at":{"bar":1,"step":1}}
+                ]
+            }},
+            "melodies":{"theme":["1 - - - | 3 - - - | 5 - - - | 1' - - -"]}
+        }"#;
+        let mut document = production_document(score);
+        let mut staged = StagedResources::new(&root);
+        let session = build(&mut document, None, &store, &mut staged, BuildMode::Stage)
+            .expect("production build");
+
+        let bass_tracks = session
+            .arrangement
+            .tracks
+            .iter()
+            .filter(|track| track.score_instrument.as_deref() == Some("bass"))
+            .collect::<Vec<_>>();
+        assert_eq!(bass_tracks.len(), 2);
+        for track in &bass_tracks {
+            let clip = session
+                .arrangement
+                .midi_clips
+                .iter()
+                .find(|clip| clip.track_id == track.id)
+                .expect("bass clip");
+            assert!(clip.instrument_control_events.iter().any(|event| matches!(
+                event.kind,
+                InstrumentControlEventKind::KeySwitch {
+                    note: 26,
+                    mode: KeySwitchMode::Latch,
+                    down: true
+                }
+            )));
+            assert!(clip.instrument_control_events.iter().any(|event| matches!(
+                event.kind,
+                InstrumentControlEventKind::KeySwitch {
+                    note: 27,
+                    mode: KeySwitchMode::Hold,
+                    down: true
+                }
+            )));
+            assert!(clip.instrument_control_events.iter().any(|event| matches!(
+                event.kind,
+                InstrumentControlEventKind::ControlChange {
+                    number: 11,
+                    value: 96
+                }
+            )));
+            assert!(clip.instrument_control_events.iter().any(|event| matches!(
+                event.kind,
+                InstrumentControlEventKind::ControlChange {
+                    number: 1,
+                    value: 100
+                }
+            )));
+            let default_index = clip
+                .instrument_control_events
+                .iter()
+                .position(|event| {
+                    matches!(
+                        event.kind,
+                        InstrumentControlEventKind::KeySwitch {
+                            note: 24,
+                            down: true,
+                            ..
+                        }
+                    )
+                })
+                .expect("default key switch");
+            let open_index = clip
+                .instrument_control_events
+                .iter()
+                .position(|event| {
+                    matches!(
+                        event.kind,
+                        InstrumentControlEventKind::KeySwitch {
+                            note: 27,
+                            down: true,
+                            ..
+                        }
+                    )
+                })
+                .expect("open key switch");
+            assert!(default_index < open_index);
+            assert!(
+                clip.instrument_control_events[default_index].source_order
+                    < clip.instrument_control_events[open_index].source_order
+            );
+        }
+        let kit = session
+            .arrangement
+            .tracks
+            .iter()
+            .find(|track| track.score_instrument.as_deref() == Some("kit:drums"))
+            .expect("kit track");
+        let kit_clip = session
+            .arrangement
+            .midi_clips
+            .iter()
+            .find(|clip| clip.track_id == kit.id)
+            .expect("kit clip");
+        assert!(
+            kit_clip
+                .instrument_control_events
+                .iter()
+                .any(|event| matches!(
+                    event.kind,
+                    InstrumentControlEventKind::KeySwitch {
+                        note: 26,
+                        mode: KeySwitchMode::Latch,
+                        down: true
+                    }
+                ))
+        );
+        assert!(
+            kit_clip
+                .instrument_control_events
+                .iter()
+                .any(|event| matches!(
+                    event.kind,
+                    InstrumentControlEventKind::ControlChange {
+                        number: 74,
+                        value: 96
+                    }
+                ))
+        );
+        assert_eq!(session.arrangement.tracks.len(), 3);
+
+        let device_ids = session
+            .arrangement
+            .tracks
+            .iter()
+            .map(|track| {
+                track
+                    .instrument
+                    .as_ref()
+                    .map(|instrument| instrument.id.clone())
+            })
+            .collect::<Vec<_>>();
+        let mut again = production_document(score);
+        let rebuilt = build(
+            &mut again,
+            Some(&session),
+            &store,
+            &mut staged,
+            BuildMode::Stage,
+        )
+        .expect("performance control rebuild");
+        assert_eq!(
+            rebuilt
+                .arrangement
+                .tracks
+                .iter()
+                .map(|track| track
+                    .instrument
+                    .as_ref()
+                    .map(|instrument| instrument.id.clone()))
+                .collect::<Vec<_>>(),
+            device_ids
+        );
+        assert!(session.score_performance_equals(&rebuilt));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn built_in_control_events_survive_performance_control_import() {
+        let mut score: Value = serde_json::from_str(SCORE).unwrap();
+        score["sections"]["verse"]["events"] = serde_json::json!([
+            {"kind":"mod_wheel","instrument":"lead","value":0.5,"at":{"bar":1,"step":1}},
+            {"kind":"sustain_pedal","instrument":"lead","down":true,"at":{"bar":1,"step":2}},
+            {"kind":"pitch_bend","instrument":"lead","value":-0.25,"at":{"bar":1,"step":3}}
+        ]);
+        let root = std::env::temp_dir().join(format!(
+            "riffra-score-controls-{}",
+            riffra_control::new_instance_id()
+        ));
+        let store = store(&root);
+        let mut document = document(&score.to_string());
+        let mut staged = StagedResources::new(&root);
+        let session = build(&mut document, None, &store, &mut staged, BuildMode::Stage)
+            .expect("built-in build");
+        let clip = &session.arrangement.midi_clips[0];
+        assert!(
+            clip.instrument_control_events
+                .iter()
+                .any(|event| matches!(event.kind, InstrumentControlEventKind::ModWheel { .. }))
+        );
+        assert!(clip.instrument_control_events.iter().any(|event| matches!(
+            event.kind,
+            InstrumentControlEventKind::SustainPedal { down: true }
+        )));
+        assert!(
+            clip.instrument_control_events
+                .iter()
+                .any(|event| matches!(event.kind, InstrumentControlEventKind::PitchBend { .. }))
+        );
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

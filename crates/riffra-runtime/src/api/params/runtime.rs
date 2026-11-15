@@ -37,6 +37,11 @@ pub enum RenderRange {
         start: MusicalPosition,
         end: MusicalPosition,
     },
+    Section {
+        name: String,
+        /// One-based position among Score regions with the same name.
+        occurrence: u32,
+    },
 }
 
 /// Range, normalization, and Track selection of an offline render.

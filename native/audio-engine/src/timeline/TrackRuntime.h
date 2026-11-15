@@ -267,6 +267,7 @@ public:
     // Prepared timeline state. The snapshot builder allocates these buffers;
     // realtime code only clears and processes their existing storage.
     std::vector<MidiScheduler::CompiledMidiClip> midiClips;
+    std::vector<MidiEventRef> midiScheduleRefs;
     MidiNoteTransform midiNoteTransform;
     PluginChainAlignment effectAlignment;
     std::int64_t timelinePdcDelaySamples = 0;

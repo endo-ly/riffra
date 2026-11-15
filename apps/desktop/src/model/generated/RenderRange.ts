@@ -4,4 +4,8 @@ import type { MusicalPosition } from "./MusicalPosition";
 /**
  * The timeline span of an offline render.
  */
-export type RenderRange = { "kind": "entireArrangement" } | { "kind": "loopRange" } | { "kind": "timeSelection", start: MusicalPosition, end: MusicalPosition, };
+export type RenderRange = { "kind": "entireArrangement" } | { "kind": "loopRange" } | { "kind": "timeSelection", start: MusicalPosition, end: MusicalPosition, } | { "kind": "section", name: string, 
+/**
+ * One-based position among Score regions with the same name.
+ */
+occurrence: number, };

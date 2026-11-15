@@ -38,6 +38,10 @@ startTick: number,
  */
 endTick: number, 
 /**
+ * Requested range kind: `entireArrangement`, `loopRange`, `timeSelection`, or `section`.
+ */
+rangeKind: string, 
+/**
  * Shared frame count, including any render tail.
  */
 frames: number, 
@@ -48,4 +52,12 @@ stems: Array<RenderStem>,
 /**
  * Tracks skipped by an all-Tracks request because they had no unmuted Clips.
  */
-skippedTrackIds: Array<string>, };
+skippedTrackIds: Array<string>, 
+/**
+ * Score section name for a section render.
+ */
+sectionName: string | null, 
+/**
+ * One-based Score section occurrence for a section render.
+ */
+sectionOccurrence: number | null, };

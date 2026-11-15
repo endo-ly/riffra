@@ -69,6 +69,16 @@ TEST(ExecutionGraphContractTest, DecodesRustGeneratedFixtures) {
     EXPECT_EQ(full.graph.tracks[1].midiClips[0].events[0].kind, MidiEventKindSpec::pitchBend);
     EXPECT_EQ(full.graph.tracks[2].midiClips[0].events[0].kind, MidiEventKindSpec::channelPressure);
     EXPECT_EQ(full.graph.tracks[2].midiClips[0].events[1].kind, MidiEventKindSpec::controlChange);
+    ASSERT_EQ(full.graph.tracks[2].midiClips[0].instrumentControlEvents.size(), 2u);
+    const auto& keySwitch = full.graph.tracks[2].midiClips[0].instrumentControlEvents[0];
+    EXPECT_EQ(keySwitch.type, "keySwitch");
+    EXPECT_EQ(keySwitch.note, 26);
+    EXPECT_TRUE(keySwitch.latch);
+    EXPECT_TRUE(keySwitch.down);
+    const auto& controller = full.graph.tracks[2].midiClips[0].instrumentControlEvents[1];
+    EXPECT_EQ(controller.type, "controlChange");
+    EXPECT_EQ(controller.controllerNumber, 11);
+    EXPECT_EQ(controller.controllerValue, 96);
     EXPECT_FALSE(full.graph.tracks[0].instrument.has_value());
     EXPECT_FALSE(full.graph.tracks[1].audioInput.has_value());
     EXPECT_FALSE(full.graph.tracks[0].midiInput.deviceId.has_value());
@@ -223,6 +233,11 @@ TEST(ExecutionGraphContractTest, RejectsValuesOutsideContractRanges) {
     setValue(invalidMidiPosition,
              {"graph", "tracks", "#1", "midiClips", "#0", "events", "#0", "tick"}, 960);
     expectTimelineSnapshotRejected(invalidMidiPosition);
+    auto terminalKeySwitch = cloneJson(full);
+    setValue(terminalKeySwitch,
+             {"graph", "tracks", "#2", "midiClips", "#0", "instrumentControlEvents", "#0", "tick"},
+             960);
+    expectTimelineSnapshotRejected(terminalKeySwitch);
 
     auto missingSidechainTarget = cloneJson(full);
     setValue(missingSidechainTarget, {"graph", "mixer", "sidechainSends", "#0", "targetDeviceId"},

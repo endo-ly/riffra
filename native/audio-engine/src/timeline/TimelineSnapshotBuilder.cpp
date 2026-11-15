@@ -458,8 +458,15 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
                     event.instrumentEvent->event_type != SONALLOY_EVENT_NOTE_OFF)
                     ++controlCapacity;
         track->runtime->midiEventCapacity += controlCapacity;
+        std::size_t restorationCapacity = 0;
+        for (const auto& clip : track->runtime->midiClips)
+            for (const auto& event : clip.events)
+                if (event.controlKind != MidiControlKind::none) ++restorationCapacity;
+        if (restorationCapacity > 0) ++restorationCapacity;
+        track->runtime->midiEventCapacity += restorationCapacity;
         track->runtime->instrumentEvents.resize(track->runtime->midiEventCapacity);
         track->runtime->instrumentEventOrdering.resize(track->runtime->midiEventCapacity);
+        track->runtime->midiScheduleRefs.reserve(track->runtime->midiEventCapacity);
         if (!MidiScheduler::prepareBuffer(track->runtime->midiBuffer,
                                           track->runtime->midiEventCapacity)) {
             error = "Timeline MIDI requires an audio buffer larger than the native runtime allows.";

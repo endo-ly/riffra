@@ -2,14 +2,26 @@ use num_traits::ToPrimitive;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
+use riffra_core::KeySwitchMode;
+
+use super::production::ArticulationControl;
 use super::syntax::{note_spans, spans};
 use super::time::{Quarter, ppq, rational, tick};
 use super::{
-    Error, MeterChange, MusicalEvent, Occurrence, PartWindow, PerformanceEvents, Result, ScoreLane,
-    ScorePlan, TempoChange, array, integer, number, object, optional_int, optional_number, q,
-    required, string, text_field,
+    Error, MeterChange, MusicalEvent, Occurrence, PartWindow, PerformanceControl,
+    PerformanceControlKind, PerformanceEvents, Result, ScoreLane, ScorePlan, TempoChange, array,
+    integer, number, object, optional_int, optional_number, q, required, string, text_field,
 };
 use super::{resolve, syntax};
+
+/// Articulation definitions and kit relationships needed by performance controls.
+pub(crate) struct ControlSources {
+    pub(crate) articulations: BTreeMap<String, BTreeMap<String, ArticulationControl>>,
+    pub(crate) articulation_paths: BTreeMap<String, String>,
+    pub(crate) kits: BTreeSet<String>,
+    pub(crate) members: BTreeMap<String, String>,
+    pub(crate) audio: BTreeSet<String>,
+}
 
 #[derive(Clone)]
 struct Section {
@@ -49,9 +61,66 @@ struct Event {
     velocity: i64,
 }
 
+#[derive(Clone, Default)]
+struct ControlPosition {
+    section: String,
+    occurrence: usize,
+    bar: usize,
+    step: String,
+}
+
+impl ControlPosition {
+    fn at(section: &Section, at: &Quarter) -> Self {
+        let (bar, step) = section_bar_step(section, &(at - &section.start));
+        Self {
+            section: section.name.clone(),
+            occurrence: section.occurrence,
+            bar,
+            step,
+        }
+    }
+}
+
+struct ArticulationInterval {
+    source: String,
+    name: String,
+    start: Quarter,
+    end: Quarter,
+    path: String,
+    position: ControlPosition,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MidiControllerKind {
+    Single,
+    Automation,
+}
+
+struct MidiControllerEvent {
+    source: String,
+    number: u8,
+    value: u8,
+    at: Quarter,
+    path: String,
+    kind: MidiControllerKind,
+    position: ControlPosition,
+}
+
+struct MidiControllerRamp {
+    source: String,
+    number: u8,
+    start: Quarter,
+    end: Quarter,
+    path: String,
+}
+
 struct Builder<'a> {
     doc: &'a Value,
+    controls: &'a ControlSources,
     events: Vec<Event>,
+    articulation_intervals: Vec<ArticulationInterval>,
+    midi_controllers: Vec<MidiControllerEvent>,
+    midi_ramps: Vec<MidiControllerRamp>,
     harmony: Vec<(Quarter, Option<syntax::Chord>, i32, Quarter)>,
     gate: Quarter,
     octave: i32,
@@ -61,7 +130,11 @@ struct Builder<'a> {
     control_ramps: Vec<(String, String, Quarter, Quarter, String)>,
 }
 
-pub(super) fn lower(doc: &Value, additional_times: &[Quarter]) -> Result<ScorePlan> {
+pub(super) fn lower(
+    doc: &Value,
+    controls: &ControlSources,
+    additional_times: &[Quarter],
+) -> Result<ScorePlan> {
     let meta = &doc["meta"];
     let bpm = number(required(meta, "bpm", "meta")?, "meta.bpm")?;
     if bpm <= 0.0 {
@@ -95,7 +168,11 @@ pub(super) fn lower(doc: &Value, additional_times: &[Quarter]) -> Result<ScorePl
     expand_tempos(doc, &mut tempos, &start)?;
     let mut builder = Builder {
         doc,
+        controls,
         events: Vec::new(),
+        articulation_intervals: Vec::new(),
+        midi_controllers: Vec::new(),
+        midi_ramps: Vec::new(),
         harmony: Vec::new(),
         gate,
         octave,
@@ -133,6 +210,7 @@ pub(super) fn lower(doc: &Value, additional_times: &[Quarter]) -> Result<ScorePl
     builder.apply_dynamics()?;
     builder.validate_control_ramps()?;
     builder.offset_timing(&start)?;
+    builder.validate_control_targets()?;
     builder.validate_controls()?;
     let timeline = compile_timeline(
         meta,
@@ -143,6 +221,7 @@ pub(super) fn lower(doc: &Value, additional_times: &[Quarter]) -> Result<ScorePl
         &meters,
         additional_times,
     )?;
+    let performance_controls = builder.resolve_performance_controls(&start, &timeline)?;
     let part_windows = compile_part_windows(
         std::mem::take(&mut builder.part_windows),
         timeline.ticks_per_beat,
@@ -161,6 +240,7 @@ pub(super) fn lower(doc: &Value, additional_times: &[Quarter]) -> Result<ScorePl
         audio_clips: BTreeMap::new(),
         mix: None,
         lanes,
+        performance_controls,
         sections: occurrences,
         length_ticks: timeline.length_ticks,
         ticks_per_beat: timeline.ticks_per_beat,
@@ -422,10 +502,29 @@ impl Builder<'_> {
         self.events = events;
     }
 
+    fn allows_kit_target(&self, event: &Value, id: &str) -> bool {
+        if !self.controls.kits.contains(id) {
+            return false;
+        }
+        match event.get("kind").and_then(Value::as_str) {
+            Some("articulation" | "cc") => true,
+            Some("automation") => event
+                .get("control")
+                .and_then(Value::as_str)
+                .and_then(super::cc_number)
+                .is_some(),
+            _ => false,
+        }
+    }
+
     fn event_targets(&self, event: &Value, path: &str) -> Result<()> {
         for key in ["instrument", "riser"] {
             if let Some(value) = event.get(key) {
-                self.instrument(string(value, &format!("{path}.{key}"))?)?;
+                let id = string(value, &format!("{path}.{key}"))?;
+                if key == "instrument" && self.allows_kit_target(event, id) {
+                    continue;
+                }
+                self.instrument(id)?;
             }
         }
         for key in ["instruments", "except_instruments"] {
@@ -437,6 +536,23 @@ impl Builder<'_> {
         }
         Ok(())
     }
+    fn validate_control_targets(&self) -> Result<()> {
+        for event in &self.events {
+            if matches!(event.kind, MusicalEvent::Note { .. }) {
+                continue;
+            }
+            if self.controls.articulations.contains_key(&event.id)
+                || self.controls.members.contains_key(&event.id)
+            {
+                return Err(Error::new(
+                    &event.source,
+                    "VST3 instruments support only note, articulation, and cc performance events",
+                ));
+            }
+        }
+        Ok(())
+    }
+
     fn validate_controls(&self) -> Result<()> {
         let mut controls: std::collections::BTreeMap<(&str, u64, String), Vec<&Event>> =
             std::collections::BTreeMap::new();
@@ -472,6 +588,51 @@ impl Builder<'_> {
         self.doc["instruments"]
             .get(id)
             .ok_or_else(|| Error::new(format!("instruments.{id}"), "undefined instrument"))
+    }
+
+    fn control_source(&self, id: &str, path: &str) -> Result<String> {
+        let path = format!("{path}.instrument");
+        if self.controls.members.contains_key(id) {
+            return Err(Error::new(
+                path,
+                "performance controls must target the kit id, not a kit member",
+            ));
+        }
+        if self.controls.audio.contains(id) {
+            return Err(Error::new(
+                path,
+                "audio instruments cannot receive VST3 performance controls",
+            ));
+        }
+        if self.controls.kits.contains(id) || self.controls.articulations.contains_key(id) {
+            return Ok(id.to_owned());
+        }
+        self.instrument(id)?;
+        Err(Error::new(
+            path,
+            "performance controls require a VST3 source or kit",
+        ))
+    }
+
+    fn articulation_control(
+        &self,
+        source: &str,
+        name: &str,
+        path: &str,
+    ) -> Result<ArticulationControl> {
+        let path = format!("{path}.name");
+        if name == "default" {
+            return Err(Error::new(
+                path,
+                "default is a return target and cannot be selected by an event",
+            ));
+        }
+        self.controls
+            .articulations
+            .get(source)
+            .and_then(|articulations| articulations.get(name))
+            .copied()
+            .ok_or_else(|| Error::new(path, format!("undefined articulation `{name}`")))
     }
     #[allow(clippy::too_many_arguments)]
     fn note(
@@ -1535,6 +1696,50 @@ impl Builder<'_> {
             }
             return self.placement(s, &placement, velocity, path);
         }
+        if kind == "articulation" {
+            if v.get("duration_steps").is_none() && v.get("duration_quarters").is_none() {
+                return Err(Error::new(
+                    path,
+                    "duration_steps or duration_quarters is required",
+                ));
+            }
+            let id = text_field(v, "instrument", path)?;
+            let source = self.control_source(id, path)?;
+            let name = text_field(v, "name", path)?;
+            self.articulation_control(&source, name, path)?;
+            let end = &at + &duration;
+            if at < s.start || end > s.start.clone() + s.length.clone() {
+                return Err(Error::new(path, "articulation exceeds section"));
+            }
+            self.articulation_intervals.push(ArticulationInterval {
+                source,
+                name: name.to_owned(),
+                start: at.clone(),
+                end,
+                path: path.to_owned(),
+                position: ControlPosition::at(s, &at),
+            });
+            return Ok(());
+        }
+        if kind == "cc" {
+            let id = text_field(v, "instrument", path)?;
+            let source = self.control_source(id, path)?;
+            let number = integer(required(v, "number", path)?, &format!("{path}.number"))?;
+            let value = integer(required(v, "value", path)?, &format!("{path}.value"))?;
+            if !(0..=127).contains(&number) || !(0..=127).contains(&value) {
+                return Err(Error::new(path, "cc number and value must be 0..127"));
+            }
+            self.midi_controllers.push(MidiControllerEvent {
+                source,
+                number: u8::try_from(number).expect("range checked"),
+                value: u8::try_from(value).expect("range checked"),
+                at: at.clone(),
+                path: path.to_owned(),
+                kind: MidiControllerKind::Single,
+                position: ControlPosition::at(s, &at),
+            });
+            return Ok(());
+        }
         if kind == "hit" || kind == "hits" {
             let ids = if kind == "hit" {
                 vec![text_field(v, "instrument", path)?.to_owned()]
@@ -1556,6 +1761,72 @@ impl Builder<'_> {
             }
             return Ok(());
         }
+        if kind == "automation"
+            && let Some(control) = v.get("control").and_then(Value::as_str)
+            && let Some(number) = super::cc_number(control)
+        {
+            let id = text_field(v, "instrument", path)?;
+            let source = self.control_source(id, path)?;
+            let from = integer(
+                required(v, "from_value", path)?,
+                &format!("{path}.from_value"),
+            )?;
+            let to = integer(required(v, "to_value", path)?, &format!("{path}.to_value"))?;
+            if !(0..=127).contains(&from) || !(0..=127).contains(&to) {
+                return Err(Error::new(path, "cc automation values must be 0..127"));
+            }
+            let end = &at + &duration;
+            if end > &s.start + &s.length {
+                return Err(Error::new(path, "automation exceeds section"));
+            }
+            self.midi_ramps.push(MidiControllerRamp {
+                source: source.clone(),
+                number,
+                start: at.clone(),
+                end: end.clone(),
+                path: path.to_owned(),
+            });
+            let position = ControlPosition::at(s, &at);
+            let mut cursor = at.clone();
+            let mut previous = None;
+            loop {
+                let value = quarter_ramp_value(
+                    &at,
+                    &end,
+                    &cursor,
+                    f32::from(i16::try_from(from).expect("range checked")),
+                    f32::from(i16::try_from(to).expect("range checked")),
+                )
+                .round()
+                .clamp(0.0, 127.0);
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                let value = value as u8;
+                if previous != Some(value) {
+                    if self.midi_controllers.len() >= 1_000_000 {
+                        return Err(Error::new(
+                            path,
+                            "expanded score exceeds one million events",
+                        ));
+                    }
+                    self.midi_controllers.push(MidiControllerEvent {
+                        source: source.clone(),
+                        number,
+                        value,
+                        at: cursor.clone(),
+                        path: path.to_owned(),
+                        kind: MidiControllerKind::Automation,
+                        position: position.clone(),
+                    });
+                    previous = Some(value);
+                }
+                if cursor == end {
+                    break;
+                }
+                cursor = (cursor + q(1, 64)).min(end.clone());
+            }
+            return Ok(());
+        }
+
         let id = text_field(v, "instrument", path)?;
         let gain = optional_number(self.instrument(id)?, "gain_db", 0.0, path)?;
         let control = |key: &str| -> Result<f32> {
@@ -1837,7 +2108,520 @@ impl Builder<'_> {
                 event.duration = event.duration.clone().min(end - &event.at);
             }
         }
+        for interval in &mut self.articulation_intervals {
+            let path = format!("instruments.{}.timing_offset_steps", interval.source);
+            let Some(offset) = self.doc["instruments"]
+                .get(&interval.source)
+                .and_then(|instrument| instrument.get("timing_offset_steps"))
+            else {
+                continue;
+            };
+            let offset = rational(offset, &path)? / q(4, 1);
+            interval.start += &offset;
+            interval.end += &offset;
+            if interval.start < q(0, 1) || interval.end > *end {
+                return Err(Error::new(
+                    &interval.path,
+                    "timing offset places articulation outside score",
+                ));
+            }
+        }
+        for event in &mut self.midi_controllers {
+            let path = format!("instruments.{}.timing_offset_steps", event.source);
+            let Some(offset) = self.doc["instruments"]
+                .get(&event.source)
+                .and_then(|instrument| instrument.get("timing_offset_steps"))
+            else {
+                continue;
+            };
+            event.at += rational(offset, &path)? / q(4, 1);
+            if event.at < q(0, 1) || event.at > *end {
+                return Err(Error::new(
+                    &event.path,
+                    "timing offset places cc outside score",
+                ));
+            }
+        }
+        for ramp in &mut self.midi_ramps {
+            let path = format!("instruments.{}.timing_offset_steps", ramp.source);
+            let Some(offset) = self.doc["instruments"]
+                .get(&ramp.source)
+                .and_then(|instrument| instrument.get("timing_offset_steps"))
+            else {
+                continue;
+            };
+            let offset = rational(offset, &path)? / q(4, 1);
+            ramp.start += &offset;
+            ramp.end += &offset;
+            if ramp.start < q(0, 1) || ramp.end > *end {
+                return Err(Error::new(
+                    &ramp.path,
+                    "timing offset places cc automation outside score",
+                ));
+            }
+        }
         Ok(())
+    }
+
+    fn resolve_performance_controls(
+        &self,
+        end: &Quarter,
+        timeline: &PerformanceEvents,
+    ) -> Result<Vec<PerformanceControl>> {
+        let mut intervals = self.articulation_intervals.iter().collect::<Vec<_>>();
+        intervals.sort_by(|left, right| {
+            (left.source.as_str(), &left.start, &left.end).cmp(&(
+                right.source.as_str(),
+                &right.start,
+                &right.end,
+            ))
+        });
+        for pair in intervals.windows(2) {
+            if pair[0].source == pair[1].source && pair[1].start < pair[0].end {
+                return Err(Error::new(
+                    &pair[1].path,
+                    "articulation intervals overlap for the same source",
+                ));
+            }
+        }
+
+        let physical = |id: &str| {
+            self.controls
+                .members
+                .get(id)
+                .cloned()
+                .unwrap_or_else(|| id.to_owned())
+        };
+        let mut existing = Vec::new();
+        for event in &self.events {
+            let number = match event.kind {
+                MusicalEvent::ModWheel { .. } => 1,
+                MusicalEvent::SustainPedal { .. } => 64,
+                _ => continue,
+            };
+            existing.push((
+                physical(&event.id),
+                number,
+                event.at.clone(),
+                event.source.as_str(),
+            ));
+        }
+        let existing_ramps = self
+            .control_ramps
+            .iter()
+            .filter(|(_, control, _, _, _)| control == "mod_wheel")
+            .map(|(id, _, start, end, path)| (physical(id), 1, start, end, path.as_str()))
+            .collect::<Vec<_>>();
+
+        for interval in &intervals {
+            let control =
+                self.articulation_control(&interval.source, &interval.name, &interval.path)?;
+            let ArticulationControl::Controller { number, .. } = control else {
+                continue;
+            };
+            for event in &self.midi_controllers {
+                if event.source == interval.source
+                    && event.number == number
+                    && event.at >= interval.start
+                    && event.at < interval.end
+                {
+                    return Err(Error::new(
+                        &event.path,
+                        "cc conflicts with an articulation interval",
+                    ));
+                }
+            }
+            for ramp in &self.midi_ramps {
+                if ramp.source == interval.source
+                    && ramp.number == number
+                    && ramp.start < interval.end
+                    && interval.start < ramp.end
+                {
+                    return Err(Error::new(
+                        &ramp.path,
+                        "cc automation conflicts with an articulation interval",
+                    ));
+                }
+            }
+            for (source, existing_number, at, path) in &existing {
+                if source == &interval.source
+                    && *existing_number == number
+                    && at >= &interval.start
+                    && at < &interval.end
+                {
+                    return Err(Error::new(
+                        *path,
+                        "performance control conflicts with an articulation interval",
+                    ));
+                }
+            }
+            for (source, existing_number, start, end, path) in &existing_ramps {
+                if source == &interval.source
+                    && *existing_number == number
+                    && *start < &interval.end
+                    && &interval.start < *end
+                {
+                    return Err(Error::new(
+                        *path,
+                        "performance control automation conflicts with an articulation interval",
+                    ));
+                }
+            }
+        }
+
+        let mut positions: BTreeMap<(&str, u8, &Quarter), &str> = BTreeMap::new();
+        for event in &self.midi_controllers {
+            if positions
+                .insert((&event.source, event.number, &event.at), &event.path)
+                .is_some()
+            {
+                return Err(Error::new(
+                    &event.path,
+                    "duplicate cc value at the same source and tick",
+                ));
+            }
+            if event.kind == MidiControllerKind::Single {
+                for ramp in &self.midi_ramps {
+                    if ramp.source == event.source
+                        && ramp.number == event.number
+                        && event.at >= ramp.start
+                        && event.at <= ramp.end
+                    {
+                        return Err(Error::new(&event.path, "cc conflicts with cc automation"));
+                    }
+                }
+            }
+            for (source, number, at, path) in &existing {
+                if source == &event.source && *number == event.number && at == &event.at {
+                    return Err(Error::new(
+                        *path,
+                        "existing performance control conflicts with cc",
+                    ));
+                }
+            }
+            for (source, number, start, end, path) in &existing_ramps {
+                if source == &event.source
+                    && *number == event.number
+                    && &event.at >= *start
+                    && &event.at <= *end
+                {
+                    return Err(Error::new(
+                        *path,
+                        "existing performance control automation conflicts with cc",
+                    ));
+                }
+            }
+        }
+        for (index, ramp) in self.midi_ramps.iter().enumerate() {
+            for other in &self.midi_ramps[index + 1..] {
+                if ramp.source == other.source
+                    && ramp.number == other.number
+                    && ramp.start <= other.end
+                    && other.start <= ramp.end
+                {
+                    return Err(Error::new(
+                        &other.path,
+                        "overlapping cc automation intervals",
+                    ));
+                }
+            }
+            for (source, number, at, path) in &existing {
+                if source == &ramp.source
+                    && *number == ramp.number
+                    && at >= &ramp.start
+                    && at <= &ramp.end
+                {
+                    return Err(Error::new(
+                        *path,
+                        "existing performance control conflicts with cc automation",
+                    ));
+                }
+            }
+            for (source, number, start, end, path) in &existing_ramps {
+                if source == &ramp.source
+                    && *number == ramp.number
+                    && *start <= &ramp.end
+                    && &ramp.start <= *end
+                {
+                    return Err(Error::new(
+                        *path,
+                        "existing performance control automation conflicts with cc automation",
+                    ));
+                }
+            }
+        }
+
+        let mut controls = Vec::new();
+        let mut push = |source: &str,
+                        at: Quarter,
+                        kind: PerformanceControlKind,
+                        path: &str,
+                        position: &ControlPosition,
+                        sort_order: u8|
+         -> Result<()> {
+            let tick = tick(&at, timeline.ticks_per_beat)?;
+            if tick > timeline.length_ticks {
+                return Err(Error::new(path, "performance control exceeds score"));
+            }
+            controls.push(PerformanceControl {
+                source: source.to_owned(),
+                tick,
+                at_quarters: at.to_string(),
+                kind,
+                sort_order,
+                path: path.to_owned(),
+                section: position.section.clone(),
+                occurrence: position.occurrence,
+                bar: position.bar,
+                step: position.step.clone(),
+                line: 0,
+                column: 0,
+            });
+            Ok(())
+        };
+        let mut baselines = BTreeSet::<String>::new();
+        for interval in &intervals {
+            let control =
+                self.articulation_control(&interval.source, &interval.name, &interval.path)?;
+            if matches!(
+                control,
+                ArticulationControl::KeySwitch {
+                    mode: KeySwitchMode::Latch,
+                    ..
+                }
+            ) {
+                baselines.insert(interval.source.clone());
+            }
+        }
+        for interval in &intervals {
+            let control =
+                self.articulation_control(&interval.source, &interval.name, &interval.path)?;
+            if matches!(control, ArticulationControl::KeySwitch { .. })
+                && interval.start <= q(1, 32)
+            {
+                baselines.remove(&interval.source);
+            }
+        }
+        for source in baselines {
+            let definition_path = format!("{}.default", self.controls.articulation_paths[&source]);
+            let Some(ArticulationControl::KeySwitch {
+                note,
+                mode: KeySwitchMode::Latch,
+            }) = self.controls.articulations[&source].get("default").copied()
+            else {
+                return Err(Error::new(
+                    &definition_path,
+                    "latch articulation requires a default key switch",
+                ));
+            };
+            push(
+                &source,
+                q(0, 1),
+                PerformanceControlKind::KeySwitch {
+                    note,
+                    mode: KeySwitchMode::Latch,
+                    down: true,
+                },
+                &definition_path,
+                &ControlPosition::default(),
+                3,
+            )?;
+        }
+        for (index, interval) in intervals.iter().enumerate() {
+            let control =
+                self.articulation_control(&interval.source, &interval.name, &interval.path)?;
+            // The preceding interval bounds the send tick; only exact adjacency continues it.
+            let preceding = index
+                .checked_sub(1)
+                .and_then(|index| intervals.get(index))
+                .filter(|preceding| preceding.source == interval.source);
+            let previous = preceding.filter(|previous| previous.end == interval.start);
+            let next = intervals
+                .get(index + 1)
+                .filter(|next| next.source == interval.source && next.start == interval.end);
+            let control_of = |interval: &ArticulationInterval| {
+                self.controls
+                    .articulations
+                    .get(&interval.source)
+                    .and_then(|articulations| articulations.get(&interval.name))
+                    .copied()
+            };
+            let previous_control = previous.copied().and_then(control_of);
+            let next_control = next.copied().and_then(control_of);
+            let next_is_key_switch =
+                matches!(next_control, Some(ArticulationControl::KeySwitch { .. }));
+            let lead = if interval.start > q(1, 32) {
+                &interval.start - q(1, 32)
+            } else {
+                q(0, 1)
+            };
+            let press = preceding.map_or_else(
+                || lead.clone(),
+                |preceding| std::cmp::max(lead.clone(), preceding.end.clone()),
+            );
+            match control {
+                ArticulationControl::KeySwitch {
+                    note,
+                    mode: KeySwitchMode::Hold,
+                } => {
+                    let same_hold = |control: Option<ArticulationControl>| {
+                        matches!(
+                            control,
+                            Some(ArticulationControl::KeySwitch {
+                                note: previous_note,
+                                mode: KeySwitchMode::Hold,
+                            }) if previous_note == note
+                        )
+                    };
+                    if !same_hold(previous_control) {
+                        push(
+                            &interval.source,
+                            press.clone(),
+                            PerformanceControlKind::KeySwitch {
+                                note,
+                                mode: KeySwitchMode::Hold,
+                                down: true,
+                            },
+                            &interval.path,
+                            &interval.position,
+                            3,
+                        )?;
+                    }
+                    if !same_hold(next_control) {
+                        push(
+                            &interval.source,
+                            interval.end.clone(),
+                            PerformanceControlKind::KeySwitch {
+                                note,
+                                mode: KeySwitchMode::Hold,
+                                down: false,
+                            },
+                            &interval.path,
+                            &interval.position,
+                            0,
+                        )?;
+                    }
+                }
+                ArticulationControl::KeySwitch {
+                    note,
+                    mode: KeySwitchMode::Latch,
+                } => {
+                    let same_latch = |control: Option<ArticulationControl>| {
+                        matches!(
+                            control,
+                            Some(ArticulationControl::KeySwitch {
+                                note: previous_note,
+                                mode: KeySwitchMode::Latch,
+                            }) if previous_note == note
+                        )
+                    };
+                    if !same_latch(previous_control) {
+                        push(
+                            &interval.source,
+                            press.clone(),
+                            PerformanceControlKind::KeySwitch {
+                                note,
+                                mode: KeySwitchMode::Latch,
+                                down: true,
+                            },
+                            &interval.path,
+                            &interval.position,
+                            3,
+                        )?;
+                    }
+                    if !next_is_key_switch && interval.end < *end {
+                        let default = self.controls.articulations[&interval.source]
+                            .get("default")
+                            .copied();
+                        let Some(ArticulationControl::KeySwitch {
+                            note,
+                            mode: KeySwitchMode::Latch,
+                        }) = default
+                        else {
+                            return Err(Error::new(
+                                &interval.path,
+                                "latch articulation requires a default key switch",
+                            ));
+                        };
+                        // Restore the latch default before a new selection at the same tick.
+                        push(
+                            &interval.source,
+                            interval.end.clone(),
+                            PerformanceControlKind::KeySwitch {
+                                note,
+                                mode: KeySwitchMode::Latch,
+                                down: true,
+                            },
+                            &interval.path,
+                            &interval.position,
+                            2,
+                        )?;
+                    }
+                }
+                ArticulationControl::Controller {
+                    number,
+                    value,
+                    reset,
+                } => {
+                    push(
+                        &interval.source,
+                        interval.start.clone(),
+                        PerformanceControlKind::ControlChange { number, value },
+                        &interval.path,
+                        &interval.position,
+                        2,
+                    )?;
+                    let adjacent_same = matches!(
+                        next_control,
+                        Some(ArticulationControl::Controller {
+                            number: next_number,
+                            ..
+                        }) if next_number == number
+                    );
+                    if !adjacent_same {
+                        push(
+                            &interval.source,
+                            interval.end.clone(),
+                            PerformanceControlKind::ControlChange {
+                                number,
+                                value: reset,
+                            },
+                            &interval.path,
+                            &interval.position,
+                            1,
+                        )?;
+                    }
+                }
+            }
+        }
+        for event in &self.midi_controllers {
+            push(
+                &event.source,
+                event.at.clone(),
+                PerformanceControlKind::ControlChange {
+                    number: event.number,
+                    value: event.value,
+                },
+                &event.path,
+                &event.position,
+                2,
+            )?;
+        }
+        controls.sort_by(|left, right| {
+            (
+                left.tick,
+                left.sort_order,
+                left.source.as_str(),
+                left.path.as_str(),
+            )
+                .cmp(&(
+                    right.tick,
+                    right.sort_order,
+                    right.source.as_str(),
+                    right.path.as_str(),
+                ))
+        });
+        Ok(controls)
     }
 
     fn validate_control_ramps(&self) -> Result<()> {
@@ -2322,6 +3106,7 @@ type FormTimeline = (
 #[allow(clippy::too_many_lines)]
 fn resolve_form(doc: &Value, mut bpm: f64, mut meter: (u8, u8)) -> Result<FormTimeline> {
     let mut sections = Vec::new();
+    let mut occurrences = BTreeMap::<String, usize>::new();
     let mut start = q(0, 1);
     let mut tempos = vec![(q(0, 1), bpm)];
     let mut meters = vec![(q(0, 1), meter)];
@@ -2403,6 +3188,8 @@ fn resolve_form(doc: &Value, mut bpm: f64, mut meter: (u8, u8)) -> Result<FormTi
                 ));
             }
         }
+        let occurrence = occurrences.entry(name.to_owned()).or_default();
+        *occurrence += 1;
         sections.push(Section {
             swing: entry
                 .get("swing")
@@ -2410,7 +3197,7 @@ fn resolve_form(doc: &Value, mut bpm: f64, mut meter: (u8, u8)) -> Result<FormTi
                 .map(|value| super::time::Swing::parse(value, &format!("{path}.swing")))
                 .transpose()?,
             name: name.into(),
-            occurrence: i + 1,
+            occurrence: *occurrence,
             value,
             start: start.clone(),
             length: length.clone(),
@@ -2451,6 +3238,23 @@ fn compile_timeline(
     }
     for (t, _, _, _) in &builder.harmony {
         denominators.push(t);
+    }
+    let control_lead = q(1, 32);
+    let control_step = q(1, 64);
+    if !builder.articulation_intervals.is_empty() {
+        denominators.push(&control_lead);
+    }
+    if !builder.midi_controllers.is_empty() {
+        denominators.push(&control_step);
+    }
+    for interval in &builder.articulation_intervals {
+        denominators.extend([&interval.start, &interval.end]);
+    }
+    for event in &builder.midi_controllers {
+        denominators.push(&event.at);
+    }
+    for ramp in &builder.midi_ramps {
+        denominators.extend([&ramp.start, &ramp.end]);
     }
     let resolution = ppq(denominators)?;
     let length_ticks = tick(start, resolution)?;

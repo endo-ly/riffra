@@ -51,7 +51,7 @@ MCPを使う場合もHostは同じで、`riffra-mcp` がstdio経由でControl Co
 5. `session inspect` または `track list` で結果を確認する
 6. Live Host で `device inspect` と `device parameter list` を読み、Parameter の意味と表示値を確認して `device parameter set` で音を調整する。離散値は `choices` の表示から選び、その `value` を渡す。設定後は応答の`parameter`で対象の読み戻し値、`changedParameters`でほかのParameterへの影響を確認する。順序・Bypass・公開 Preset は `effect reorder`、`device bypass`、`plugin preset` を使う。ミックスのバランスを `track update`、`clip audio update`、`automation set`、`session settings update --master-db` で整える
 7. `render start` で音声を書き出し、完了を `job wait`(ワンショット)または `job get`(interactive)で確認する
-8. 書き出し結果の`measurements.sections`で区間ごとのラウドネス・ピーク位置・帯域バランスを確認する。素材の解析には`analysis inspect`、実行状態の確認には`audio diagnostics`を使い、必要なら編集へ戻る
+8. 書き出し結果の`measurements.sections`でMarker区間、`measurements.scoreSections`でScoreのセクション出現ごとのラウドネス・ピーク位置・帯域バランスを確認する。素材の解析には`analysis inspect`、実行状態の確認には`audio diagnostics`を使い、必要なら編集へ戻る
 
 ### まとめて構築する場合
 
@@ -106,7 +106,7 @@ Track・Clipの音量や定位に加え、バスへの接続やセンドを使�
 
 ## 書き出しと評価
 
-楽曲を編集したら `render start`、各パートを比較するなら `render stems` でWAVを作成する。返されたJob IDを `job wait` へ渡し、完了結果を確認する。区間や比較対象を変えて測定するだけなら、`render list` のRender IDまたは保存済みWAVを `analysis measure` へ渡す。測定は楽曲やMarkerを編集せず、再レンダリングも行わない。音源・ノート・ミックスを変更した音を評価するときは、新しいWAVを書き出す。
+楽曲を編集したら `render start`、各パートを比較するなら `render stems` でWAVを作成する。Scoreから取り込んだProjectでは `--section <name> --occurrence <n>` でセクションの出現だけを書き出せる。返されたJob IDを `job wait` へ渡し、完了結果を確認する。区間や比較対象を変えて測定するだけなら、`render list` のRender IDまたは保存済みWAVを `analysis measure` へ渡す。測定は楽曲やMarkerを編集せず、再レンダリングも行わない。音源・ノート・ミックスを変更した音を評価するときは、新しいWAVを書き出す。
 
 ## Host discoveryとDataRoot
 

@@ -90,6 +90,23 @@ pub enum InstrumentControlEventKind {
         #[ts(rename = "durationTicks")]
         duration_ticks: u64,
     },
+    KeySwitch {
+        note: u8,
+        mode: KeySwitchMode,
+        down: bool,
+    },
+    ControlChange {
+        number: u8,
+        value: u8,
+    },
+}
+
+/// Lifetime of one VST3 key switch selection.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, TS, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum KeySwitchMode {
+    Hold,
+    Latch,
 }
 
 /// A non-destructive MIDI clip on the arrangement.
@@ -195,6 +212,16 @@ impl MidiClip {
                             .0
                             .checked_add(*duration_ticks)
                             .is_some_and(|end| end <= self.duration_ticks)
+                }
+                InstrumentControlEventKind::KeySwitch { note, mode, down } => {
+                    *note <= 127
+                        && match mode {
+                            KeySwitchMode::Hold => !*down || event.tick.0 < self.duration_ticks,
+                            KeySwitchMode::Latch => *down && event.tick.0 < self.duration_ticks,
+                        }
+                }
+                InstrumentControlEventKind::ControlChange { number, value } => {
+                    *number <= 127 && *value <= 127
                 }
             };
             if event.id.trim().is_empty()
@@ -364,6 +391,63 @@ mod tests {
                     && error.contains(&format!("duration {}", candidate.duration_ticks))
             );
         }
+    }
+
+    #[test]
+    fn vst3_keyswitch_and_cc_controls_validate_their_ranges() {
+        let track = Track::instrument("instrument".into(), "Instrument".into());
+        let mut clip = midi_clip("instrument");
+        clip.instrument_control_events = vec![InstrumentControlEvent {
+            id: "control".into(),
+            tick: TimelineTick(0),
+            source_order: 0,
+            kind: InstrumentControlEventKind::KeySwitch {
+                note: 128,
+                mode: KeySwitchMode::Latch,
+                down: true,
+            },
+        }];
+        assert!(clip.validate_and_normalize(Some(&track)).is_err());
+
+        let mut control = clip.instrument_control_events[0].clone();
+        control.kind = InstrumentControlEventKind::KeySwitch {
+            note: 127,
+            mode: KeySwitchMode::Latch,
+            down: true,
+        };
+        clip.instrument_control_events[0] = control.clone();
+        assert!(clip.validate_and_normalize(Some(&track)).is_ok());
+
+        control.kind = InstrumentControlEventKind::KeySwitch {
+            note: 24,
+            mode: KeySwitchMode::Latch,
+            down: false,
+        };
+        clip.instrument_control_events[0] = control.clone();
+        assert!(clip.validate_and_normalize(Some(&track)).is_err());
+
+        control.kind = InstrumentControlEventKind::ControlChange {
+            number: 11,
+            value: 128,
+        };
+        clip.instrument_control_events[0] = control.clone();
+        assert!(clip.validate_and_normalize(Some(&track)).is_err());
+
+        control.tick = TimelineTick(clip.duration_ticks);
+        control.kind = InstrumentControlEventKind::KeySwitch {
+            note: 24,
+            mode: KeySwitchMode::Hold,
+            down: true,
+        };
+        clip.instrument_control_events[0] = control.clone();
+        assert!(clip.validate_and_normalize(Some(&track)).is_err());
+        control.kind = InstrumentControlEventKind::KeySwitch {
+            note: 24,
+            mode: KeySwitchMode::Hold,
+            down: false,
+        };
+        clip.instrument_control_events[0] = control;
+        assert!(clip.validate_and_normalize(Some(&track)).is_ok());
     }
 
     #[test]

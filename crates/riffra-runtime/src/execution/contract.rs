@@ -479,6 +479,27 @@ mod tests {
             data1: 7,
             data2: 64,
         });
+        vst.midi_clips[0].instrument_control_events = vec![
+            riffra_core::InstrumentControlEvent {
+                id: "control-keyswitch".into(),
+                tick: riffra_core::TimelineTick(0),
+                source_order: 0,
+                kind: riffra_core::InstrumentControlEventKind::KeySwitch {
+                    note: 26,
+                    mode: riffra_core::KeySwitchMode::Latch,
+                    down: true,
+                },
+            },
+            riffra_core::InstrumentControlEvent {
+                id: "control-cc".into(),
+                tick: riffra_core::TimelineTick(0),
+                source_order: 1,
+                kind: riffra_core::InstrumentControlEventKind::ControlChange {
+                    number: 11,
+                    value: 96,
+                },
+            },
+        ];
         audio.output_bus_id = Some("bus:group".into());
         let mixer = GraphMixer {
             master_effects: vec![GraphPluginDevice {

@@ -16,4 +16,9 @@ import type { ScoreTrackInspection } from "./ScoreTrackInspection";
 /**
  * Detailed structure expanded from one Score document.
  */
-export type ScoreInspection = { tracks: Array<ScoreTrackInspection>, kits: Array<ScoreKitInspection>, effects: Array<ScoreEffectInspection>, automation: Array<ScoreAutomationInspection>, summary: ScoreSummary, sections: Array<ScoreSectionInspection>, instruments: Array<ScoreInstrumentInspection>, lanes: Array<ScoreLaneInspection>, diagnostics: Array<ScoreDiagnostic>, buses: Array<ScoreBusInspection>, sends: Array<ScoreSendInspection>, sidechains: Array<ScoreSidechainInspection>, audioClips: Array<ScoreAudioClipInspection>, masterGainDb?: number, };
+export type ScoreInspection = { tracks: Array<ScoreTrackInspection>, kits: Array<ScoreKitInspection>, effects: Array<ScoreEffectInspection>, automation: Array<ScoreAutomationInspection>, summary: ScoreSummary, sections: Array<ScoreSectionInspection>, instruments: Array<ScoreInstrumentInspection>, lanes: Array<ScoreLaneInspection>, 
+/**
+ * Logical VST3 key switch and CC controls with their Score source locations;
+ * empty unless the command requests events.
+ */
+performanceControls: unknown[], diagnostics: Array<ScoreDiagnostic>, buses: Array<ScoreBusInspection>, sends: Array<ScoreSendInspection>, sidechains: Array<ScoreSidechainInspection>, audioClips: Array<ScoreAudioClipInspection>, masterGainDb?: number, };
