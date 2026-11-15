@@ -2483,6 +2483,17 @@ mod tests {
         );
 
         doc["sections"]["phrase"]["events"] = json!([
+            {"kind":"articulation","instrument":"part","name":"mute","at":{"bar":1,"step":1},"duration_quarters":1},
+            {"kind":"articulation","instrument":"part","name":"open","at":{"bar":1,"step":5},"duration_quarters":1}
+        ]);
+        let plan = compile_document(&doc);
+        assert_eq!(
+            key_switches(&plan),
+            [(0, 26, true), (beat, 27, true), (2 * beat, 27, false)],
+            "an adjacent hold replaces the latch selection at the boundary"
+        );
+
+        doc["sections"]["phrase"]["events"] = json!([
             {"kind":"articulation","instrument":"part","name":"expression","at":{"bar":1,"step":1},"duration_quarters":1},
             {"kind":"articulation","instrument":"part","name":"swell","at":{"bar":1,"step":5},"duration_quarters":1}
         ]);
@@ -2499,6 +2510,48 @@ mod tests {
         let plan = compile_document(&doc);
         assert_eq!(key_switches(&plan), [(0, 26, true), (beat, 24, true)]);
         assert_eq!(controller_values(&plan), [(3 * beat, 96), (4 * beat, 64)]);
+
+        doc["sections"]["phrase"]["events"] = json!([
+            {"kind":"articulation","instrument":"part","name":"open","at":{"bar":1,"step":1},"duration_quarters":"63/64"},
+            {"kind":"articulation","instrument":"part","name":"closed","at":{"bar":1,"offset_quarters":1},"duration_quarters":1}
+        ]);
+        let plan = compile_document(&doc);
+        let short_beat = u64::from(plan.ticks_per_beat);
+        let short_gap = short_beat * 63 / 64;
+        assert_eq!(
+            key_switches(&plan),
+            [
+                (0, 27, true),
+                (short_gap, 27, false),
+                (short_gap, 28, true),
+                (2 * short_beat, 28, false)
+            ],
+            "a short gap delays the next keyswitch until the preceding interval ends"
+        );
+        assert!(key_switches(&plan)[2].0 < short_beat);
+        assert!(plan.lanes.iter().any(|lane| {
+            lane.pattern.events.iter().any(
+                |event| matches!(event, MusicalEvent::Note { tick, .. } if *tick == short_beat),
+            )
+        }));
+
+        doc["sections"]["phrase"]["events"] = json!([
+            {"kind":"articulation","instrument":"part","name":"open","at":{"bar":1,"step":1},"duration_quarters":"31/32"},
+            {"kind":"articulation","instrument":"part","name":"closed","at":{"bar":1,"offset_quarters":1},"duration_quarters":1}
+        ]);
+        let plan = compile_document(&doc);
+        let second_beat = u64::from(plan.ticks_per_beat);
+        let one_thirty_second_gap = second_beat - second_beat / 32;
+        assert_eq!(
+            key_switches(&plan),
+            [
+                (0, 27, true),
+                (one_thirty_second_gap, 27, false),
+                (one_thirty_second_gap, 28, true),
+                (2 * second_beat, 28, false)
+            ],
+            "a gap of one thirty-second keeps the normal anticipation"
+        );
     }
 
     #[test]

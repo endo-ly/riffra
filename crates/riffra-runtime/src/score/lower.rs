@@ -2428,9 +2428,16 @@ impl Builder<'_> {
                 3,
             )?;
         }
+        let mut preceding_by_source = Vec::with_capacity(intervals.len());
+        let mut latest_by_source = BTreeMap::<&str, usize>::new();
+        for (index, interval) in intervals.iter().enumerate() {
+            preceding_by_source.push(latest_by_source.get(interval.source.as_str()).copied());
+            latest_by_source.insert(interval.source.as_str(), index);
+        }
         for (index, interval) in intervals.iter().enumerate() {
             let control =
                 self.articulation_control(&interval.source, &interval.name, &interval.path)?;
+            let preceding = preceding_by_source[index].map(|index| intervals[index]);
             let previous = index
                 .checked_sub(1)
                 .and_then(|index| intervals.get(index))
@@ -2456,6 +2463,10 @@ impl Builder<'_> {
             } else {
                 q(0, 1)
             };
+            let press = preceding.map_or_else(
+                || lead.clone(),
+                |preceding| std::cmp::max(lead.clone(), preceding.end.clone()),
+            );
             match control {
                 ArticulationControl::KeySwitch {
                     note,
@@ -2473,11 +2484,7 @@ impl Builder<'_> {
                     if !same_hold(previous_control) {
                         push(
                             &interval.source,
-                            if previous.is_some() {
-                                interval.start.clone()
-                            } else {
-                                lead
-                            },
+                            press.clone(),
                             PerformanceControlKind::KeySwitch {
                                 note,
                                 mode: KeySwitchMode::Hold,
@@ -2519,11 +2526,7 @@ impl Builder<'_> {
                     if !same_latch(previous_control) {
                         push(
                             &interval.source,
-                            if previous.is_some() {
-                                interval.start.clone()
-                            } else {
-                                lead
-                            },
+                            press.clone(),
                             PerformanceControlKind::KeySwitch {
                                 note,
                                 mode: KeySwitchMode::Latch,
