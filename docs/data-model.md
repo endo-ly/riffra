@@ -26,14 +26,14 @@ flowchart LR
 
 言語間の対応は次の規則に従う。
 
-| 規則           | 内容                                                                                                                                 |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| 直列化         | `rename_all = "camelCase"`(enum は `"lowercase"`)                                                                                    |
-| IDの表現       | `TimelineTick`・`Marker.tick` などは `#[ts(type = "number")]`。`AssetId` は文字列ブランド型で、直列化は `asset:<UUIDv7>` の文字列    |
-| 省略可能な値   | `skip_serializing_if = "Option::is_none"` + `#[ts(optional)]` を対で使う                                                             |
-| TypeScriptの型 | `npm run gen:types`(cargo test による ts-rs 出力 → `scripts/gen-barrel.js` のバレル生成)で常にRustから再生成される                   |
-| C++への渡し方  | セッション全体のコピーは行わない。グラフ・パラメータ・演奏・録音の実行に必要なスライスだけを投影プロトコルで渡す(ipc.md「境界C・D」) |
-| 正当性の基準   | 永続化される正準表現は常にRustの `CreativeSession` である。TypeScriptは表示と編集のための投影、C++は実行のための投影                 |
+| 規則           | 内容                                                                                                                              |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| 直列化         | `rename_all = "camelCase"`(enum は `"lowercase"`)                                                                                 |
+| IDの表現       | `TimelineTick`・`Marker.tick` などは `#[ts(type = "number")]`。`AssetId` は文字列ブランド型で、直列化は `asset:<UUIDv7>` の文字列 |
+| 省略可能な値   | `skip_serializing_if = "Option::is_none"` + `#[ts(optional)]` を対で使う                                                          |
+| TypeScriptの型 | `npm run gen:types` で常にRustから再生成される                                                                                    |
+| C++への渡し方  | セッション全体のコピーは行わない。グラフ・パラメータ・演奏・録音の実行に必要なスライスだけを投影プロトコルで渡す(ipc.md 境界C・D) |
+| 正当性の基準   | 永続化される正準表現は常にRustの `CreativeSession` である。TypeScriptは表示と編集のための投影、C++は実行のための投影              |
 
 ---
 
@@ -91,12 +91,8 @@ External Audioは複数のSource TrackからInstrumentへ音声を渡す。複�
 ミキサーはArrangementに所属し、Masterのエフェクト列、Group・Returnのチャンネル、TrackからReturnへのSend、TrackからEffect Deviceの補助入力へのSidechainSendを保存する。
 
 - GroupはTrackの主出力先、Returnは並列Sendの宛先として区別される。Trackの主出力先が未指定の場合はMasterを表し、Master GainはSessionSettingsが保持する
-- Mixerが未指定のセッションは空のMixerで初期化される
 - `SidechainSend` は送信元Trackと送信先DeviceのID、Level、Pre / Post Fader、Enabledを保持する。宛先はTrack・Group・Return・Master上のEffect Deviceである
-- SidechainSendは送信元Trackまたは送信先Effectの削除時に関連Laneとともに削除される。Bus内のEffectが参照されている場合、Bus削除は参照元IDを示して拒否される
-- Track複製では送信元の接続と、複製されるEffectへの接続を新しいTrack・Device・Send IDへ付け替え、LaneとPointも複製する。同一Deviceの並べ替えやBypassでは接続は維持される
-- Busを削除するには、主出力先として参照するTrackと、宛先として参照するSendを先に解除する
-- Track削除時はそのTrackのSendも削除する。Track複製時は主出力先とSend設定を引き継ぎ、Device・SendのIDは新しく割り当てる
+- 削除・複製・置換時の接続とLaneの扱いは §9.4 に定義する
 
 Mixdown設定は楽曲終端Tick、秒単位のTailとFade、プラグインの準備時間、任意のLoudness Mastering目標、比較用のSample Rate・Block Sizeを保持する。プラグインの準備時間は0〜60秒で、既定値は2秒である。Entire Arrangementの終端は楽曲終端設定と現在のClip終端の大きい方にTailを加え、最終MixへFadeを1回適用する。Mastering目標は音量のIntegrated LUFSと判定基準のTrue Peak、参考量のLoudness Rangeであり、調整はMix全体への一定のゲインで行う。
 
@@ -115,10 +111,8 @@ Mixdown設定は楽曲終端Tick、秒単位のTailとFade、プラグインの�
 
 - Pointは独立したID、楽曲全体の絶対Tick、値を保持する。入力は絶対Tickまたは小節位置のいずれかであり、小節位置はその時点のテンポ・拍子でTickへ変換して保存する。Device対象の値は正規化数値またはPluginの表示文字列であり、表示文字列は実行時に数値へ解決して保存する
 - Laneの更新はIDを維持し、空のPoint列はLaneの削除を表す
-- 補間と再生時の適用は [音声エンジンの設計](audio-engine.md) に従う
-- Track・Bus・Send・Deviceの削除は、その対象のLaneも削除する
-- Trackの複製では、Track・Device・Sendの参照を複製先へ置き換え、LaneとPointにも新しいIDを割り当てる
-- 別のPluginへの置換ではDeviceのLaneを削除し、同じPluginの再読込ではLaneを保持する
+- 補間と再生時の適用は [音声エンジンの設計](audio-engine.md) 参照
+- 削除・複製・Plugin置換時のLaneの扱いは §9.4 に定義する
 
 ### 3.5 編集の補助
 
@@ -250,18 +244,17 @@ flowchart TD
 | ProjectId  | `projects/` 直下のディレクトリ名としてcanonical lowercase UUIDを使う。`CreativeSession` へは埋め込まない           |
 | session_id | 空文字は不可。新規は `session-<ms>`                                                                                |
 | 参照の整合 | セッションが参照するアセットIDはすべて登録済みである。未登録のIDを含むセッションは保存・読み込みともに採用されない |
-| 素材の内容 | 生成済み素材のコンテンツは不変。内容を変えるときは新しいAssetを発行し、管理メタデータだけを更新できる              |
 
 ### 9.2 時間
 
-| 規則             | 内容                                                                                                                                                                                     |
-| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| タイムベース     | `ppq` は `1..=1,073,741,823` の整数（全音符をu32の分数で表現できる範囲）で、新規プロジェクトの既定値は `960`(`TIMELINE_PPQ`)。テンポ・拍子変更点はTick 0を必須とし、重複のない昇順で並ぶ |
-| テンポ・拍子の値 | BPMは正の有限値。拍子の分母は `1/2/4/8/16/32`、分子は非ゼロ                                                                                                                              |
-| 範囲             | TimelineRegion・HarmonyEvent等の時間範囲は `end_tick > start_tick`。オートメーションのPointは同一Tickを許さずTick昇順に並ぶ                                                              |
-| 音楽操作値       | `MusicalPosition` は1-originのbar/beatとbeat内の正規化分数、`MusicalDuration` は正の正規化分数、`MusicalPitch` は表記を保持したMIDI範囲内の音名。入力値はCoreで正準tick/pitchへ変換する  |
-| 上限             | HarmonyEventは最大16,384件で、イベント間の重複・入れ子・gapは許可され、`start_tick`・`end_tick`・id順に正規化される。MIDIクリップのノートとイベントは各最大200,000件                     |
-| フェード         | fade_in / fade_out はタイムライン持続時間以下にクランプ                                                                                                                                  |
+| 規則             | 内容                                                                                                                                                                                    |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| タイムベース     | `ppq` は `1..=1,073,741,823` の整数で、新規プロジェクトの既定値は `960`(`TIMELINE_PPQ`)。テンポ・拍子変更点はTick 0を必須とし、重複のない昇順で並ぶ                                     |
+| テンポ・拍子の値 | BPMは正の有限値。拍子の分母は `1/2/4/8/16/32`、分子は非ゼロ                                                                                                                             |
+| 範囲             | TimelineRegion・HarmonyEvent等の時間範囲は `end_tick > start_tick`。オートメーションのPointは同一Tickを許さずTick昇順に並ぶ                                                             |
+| 音楽操作値       | `MusicalPosition` は1-originのbar/beatとbeat内の正規化分数、`MusicalDuration` は正の正規化分数、`MusicalPitch` は表記を保持したMIDI範囲内の音名。入力値はCoreで正準tick/pitchへ変換する |
+| 上限             | HarmonyEventは最大16,384件で、イベント間の重複・入れ子・gapは許可され、`start_tick`・`end_tick`・id順に正規化される。MIDIクリップのノートとイベントは各最大200,000件                    |
+| フェード         | fade_in / fade_out はタイムライン持続時間以下にクランプ                                                                                                                                 |
 
 ### 9.3 音量とパン
 
@@ -277,16 +270,16 @@ flowchart TD
 
 ### 9.4 経路とデバイス
 
-| 規則                   | 内容                                                                                                                                                                                                                                                                                    |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 一意性                 | Track・BusのIDはチャンネル間で一意。Send IDも一意。Device IDはInstrument・Track Effects・Bus Effects・Master Effectsを通じて一意                                                                                                                                                        |
-| 主出力とSend           | Trackの主出力先は既存Group、Sendは既存Trackから既存Returnへの経路に限定され、同じ組のSendは1つだけ許可される                                                                                                                                                                            |
-| エフェクト数           | 1チャンネルあたり最大256件                                                                                                                                                                                                                                                              |
-| 削除の扱い             | Bus削除は主出力先として参照するTrackと宛先として参照するSendの解除が前提。Track削除でそのTrackのSendも削除する。Track・Bus・Send・Deviceの削除はその対象のAutomationLaneも削除する                                                                                                      |
-| 複製の扱い             | Track複製は主出力先とSend設定を引き継ぎ、Device・Send・Lane・PointのIDを新しく割り当てる。Plugin置換でDeviceのLaneは削除され、同じPluginの再読込では保持される                                                                                                                          |
-| オートメーションの対象 | 実在するTrack・Bus・Send・VST3 Deviceを参照し、同じ対象のLaneは1本。Lane IDとLane内のPoint IDは一意かつ非空                                                                                                                                                                             |
-| SidechainSend          | IDは非空でTrack・Bus・Send・SidechainSend間で一意。同一の送信元Trackと送信先Deviceの組は1つ。Instrument Deviceと自己所有のEffectへの接続は拒否され、有効な接続とExternal Audioを合わせた循環も拒否される。LevelはSendと同じ値域・有限値規則を使う。VST3の補助入力能力は実行時に検証する |
-| オートメーションの上限 | Laneは最大16,384本、各Laneは最大16,384点                                                                                                                                                                                                                                                |
+| 規則                   | 内容                                                                                                                                                                                                                                                                                                                              |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 一意性                 | Track・BusのIDはチャンネル間で一意。Send IDも一意。Device IDはInstrument・Track Effects・Bus Effects・Master Effectsを通じて一意                                                                                                                                                                                                  |
+| 主出力とSend           | Trackの主出力先は既存Group、Sendは既存Trackから既存Returnへの経路に限定され、同じ組のSendは1つだけ許可される                                                                                                                                                                                                                      |
+| エフェクト数           | 1チャンネルあたり最大256件                                                                                                                                                                                                                                                                                                        |
+| 削除の扱い             | Bus削除は主出力先として参照するTrackと宛先として参照するSendの解除が前提で、Bus内のEffectが参照されている場合は参照元IDを示して拒否する。Track削除でそのTrackのSendも削除する。Track・Bus・Send・Deviceの削除はその対象のAutomationLaneも削除し、SidechainSendは送信元Trackまたは送信先Effectの削除時に関連Laneとともに削除される |
+| 複製の扱い             | Track複製は主出力先とSend設定を引き継ぎ、送信元の接続と複製されるEffectへの接続を新しいTrack・Device・Send IDへ付け替え、LaneとPointにも新しいIDを割り当てる。Plugin置換でDeviceのLaneは削除され、同じPluginの再読込では保持される。同一Deviceの並べ替えやBypassでは接続は維持される                                              |
+| オートメーションの対象 | 実在するTrack・Bus・Send・VST3 Deviceを参照し、同じ対象のLaneは1本。Lane IDとLane内のPoint IDは一意かつ非空                                                                                                                                                                                                                       |
+| SidechainSend          | IDは非空でTrack・Bus・Send・SidechainSend間で一意。同一の送信元Trackと送信先Deviceの組は1つ。Instrument Deviceと自己所有のEffectへの接続は拒否され、有効な接続とExternal Audioを合わせた循環も拒否される。LevelはSendと同じ値域・有限値規則を使う。VST3の補助入力能力は実行時に検証する                                           |
+| オートメーションの上限 | Laneは最大16,384本、各Laneは最大16,384点                                                                                                                                                                                                                                                                                          |
 
 ### 9.5 パラメータと録音
 
@@ -309,4 +302,3 @@ flowchart TD
 | 現行スキーマ | 永続化する型は未知のキーを拒否し、省略可能な値と明示された初期値だけを補完する。Mixerの欠落は空の構成、Trackの主出力先の欠落はMasterとする。それ以外の必須キー欠落や対応しない形のデータは正準状態へ取り込まれない |
 | 世代回復     | 自動回復は読み込めない世代を飛ばし、手動復元も検証と正準化に成功した世代だけを正準状態へ取り込む                                                                                                                   |
 | DataRoot     | `workspace.json` と `projects/` を中心とするProjectレイアウトを保持する                                                                                                                                            |
-| 言語間の同期 | Rustを唯一の型定義元とする。TypeScriptは生成し、C++は投影プロトコルの検証テストで整合を保つ                                                                                                                        |

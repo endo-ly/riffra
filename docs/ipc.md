@@ -6,18 +6,21 @@
 
 ```mermaid
 flowchart TB
-    subgraph webview["WebView"]
-        REACT["React(src/native/)"]
+    subgraph desktop["Desktopプロセス(1つ)"]
+        REACT["WebView React<br/>src/native/"]
+        TAURI["Tauriシェル(Rust)<br/>HostConnectionManager"]
+        EMB["Host(riffra-runtime)<br/>Embedded"]
+        REACT -->|"A: 命令(invoke)"| TAURI
+        TAURI -->|"B: イベント(listen)"| REACT
+        TAURI -->|"Embedded: プロセス内"| EMB
     end
-    subgraph shell["Tauriシェル(Rust)"]
-        TAURI["命令層 → Host adapter"]
-    end
-    REACT -->|"A: Tauri命令(invoke)"| TAURI
-    TAURI -->|"B: イベント(listen)"| REACT
-    TAURI <-->|"C: JSON Lines(stdin/stdout)"| AUDIO["riffra-audio --serve<br/>常駐・音声"]
-    TAURI -->|"D: JSON 1行"| RENDER["riffra-render<br/>オフラインレンダリング"]
-    TAURI -->|"E: JSON 1行"| PROBE["riffra-audio --probe系<br/>riffra-plugin-scan"]
-    CLIENT["riffra --attach などの<br/>外部クライアント"] -->|"F: パイプ・ソケット<br/>command接続 + events接続"| SERVER["Riffra Host Control Server"]
+    SERVE["Host(riffra-runtime)<br/>riffra serve"]
+    TAURI -->|"F: Attached切替時"| SERVE
+    EMB <-->|"C: JSON Lines(stdin/stdout)"| AUDIO["riffra-audio --serve<br/>常駐・音声"]
+    SERVE <-->|"C"| AUDIO
+    EMB -->|"D: JSON 1行"| RENDER["riffra-render<br/>オフラインレンダリング"]
+    EMB -->|"E: JSON 1行"| PROBE["riffra-audio --probe系<br/>riffra-plugin-scan"]
+    CLI["riffra --attach などの<br/>外部クライアント"] -->|"F: パイプ・ソケット<br/>command接続 + events接続"| SERVE
 ```
 
 | 境界 | 方向                              | 方式                                                  | 用途                                                     |
@@ -48,7 +51,7 @@ WebViewからHostへの操作は、すべて `dispatch_control` 1本で送る。
 | `get_host_connection_state` / `list_local_hosts` / `switch_host` / `reconnect_host` | Hostの選択・切替・再接続                                                             |
 | `import_midi_bytes`                                                                 | ドロップされたMIDIバイト列を一時ファイルへ書き出し、`asset.import-midi` で取り込む   |
 
-全命令は `lib.rs` の `invoke_handler` が真実源である。命令は `spawn_blocking` でasyncワーカーから分離して実行する。
+全命令は `lib.rs` の `invoke_handler` が真実源である。
 
 ### 2.2 Control Command
 
@@ -64,7 +67,6 @@ Hostに頼める操作(Control Command)は、`riffra-runtime` の `api` モジ�
 |          | `runtime`                               | Live HostのRuntimeを要する。Standaloneは `runtimeUnavailable` を返す                                                               |
 
 - 要求は最初に `ControlCommand::decode` で型付きの命令になる。未知の命令名、未知のParamsキー、型の不一致は `invalidRequest` となり、`details` にJSON Pointer形式の `path`、配列要素の `index`、小さな値の `value` が付く
-- 実行側はexecutorごとの命令を網羅的に `match` する。表に命令を足して実装を書き忘れるとコンパイルエラーになる
 - 正準状態を変える命令は `arrangementMutation`(`session.apply` は `batchMutation`)を返す。結果の `type` は `ControlOutput` のvariant名である
 - TypeScriptの `ControlCommand`(`{ command, params }` のunion)と `ControlCommandResults`(命令名 → 結果型)はRustから生成する(`npm run gen:types`)
 
@@ -118,7 +120,7 @@ DesktopのActive Projectは初期bootstrapと `ProjectActivationResult` で確�
 
 `audio-meters` はRuntime投影が属する `projectId`、`outputPeakLeft` / `outputPeakRight`、`trackMeters` と `busMeters`(チャンネルID、左右Peak/RMS)を含む。Desktopは現在のActive Projectと `projectId` が一致するframeだけを採用し、Project切替後は旧Projectの値が描画状態へ戻ることがない。高頻度メーターのTrackデータは、低頻度 `audio-status` の到着でも保持される。
 
-Desktopのイベントゲートは現在の接続世代のイベントだけをWebViewへ送る。接続切替の後に旧世代のイベントが届くことはない。フックはこの保証を前提に購読し、コンポーネント破棄後のコールバックだけを自身で止める。購読は `src/native/api/events.ts` のラッパを使い、用途は表示更新に限る。エディタ由来のstate / parameter変更はHost内の正準保存で完結する。
+Desktopのイベントゲートは現在の接続世代のイベントだけをWebViewへ送る。接続切替の後に旧世代のイベントが届くことはない。WebView側の購読は表示更新に限る。
 
 ---
 
@@ -126,9 +128,9 @@ Desktopのイベントゲートは現在の接続世代のイベントだけをW
 
 ### 4.1 接続とフレーミング
 
-- 起動: `riffra-audio --serve`。`AudioSupervisor` が起動ごとに世代番号を採番し、`ready` イベント(§4.3)を `SIDECAR_READY_TIMEOUT` まで待つ
+- 起動: `riffra-audio --serve`。Hostが起動ごとに世代番号を採番し、`ready` イベント(§4.3)を `SIDECAR_READY_TIMEOUT` まで待つ
 - 送受信: JSON Lines(1命令 = stdin 1行、1メッセージ = stdout 1行)。stderrは診断ログ専用である
-- 型の真実源: Rustは `crates/riffra-runtime/src/audio/wire/`、C++は `SidecarCommands` / `SidecarMessages`。両者は `contracts/sidecar/` の契約フィクスチャで固定する(test-strategy.md「サイドカー通信契約」)
+- 型の真実源: Rustは `crates/riffra-runtime/src/audio/wire/`、C++は `SidecarCommands` / `SidecarMessages`。両者は `contracts/sidecar/` の契約フィクスチャで固定する(test-strategy.md「契約の検証」)
 - 厳格性: 両方向とも契約どおりのデータだけを受け入れる。必須キーの欠落、未知のキー、型の不一致、範囲外の値はすべて契約違反として扱う。値が欠けうるフィールドは常にキーを持ち、欠けていることを `null` で表す
 
 ### 4.2 封筒
@@ -145,8 +147,8 @@ Desktopのイベントゲートは現在の接続世代のイベントだけをW
 ```
 
 - `response` と `error` は必ず `requestId` を持ち、`event` は持たない。Transportの応答はキューへの受け付けを示し、状態は独立した `transportStatus` eventで送る。要求に紐づかない失敗は `fault` イベントで送る
-- 1つの要求に対する応答は `response` か `error` のちょうど1回である。C++の `CommandResponder` が要求ごとに1つ作られ、非同期処理へmoveで渡る。応答のないまま破棄されると `noResponse` の `error` を送る
-- 命令ごとの応答型は1つに決まる(`SidecarCommand::expected_response`)。`command_bus.rs` は `requestId`(原子カウンタ)で要求を相関し、期待と異なる型の応答はその要求をプロトコルエラーで即座に失敗させ、Hostの状態へ反映しない。中身を持たない完了応答も命令の分類ごとに別の型とし、取り違えを型の不一致として検出する
+- 1つの要求に対する応答は `response` か `error` のちょうど1回である。応答のないまま要求が破棄された場合は `noResponse` の `error` を送る
+- 命令ごとの応答型は1つに決まる。`requestId` で要求を相関し、期待と異なる型の応答はその要求をプロトコルエラーで即座に失敗させ、Hostの状態へ反映しない。取り違えは型の不一致として検出するため、中身を持たない完了応答も命令の分類ごとに別の型とする
 - 期限: 通常は `COMMAND_ACK_TIMEOUT`、デバイス操作は `AUDIO_DEVICE_COMMAND_TIMEOUT`、`prepareTimelineSnapshot` は `TIMELINE_PREPARE_TIMEOUT` と呼び出し側の残り時間の短い方、`waitForTimelineIdle` は呼び出し側の残り時間を使う。期限切れは失敗報告で確定する
 
 ### 4.3 起動とプロトコル版
@@ -173,31 +175,20 @@ Desktopのイベントゲートは現在の接続世代のイベントだけをW
 | プレビュー       | `previewSample`、`previewInstrument`、`stopPreview`、`stopInstrumentPreview`、`openPluginAudition`                                    | `audioStatus`                                                |
 | テイク比較       | `startTakeComparison`、`switchTakeComparisonVariant`、`stopTakeComparison`                                                            | `audioStatus`                                                |
 
-`transportAccepted` は命令の受け付けと `commandSequence` を返し、適用済みの命令番号は `transportStatus.appliedCommandSequence` で分かる。命令の適用順序と実行の設計は audio-engine.md を参照する。
+命令の意味で表から補充すべき点は次です。設計の詳細は各所で正本を辿ってください。
 
-`getDeviceParameterValueForText` はDevice ID、Stable Parameter ID、表示文字列を受け取り、値を変更せずに変換結果を `deviceParameters` へ返す。
-
-`getDeviceParameters` は制御側で最新のPlugin metadataを取得し、`deviceParameters` へ返す。パラメータの識別、表示文字列の扱い、変更の確定条件は audio-engine.md「パラメータと状態」を参照する。
-
-`device.parameter.set` は `value` または `display` の一方だけを受け付ける。表示文字列の変換規則は audio-engine.md「パラメータと状態」を参照する。デバイスの読み書きは、直前の正準変更の投影が音声エンジンへ確定するのを待ってから実行する。
-
-`effect.add` と `instrument.vst3.set` は `pluginPath` または `pluginId` の一方だけを受け付ける。カタログIDからの解決と検証は audio-engine.md「カタログと解決」を参照する。
-
-DesktopのDevicesは既存Control Commandの `device.inspect`、`device.parameter.list/get/set`、`plugin.preset.list/get/set` を使用する。PresetとParameterの編集結果は正準状態へ適用し、詳細を再取得する。Plugin Editorのイベントによる正準値更新も同じ詳細へ反映する。
-
-`setChannelMix` はTrack・BusのGain/Pan、`setSendLevel` は通常SendまたはSidechainSendのLevelを一意なSend IDで現役Graphへ一時適用し、`mixAck` を返す。正準値のコミットは意味しない。Hostの入口は `mixer.channel.preview`、`mixer.send.preview`、`mixer.sidechain.preview` で、Master Gainは `audio.master-gain.preview` を使う。一時値の設計は audio-engine.md「ミキサーの一時値」を参照する。
-
-`device.inspect` の `capabilities.sidechain` は補助入力の利用可否、Mono・Stereoの対応、現在のチャンネル数、利用できない理由を返す。Nativeの `deviceStatus.capabilities.sidechain` を投影するものであり、InstrumentはSidechainの接続先として扱われない。
-
-Effect・Device・Plugin State・Preset・Editor操作は `owner` で所有者を指定する。Trackは `{"kind":"track","id":"..."}`、Group・Returnは `{"kind":"bus","id":"..."}`、Masterは `{"kind":"master"}` とする。Instrument割り当てと演奏はTrack専用である。Editorイベントの `pluginStateChanged`・`pluginParameterChanged` にもProject IDと同じOwner参照を含め、Hostが正準状態へ保存する。
-
-`openPluginAudition` は検証済みのVST3をProjectの外で読み込み、そのエディタを開く。試聴の設計は audio-engine.md「試聴」を参照する。
-
-`prepareTimelineSnapshot` は `TimelineSnapshot` を受け取り、契約違反を `kind: timelineContract` として返し、グラフの準備処理へ進めない。投影の入れ替えの設計は audio-engine.md「グラフの入れ替え」を参照する。
-
-実行グラフのオートメーションの形式と適用は audio-engine.md「オートメーション」を参照する。実行できないレーンは `AudioStatus.diagnostics.automationWarnings` へ返る。
-
-`ExecutionGraph.mixer.sidechainSends` は正準の接続と同じSource Track ID・Target Device ID・Level・Position・Enabledを持ち、未設定時も空配列を送る。Sidechain LevelのLaneは `target.kind: sidechainSendLevel` と `sidechainSendId` で接続を参照する。RealtimeとOfflineで同じ契約を使い、形状は `contracts/execution-graph/` の共有フィクスチャで検証する。
+| 対象                  | 契約                                                                                                                                                                                                                                                                                                                                       |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Transportの照合       | `transportAccepted` は受け付けと `commandSequence` を返し、適用済み番号は `transportStatus.appliedCommandSequence` で分かる(適用順序の設計は audio-engine.md「トランスポート」)                                                                                                                                                            |
+| パラメータ読み書き    | `getDeviceParameterValueForText` は値を変更せず表示文字列からの変換結果だけ返す。`getDeviceParameters` は制御側で最新のPlugin metadataを取得して返す。`device.parameter.set` は `value` または `display` の一方だけを受け付ける(識別・変換・確定条件は audio-engine.md「パラメータと状態」)                                                |
+| プラグイン解決        | `effect.add` と `instrument.vst3.set` は `pluginPath` または `pluginId` の一方だけを受け付ける(カタログ解決は audio-engine.md「カタログと解決」)                                                                                                                                                                                           |
+| Mixer一時値           | `setChannelMix`(Track・BusのGain/Pan)と `setSendLevel`(通常Send / SidechainSendのLevel)は一意なIDで現役Graphへ一時適用し `mixAck` を返す。正準値のコミットは意味しない。Host入口は `mixer.channel.preview`、`mixer.send.preview`、`mixer.sidechain.preview`、`audio.master-gain.preview`(設計は audio-engine.md「ミキサーの一時値」)       |
+| Owner指定             | Effect・Device・Plugin State・Preset・Editor操作は `owner` で所有者を表す: Track `{"kind":"track","id":"..."}`、Group・Return `{"kind":"bus","id":"..."}`、Master `{"kind":"master"}`。Instrument割り当てと演奏はTrack専用。Editorイベント `pluginStateChanged` / `pluginParameterChanged` も同じOwner参照を含み、Hostが正準状態へ保存する |
+| Sidechain能力照会     | `device.inspect` の `capabilities.sidechain` は `deviceStatus.capabilities.sidechain` の投影で、利用可否・Mono/Stereo対応・チャンネル数・不可の理由を返す。Instrumentは接続先にならない                                                                                                                                                    |
+| Desktopの編集経路     | Devices画面は `device.inspect`、`device.parameter.list/get/set`、`plugin.preset.list/get/set` を使う。編集結果は正準状態へ適用し詳細を再取得する                                                                                                                                                                                           |
+| 試聴                  | `openPluginAudition` は検証済みVST3をProjectの外で読み込みエディタを開く(設計は audio-engine.md「試聴」)                                                                                                                                                                                                                                   |
+| 投影                  | `prepareTimelineSnapshot` は `TimelineSnapshot` を受け取り、契約違反を `kind: timelineContract` として準備処理へ進めない(入れ替えの設計は audio-engine.md「グラフの入れ替え」)。実行できないオートメーションレーンは `AudioStatus.diagnostics.automationWarnings` へ返る(形式は audio-engine.md「オートメーション」)                       |
+| Sidechainのグラフ投影 | `ExecutionGraph.mixer.sidechainSends` は正準と同じSource Track ID・Target Device ID・Level・Position・Enabledを持ち、未設定時も空配列を送る。LevelのLaneは `sidechainSendId` で接続を参照する。Realtime・Offline共通契約で、形状は `contracts/execution-graph/` の共有フィクスチャで検証する                                               |
 
 MIDI系の意味づけは次の通りである。
 
@@ -226,10 +217,9 @@ Rustは解釈できない行も捨てることなく扱う。`tracing` に記録
 
 - `stopArrangeRecording` の応答は停止の受理を表し、適用前の `recording.active: true` を含むことがある。適用後の状態は `audioStatus` イベントで届く
 - カウントイン中の停止は録音を取り消す。応答は `recording.cancelled: true` を持ち、確定処理は行わない
-- 失敗時はRawあり → `recoverable`、Rawなし → `failed` へ必ず確定してから失敗を通知する
-- `processing` 中の新規録音とProject切替は排他する
-- Sidechainを使うTrackはDevice別の補助入力をRawと同じキャプチャ窓で保存し、Processed生成に使用する。入力が欠損・不完全な場合、そのTrackのマニフェストは `processedFile` を持たず `processedUnavailableReason` を返す。Rawのみのテイクも正常にAsset登録され、`record.list` の `processedUnavailableReason` で理由を確認できる
-- Playの投影準備は非同期に行い、`transportStatus: starting` と `runtime-projection-status` で進捗を通知する。Stopは保留中のPlayを取り消す
+- 失敗時はRawあり → `recoverable`、Rawなし → `failed` へ必ず確定してから失敗を通知する。排他事項は audio-engine.md「録音の実行」を参照する
+- 入力が欠損・不完全なTrackのマニフェストは `processedFile` を持たず、`record.list` の `processedUnavailableReason` で理由を確認できる。キャプチャ窓とRawのみテイクの扱いは audio-engine.md「録音の実行」を参照する
+- Playの投影準備は非同期に行い、`transportStatus: starting` と `runtime-projection-status` で進捗を通知する
 - デバイス切替のトランザクションと録音の実行の設計は audio-engine.md を参照する
 
 ### 4.7 イベントと出力レーン
@@ -260,7 +250,7 @@ C++の出力は3つのレーンに分かれる。`control` は順序を保つバ
 
 ## 5. 境界D: オフラインレンダリング(riffra-render)
 
-Hostのrender.start / render.stems JobがWAVごとにriffra-renderを起動し、Realtimeと同じExecution Graphを渡す。GraphはMixerのMaster Effects・Bus・SendとTrackのoutputBusId、解決済みのプラグインパス・保存状態・接続先IDを含む。Nativeは必須フィールドと実行可能な参照を厳密に検証する。Graphの共有フィクスチャは contracts/execution-graph に置く。
+Hostのrender.start / render.stems JobがWAVごとにriffra-renderを起動し、Realtimeと同じExecution Graphを渡す。GraphはMixerのMaster Effects・Bus・SendとTrackのoutputBusId、解決済みのプラグインパス・保存状態・接続先IDを含む。Nativeは必須フィールドと実行可能な参照を厳密に検証する。
 
 | 項目 | 契約                                                                                                                                                                               |
 | ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -293,8 +283,8 @@ Hostが範囲・保存先・Asset登録・Manifestを管理し、Native worker�
 
 実行モードと状態の所有は architecture.md「実行モード」を参照する。DesktopのHostConnectionManagerも同じControl Command(§2.2)とLocalHostClientを利用するため、EmbeddedとAttachedの制作操作は同じHost command境界を通る。CLIの一回実行と `--interactive` の各行も、送信前に `ControlCommand::decode` で型付きの命令になる。
 
-- DataRootの所有者は1つのHostに限られる。Standalone / `serve` は所有者ありで起動失敗となり、Desktopは接続へ回る
-- 公開: 起動中のHostは `<data_root>/control/host.json` とcurrent-user registryへ登録する。Attached CLIの探索先はregistryのみである
+Attached CLIの探索先はregistryのみである。
+
 - 削除: プロセス不存在か別Host確定のときだけ登録を削除する。一時的な到達不能は一覧から外すだけで、登録は残る
 - Helloでは接続の役割を明示する
 
@@ -429,17 +419,17 @@ DesktopのTauri command境界とLive HostのControl Serverの機能分担は次�
 | レンダー・ジョブ                                                     | HostのRenderWorker                | `runtimeUnavailable`                                                                 |
 | ライブラリ・解析・Asset preview                                      | Hostのshared service              | `runtimeUnavailable`                                                                 |
 
-- エディタ窓・ダイアログ・窓管理はDesktop shellに残る。open / 録音 / プレビュー / スキャン / ライブラリ・解析の実行はHost側を使い、エディタ由来の永続化はHost内coordinatorのcommitで完結する
-- `automation.get/clear` は `target` を指定する。`get` は該当Laneを0件または1件の配列で返す。`automation.list` は任意の `owner` でTrack・Bus・Masterの所有するLaneへ絞り込み、省略時は全LaneをID順に返す。読み取りはCanonical sequenceを変更しない
-- `automation.set` は `target`、`interpolation`、`points` でLane全体を置き換える。Pointの `value` は数値、またはDevice用の表示文字列を受け付ける。表示文字列はLive Hostで変換し、正準状態には数値だけが保存される。`session.apply` も同じ契約を使い、変換や検証の失敗ではBatch全体をコミットしない
-- `render start` は接続先Hostの `RenderWorker` にジョブを開始しIDを返す。部分Renderは音楽座標の `start` / `end` と任意の `trackId` で指定する。状態は `job get`、停止は `job cancel` で行う。Workerの所有者は接続先Hostである
-- `render.stems` は `allTracks` または `trackIds` のいずれか一方と共有 `range` を受け取り、接続先Hostの `RenderWorker` で1つの `renderStems` ジョブを開始する。結果には共通の開始・終了Tick、Sample Rate、フレーム数と各TrackのAsset ID・パスを含み、同じ内容を出力ディレクトリの `render.json` に保存する。明示IDが不正な要求はジョブ開始前に拒否する
-- `render.start` と `render.stems` は任意の出力先を指定でき、既存ファイルを上書きしない。`render.export` は完了済みRenderを指定先へコピーする
-- `analysis.measure` は保存済みWAVの区間測定を非同期Jobとして実行し、進捗・中止は既存Job契約を用いる。解析は楽曲や保存済みの測定値を変更しない。`analysis.start` は波形・RMS等の解析結果を同期的に返す
-- `render.list` は管理対象Renderを一覧表示する。`render.clean` はほかから参照されていない管理対象Renderを削除し、外部へExportしたファイルは削除しない
-- `instrument.midi.get` はTrack InstrumentのMIDI設定と現在のClip Noteに対する警告を返す。`instrument.midi.set` は設定を保存し、Batch・Undo・Redoで扱える。演奏可能音域外でもMIDI範囲内のNoteは再生し、0〜127を超えるNoteは送信しない
-- 結果は全Stemの生成後にだけジョブへ設定される。キャンセルまたは失敗が先に確定した場合、作成済みのファイルとAsset登録を破棄する
-- `expectedSequence` は `render.start`、`render.stems`、`undo`、`redo` にも適用する。Conflict時は再Inspectしてやり直す。Revision tokenは同一 `AppCore` の有効期間内でのみ有効である
+| 対象                | 契約                                                                                                                                                                                                                                                                             |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 機能分担            | エディタ窓・ダイアログ・窓管理はDesktop shellに残り、open / 録音 / プレビュー / スキャン / ライブラリ・解析の実行はHost側を使う。エディタ由来の永続化はHost内の正準コミットで完結する                                                                                            |
+| Automation 読み取り | `automation.get`(0または1件のLane配列)・`automation.list`(任意 `owner` で絞り込み、省略時は全LaneをID順)・`automation.clear` は `target` を指定し、Canonical sequenceを変えない                                                                                                  |
+| Automation 書き込み | `automation.set` は `target`、`interpolation`、`points` でLane全体を置き換える。Pointの `value` は数値またはDevice用の表示文字列で、表示文字列はLive Hostが数値へ変換して正準状態には数値のみ保存する。`session.apply` も同じ契約で、変換・検証の失敗はBatch全体をコミットしない |
+| Render開始          | `render start` と `render.stems` は接続先Hostの `RenderWorker` でJobを開始しIDを返す。部分指定は音楽座標 `start` / `end` と任意 `trackId`、Stemsは `allTracks` または `trackIds` と共有 `range`(不正IDは開始前に拒否)。任意の出力先を指定でき、既存ファイルは上書きしない        |
+| Stems結果           | 全Stem生成後にだけJobへ設定される。共通開始・終了Tick、Sample Rate、フレーム数、各TrackのAsset ID・パスを含み、同じ内容を出力ディレクトリの `render.json` へ保存する。キャンセル・失敗が先に確定した場合は作成済みファイルとAsset登録を破棄する                                  |
+| Render管理          | `render.export` は完了済みRenderを指定先へコピー、`render.list` / `render.clean` は管理対象の一覧と、ほかから参照されていないものだけの削除(外部Export済みファイルは残す)。状態照会と停止は `job get` / `job cancel`                                                             |
+| 解析                | `analysis.start` は波形・RMS等を同期的に返し、`analysis.measure` は保存済みWAVの区間測定を非同期Jobで実行する(進捗・中止はJob契約)                                                                                                                                               |
+| Instrument MIDI     | `instrument.midi.get` はMIDI設定と現在のClip Noteへの警告を返し、`set` はBatch・Undo・Redoで扱える。演奏可能音域外でもMIDI 0〜127内のNoteは再生し、範囲外は送信しない                                                                                                            |
+| 同時実行制御        | `expectedSequence` は `render.start`、`render.stems`、`undo`、`redo` にも適用し、Conflict時は再Inspectしてやり直す。Revision tokenは同一 `AppCore` の有効期間内でのみ有効                                                                                                        |
 
 ---
 
@@ -452,7 +442,7 @@ DesktopのTauri command境界とLive HostのControl Serverの機能分担は次�
 | `core:default` / `core:window:allow-destroy` | コア操作とウィンドウ破棄 |
 | `dialog:default`                             | ファイルダイアログ       |
 
-更新フローはDesktop所有の `check_for_app_update` / `install_app_update` コマンドで提供する。Windows updaterはインストーラ起動直後にプロセスを終了させるため、`install_app_update` は `on_before_exit` フックでEmbedded Hostの停止を注入する。インストーラがアプリケーションを再起動するため、プロセス再起動の権限は不要である。
+更新フローはDesktop所有の `check_for_app_update` / `install_app_update` コマンドで提供する。`install_app_update` はEmbedded Hostを停止してからインストーラへ渡す。アプリの再起動はインストーラ側が行うため、プロセス再起動の権限は不要である。
 
 ---
 
@@ -466,4 +456,3 @@ DesktopのTauri command境界とLive HostのControl Serverの機能分担は次�
 - `previewChannelMix` と `previewMasterGainDb` はRuntime-onlyの一時プレビューであり、CanonicalStateを返すMutationではない。確定操作はそれぞれ `updateTrack` / `updateMixBus` と `setMasterGainDb` を使い、結果は正準状態と投影結果を含む `ArrangementMutationResult` を返す
 - 状態を返す音声系methodは成功時に `AudioStatus` を返し、失敗時は `NativeCommandError` を投げる。MIDI送信系methodも失敗時は同じ例外を投げ、成功時に値を返さない。状態遷移と再試行はAudio設定Featureに集約する
 - 失敗は `NativeCommandError` の `code` と `details` で分岐する。Nativeの `kind` / `operation` は `details` 内の `nativeAudio` 情報から参照する
-- テストでは `createFakeNativeApi` で作った `FakeNativeApi` を注入し、呼び出し記録・設定済み応答と失敗・イベント発火だけを扱う。NativeApiの全methodは一覧から転送として生成するため、テスト用の実装を手で並べない。制作規則・履歴・validationはCoreのテストが担う
