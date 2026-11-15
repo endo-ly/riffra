@@ -81,6 +81,57 @@ Live Host は候補の解析・音源解決・Native 準備を済ませてから
 
 リンクされた Project では、YAML が所有する部分を変更する操作を拒否する。対象は時間軸、トラック構造（Score に由来しないトラックの追加・編集を含む）、楽器、演奏イベント、和声、Region、Automation（デバイスパラメーターを含む）、ミックス構造、楽曲パラメータ、ScoreSource 本文である。ミュート・ソロ・armed・monitoring などの作業状態だけを変更できる。GUI のボタン抑止だけに依存せず、Core の確定境界で判定する。
 
+## 書き出し
+
+Project の正準状態から、読み込み直せる Score の曲フォルダを作る。書き出した YAML は、Project の中身を人とエージェントが一目で読める形であり、そのまま `import-score` や `--link` で Score を正本とする制作へ移れる。
+
+```bash
+riffra project export-score ./music/song
+riffra project export-score ./music/song --link
+riffra --attach project export-score ./music/song
+```
+
+出力先のフォルダは存在してはならない。書き出しは、全体をメモリ上で組み立ててから一時フォルダへ書き、最後に出力先へ名前を変える。途中で失敗したときは一時フォルダだけを消し、既存のファイルには触れない。
+
+```text
+<path>/
+├─ score.yaml
+├─ states/   # VST3 の音源とエフェクトの State
+├─ sounds/   # 同梱品ではない内蔵音源のパッケージ
+└─ audio/    # AudioClip の WAV
+```
+
+中身のないサブフォルダは作らない。
+
+### 変換の方針
+
+- **決定的に書く。** 同じ Session からは、毎回同じ本文とファイルが出る
+- **推測しない。** 音符はすべて旋律文字列かドラム文字列で書き、伴奏・アルペジオ・対旋律・素材の変奏は復元しない
+- **正準状態だけを読む。** Native 側にあって正準状態にまだ反映されていない State は含めない
+- **読みやすさは完全一致だけで作る。** 同じ中身のセクションと素材は1つにまとめ、似ているだけのものはまとめない
+- **表現できないものは報告する。** 書き出せない内容は `omissions` として対象と理由を返し、黙って捨てない
+
+曲の骨格は Region から作る。Region が重ならず小節の頭で区切られていれば `form` の各出現にし、Region の間の隙間は `untitled_<n>` で埋める。重なり・入れ子・小節の途中の区切りがある場合は曲全体を `song` の1セクションにして、その事実を報告する。テンポの変更はセクションの頭なら `form[].bpm`、それ以外は `time_changes` に書く。拍子の変更がセクションの途中にある場合は、その小節でセクションを分ける。
+
+Track ごとの楽器は次のように書く。
+
+| Track                | Score                                                         |
+| -------------------- | ------------------------------------------------------------- |
+| Instrument Track     | `instruments.<id>`。音源、ゲイン、パン、エフェクト            |
+| Kit Track            | `kits.<id>` と、トリガーノートごとの部品 `instruments.<部品>` |
+| Audio Track          | `instruments.<id>` に `audio: true`                           |
+| ミュートしたクリップ | 書かずに省略として報告する                                    |
+
+Score から作る Track は `LinearBalance` でパンされるため、GUI 既定の `EqualPower` や `UnityCenterStereo` のパンは、左右のゲインが一致する `gain_db` と `pan` に換算する。音量・バスのゲインのオートメーションがある場合は、すべての点に同じ dB を足す。パンのオートメーションは補間の形が変わるため、`LinearBalance` 以外では換算せずに報告する。
+
+### `--link`
+
+`--link` を付けると、書き出した Score を元の Project にリンクし、それ以後は YAML が Project の正本になる。書き出した YAML を再構築と同じ処理で読み込み、リンクの前後で Track ID・名前・作業状態が保たれる。確定は `rebuild-score` と同じ経路を通るため、履歴の区切り、`sequence`、ファイルの監視も同じになる。
+
+リンクできるのは Score のファイルにリンクしていない Project だけである。ファイルにリンク済みの Project は、その YAML がすでに正本なので拒否する。省略が1件でもある場合はリンクせず、ファイルも書かずに、省略の一覧をエラーとして返す。リンクすると Project は YAML から作り直されるため、省略したものが Project から消えてしまうためである。
+
+リンクで Project は Score の形に変わる。MIDI クリップはトラックごとに曲全体を覆う1つにまとまり、Track と Bus の Pan Law は `LinearBalance` になり、デバイスの ID は Score の規則で振り直される。音符・制御・音声クリップの位置と、左右のゲインは変わらない。読み込みや確定に失敗した場合は、書き出した曲フォルダを残し、Project は変更しない。
+
 ## 楽譜の構造
 
 Score は `meta`、`form`、`sections`、`instruments` を必須とする。`form` にセクションの再生順・小節数・主音を書き、`sections` にその演奏内容を書く。同じセクションを `form` に複数回置くと、それぞれの位置に展開される。
