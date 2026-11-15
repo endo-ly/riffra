@@ -2447,11 +2447,7 @@ mod tests {
         let plan = compile_document(&doc);
         assert_eq!(
             key_switches(&plan),
-            [
-                (0, 24, true),
-                (beat - beat / 32, 26, true),
-                (2 * beat, 24, true)
-            ]
+            [(0, 24, true), (beat, 26, true), (2 * beat, 24, true)]
         );
         assert_eq!(controller_values(&plan), [(0, 96), (beat, 64)]);
 
@@ -2596,6 +2592,32 @@ mod tests {
                 .sources
                 .iter()
                 .any(|source| { source.section == "chorus" && source.occurrence == 1 })
+        );
+
+        doc["form"] = json!([
+            {"section":"phrase","bars":1,"tonic":"C","scale":"ionian"},
+            {"section":"phrase","bars":1,"tonic":"C","scale":"ionian"}
+        ]);
+        doc["instruments"]["part"]["source"]["articulations"]["expression"] =
+            json!({"cc":{"number":11,"value":96,"reset":64}});
+        doc["sections"]["phrase"]["events"] = json!([
+            {"kind":"articulation","instrument":"part","name":"expression","at":{"bar":1,"step":1},"duration_quarters":4}
+        ]);
+        let repeated = compile(&to_yaml(&doc).unwrap()).unwrap();
+        assert_eq!(
+            repeated
+                .performance_controls
+                .iter()
+                .filter(|control| matches!(
+                    control.kind,
+                    PerformanceControlKind::ControlChange {
+                        number: 11,
+                        value: 96
+                    }
+                ))
+                .map(|control| control.occurrence)
+                .collect::<Vec<_>>(),
+            [1, 2]
         );
     }
 

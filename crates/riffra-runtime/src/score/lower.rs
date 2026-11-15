@@ -2449,10 +2449,6 @@ impl Builder<'_> {
             };
             let previous_control = previous.copied().and_then(control_of);
             let next_control = next.copied().and_then(control_of);
-            let previous_is_key_switch = matches!(
-                previous_control,
-                Some(ArticulationControl::KeySwitch { .. })
-            );
             let next_is_key_switch =
                 matches!(next_control, Some(ArticulationControl::KeySwitch { .. }));
             let lead = if interval.start > q(1, 32) {
@@ -2477,7 +2473,7 @@ impl Builder<'_> {
                     if !same_hold(previous_control) {
                         push(
                             &interval.source,
-                            if previous_is_key_switch {
+                            if previous.is_some() {
                                 interval.start.clone()
                             } else {
                                 lead
@@ -2523,7 +2519,7 @@ impl Builder<'_> {
                     if !same_latch(previous_control) {
                         push(
                             &interval.source,
-                            if previous_is_key_switch {
+                            if previous.is_some() {
                                 interval.start.clone()
                             } else {
                                 lead
