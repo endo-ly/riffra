@@ -188,7 +188,7 @@ MuteとSoloは、主出力と並列Sendの可聴経路を決める。
 ## 5. MIDIとライブ入力
 
 - タイムラインのMIDIは投影時に時系列へ整列し、再生時は再生位置の近傍だけを取り出す。ループは同じスケジューラが処理し、境界をまたぐノートの対応もそこで合わせる
-- VST3のキースイッチとCCは`InstrumentControlEvent`から標準MIDIへ変換する。同じTickではNote Off・解除、奏法変更・CC、通常Note Onの順に送り、`latch`の押下と解除は正のTickを空ける。VST3はサステイン・ピッチベンド・Mod Wheel・Aftertouch・ParameterChangeの既存演奏制御を受け取らず、Score検証で拒否する
+- VST3のキースイッチとCCは`InstrumentControlEvent`から標準MIDIへ変換する。同じTickではNote Off・解除、奏法変更・CC、通常Note Onの順に送り、`latch`の押下と解除は正のTickを空ける。複数のClipが同じTrackで同じSampleに制御を出す場合も、絶対Sample・優先順位・Source順で並べ、通常再生とシーク復元を一致させる。VST3はサステイン・ピッチベンド・Mod Wheel・Aftertouch・ParameterChangeの既存演奏制御を受け取らず、Score検証で拒否する。キット部品も同じVST3実体を共有するため、これらの制御は受け取らない
 - 途中再生では、再生位置より前のPrepared MIDIから押下中のキースイッチ・選択済みの`latch`・最後のCC値を再構成し、再開後の最初のブロックで1回だけ送る。リアルタイム処理内でScore原本を読んだり、状態復元のためにメモリを確保したりしない
 - ライブMIDIは固定容量のキューで受け、あふれたメッセージは破棄して診断に数える。音声の実時間を優先する
 - 音声トラックの入力監視の可否は、モニタリング設定から投影時に決める。楽器トラックの低遅延監視は演奏中に変わるため、サイドカーが判断する
