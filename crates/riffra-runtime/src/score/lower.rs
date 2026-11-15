@@ -2449,6 +2449,17 @@ impl Builder<'_> {
             };
             let previous_control = previous.copied().and_then(control_of);
             let next_control = next.copied().and_then(control_of);
+            let previous_is_key_switch = matches!(
+                previous_control,
+                Some(ArticulationControl::KeySwitch { .. })
+            );
+            let next_is_key_switch =
+                matches!(next_control, Some(ArticulationControl::KeySwitch { .. }));
+            let lead = if interval.start > q(1, 32) {
+                &interval.start - q(1, 32)
+            } else {
+                q(0, 1)
+            };
             match control {
                 ArticulationControl::KeySwitch {
                     note,
@@ -2464,14 +2475,13 @@ impl Builder<'_> {
                         )
                     };
                     if !same_hold(previous_control) {
-                        let lead = if interval.start > q(1, 32) {
-                            &interval.start - q(1, 32)
-                        } else {
-                            q(0, 1)
-                        };
                         push(
                             &interval.source,
-                            lead,
+                            if previous_is_key_switch {
+                                interval.start.clone()
+                            } else {
+                                lead
+                            },
                             PerformanceControlKind::KeySwitch {
                                 note,
                                 mode: KeySwitchMode::Hold,
@@ -2501,24 +2511,34 @@ impl Builder<'_> {
                     note,
                     mode: KeySwitchMode::Latch,
                 } => {
-                    let lead = if interval.start > q(1, 32) {
-                        &interval.start - q(1, 32)
-                    } else {
-                        q(0, 1)
+                    let same_latch = |control: Option<ArticulationControl>| {
+                        matches!(
+                            control,
+                            Some(ArticulationControl::KeySwitch {
+                                note: previous_note,
+                                mode: KeySwitchMode::Latch,
+                            }) if previous_note == note
+                        )
                     };
-                    push(
-                        &interval.source,
-                        lead,
-                        PerformanceControlKind::KeySwitch {
-                            note,
-                            mode: KeySwitchMode::Latch,
-                            down: true,
-                        },
-                        &interval.path,
-                        &interval.position,
-                        3,
-                    )?;
-                    if next.is_none() && interval.end < *end {
+                    if !same_latch(previous_control) {
+                        push(
+                            &interval.source,
+                            if previous_is_key_switch {
+                                interval.start.clone()
+                            } else {
+                                lead
+                            },
+                            PerformanceControlKind::KeySwitch {
+                                note,
+                                mode: KeySwitchMode::Latch,
+                                down: true,
+                            },
+                            &interval.path,
+                            &interval.position,
+                            3,
+                        )?;
+                    }
+                    if !next_is_key_switch && interval.end < *end {
                         let default = self.controls.articulations[&interval.source]
                             .get("default")
                             .map(|articulation| articulation.control);
@@ -3094,6 +3114,7 @@ type FormTimeline = (
 #[allow(clippy::too_many_lines)]
 fn resolve_form(doc: &Value, mut bpm: f64, mut meter: (u8, u8)) -> Result<FormTimeline> {
     let mut sections = Vec::new();
+    let mut occurrences = BTreeMap::<String, usize>::new();
     let mut start = q(0, 1);
     let mut tempos = vec![(q(0, 1), bpm)];
     let mut meters = vec![(q(0, 1), meter)];
@@ -3175,6 +3196,8 @@ fn resolve_form(doc: &Value, mut bpm: f64, mut meter: (u8, u8)) -> Result<FormTi
                 ));
             }
         }
+        let occurrence = occurrences.entry(name.to_owned()).or_default();
+        *occurrence += 1;
         sections.push(Section {
             swing: entry
                 .get("swing")
@@ -3182,7 +3205,7 @@ fn resolve_form(doc: &Value, mut bpm: f64, mut meter: (u8, u8)) -> Result<FormTi
                 .map(|value| super::time::Swing::parse(value, &format!("{path}.swing")))
                 .transpose()?,
             name: name.into(),
-            occurrence: i + 1,
+            occurrence: *occurrence,
             value,
             start: start.clone(),
             length: length.clone(),

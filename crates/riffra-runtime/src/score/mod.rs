@@ -692,9 +692,13 @@ fn tick_position(
         * q(4, 1)
         + q(1, 1))
     .to_string();
+    let occurrence = sections[..=index]
+        .iter()
+        .filter(|candidate| candidate.section == section.section)
+        .count();
     Some((
         section.section.clone(),
-        index + 1,
+        occurrence,
         index_in_section + 1,
         step,
     ))
@@ -2207,7 +2211,7 @@ mod tests {
                 mode: production::KeySwitchMode::Hold
             }
         ));
-        assert_eq!(controls[1].at_quarters, "31/32");
+        assert_eq!(controls[1].at_quarters, "1");
         assert!(matches!(
             controls[2].kind,
             PerformanceControlKind::KeySwitch {
@@ -2382,20 +2386,147 @@ mod tests {
     }
 
     #[test]
+    fn performance_control_transitions_end_the_previous_state() {
+        let mut doc = document();
+        doc["instruments"]["part"] = json!({
+            "source": {
+                "vst3": {"plugin": "Synth"},
+                "articulations": {
+                    "default": {"keyswitch": 24, "mode": "latch"},
+                    "mute": {"keyswitch": 26, "mode": "latch"},
+                    "open": {"keyswitch": 27, "mode": "hold"},
+                    "closed": {"keyswitch": 28, "mode": "hold"},
+                    "expression": {"cc": {"number": 11, "value": 96, "reset": 64}},
+                    "swell": {"cc": {"number": 11, "value": 32, "reset": 0}}
+                }
+            }
+        });
+        let compile_document = |doc: &serde_json::Value| {
+            compile(&to_yaml(doc).unwrap()).expect("performance control transition")
+        };
+        let key_switches = |plan: &ScorePlan| {
+            plan.performance_controls
+                .iter()
+                .filter_map(|control| match control.kind {
+                    PerformanceControlKind::KeySwitch { note, down, .. } => {
+                        Some((control.tick, note, down))
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        let controller_values = |plan: &ScorePlan| {
+            plan.performance_controls
+                .iter()
+                .filter_map(|control| match control.kind {
+                    PerformanceControlKind::ControlChange { number: 11, value } => {
+                        Some((control.tick, value))
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+
+        doc["sections"]["phrase"]["events"] = json!([
+            {"kind":"articulation","instrument":"part","name":"mute","at":{"bar":1,"step":1},"duration_quarters":1},
+            {"kind":"articulation","instrument":"part","name":"expression","at":{"bar":1,"step":5},"duration_quarters":1}
+        ]);
+        let plan = compile_document(&doc);
+        let beat = u64::from(plan.ticks_per_beat);
+        assert_eq!(
+            key_switches(&plan),
+            [(0, 26, true), (beat, 24, true)],
+            "a latch interval returns to default before an adjacent controller interval"
+        );
+        assert_eq!(controller_values(&plan), [(beat, 96), (2 * beat, 64)]);
+
+        doc["sections"]["phrase"]["events"] = json!([
+            {"kind":"articulation","instrument":"part","name":"expression","at":{"bar":1,"step":1},"duration_quarters":1},
+            {"kind":"articulation","instrument":"part","name":"mute","at":{"bar":1,"step":5},"duration_quarters":1}
+        ]);
+        let plan = compile_document(&doc);
+        assert_eq!(
+            key_switches(&plan),
+            [
+                (0, 24, true),
+                (beat - beat / 32, 26, true),
+                (2 * beat, 24, true)
+            ]
+        );
+        assert_eq!(controller_values(&plan), [(0, 96), (beat, 64)]);
+
+        doc["sections"]["phrase"]["events"] = json!([
+            {"kind":"articulation","instrument":"part","name":"open","at":{"bar":1,"step":1},"duration_quarters":1},
+            {"kind":"articulation","instrument":"part","name":"closed","at":{"bar":1,"step":5},"duration_quarters":1}
+        ]);
+        let plan = compile_document(&doc);
+        assert_eq!(
+            key_switches(&plan),
+            [
+                (0, 27, true),
+                (beat, 27, false),
+                (beat, 28, true),
+                (2 * beat, 28, false)
+            ],
+            "adjacent holds release before the next press without overlapping"
+        );
+
+        doc["sections"]["phrase"]["events"] = json!([
+            {"kind":"articulation","instrument":"part","name":"open","at":{"bar":1,"step":1},"duration_quarters":1},
+            {"kind":"articulation","instrument":"part","name":"mute","at":{"bar":1,"step":5},"duration_quarters":1}
+        ]);
+        let plan = compile_document(&doc);
+        assert_eq!(
+            key_switches(&plan),
+            [
+                (0, 27, true),
+                (beat, 27, false),
+                (beat, 26, true),
+                (2 * beat, 24, true)
+            ]
+        );
+
+        doc["sections"]["phrase"]["events"] = json!([
+            {"kind":"articulation","instrument":"part","name":"expression","at":{"bar":1,"step":1},"duration_quarters":1},
+            {"kind":"articulation","instrument":"part","name":"swell","at":{"bar":1,"step":5},"duration_quarters":1}
+        ]);
+        let plan = compile_document(&doc);
+        assert_eq!(
+            controller_values(&plan),
+            [(0, 96), (beat, 32), (2 * beat, 0)]
+        );
+
+        doc["sections"]["phrase"]["events"] = json!([
+            {"kind":"articulation","instrument":"part","name":"mute","at":{"bar":1,"step":1},"duration_quarters":1},
+            {"kind":"articulation","instrument":"part","name":"expression","at":{"bar":1,"step":13},"duration_quarters":1}
+        ]);
+        let plan = compile_document(&doc);
+        assert_eq!(key_switches(&plan), [(0, 26, true), (beat, 24, true)]);
+        assert_eq!(controller_values(&plan), [(3 * beat, 96), (4 * beat, 64)]);
+    }
+
+    #[test]
     fn performance_control_provenance_uses_the_declaration_not_the_lead_tick() {
         let mut doc = document();
         doc["form"] = json!([
             {"section":"phrase","bars":1,"tonic":"C","scale":"ionian"},
+            {"section":"chorus","bars":1,"tonic":"C","scale":"ionian"},
             {"section":"phrase","bars":1,"tonic":"C","scale":"ionian"}
         ]);
+        doc["sections"]["chorus"] =
+            json!({"lines":{"main":{"instrument":"part","melody":"phrase"}}});
         doc["instruments"]["part"] = json!({
             "source": {
                 "vst3": {"plugin": "Synth"},
-                "articulations": {"open": {"keyswitch": 27, "mode": "hold"}}
+                "articulations": {
+                    "open": {"keyswitch": 27, "mode": "hold"},
+                    "default": {"keyswitch": 24, "mode": "latch"}
+                }
             }
         });
         doc["sections"]["phrase"]["events"] = json!([
-            {"kind":"articulation","instrument":"part","name":"open","at":{"bar":1,"step":1},"duration_quarters":1}
+            {"kind":"articulation","instrument":"part","name":"open","at":{"bar":1,"step":1},"duration_quarters":4},
+            {"kind":"cc","instrument":"part","number":11,"value":96,"at":{"bar":1,"step":5}}
         ]);
         let plan = compile(&to_yaml(&doc).unwrap()).unwrap();
         let starts: Vec<_> = plan
@@ -2415,7 +2546,57 @@ mod tests {
             assert_eq!(control.bar, 1);
             assert_eq!(control.step, "1");
         }
-        assert!(starts[1].tick < plan.sections[1].start_tick);
+        assert!(starts[1].tick < plan.sections[2].start_tick);
+        let release = plan
+            .performance_controls
+            .iter()
+            .rev()
+            .find(|control| {
+                matches!(
+                    control.kind,
+                    PerformanceControlKind::KeySwitch { down: false, .. }
+                )
+            })
+            .expect("terminal hold release");
+        assert_eq!(release.occurrence, 2);
+        assert_eq!(release.tick, plan.length_ticks);
+
+        let cc = plan
+            .performance_controls
+            .iter()
+            .filter(|control| {
+                matches!(
+                    control.kind,
+                    PerformanceControlKind::ControlChange {
+                        number: 11,
+                        value: 96
+                    }
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(cc.len(), 2);
+        assert_eq!(cc[0].occurrence, 1);
+        assert_eq!(cc[1].occurrence, 2);
+        assert_eq!(
+            cc[1].tick,
+            plan.sections[2].start_tick + u64::from(plan.ticks_per_beat)
+        );
+
+        let phrase_occurrences = plan.lanes[0]
+            .sources
+            .iter()
+            .filter(|source| source.section == "phrase")
+            .map(|source| source.occurrence)
+            .collect::<Vec<_>>();
+        assert_eq!(phrase_occurrences.first(), Some(&1));
+        assert_eq!(phrase_occurrences.last(), Some(&2));
+        assert!(!phrase_occurrences.contains(&3));
+        assert!(
+            plan.lanes[0]
+                .sources
+                .iter()
+                .any(|source| { source.section == "chorus" && source.occurrence == 1 })
+        );
     }
 
     #[test]
