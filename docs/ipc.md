@@ -396,7 +396,7 @@ riffra --attach --interactive
 
 CLIは入力形式だけを解釈し、制作規則と正準化は `riffra-core::Application` に委譲する。
 
-Mixerの正準状態は `mixer.get`、Bus一覧は `mixer.bus.list`、Send一覧は `mixer.send.list` で取得する。結果のタグはそれぞれ `mixer`、`mixBuses`、`sends` である。Bus・Sendの追加、更新、削除とTrack主出力先の設定は通常の正準Mutationとして扱い、`arrangementMutation` を返す。`session.apply` にも含められ、作成したBusとSendのIDは `createdEntityIds` の `buses`・`sends` へ記録する。パラメーターの正本は `api/params/mixer.rs`、CLIの操作形式は `agents/skills/riffra-headless/references/commands.md` を参照する。
+Mixerの正準状態は `mixer.get`、Bus一覧は `mixer.bus.list`、Send一覧は `mixer.send.list` で取得する。結果のタグはそれぞれ `mixer`、`mixBuses`、`sends` である。Bus・Sendの追加、更新、削除とTrack主出力先の設定は通常の正準Mutationとして扱い、`arrangementMutation` を返す。`session.apply` にも含められ、作成したBusとSendのIDは `createdEntityIds` の `buses`・`sends` へ記録する。パラメーターの正本は `api/params/mixer.rs`、CLIの操作形式は `agents/skills/riffra-headless/SKILL.md` を参照する。
 
 Sidechain接続は `mixer.sidechain.list` が `sidechainSends` を返す。`mixer.sidechain.add/update/remove` は同じ正準Mutation・Batch契約を使い、新しいIDは `createdEntityIds.sidechainSends` へ記録される。PreviewはRuntime操作であり、Batchには含まれない。
 
