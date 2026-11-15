@@ -2099,7 +2099,9 @@ pub(super) fn session_from_score(
     .unwrap();
     let store = UserInstrumentStore::new(data_root, Path::new("unused"));
     let mut staged = StagedResources::new(data_root);
-    build(&mut document, None, &store, &mut staged, BuildMode::Stage).unwrap()
+    let session = build(&mut document, None, &store, &mut staged, BuildMode::Stage).unwrap();
+    staged.clear();
+    session
 }
 
 /// How a Score build treats resources that outlive the candidate Session.

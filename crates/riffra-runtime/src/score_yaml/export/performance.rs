@@ -1,13 +1,16 @@
 //! Score performance content: notes, drums, control events, harmony.
 
 use super::{
-    Export, ExportError, ExportTrack, Original, SongSection, TrackRole, clips_for, fraction,
-    instrument_of, omit, rational, to_quarters,
+    Export, ExportError, ExportTrack, Original, SongSection, TrackRole, add_file, clips_for,
+    file_identifier, fraction, instrument_of, omit, rational, to_quarters,
 };
 use crate::api::output::ScoreExportOmission;
 use crate::score::syntax;
 use num_rational::BigRational;
-use riffra_core::{HarmonyEvent, InstrumentControlEventKind, KeySwitchMode};
+use riffra_core::{
+    AudioClip, FadeShape, HarmonyEvent, InstrumentControlEventKind, KeySwitchMode,
+    TrackInstrumentSource,
+};
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -77,6 +80,8 @@ struct Content {
     drums: BTreeMap<String, BTreeMap<String, Vec<String>>>,
     /// Kit hits when a section cannot use drum grids.
     hits: Vec<Value>,
+    /// Audio clips in canonical order, without their Score IDs.
+    audio: Vec<AudioDeclaration>,
     notes: Option<String>,
     tonic: String,
     scale: Option<String>,
@@ -97,6 +102,11 @@ impl Content {
             "chord_changes": self.chord_changes,
             "drums": self.drums,
             "hits": self.hits,
+            "audio": self
+                .audio
+                .iter()
+                .map(|clip| (&clip.name, &clip.body))
+                .collect::<Vec<_>>(),
             "notes": self.notes,
             "tonic": self.tonic,
             "scale": self.scale,
@@ -115,11 +125,18 @@ struct Note {
 }
 
 /// One drum hit on the absolute timeline.
+#[derive(Clone)]
 struct Hit {
     part: String,
     start: u64,
     length: u64,
     velocity: u8,
+}
+
+/// One audio clip of a section before its Score ID is assigned.
+struct AudioDeclaration {
+    name: String,
+    body: Value,
 }
 
 /// One articulation interval on the absolute timeline.
@@ -128,6 +145,8 @@ struct Articulation {
     name: String,
     start: u64,
     end: u64,
+    /// Source order of the key switch that opens the interval.
+    order: u32,
 }
 
 /// Renders every section body and writes the performance documents.
@@ -144,7 +163,7 @@ pub(super) fn apply(
     let mut contents = Vec::with_capacity(export.sections.len());
     for index in 0..export.sections.len() {
         let section = export.sections[index].clone();
-        contents.push(build(export, index, &section, &voices, &articulations)?);
+        contents.push(build(export, &section, &voices, &articulations)?);
     }
     let mut fingerprints: Vec<String> = Vec::new();
     let mut names: Vec<String> = Vec::new();
@@ -166,6 +185,7 @@ pub(super) fn apply(
     let mut drums = Map::new();
     let mut sections = Map::new();
     let mut materials = BTreeMap::<String, String>::new();
+    let mut clip_ids = BTreeSet::new();
     for (body, name) in names.iter().enumerate() {
         let content = &contents[first_body(&bodies, body)];
         let mut section = Map::new();
@@ -202,6 +222,22 @@ pub(super) fn apply(
                 Value::Array(content.chord_changes.clone()),
             );
         }
+        if !content.audio.is_empty() {
+            section.insert(
+                "audio_clips".into(),
+                Value::Array(
+                    content
+                        .audio
+                        .iter()
+                        .map(|clip| {
+                            let mut body = clip.body.clone();
+                            body["id"] = json!(super::unique_id(&clip.name, "clip", &mut clip_ids));
+                            body
+                        })
+                        .collect(),
+                ),
+            );
+        }
         if let Some(velocity) = content.velocity {
             section.insert("velocity".into(), json!(velocity));
         }
@@ -226,24 +262,26 @@ pub(super) fn apply(
 
 /// Reports the MIDI clips the Score cannot carry.
 fn report_clips(export: &mut Export<'_>) {
-    let clips = export.session.arrangement.midi_clips.clone();
-    let tracks = export.tracks.clone();
-    for track in &tracks {
-        for clip in clips.iter().filter(|clip| clip.track_id == track.track.id) {
+    let session = export.session;
+    let tracks = &export.tracks;
+    let omissions = &mut export.omissions;
+    for track in tracks {
+        for clip in session
+            .arrangement
+            .midi_clips
+            .iter()
+            .filter(|clip| clip.track_id == track.track.id)
+        {
             let subject = format!("track \"{}\" / clip \"{}\"", track.track.name, clip.name);
             if clip.muted {
-                omit(&mut export.omissions, subject.clone(), "the clip is muted");
+                omit(omissions, subject.clone(), "the clip is muted");
                 continue;
             }
             if clip.loop_enabled {
-                omit(&mut export.omissions, subject.clone(), "the clip loops");
+                omit(omissions, subject.clone(), "the clip loops");
             }
             if clip.notes.iter().any(|note| note.lyric.is_some()) {
-                omit(
-                    &mut export.omissions,
-                    subject,
-                    "the Score cannot store note lyrics",
-                );
+                omit(omissions, subject, "the Score cannot store note lyrics");
             }
         }
     }
@@ -352,7 +390,6 @@ fn assign_voices(mut notes: Vec<Note>) -> Vec<Vec<Note>> {
 
 fn build(
     export: &mut Export<'_>,
-    _index: usize,
     section: &SongSection,
     voices: &BTreeMap<String, Vec<Vec<Note>>>,
     articulations: &[Articulation],
@@ -363,7 +400,7 @@ fn build(
         ..Content::default()
     };
     let tracks = export.tracks.clone();
-    let mut section_velocity: Option<u8> = None;
+    let velocity = section_velocity(export, section, voices);
     for track in &tracks {
         match &track.role {
             TrackRole::Instrument => {
@@ -378,11 +415,7 @@ fn build(
                 if notes.is_empty() {
                     continue;
                 }
-                let velocity = mode(notes.iter().map(|note| note.velocity));
-                section_velocity = Some(match section_velocity {
-                    Some(current) => mode([current, velocity].into_iter()),
-                    None => velocity,
-                });
+                let velocity = velocity.unwrap_or(100);
                 for (number, lane) in lanes.iter().enumerate() {
                     let part = if number == 0 {
                         track.id.clone()
@@ -408,7 +441,7 @@ fn build(
                         content.lines.push(Line {
                             instrument: track.id.clone(),
                             part,
-                            material: melody(section, export.ppq, &continuous),
+                            material: melody(section, export.ppq, &continuous, velocity),
                         });
                     }
                     for note in local.iter().filter(|note| note.end > section.end_tick) {
@@ -423,7 +456,7 @@ fn build(
                 if hits.is_empty() {
                     continue;
                 }
-                match drum_grid(section, &hits) {
+                match drum_grid(section, export.ppq, &hits) {
                     Some(drums) => {
                         content.drums.insert(kit.clone(), drums);
                     }
@@ -436,10 +469,12 @@ fn build(
                     }
                 }
             }
-            TrackRole::Audio => {}
+            TrackRole::Audio => {
+                content.audio = audio(export, section)?;
+            }
         }
     }
-    content.velocity = section_velocity;
+    content.velocity = velocity;
     content.events = events(export, section, articulations);
     content.events.append(&mut content.hits);
     let (chords, chord_changes, omitted) = harmony(
@@ -459,19 +494,33 @@ fn build(
     Ok(content)
 }
 
-fn mode(values: impl Iterator<Item = u8>) -> u8 {
+/// Returns the most common velocity of the section, preferring the lower one.
+fn section_velocity(
+    export: &Export<'_>,
+    section: &SongSection,
+    voices: &BTreeMap<String, Vec<Vec<Note>>>,
+) -> Option<u8> {
+    let notes = export.tracks.iter().filter_map(|track| {
+        let TrackRole::Instrument = track.role else {
+            return None;
+        };
+        Some(voices.get(&track.track.id)?.iter().flatten())
+    });
     let mut counts = BTreeMap::new();
-    for value in values {
-        *counts.entry(value).or_insert(0usize) += 1;
+    for note in notes
+        .flatten()
+        .filter(|note| note.start >= section.start_tick && note.start < section.end_tick)
+    {
+        *counts.entry(note.velocity).or_insert(0usize) += 1;
     }
     counts
         .into_iter()
         .max_by_key(|(value, count)| (*count, std::cmp::Reverse(*value)))
-        .map_or(100, |(value, _)| value)
+        .map(|(value, _)| value)
 }
 
 /// Builds one bar list of melody tokens for a voice.
-fn melody(section: &SongSection, ppq: u32, notes: &[Note]) -> Vec<String> {
+fn melody(section: &SongSection, ppq: u32, notes: &[Note], velocity: u8) -> Vec<String> {
     let mut bars = Vec::new();
     for (index, start) in section.bar_starts.iter().enumerate() {
         let length = section.bar_lengths[index];
@@ -495,11 +544,7 @@ fn melody(section: &SongSection, ppq: u32, notes: &[Note]) -> Vec<String> {
             if tie {
                 tokens.push(format!("-:{}", steps(length, ppq)));
             } else {
-                tokens.push(format!(
-                    "{}:{}",
-                    degree(section, note.midi),
-                    steps(length, ppq)
-                ));
+                tokens.push(note_token(section, note, velocity, steps(length, ppq)));
             }
             cursor = at + length;
         }
@@ -509,6 +554,16 @@ fn melody(section: &SongSection, ppq: u32, notes: &[Note]) -> Vec<String> {
         bars.push(tokens.join(" "));
     }
     bars
+}
+
+/// Renders one pitched token, naming the velocity when it differs.
+fn note_token(section: &SongSection, note: &Note, velocity: u8, length: String) -> String {
+    let degree = degree(section, note.midi);
+    if note.velocity == velocity {
+        format!("{degree}:{length}")
+    } else {
+        format!("{degree}@{}:{length}", note.velocity)
+    }
 }
 
 fn steps(ticks: u64, ppq: u32) -> String {
@@ -596,42 +651,59 @@ fn kit_hits(export: &Export<'_>, section: &SongSection, track_id: &str, kit: &st
     hits
 }
 
-fn drum_grid(section: &SongSection, hits: &[Hit]) -> Option<BTreeMap<String, Vec<String>>> {
+fn drum_grid(
+    section: &SongSection,
+    ppq: u32,
+    hits: &[Hit],
+) -> Option<BTreeMap<String, Vec<String>>> {
+    let cell = u64::from(section_cell(ppq)?);
     let mut grid: BTreeMap<String, Vec<Vec<char>>> = BTreeMap::new();
     for hit in hits {
-        if !matches!(hit.velocity, 64 | 96 | 120) {
-            return None;
-        }
+        let token = match hit.velocity {
+            64 => 'o',
+            96 => 'x',
+            120 => 'X',
+            _ => return None,
+        };
         let index = section
             .bar_starts
             .iter()
             .rposition(|start| *start <= hit.start)?;
         let bar_start = section.bar_starts[index];
-        let cells = usize::from(section.meter.0) * 4;
-        let cell = BigRational::new(section.bar_lengths[index].into(), cells.into());
-        let offset = BigRational::from_integer((hit.start - bar_start).into());
-        let duration = BigRational::from_integer(hit.length.into());
-        if duration != cell || !(offset.clone() / cell.clone()).is_integer() {
+        let cells = section.bar_lengths[index] / cell;
+        if !section.bar_lengths[index].is_multiple_of(cell)
+            || hit.length != cell
+            || !(hit.start - bar_start).is_multiple_of(cell)
+        {
             return None;
         }
-        let column = usize::try_from((offset / cell).to_integer()).ok()?;
-        if column >= cells {
+        let column = usize::try_from((hit.start - bar_start) / cell).ok()?;
+        if column >= usize::try_from(cells).ok()? {
             return None;
         }
-        let bars = grid
-            .entry(hit.part.clone())
-            .or_insert_with(|| vec![vec!['.'; cells]; section.bars()]);
-        bars[index][column] = match hit.velocity {
-            64 => 'o',
-            96 => 'x',
-            _ => 'X',
-        };
+        let bars = grid.entry(hit.part.clone()).or_insert_with(|| {
+            section
+                .bar_lengths
+                .iter()
+                .map(|length| vec!['.'; usize::try_from(length / cell).unwrap_or(0)])
+                .collect()
+        });
+        if bars[index][column] != '.' {
+            return None;
+        }
+        bars[index][column] = token;
     }
     let mut result = BTreeMap::new();
     for (part, bars) in grid {
         result.insert(part, compress(bars));
     }
     Some(result)
+}
+
+/// Returns the drum cell length in ticks, or `None` when the clock has no
+/// exact sixteenth-note grid.
+fn section_cell(ppq: u32) -> Option<u32> {
+    ppq.is_multiple_of(4).then_some(ppq / 4)
 }
 
 /// Shortens a bar list to its smallest repeating unit.
@@ -666,17 +738,147 @@ fn hit_event(section: &SongSection, ppq: u32, part: &str, hit: &Hit) -> Value {
     value
 }
 
+/// Builds the audio clip declarations of one section.
+fn audio(
+    export: &mut Export<'_>,
+    section: &SongSection,
+) -> Result<Vec<AudioDeclaration>, ExportError> {
+    let mut result = Vec::new();
+    for track in export.tracks.clone() {
+        let TrackRole::Audio = track.role else {
+            continue;
+        };
+        for clip in export
+            .session
+            .arrangement
+            .audio_clips
+            .iter()
+            .filter(|clip| clip.track_id == track.track.id)
+        {
+            if clip.start_tick.0 < section.start_tick || clip.start_tick.0 >= section.end_tick {
+                continue;
+            }
+            if !exportable_clip(export, clip) {
+                continue;
+            }
+            if clip.fade_shape != FadeShape::EqualPower {
+                omit(
+                    &mut export.omissions,
+                    format!("clip \"{}\" / fade shape", clip.name),
+                    "the Score only stores equal-power fades",
+                );
+            }
+            let file = audio_file(export, clip)?;
+            let rate = f64::from(clip.source_sample_rate);
+            let mut body = json!({
+                "instrument": track.id,
+                "file": file,
+                "at": section.position(clip.start_tick.0, export.ppq),
+                "offset_seconds": clip.source_range.start as f64 / rate,
+                "duration_seconds": clip.source_range.end.saturating_sub(clip.source_range.start) as f64 / rate,
+                "gain_db": clip.gain_db,
+                "pan": clip.pan,
+            });
+            for (key, fade) in [
+                ("fade_in_seconds", &clip.fade_in),
+                ("fade_out_seconds", &clip.fade_out),
+            ] {
+                if fade.frames > 0 {
+                    body[key] = json!(fade.frames as f64 / f64::from(fade.sample_rate));
+                }
+            }
+            result.push(AudioDeclaration {
+                name: clip.name.clone(),
+                body,
+            });
+        }
+    }
+    Ok(result)
+}
+
+/// Reports whether one audio clip can be written and reports the rest.
+fn exportable_clip(export: &mut Export<'_>, clip: &AudioClip) -> bool {
+    if clip.muted {
+        omit(
+            &mut export.omissions,
+            format!("clip \"{}\"", clip.name),
+            "the clip is muted",
+        );
+        return false;
+    }
+    if clip.loop_enabled {
+        omit(
+            &mut export.omissions,
+            format!("clip \"{}\"", clip.name),
+            "the clip loops",
+        );
+        return false;
+    }
+    if clip.take_variant != riffra_core::AudioTakeVariant::Raw {
+        omit(
+            &mut export.omissions,
+            format!("clip \"{}\"", clip.name),
+            "the clip uses a processed take",
+        );
+        return false;
+    }
+    true
+}
+
+/// Copies the WAV of one asset once and returns its Score path.
+fn audio_file(export: &mut Export<'_>, clip: &AudioClip) -> Result<String, ExportError> {
+    if let Some(file) = export.audio_files.get(&clip.asset_id) {
+        return Ok(file.clone());
+    }
+    let Some(asset) = crate::asset::load(export.data_root, &clip.asset_id)
+        .map_err(|error| ExportError::new(format!("asset could not be read: {error}")))?
+    else {
+        return Err(ExportError::new(format!(
+            "clip \"{}\" references a missing asset",
+            clip.name
+        )));
+    };
+    let Some(location) =
+        crate::asset::resolve_content_location(export.data_root, &clip.asset_id)
+            .map_err(|error| ExportError::new(format!("asset could not be read: {error}")))?
+    else {
+        return Err(ExportError::new(format!(
+            "clip \"{}\" references a missing file",
+            clip.name
+        )));
+    };
+    let name = file_identifier(&asset.name);
+    let mut relative = format!("audio/{name}.wav");
+    let mut number = 2;
+    while export.files.contains_key(&relative) {
+        relative = format!("audio/{name}_{number}.wav");
+        number += 1;
+    }
+    let bytes = std::fs::read(&location)
+        .map_err(|error| ExportError::new(format!("could not read {}: {error}", location)))?;
+    add_file(export, relative.clone(), bytes)?;
+    export
+        .audio_files
+        .insert(clip.asset_id.clone(), relative.clone());
+    Ok(relative)
+}
+
 /// Renders every performance control of one section.
 fn events(
     export: &mut Export<'_>,
     section: &SongSection,
     articulations: &[Articulation],
 ) -> Vec<Value> {
-    let mut events = Vec::new();
+    let mut events: Vec<(u64, u32, Value)> = Vec::new();
     for track in export.tracks.clone() {
-        let TrackRole::Instrument = track.role else {
-            continue;
-        };
+        match track.role {
+            TrackRole::Kit(_) => {
+                report_kit_controls(export, section, &track);
+                continue;
+            }
+            TrackRole::Audio => continue,
+            TrackRole::Instrument => {}
+        }
         let vst3 =
             instrument_of(track.track).is_some_and(|instrument| instrument.as_vst3().is_some());
         let mut controls: Vec<(u64, u32, InstrumentControlEventKind)> = Vec::new();
@@ -714,10 +916,16 @@ fn events(
             }
         }
         controls.sort_by_key(|(tick, order, _)| (*tick, *order));
-        let mut points = Vec::new();
-        for (tick, _, control) in controls {
+        let mut points: Vec<(u64, u32, Point)> = Vec::new();
+        for (tick, order, control) in controls {
             let at = section.position(tick, export.ppq);
-            if vst3 && !matches!(control, InstrumentControlEventKind::ControlChange { .. }) {
+            if vst3
+                && !matches!(
+                    control,
+                    InstrumentControlEventKind::ControlChange { .. }
+                        | InstrumentControlEventKind::KeySwitch { .. }
+                )
+            {
                 omit(
                     &mut export.omissions,
                     format!("track \"{}\" / control", track.track.name),
@@ -748,13 +956,23 @@ fn events(
                 InstrumentControlEventKind::ParameterChange {
                     parameter,
                     native_value,
-                } => Control::Event(json!({
-                    "kind": "parameter_change",
-                    "instrument": track.id,
-                    "at": at,
-                    "parameter": parameter,
-                    "native_value": native_value,
-                })),
+                } => {
+                    if let Err(reason) = internal_parameter(&track, &parameter, &[native_value]) {
+                        omit(
+                            &mut export.omissions,
+                            format!("track \"{}\" / parameter {parameter}", track.track.name),
+                            reason,
+                        );
+                        continue;
+                    }
+                    Control::Event(json!({
+                        "kind": "parameter_change",
+                        "instrument": track.id,
+                        "at": at,
+                        "parameter": parameter,
+                        "native_value": native_value,
+                    }))
+                }
                 InstrumentControlEventKind::ParameterRamp {
                     parameter,
                     from_value,
@@ -766,6 +984,16 @@ fn events(
                             &mut export.omissions,
                             format!("track \"{}\" / control", track.track.name),
                             "a parameter ramp crosses a section boundary",
+                        );
+                        continue;
+                    }
+                    if let Err(reason) =
+                        internal_parameter(&track, &parameter, &[from_value, to_value])
+                    {
+                        omit(
+                            &mut export.omissions,
+                            format!("track \"{}\" / parameter {parameter}", track.track.name),
+                            reason,
                         );
                         continue;
                     }
@@ -781,12 +1009,12 @@ fn events(
                 }
             };
             match event {
-                Control::Point(point) => points.push((tick, point)),
-                Control::Event(event) => events.push((tick, event)),
+                Control::Point(point) => points.push((tick, order, point)),
+                Control::Event(event) => events.push((tick, order, event)),
             }
         }
-        for (tick, event) in coalesce(&points, export.ppq, section, &track.id) {
-            events.push((tick, event));
+        for (tick, order, event) in coalesce(&points, export.ppq, section, &track.id) {
+            events.push((tick, order, event));
         }
         for articulation in articulations
             .iter()
@@ -799,6 +1027,7 @@ fn events(
             }
             events.push((
                 start,
+                articulation.order,
                 json!({
                     "kind": "articulation",
                     "instrument": track.id,
@@ -809,8 +1038,83 @@ fn events(
             ));
         }
     }
-    events.sort_by_key(|(tick, _)| *tick);
-    events.into_iter().map(|(_, event)| event).collect()
+    events.sort_by_key(|(tick, order, _)| (*tick, *order));
+    events.into_iter().map(|(_, _, event)| event).collect()
+}
+
+/// Reports the kit controls the Score cannot address per drum part.
+fn report_kit_controls(export: &mut Export<'_>, section: &SongSection, track: &ExportTrack<'_>) {
+    for clip in clips_for(export.session, &track.track.id) {
+        if clip.muted {
+            continue;
+        }
+        for event in &clip.instrument_control_events {
+            let tick = clip.start_tick.0 + event.tick.0;
+            if tick >= section.start_tick && tick < section.end_tick {
+                omit(
+                    &mut export.omissions,
+                    format!("track \"{}\" / control", track.track.name),
+                    "the Score cannot send control events to a kit track",
+                );
+            }
+        }
+        for event in &clip.events {
+            let tick = clip.start_tick.0 + event.tick.0;
+            if tick >= section.start_tick && tick < section.end_tick {
+                omit(
+                    &mut export.omissions,
+                    format!("track \"{}\" / MIDI event", track.track.name),
+                    "the Score cannot express this MIDI event",
+                );
+            }
+        }
+    }
+}
+
+/// Validates a built-in instrument parameter event against its definition.
+fn internal_parameter(
+    track: &ExportTrack<'_>,
+    parameter: &str,
+    values: &[f32],
+) -> Result<(), String> {
+    let Some(instrument) = instrument_of(track.track) else {
+        return Err("the track has no instrument".into());
+    };
+    if instrument.as_vst3().is_some() {
+        return Err("the Score cannot change a VST3 instrument parameter".into());
+    }
+    let TrackInstrumentSource::Internal {
+        definition_json, ..
+    } = &instrument.source
+    else {
+        return Err("the instrument source is not available".into());
+    };
+    let definition: Value =
+        serde_json::from_str(definition_json).map_err(|error| error.to_string())?;
+    let Some(descriptor) = definition["parameters"]
+        .as_array()
+        .and_then(|parameters| parameters.iter().find(|entry| entry["id"] == parameter))
+    else {
+        return Err(format!(
+            "the instrument definition does not describe parameter {parameter:?}"
+        ));
+    };
+    let min = descriptor["min"]
+        .as_f64()
+        .ok_or("the parameter has no minimum")?;
+    let max = descriptor["max"]
+        .as_f64()
+        .ok_or("the parameter has no maximum")?;
+    if values.iter().any(|value| {
+        !value.is_finite()
+            || (descriptor["scale"] != "linear_unbounded"
+                && !(min..=max).contains(&f64::from(*value)))
+    }) {
+        return Err(format!(
+            "instrument parameter {parameter:?} is out of range"
+        ));
+    }
+    Ok(())
 }
 
 /// One control event of a section, before automation runs are detected.
@@ -845,6 +1149,11 @@ impl Point {
         }
     }
 
+    /// Returns whether the Score can expand this control from a ramp.
+    fn rampable(self) -> bool {
+        !matches!(self.kind, PointKind::Cc(_))
+    }
+
     fn control(self) -> String {
         match self.kind {
             PointKind::ModWheel => "mod_wheel".into(),
@@ -866,16 +1175,16 @@ impl Point {
 
 /// Joins point runs the Score expands back to the same events.
 fn coalesce(
-    points: &[(u64, Point)],
+    points: &[(u64, u32, Point)],
     ppq: u32,
     section: &SongSection,
     instrument: &str,
-) -> Vec<(u64, Value)> {
+) -> Vec<(u64, u32, Value)> {
     let mut result = Vec::new();
     let mut index = 0;
     while index < points.len() {
         let mut end = index;
-        if ppq.is_multiple_of(64) {
+        if ppq.is_multiple_of(64) && points[index].2.rampable() {
             for candidate in (index + 1..points.len()).rev() {
                 if matches(&points[index..=candidate], ppq) {
                     end = candidate;
@@ -883,16 +1192,12 @@ fn coalesce(
                 }
             }
         }
-        let (tick, point) = points[index];
+        let (tick, order, point) = points[index];
         if end > index {
-            let last = points[end];
-            let values = if matches!(point.kind, PointKind::Cc(_)) {
-                (json!(point.value as u8), json!(last.1.value as u8))
-            } else {
-                (json!(point.value), json!(last.1.value))
-            };
+            let last = points[end].2;
             result.push((
                 tick,
+                order,
                 point_json(
                     section,
                     ppq,
@@ -901,27 +1206,27 @@ fn coalesce(
                     &json!({
                         "kind": "automation",
                         "control": point.control(),
-                        "from_value": values.0,
-                        "to_value": values.1,
-                        "duration_quarters": rational(last.0 - tick, ppq),
+                        "from_value": point.value,
+                        "to_value": last.value,
+                        "duration_quarters": rational(points[end].0 - tick, ppq),
                     }),
                 ),
             ));
         } else {
-            let value = if matches!(point.kind, PointKind::Cc(_)) {
-                json!(point.value as u8)
-            } else {
-                json!(point.value)
-            };
             let mut body = json!({
                 "kind": point.name(),
-                "value": value,
+                "value": point.value,
             });
             if let PointKind::Cc(number) = point.kind {
                 body["kind"] = json!("cc");
                 body["number"] = json!(number);
+                body["value"] = json!(point.value as u8);
             }
-            result.push((tick, point_json(section, ppq, tick, instrument, &body)));
+            result.push((
+                tick,
+                order,
+                point_json(section, ppq, tick, instrument, &body),
+            ));
         }
         index = end + 1;
     }
@@ -936,7 +1241,7 @@ fn point_json(section: &SongSection, ppq: u32, tick: u64, instrument: &str, body
 }
 
 /// Reports whether a run re-expands to exactly its own points.
-fn matches(points: &[(u64, Point)], ppq: u32) -> bool {
+fn matches(points: &[(u64, u32, Point)], ppq: u32) -> bool {
     if points.len() < 2 {
         return false;
     }
@@ -944,16 +1249,15 @@ fn matches(points: &[(u64, Point)], ppq: u32) -> bool {
     if step == 0 || points.windows(2).any(|pair| pair[1].0 != pair[0].0 + step) {
         return false;
     }
-    let first = points[0].1;
-    let last = points[points.len() - 1].1;
-    if first.kind != last.kind || points.iter().any(|(_, point)| point.kind != first.kind) {
+    let first = points[0].2;
+    let last = points[points.len() - 1].2;
+    if first.kind != last.kind || points.iter().any(|(_, _, point)| point.kind != first.kind) {
         return false;
     }
     let start = points[0].0;
     let end = points[points.len() - 1].0;
-    let mut previous = None;
     let mut expanded = Vec::new();
-    for (tick, _) in points {
+    for (tick, _, _) in points {
         let ratio = (tick - start) as f64 / (end - start) as f64;
         let value = if *tick == start {
             first.value
@@ -963,22 +1267,13 @@ fn matches(points: &[(u64, Point)], ppq: u32) -> bool {
             (f64::from(first.value) + (f64::from(last.value) - f64::from(first.value)) * ratio)
                 as f32
         };
-        if let PointKind::Cc(_) = first.kind {
-            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-            let value = value.round().clamp(0.0, 127.0) as u8;
-            if previous != Some(value) {
-                expanded.push(f32::from(value));
-                previous = Some(value);
-            }
-        } else {
-            expanded.push(value);
-        }
+        expanded.push(value);
     }
     expanded.len() == points.len()
         && expanded
             .iter()
             .zip(points)
-            .all(|(value, (_, point))| value.to_bits() == point.value.to_bits())
+            .all(|(value, (_, _, point))| value.to_bits() == point.value.to_bits())
 }
 
 /// Reconstructs articulation intervals from their key switch sends.
@@ -1041,11 +1336,11 @@ fn articulations(export: &mut Export<'_>) -> Vec<Articulation> {
             .iter()
             .find(|(_, _, name)| name == "default")
             .map(|(note, _, _)| *note);
-        let mut active: Option<(usize, u64, KeySwitchMode, bool)> = None;
+        let mut active: Option<(usize, u64, u32, KeySwitchMode, bool)> = None;
         let mut previous_end = None;
         let mut restored = false;
         let mut released = BTreeSet::new();
-        for (tick, _, note, mode, down) in sends {
+        for (tick, press_order, note, mode, down) in sends {
             let Some(position) = named.iter().position(|(candidate, candidate_mode, _)| {
                 *candidate == note && *candidate_mode == mode
             }) else {
@@ -1060,12 +1355,13 @@ fn articulations(export: &mut Export<'_>) -> Vec<Articulation> {
                 if mode == KeySwitchMode::Hold {
                     released.insert(note);
                 }
-                if let Some((active_position, press, _, same_hold_release)) = active.take() {
+                if let Some((active_position, press, order, _, same_hold_release)) = active.take() {
                     push_interval(
                         &mut result,
                         &mut omissions,
                         track,
                         &named[active_position].2,
+                        order,
                         export.ppq,
                         press,
                         tick,
@@ -1079,12 +1375,13 @@ fn articulations(export: &mut Export<'_>) -> Vec<Articulation> {
                 continue;
             }
             if is_default {
-                if let Some((active_position, press, _, same_hold_release)) = active.take() {
+                if let Some((active_position, press, order, _, same_hold_release)) = active.take() {
                     push_interval(
                         &mut result,
                         &mut omissions,
                         track,
                         &named[active_position].2,
+                        order,
                         export.ppq,
                         press,
                         tick,
@@ -1098,12 +1395,13 @@ fn articulations(export: &mut Export<'_>) -> Vec<Articulation> {
                 continue;
             }
             let same_hold_release = mode == KeySwitchMode::Hold && released.contains(&note);
-            if let Some((active_position, press, _, released_before)) = active.take() {
+            if let Some((active_position, press, order, _, released_before)) = active.take() {
                 push_interval(
                     &mut result,
                     &mut omissions,
                     track,
                     &named[active_position].2,
+                    order,
                     export.ppq,
                     press,
                     tick,
@@ -1113,16 +1411,17 @@ fn articulations(export: &mut Export<'_>) -> Vec<Articulation> {
                 );
                 previous_end = Some(tick);
             }
-            active = Some((position, tick, mode, same_hold_release));
+            active = Some((position, tick, press_order, mode, same_hold_release));
             restored = false;
             released.clear();
         }
-        if let Some((position, press, _, _)) = active {
+        if let Some((position, press, order, _, _)) = active {
             push_interval(
                 &mut result,
                 &mut omissions,
                 track,
                 &named[position].2,
+                order,
                 export.ppq,
                 press,
                 song_end,
@@ -1142,6 +1441,7 @@ fn push_interval(
     omissions: &mut Vec<ScoreExportOmission>,
     track: &ExportTrack<'_>,
     name: &str,
+    order: u32,
     ppq: u32,
     press: u64,
     end: u64,
@@ -1162,6 +1462,7 @@ fn push_interval(
         name: name.to_owned(),
         start,
         end,
+        order,
     });
 }
 
@@ -1350,6 +1651,7 @@ mod tests {
             &section(),
             480,
             &[note(0, 960, 60), note(960, 2880, 64), note(2880, 3840, 67)],
+            100,
         );
         assert_eq!(ticks, ["1:8 3:8", "-:8 5:8"]);
     }
@@ -1387,55 +1689,114 @@ mod tests {
                 velocity: 120,
             },
         ];
-        let grid = drum_grid(&section(), &hits).expect("the hits fall on the grid");
+        let grid = drum_grid(&section(), 480, &hits).expect("the hits fall on the grid");
         assert_eq!(grid["kick"], ["x...............", "................"]);
 
         let mut off = hits;
         off[0].start = 60;
         off[0].length = 60;
-        assert!(drum_grid(&section(), &off).is_none());
+        assert!(drum_grid(&section(), 480, &off).is_none());
+    }
+
+    #[test]
+    fn drum_grids_follow_the_meter_and_keep_every_hit() {
+        let mut waltz = section();
+        waltz.meter = (3, 8);
+        waltz.end_tick = 1440;
+        waltz.bar_lengths = vec![720, 720];
+        waltz.bar_starts = vec![0, 720];
+        let hits = vec![
+            Hit {
+                part: "kick".into(),
+                start: 0,
+                length: 120,
+                velocity: 96,
+            },
+            Hit {
+                part: "kick".into(),
+                start: 480,
+                length: 120,
+                velocity: 96,
+            },
+            Hit {
+                part: "snare".into(),
+                start: 720,
+                length: 120,
+                velocity: 120,
+            },
+        ];
+        let grid = drum_grid(&waltz, 480, &hits).expect("3/8 has six sixteenth cells");
+        assert_eq!(grid["kick"], ["x...x.", "......"]);
+        assert_eq!(grid["snare"], ["......", "X....."]);
+
+        let mut repeated = hits.clone();
+        repeated.push(Hit {
+            part: "kick".into(),
+            start: 0,
+            length: 120,
+            velocity: 64,
+        });
+        assert!(
+            drum_grid(&waltz, 480, &repeated).is_none(),
+            "two hits in one cell cannot both be written"
+        );
+
+        let mut short = waltz.clone();
+        short.bar_lengths = vec![720, 360];
+        let short_hits = vec![
+            Hit {
+                part: "kick".into(),
+                start: 0,
+                length: 120,
+                velocity: 96,
+            },
+            Hit {
+                part: "snare".into(),
+                start: 960,
+                length: 120,
+                velocity: 120,
+            },
+        ];
+        let grid = drum_grid(&short, 480, &short_hits).expect("a short bar keeps the cell length");
+        assert_eq!(grid["snare"], ["......", "..X"]);
+
+        let mut off = hits;
+        off[0].velocity = 100;
+        assert!(drum_grid(&waltz, 480, &off).is_none());
     }
 
     #[test]
     fn automation_runs_coalesce_only_when_the_expansion_matches() {
         let points = [
-            (0, Point::value(PointKind::ModWheel, 0.0)),
-            (15, Point::value(PointKind::ModWheel, 0.5)),
-            (30, Point::value(PointKind::ModWheel, 1.0)),
+            (0, 0, Point::value(PointKind::ModWheel, 0.0)),
+            (15, 1, Point::value(PointKind::ModWheel, 0.5)),
+            (30, 2, Point::value(PointKind::ModWheel, 1.0)),
         ];
         assert!(matches(&points, 960));
         let section = section();
         let events = coalesce(&points, 960, &section, "lead");
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].1["kind"], "automation");
-        assert_eq!(events[0].1["control"], "mod_wheel");
+        assert_eq!(events[0].2["kind"], "automation");
+        assert_eq!(events[0].2["control"], "mod_wheel");
 
         let broken = [
-            (0, Point::value(PointKind::ModWheel, 0.0)),
-            (15, Point::value(PointKind::ModWheel, 0.9)),
-            (30, Point::value(PointKind::ModWheel, 1.0)),
+            (0, 0, Point::value(PointKind::ModWheel, 0.0)),
+            (15, 1, Point::value(PointKind::ModWheel, 0.9)),
+            (30, 2, Point::value(PointKind::ModWheel, 1.0)),
         ];
         assert!(!matches(&broken, 960));
         assert_eq!(coalesce(&broken, 960, &section, "lead").len(), 2);
 
         let cc = [
-            (0, Point::cc(11, 0)),
-            (15, Point::cc(11, 64)),
-            (30, Point::cc(11, 127)),
+            (0, 0, Point::cc(11, 0)),
+            (15, 1, Point::cc(11, 64)),
+            (30, 2, Point::cc(11, 127)),
         ];
-        assert!(matches(&cc, 960));
+        assert!(!matches(&cc, 960));
         let events = coalesce(&cc, 960, &section, "lead");
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0].1["control"], "cc:11");
-        assert_eq!(events[0].1["from_value"], 0.0);
-        assert_eq!(events[0].1["to_value"], 127.0);
-
-        let repeated = [
-            (0, Point::cc(11, 5)),
-            (15, Point::cc(11, 5)),
-            (30, Point::cc(11, 5)),
-        ];
-        assert!(!matches(&repeated, 960));
-        assert_eq!(coalesce(&repeated, 960, &section, "lead").len(), 3);
+        assert_eq!(events.len(), 3);
+        assert_eq!(events[0].2["kind"], "cc");
+        assert_eq!(events[0].2["number"], 11);
+        assert_eq!(events[0].2["value"], 0);
     }
 }
