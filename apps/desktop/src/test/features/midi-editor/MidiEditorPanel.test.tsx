@@ -297,7 +297,9 @@ describe('MidiEditorPanel', () => {
 
     // Act: hold the key, then move the playhead so the panel renders again.
     fireEvent.pointerDown(key, { pointerId: 1 });
-    act(() => store.getState().transport.seekLocally(480));
+    act(() => {
+      store.getState().transport.seekLocally(480);
+    });
 
     // Assert: the held note is neither released nor panicked by the re-render.
     expect(sendMidi).toHaveBeenCalledTimes(1);

@@ -64,7 +64,7 @@ it.each(['clip', 'host', 'session'] as const)(
       rerender({ edited: { ...clip, id: 'b' } });
       rerender({ edited: clip });
     } else if (scope === 'host') {
-      act(() =>
+      act(() => {
         store.setState((state) => ({
           host: {
             ...state.host,
@@ -73,10 +73,10 @@ it.each(['clip', 'host', 'session'] as const)(
               generation: state.host.connection.generation + 1,
             },
           },
-        })),
-      );
+        }));
+      });
     } else {
-      act(() =>
+      act(() => {
         store.setState((state) => ({
           project: {
             ...state.project,
@@ -88,8 +88,8 @@ it.each(['clip', 'host', 'session'] as const)(
               },
             },
           },
-        })),
-      );
+        }));
+      });
     }
     act(() => result.current.setSelectedNoteIds(['current-selection']));
     const next = api.mutationResult(session);
