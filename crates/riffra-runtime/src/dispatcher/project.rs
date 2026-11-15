@@ -94,7 +94,7 @@ impl HostDispatcher<'_> {
             ProjectCommand::ProjectRebuildScore(params) => {
                 let writer = writer.expect("project mutation holds the writer");
                 let current = writer.project().core.canonical_state();
-                let mut rebuilt = crate::score_yaml::import::rebuild(
+                let rebuilt = crate::score_yaml::import::rebuild(
                     &current.session,
                     params.path.as_deref(),
                     &params.bindings,
@@ -106,50 +106,59 @@ impl HostDispatcher<'_> {
                 .map_err(|error| {
                     DispatchError::invalid_request_with_details(error.message, error.details)
                 })?;
-                let changed = rebuilt.changed;
-                let yaml_changed = rebuilt.yaml_changed;
-                let link_changed = rebuilt.link_changed;
-                let diagnostics = rebuilt.diagnostics.clone();
-                let path = rebuilt
-                    .session
-                    .score_source
-                    .as_ref()
-                    .and_then(|source| source.path.clone());
-                let result = |sequence: u64| ScoreRebuild {
-                    project_id: current.project_id.clone(),
-                    changed,
-                    yaml_changed,
-                    link_changed,
-                    sequence,
-                    path: path.clone(),
-                    diagnostics: diagnostics.clone(),
-                };
-                let Some(candidate) = rebuilt.candidate(&current.session) else {
+                return self.accept_score_rebuild(writer, current, rebuilt);
+            }
+            ProjectCommand::ProjectExportScore(params) => {
+                let writer = writer.expect("project mutation holds the writer");
+                let current = writer.project().core.canonical_state();
+                let plan = crate::score_yaml::export::plan(
+                    &current.session,
+                    &params.path,
+                    &self.data_root,
+                    &self.built_in_instruments,
+                    &self.plugin_scan,
+                )
+                .map_err(export_error)?;
+                if !params.link {
+                    let path = plan.write().map_err(export_error)?;
                     return Ok(DispatchResult {
-                        output: ControlOutput::ScoreRebuild(result(current.sequence)),
+                        output: ControlOutput::ScoreExport(crate::api::output::ScoreExport {
+                            path: path.to_string_lossy().into_owned(),
+                            omissions: plan.omissions,
+                            link: None,
+                        }),
                         sequence: current.sequence,
                     });
+                }
+                if !plan.omissions.is_empty() {
+                    return Err(omissions_error(&plan.omissions));
+                }
+                if already_linked(&current.session) {
+                    return Err(already_linked_error());
+                }
+                let path = plan.write().map_err(export_error)?;
+                let linked = linked_session(&current.session, &plan.score_instruments);
+                let rebuilt = crate::score_yaml::import::link(
+                    &linked,
+                    &path,
+                    &self.data_root,
+                    &self.built_in_instruments,
+                    &self.plugin_scan,
+                    &self.sonalloy,
+                )
+                .map_err(|error| {
+                    DispatchError::invalid_request_with_details(error.message, error.details)
+                })?;
+                let mut result = self.accept_score_rebuild(writer, current, rebuilt)?;
+                let ControlOutput::ScoreRebuild(rebuild) = result.output else {
+                    unreachable!("score rebuild returns a rebuild result")
                 };
-                if rebuilt.source_changed() {
-                    return Err(DispatchError::InvalidRequest {
-                        message: "the linked Score file changed before it could be applied".into(),
-                        details: Some(serde_json::json!({
-                            "domain": "score",
-                            "kind": "scoreSourceChanged",
-                            "path": path,
-                        })),
-                    });
-                }
-                let committed = writer
-                    .commit_accepted(candidate)
-                    .map_err(|error| DispatchError::CommandFailed(error.to_string()))?;
-                if changed {
-                    rebuilt.retain();
-                }
-                let sequence = committed.snapshot.canonical.sequence;
-                let output = ControlOutput::ScoreRebuild(result(sequence));
-                self.publish_standalone(committed);
-                return Ok(DispatchResult { output, sequence });
+                result.output = ControlOutput::ScoreExport(crate::api::output::ScoreExport {
+                    path: path.to_string_lossy().into_owned(),
+                    omissions: Vec::new(),
+                    link: Some(rebuild),
+                });
+                return Ok(result);
             }
             ProjectCommand::ProjectImport(params) => {
                 let writer = writer.expect("project mutation holds the writer");
@@ -173,6 +182,59 @@ impl HostDispatcher<'_> {
                 )?)
             }
         };
+        Ok(DispatchResult { output, sequence })
+    }
+
+    /// Commits one rebuilt Score candidate and reports the synchronization.
+    fn accept_score_rebuild(
+        &self,
+        writer: &mut ProjectWriter<'_>,
+        current: riffra_core::CanonicalState,
+        mut rebuilt: crate::score_yaml::import::ScoreOutcome,
+    ) -> Result<DispatchResult, DispatchError> {
+        let changed = rebuilt.changed;
+        let yaml_changed = rebuilt.yaml_changed;
+        let link_changed = rebuilt.link_changed;
+        let diagnostics = rebuilt.diagnostics.clone();
+        let path = rebuilt
+            .session
+            .score_source
+            .as_ref()
+            .and_then(|source| source.path.clone());
+        let result = |sequence: u64| ScoreRebuild {
+            project_id: current.project_id.clone(),
+            changed,
+            yaml_changed,
+            link_changed,
+            sequence,
+            path: path.clone(),
+            diagnostics: diagnostics.clone(),
+        };
+        let Some(candidate) = rebuilt.candidate(&current.session) else {
+            return Ok(DispatchResult {
+                output: ControlOutput::ScoreRebuild(result(current.sequence)),
+                sequence: current.sequence,
+            });
+        };
+        if rebuilt.source_changed() {
+            return Err(DispatchError::InvalidRequest {
+                message: "the linked Score file changed before it could be applied".into(),
+                details: Some(serde_json::json!({
+                    "domain": "score",
+                    "kind": "scoreSourceChanged",
+                    "path": path,
+                })),
+            });
+        }
+        let committed = writer
+            .commit_accepted(candidate)
+            .map_err(|error| DispatchError::CommandFailed(error.to_string()))?;
+        if changed {
+            rebuilt.retain();
+        }
+        let sequence = committed.snapshot.canonical.sequence;
+        let output = ControlOutput::ScoreRebuild(result(sequence));
+        self.publish_standalone(committed);
         Ok(DispatchResult { output, sequence })
     }
 
@@ -215,12 +277,159 @@ impl HostDispatcher<'_> {
     }
 }
 
+/// Marks the Tracks with the Score instruments they were exported as.
+fn linked_session(
+    session: &riffra_core::CreativeSession,
+    instruments: &std::collections::BTreeMap<String, String>,
+) -> riffra_core::CreativeSession {
+    let mut session = session.clone();
+    for track in &mut session.arrangement.tracks {
+        if let Some(id) = instruments.get(&track.id) {
+            track.score_instrument = Some(id.clone());
+        }
+    }
+    session
+}
+
+fn already_linked(session: &riffra_core::CreativeSession) -> bool {
+    session
+        .score_source
+        .as_ref()
+        .is_some_and(|source| source.path.is_some())
+}
+
+fn already_linked_error() -> DispatchError {
+    DispatchError::InvalidRequest {
+        message: "the active Project is already linked to a Score file".into(),
+        details: Some(serde_json::json!({
+            "domain": "score",
+            "kind": "scoreExportLinked",
+        })),
+    }
+}
+
+fn export_error(error: crate::score_yaml::export::ExportError) -> DispatchError {
+    DispatchError::invalid_request_with_details(error.message, error.details)
+}
+
+fn omissions_error(omissions: &[crate::api::output::ScoreExportOmission]) -> DispatchError {
+    let subjects = omissions
+        .iter()
+        .map(|omission| omission.subject.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    DispatchError::invalid_request_with_details(
+        format!("the Score cannot express this Project: {subjects}"),
+        serde_json::json!({
+            "domain": "score",
+            "kind": "scoreExportOmissions",
+            "omissions": omissions,
+        }),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::Dispatcher;
     use crate::test_support::{command as request, output_value};
     use riffra_host::ProjectStore;
     use serde_json::{Value, json};
+
+    fn session(dispatcher: &Dispatcher) -> riffra_core::CreativeSession {
+        let state = dispatcher
+            .dispatch(request("session.get", json!({})), None)
+            .unwrap();
+        match state.output {
+            crate::api::ControlOutput::Session(session) => session,
+            output => panic!("expected the canonical session, got {output:?}"),
+        }
+    }
+
+    #[test]
+    fn export_score_links_an_unlinked_project_and_keeps_track_identity() {
+        use crate::test_support::{mutated_session, output_type};
+
+        let root = std::env::temp_dir().join(format!(
+            "riffra-score-export-link-{}",
+            riffra_control::new_instance_id()
+        ));
+        let dispatcher = Dispatcher::open(
+            root.clone(),
+            crate::test_support::prepare_built_in_resource_root(&root),
+        )
+        .unwrap();
+        let created = dispatcher
+            .dispatch(
+                request("track.add", json!({"name":"Take","kind":"audio"})),
+                None,
+            )
+            .unwrap();
+        let before = mutated_session(&created);
+        let track = before.arrangement.tracks[0].clone();
+
+        let folder = root.join("song");
+        let link = dispatcher
+            .dispatch(
+                request(
+                    "project.export-score",
+                    json!({"path": folder, "link": true}),
+                ),
+                None,
+            )
+            .unwrap();
+
+        assert_eq!(output_type(&link), "scoreExport");
+        let value = output_value(&link);
+        assert!(folder.join("score.yaml").is_file());
+        assert_eq!(value["link"]["changed"], true);
+        assert!(value["link"]["sequence"].as_u64().unwrap() > before.arrangement.revision);
+        let linked = session(&dispatcher);
+        assert_eq!(linked.arrangement.tracks.len(), 1);
+        assert_eq!(linked.arrangement.tracks[0].id, track.id);
+        assert_eq!(linked.arrangement.tracks[0].name, track.name);
+        assert!(linked.score_source.as_ref().unwrap().path.is_some());
+
+        let again = dispatcher.dispatch(
+            request(
+                "project.export-score",
+                json!({"path": root.join("second"), "link": true}),
+            ),
+            None,
+        );
+        assert!(again.is_err(), "a linked Project owns its Score file");
+        assert!(!root.join("second").exists());
+    }
+
+    #[test]
+    fn export_score_without_link_leaves_the_project_unchanged() {
+        use crate::test_support::output_type;
+
+        let root = std::env::temp_dir().join(format!(
+            "riffra-score-export-plain-{}",
+            riffra_control::new_instance_id()
+        ));
+        let dispatcher = Dispatcher::open(
+            root.clone(),
+            crate::test_support::prepare_built_in_resource_root(&root),
+        )
+        .unwrap();
+        dispatcher
+            .dispatch(
+                request("track.add", json!({"name":"Take","kind":"audio"})),
+                None,
+            )
+            .unwrap();
+        let folder = root.join("song");
+        let exported = dispatcher
+            .dispatch(
+                request("project.export-score", json!({"path": folder})),
+                None,
+            )
+            .unwrap();
+        assert_eq!(output_type(&exported), "scoreExport");
+        assert!(folder.join("score.yaml").is_file());
+        assert!(session(&dispatcher).score_source.is_none());
+    }
 
     #[test]
     fn midi_export_uses_clip_or_track_origin() {

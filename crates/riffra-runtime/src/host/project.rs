@@ -5,7 +5,7 @@ use crate::api::{ControlOutput, ProjectCommand};
 use crate::execution::project_session;
 use crate::projects;
 use riffra_control::{ErrorCode, ProtocolError};
-use riffra_core::CanonicalState;
+use riffra_core::{CanonicalState, CreativeSession};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -42,6 +42,72 @@ pub(super) fn dispatch(
             ),
             current.sequence,
         )),
+        ProjectCommand::ProjectExportScore(params) => {
+            let writer = writer.as_mut().expect("project mutation holds the writer");
+            let current = writer.project().core.canonical_state();
+            let plan = crate::score_yaml::export::plan(
+                &current.session,
+                &params.path,
+                &state.data_root,
+                &state.built_in_instruments,
+                &state.binaries.plugin_scan,
+            )
+            .map_err(export_error)?;
+            if !params.link {
+                let path = plan.write().map_err(export_error)?;
+                return Ok((
+                    ControlOutput::ScoreExport(crate::api::output::ScoreExport {
+                        path: path.to_string_lossy().into_owned(),
+                        omissions: plan.omissions,
+                        link: None,
+                    }),
+                    current.sequence,
+                ));
+            }
+            if !plan.omissions.is_empty() {
+                return Err(omissions_error(&plan.omissions));
+            }
+            if current
+                .session
+                .score_source
+                .as_ref()
+                .is_some_and(|source| source.path.is_some())
+            {
+                return Err(
+                    command_error("the active Project is already linked to a Score file")
+                        .with_details(serde_json::json!({
+                            "domain": "score",
+                            "kind": "scoreExportLinked",
+                        })),
+                );
+            }
+            let path = plan.write().map_err(export_error)?;
+            let mut linked = current.session.clone();
+            for track in &mut linked.arrangement.tracks {
+                if let Some(id) = plan.score_instruments.get(&track.id) {
+                    track.score_instrument = Some(id.clone());
+                }
+            }
+            let rebuild = rebuild_score_for(
+                state,
+                writer,
+                &crate::api::params::ProjectRebuildScoreParams {
+                    path: Some(path.clone()),
+                    bindings: BTreeMap::new(),
+                },
+                true,
+                Some(&linked),
+            )?;
+            let sequence = rebuild.sequence;
+            Ok((
+                ControlOutput::ScoreExport(crate::api::output::ScoreExport {
+                    path: path.to_string_lossy().into_owned(),
+                    omissions: Vec::new(),
+                    link: Some(rebuild),
+                }),
+                sequence,
+            ))
+        }
         ProjectCommand::ProjectCreate(params) => {
             let writer = writer.as_mut().expect("project mutation holds the writer");
             ensure_switch_allowed(state)?;
@@ -120,7 +186,7 @@ pub(super) fn dispatch(
         }
         ProjectCommand::ProjectRebuildScore(params) => {
             let writer = writer.as_mut().expect("project mutation holds the writer");
-            let result = rebuild_score(state, writer, &params)?;
+            let result = rebuild_score(state, writer, &params, false)?;
             Ok((ControlOutput::ScoreRebuild(result.clone()), result.sequence))
         }
         ProjectCommand::ProjectImport(params) => {
@@ -391,18 +457,41 @@ fn rebuild_score(
     state: &HostState,
     writer: &mut super::open_project::ProjectWriter<'_>,
     params: &crate::api::params::ProjectRebuildScoreParams,
+    link: bool,
+) -> Result<ScoreRebuild, ProtocolError> {
+    rebuild_score_for(state, writer, params, link, None)
+}
+
+fn rebuild_score_for(
+    state: &HostState,
+    writer: &mut super::open_project::ProjectWriter<'_>,
+    params: &crate::api::params::ProjectRebuildScoreParams,
+    link: bool,
+    linked: Option<&CreativeSession>,
 ) -> Result<ScoreRebuild, ProtocolError> {
     ensure_recording_idle(state)?;
     let current = writer.project().core.canonical_state();
-    let mut rebuilt = crate::score_yaml::import::rebuild(
-        &current.session,
-        params.path.as_deref(),
-        &params.bindings,
-        &state.data_root,
-        &state.built_in_instruments,
-        &state.binaries.plugin_scan,
-        &state.binaries.sonalloy,
-    )
+    let previous = linked.unwrap_or(&current.session);
+    let mut rebuilt = if link {
+        crate::score_yaml::import::link(
+            previous,
+            params.path.as_deref().expect("linking names a Score file"),
+            &state.data_root,
+            &state.built_in_instruments,
+            &state.binaries.plugin_scan,
+            &state.binaries.sonalloy,
+        )
+    } else {
+        crate::score_yaml::import::rebuild(
+            previous,
+            params.path.as_deref(),
+            &params.bindings,
+            &state.data_root,
+            &state.built_in_instruments,
+            &state.binaries.plugin_scan,
+            &state.binaries.sonalloy,
+        )
+    }
     .map_err(|error| command_error(error.message).with_details(error.details))?;
     let path = rebuilt
         .session
@@ -506,6 +595,7 @@ pub(super) fn synchronize_score(
             path: None,
             bindings: BTreeMap::new(),
         },
+        false,
     )?;
     Ok(())
 }
@@ -609,6 +699,25 @@ fn project_runtime_projection_error(error: crate::RuntimeError) -> ProtocolError
         "message": message,
         "cause": serde_json::to_value(cause).unwrap_or(Value::Null),
     }))
+}
+
+fn export_error(error: crate::score_yaml::export::ExportError) -> ProtocolError {
+    command_error(error.message).with_details(error.details)
+}
+
+fn omissions_error(omissions: &[crate::api::output::ScoreExportOmission]) -> ProtocolError {
+    let subjects = omissions
+        .iter()
+        .map(|omission| omission.subject.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    command_error(format!("the Score cannot express this Project: {subjects}")).with_details(
+        serde_json::json!({
+            "domain": "score",
+            "kind": "scoreExportOmissions",
+            "omissions": omissions,
+        }),
+    )
 }
 
 fn command_error(message: impl Into<String>) -> ProtocolError {
