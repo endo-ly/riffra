@@ -408,6 +408,20 @@ TEST(MidiSchedulerTest, CompilesVst3KeyswitchesAndCcBeforeNormalNotes) {
     EXPECT_TRUE(events[4].message.isNoteOff() && events[4].message.getNoteNumber() == 26);
     EXPECT_EQ(events[4].sampleOffset, 1);
     EXPECT_TRUE(events[5].message.isNoteOff() && events[5].message.getNoteNumber() == 60);
+
+    CompiledMidiClip highPpq;
+    ASSERT_TRUE(MidiScheduler::compile(
+        source, {}, TimelineTimebase{30720, {{0, 240.0}}, {{0, 4, 4}}}, 48000.0, highPpq, error))
+        << error.toStdString();
+    juce::MidiBuffer highPpqBuffer;
+    schedule({highPpq}, 0, 2, highPpqBuffer);
+    std::vector<std::pair<int, bool>> latchPulse;
+    for (const auto metadata : highPpqBuffer) {
+        const auto message = metadata.getMessage();
+        if (message.isNoteOnOrOff() && message.getNoteNumber() == 26)
+            latchPulse.emplace_back(metadata.samplePosition, message.isNoteOn());
+    }
+    EXPECT_EQ(latchPulse, (std::vector<std::pair<int, bool>>{{0, true}, {1, false}}));
 }
 
 TEST(MidiSchedulerTest, RestoresVst3ControlStateAfterSeek) {
@@ -632,11 +646,7 @@ TEST(MidiSchedulerTest, OrdersMidiControlsAcrossOverlappingClipsByAbsoluteTime) 
         return messages;
     };
     const auto forward = messagesFor({earlierClip, laterClip});
-    const auto reversed = messagesFor({laterClip, earlierClip});
     ASSERT_EQ(forward.size(), 5u);
-    ASSERT_EQ(reversed.size(), forward.size());
-    for (std::size_t index = 0; index < forward.size(); ++index)
-        EXPECT_EQ(forward[index].getDescription(), reversed[index].getDescription());
     EXPECT_TRUE(forward[0].isNoteOff() && forward[0].getNoteNumber() == 24);
     EXPECT_TRUE(forward[1].isController() && forward[1].getControllerNumber() == 68 &&
                 forward[1].getControllerValue() == 0);
@@ -644,6 +654,16 @@ TEST(MidiSchedulerTest, OrdersMidiControlsAcrossOverlappingClipsByAbsoluteTime) 
                 forward[2].getControllerValue() == 64);
     EXPECT_TRUE(forward[3].isNoteOn() && forward[3].getNoteNumber() == 24);
     EXPECT_TRUE(forward[4].isNoteOn() && forward[4].getNoteNumber() == 60);
+
+    const auto reversed = messagesFor({laterClip, earlierClip});
+    ASSERT_EQ(reversed.size(), 5u);
+    EXPECT_TRUE(reversed[0].isNoteOff() && reversed[0].getNoteNumber() == 24);
+    EXPECT_TRUE(reversed[1].isController() && reversed[1].getControllerNumber() == 68 &&
+                reversed[1].getControllerValue() == 64);
+    EXPECT_TRUE(reversed[2].isNoteOn() && reversed[2].getNoteNumber() == 24);
+    EXPECT_TRUE(reversed[3].isController() && reversed[3].getControllerNumber() == 68 &&
+                reversed[3].getControllerValue() == 0);
+    EXPECT_TRUE(reversed[4].isNoteOn() && reversed[4].getNoteNumber() == 60);
 
     juce::MidiBuffer restored;
     schedule({laterClip, earlierClip}, 111, 1, restored, true);
@@ -655,46 +675,11 @@ TEST(MidiSchedulerTest, OrdersMidiControlsAcrossOverlappingClipsByAbsoluteTime) 
     EXPECT_TRUE(
         std::any_of(restoredMessages.begin(), restoredMessages.end(), [](const auto& message) {
             return message.isController() && message.getControllerNumber() == 68 &&
-                   message.getControllerValue() == 64;
+                   message.getControllerValue() == 0;
         }));
     EXPECT_FALSE(std::any_of(
         restoredMessages.begin(), restoredMessages.end(),
         [](const auto& message) { return message.isNoteOff() && message.getNoteNumber() == 24; }));
-
-    MidiClipSpec firstEqualOrder;
-    auto firstValue = control(20, "first-equal", 0);
-    firstValue.type = "controlChange";
-    firstValue.controllerNumber = 68;
-    firstValue.controllerValue = 12;
-    firstEqualOrder.instrumentControlEvents.push_back(firstValue);
-
-    MidiClipSpec secondEqualOrder;
-    auto secondValue = control(10, "second-equal", 0);
-    secondValue.type = "controlChange";
-    secondValue.controllerNumber = 68;
-    secondValue.controllerValue = 34;
-    secondEqualOrder.instrumentControlEvents.push_back(secondValue);
-
-    const auto firstEqualClip = compile(90, 30, firstEqualOrder);
-    const auto secondEqualClip = compile(100, 20, secondEqualOrder);
-    const auto forwardEqual = messagesFor({firstEqualClip, secondEqualClip});
-    const auto reversedEqual = messagesFor({secondEqualClip, firstEqualClip});
-    ASSERT_EQ(forwardEqual.size(), 2u);
-    ASSERT_EQ(reversedEqual.size(), forwardEqual.size());
-    for (std::size_t index = 0; index < forwardEqual.size(); ++index)
-        EXPECT_EQ(forwardEqual[index].getDescription(), reversedEqual[index].getDescription());
-    EXPECT_EQ(forwardEqual[0].getControllerValue(), 12);
-    EXPECT_EQ(forwardEqual[1].getControllerValue(), 34);
-
-    juce::MidiBuffer restoredEqual;
-    schedule({secondEqualClip, firstEqualClip}, 111, 1, restoredEqual, true);
-    std::vector<juce::MidiMessage> restoredEqualMessages;
-    for (const auto metadata : restoredEqual)
-        restoredEqualMessages.push_back(metadata.getMessage());
-    ASSERT_EQ(restoredEqualMessages.size(), 1u);
-    EXPECT_TRUE(restoredEqualMessages[0].isController());
-    EXPECT_EQ(restoredEqualMessages[0].getControllerNumber(), 68);
-    EXPECT_EQ(restoredEqualMessages[0].getControllerValue(), 34);
 
     MidiClipSpec firstExact;
     auto firstExactValue = control(0, "first-exact", 0);
@@ -715,11 +700,11 @@ TEST(MidiSchedulerTest, OrdersMidiControlsAcrossOverlappingClipsByAbsoluteTime) 
     const auto forwardExact = messagesFor({firstExactClip, secondExactClip});
     const auto reversedExact = messagesFor({secondExactClip, firstExactClip});
     ASSERT_EQ(forwardExact.size(), 2u);
-    ASSERT_EQ(reversedExact.size(), forwardExact.size());
-    for (std::size_t index = 0; index < forwardExact.size(); ++index)
-        EXPECT_EQ(forwardExact[index].getDescription(), reversedExact[index].getDescription());
+    ASSERT_EQ(reversedExact.size(), 2u);
     EXPECT_EQ(forwardExact[0].getControllerValue(), 12);
     EXPECT_EQ(forwardExact[1].getControllerValue(), 34);
+    EXPECT_EQ(reversedExact[0].getControllerValue(), 34);
+    EXPECT_EQ(reversedExact[1].getControllerValue(), 12);
 
     juce::MidiBuffer restoredExact;
     schedule({secondExactClip, firstExactClip}, 111, 1, restoredExact, true);
@@ -729,7 +714,7 @@ TEST(MidiSchedulerTest, OrdersMidiControlsAcrossOverlappingClipsByAbsoluteTime) 
     ASSERT_EQ(restoredExactMessages.size(), 1u);
     EXPECT_TRUE(restoredExactMessages[0].isController());
     EXPECT_EQ(restoredExactMessages[0].getControllerNumber(), 68);
-    EXPECT_EQ(restoredExactMessages[0].getControllerValue(), 34);
+    EXPECT_EQ(restoredExactMessages[0].getControllerValue(), 12);
 }
 
 TEST(MidiSchedulerTest, RestoresLoopControlStateFromThePreviousIteration) {
@@ -752,14 +737,24 @@ TEST(MidiSchedulerTest, RestoresLoopControlStateFromThePreviousIteration) {
     source.instrumentControlEvents.push_back(up);
     auto first = control(1, "first");
     first.type = "controlChange";
-    first.controllerNumber = 11;
+    first.controllerNumber = 7;
     first.controllerValue = 10;
     source.instrumentControlEvents.push_back(first);
     auto last = control(3, "last");
     last.type = "controlChange";
-    last.controllerNumber = 11;
+    last.controllerNumber = 7;
     last.controllerValue = 20;
     source.instrumentControlEvents.push_back(last);
+    auto initial = control(0, "initial");
+    initial.type = "controlChange";
+    initial.controllerNumber = 11;
+    initial.controllerValue = 96;
+    source.instrumentControlEvents.push_back(initial);
+    auto reset = control(4, "reset");
+    reset.type = "controlChange";
+    reset.controllerNumber = 11;
+    reset.controllerValue = 0;
+    source.instrumentControlEvents.push_back(reset);
 
     CompiledMidiClip compiled;
     juce::String error;
@@ -771,11 +766,35 @@ TEST(MidiSchedulerTest, RestoresLoopControlStateFromThePreviousIteration) {
     schedule({compiled}, 6, 1, buffer, true);
     std::vector<juce::MidiMessage> messages;
     for (const auto metadata : buffer) messages.push_back(metadata.getMessage());
-    ASSERT_EQ(messages.size(), 3u);
+    ASSERT_EQ(messages.size(), 4u);
     EXPECT_TRUE(messages[0].isNoteOn() && messages[0].getNoteNumber() == 24);
-    EXPECT_TRUE(messages[1].isController() && messages[1].getControllerNumber() == 11 &&
+    EXPECT_TRUE(messages[1].isController() && messages[1].getControllerNumber() == 7 &&
                 messages[1].getControllerValue() == 10);
-    EXPECT_TRUE(messages[2].isNoteOff() && messages[2].getNoteNumber() == 24);
+    EXPECT_TRUE(messages[2].isController() && messages[2].getControllerNumber() == 11 &&
+                messages[2].getControllerValue() == 96);
+    EXPECT_TRUE(messages[3].isNoteOff() && messages[3].getNoteNumber() == 24);
+
+    juce::MidiBuffer boundary;
+    schedule({compiled}, 4, 1, boundary, false);
+    std::vector<int> boundaryValues;
+    for (const auto metadata : boundary) {
+        const auto message = metadata.getMessage();
+        if (message.isController() && message.getControllerNumber() == 11)
+            boundaryValues.push_back(message.getControllerValue());
+    }
+    EXPECT_EQ(boundaryValues, (std::vector<int>{0, 96}));
+
+    juce::MidiBuffer afterBoundary;
+    schedule({compiled}, 5, 1, afterBoundary, true);
+    std::vector<juce::MidiMessage> afterBoundaryMessages;
+    for (const auto metadata : afterBoundary)
+        afterBoundaryMessages.push_back(metadata.getMessage());
+    const auto boundaryController = std::find_if(
+        afterBoundaryMessages.begin(), afterBoundaryMessages.end(), [](const auto& message) {
+            return message.isController() && message.getControllerNumber() == 11;
+        });
+    ASSERT_NE(boundaryController, afterBoundaryMessages.end());
+    EXPECT_EQ(boundaryController->getControllerValue(), 96);
 
     juce::MidiBuffer early;
     schedule({compiled}, 2, 1, early, true);
@@ -783,7 +802,7 @@ TEST(MidiSchedulerTest, RestoresLoopControlStateFromThePreviousIteration) {
     for (const auto metadata : early) earlyMessages.push_back(metadata.getMessage());
     const auto earlyController =
         std::find_if(earlyMessages.begin(), earlyMessages.end(), [](const auto& message) {
-            return message.isController() && message.getControllerNumber() == 11;
+            return message.isController() && message.getControllerNumber() == 7;
         });
     ASSERT_NE(earlyController, earlyMessages.end());
     EXPECT_EQ(earlyController->getControllerValue(), 10);

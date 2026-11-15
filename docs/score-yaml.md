@@ -618,7 +618,7 @@ sections:
 
 奏法名は`source.articulations`で宣言した名前だけを受理し、`default`は復帰先としてのみ使う。各定義は`keyswitch`と`mode`、または`cc`のどちらか一方を持つ。
 
-- `keyswitch`は0～127のMIDIノート。`mode: hold`は区間中押し続けて終端でNote Off、`mode: latch`は短いNote On/Offで選択し、次のキースイッチが選択を置き換えない区間終端で`default`を選び直す
+- `keyswitch`は0～127のMIDIノート。`mode: hold`は区間中押し続けて終端でNote Off、`mode: latch`は短いNote On/Off（常にNote On→Note Offの順で、サンプル上も正の長さ）で選択し、次のキースイッチが選択を置き換えない区間終端で`default`を選び直す。同じTickに`default`復帰と次のキースイッチ選択が重なる場合は、復帰を先に送る
 - `cc`は`number`・`value`・`reset`を0～127で持ち、区間開始時に`value`、終端に`reset`を送る
 - `default`は`latch`のキースイッチ定義に限る。`latch`の奏法を1つでも定義する場合は必須
 - 奏法区間は`[開始, 終端)`の半開区間で、正の長さを持つ。キースイッチは区間開始の1/32四分音符前（曲頭ではTick 0）に送り、通常のNote Onより先に届くようにする。ただし同じ実体音源の直前の奏法区間の終了が開始の1/32前より後なら、その終了Tickまで押下を遅らせ、前区間の末尾のNoteを先取りしない。完全隣接では境界Tickに送る。`hold`は境界で解除する
