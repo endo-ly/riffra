@@ -695,6 +695,41 @@ TEST(MidiSchedulerTest, OrdersMidiControlsAcrossOverlappingClipsByAbsoluteTime) 
     EXPECT_TRUE(restoredEqualMessages[0].isController());
     EXPECT_EQ(restoredEqualMessages[0].getControllerNumber(), 68);
     EXPECT_EQ(restoredEqualMessages[0].getControllerValue(), 34);
+
+    MidiClipSpec firstExact;
+    auto firstExactValue = control(0, "first-exact", 0);
+    firstExactValue.type = "controlChange";
+    firstExactValue.controllerNumber = 68;
+    firstExactValue.controllerValue = 12;
+    firstExact.instrumentControlEvents.push_back(firstExactValue);
+
+    MidiClipSpec secondExact;
+    auto secondExactValue = control(0, "second-exact", 0);
+    secondExactValue.type = "controlChange";
+    secondExactValue.controllerNumber = 68;
+    secondExactValue.controllerValue = 34;
+    secondExact.instrumentControlEvents.push_back(secondExactValue);
+
+    const auto firstExactClip = compile(110, 20, firstExact);
+    const auto secondExactClip = compile(110, 20, secondExact);
+    const auto forwardExact = messagesFor({firstExactClip, secondExactClip});
+    const auto reversedExact = messagesFor({secondExactClip, firstExactClip});
+    ASSERT_EQ(forwardExact.size(), 2u);
+    ASSERT_EQ(reversedExact.size(), forwardExact.size());
+    for (std::size_t index = 0; index < forwardExact.size(); ++index)
+        EXPECT_EQ(forwardExact[index].getDescription(), reversedExact[index].getDescription());
+    EXPECT_EQ(forwardExact[0].getControllerValue(), 12);
+    EXPECT_EQ(forwardExact[1].getControllerValue(), 34);
+
+    juce::MidiBuffer restoredExact;
+    schedule({secondExactClip, firstExactClip}, 111, 1, restoredExact, true);
+    std::vector<juce::MidiMessage> restoredExactMessages;
+    for (const auto metadata : restoredExact)
+        restoredExactMessages.push_back(metadata.getMessage());
+    ASSERT_EQ(restoredExactMessages.size(), 1u);
+    EXPECT_TRUE(restoredExactMessages[0].isController());
+    EXPECT_EQ(restoredExactMessages[0].getControllerNumber(), 68);
+    EXPECT_EQ(restoredExactMessages[0].getControllerValue(), 34);
 }
 
 TEST(MidiSchedulerTest, RestoresLoopControlStateFromThePreviousIteration) {

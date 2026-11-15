@@ -19,15 +19,23 @@ void appendEvent(CompiledMidiClip& destination, const juce::MidiMessage& message
 }
 
 // Playback and seek restoration share this order. Clip start tick and the prepared
-// sample offset break ties without depending on the order of the clip array.
-using MidiOrderKey =
-    std::tuple<std::int64_t, int, std::uint32_t, std::uint64_t, std::uint64_t, std::int64_t>;
+// sample offset break ties without depending on the order of the clip array. The final
+// control identity makes coincident controls deterministic: a higher controller value or
+// key note wins, and a key-on wins over a key-off for the same note.
+using MidiControlOrder = std::tuple<std::uint8_t, std::uint8_t, bool>;
+using MidiOrderKey = std::tuple<std::int64_t, int, std::uint32_t, std::uint64_t, std::uint64_t,
+                                std::int64_t, MidiControlOrder>;
 
 MidiOrderKey midiOrderKey(const CompiledMidiEvent& event, const std::int64_t absoluteSample,
                           const std::uint64_t absoluteTick,
                           const std::uint64_t clipStartTick) noexcept {
-    return {absoluteSample, event.ordering, event.sourceOrder,
-            absoluteTick,   clipStartTick,  event.sampleOffset};
+    return {absoluteSample,
+            event.ordering,
+            event.sourceOrder,
+            absoluteTick,
+            clipStartTick,
+            event.sampleOffset,
+            {event.controlNumber, event.controlValue, event.message.isNoteOn()}};
 }
 
 std::size_t saturatingAdd(const std::size_t left, const std::size_t right) noexcept {
