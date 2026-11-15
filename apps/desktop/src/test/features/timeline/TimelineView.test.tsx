@@ -234,7 +234,9 @@ describe('TimelineView', () => {
     trackRenders.count = 0;
 
     // Act
-    act(() => store.getState().transport.seekLocally(1_920));
+    act(() => {
+      store.getState().transport.seekLocally(1_920);
+    });
 
     // Assert
     expect(store.getState().transport.displayTick).toBe(1_920);

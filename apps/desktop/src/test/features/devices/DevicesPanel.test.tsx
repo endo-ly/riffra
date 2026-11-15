@@ -312,7 +312,9 @@ describe('DevicesPanel', () => {
     );
     sidechainRenders.count = 0;
 
-    act(() => store.getState().transport.seekLocally(480));
+    act(() => {
+      store.getState().transport.seekLocally(480);
+    });
 
     await waitFor(() =>
       expect(screen.getByLabelText('Level current automation value')).toHaveTextContent(
