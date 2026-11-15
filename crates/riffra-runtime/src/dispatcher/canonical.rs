@@ -150,7 +150,7 @@ impl HostDispatcher<'_> {
                 )?,
             )),
             CanonicalCommand::ScoreValidate(params) => Ok(ControlOutput::ScoreValidation(
-                crate::score_yaml_import::validate(
+                crate::score_yaml::import::validate(
                     &params.path,
                     &params.bindings,
                     &self.data_root,
@@ -160,7 +160,7 @@ impl HostDispatcher<'_> {
                 ),
             )),
             CanonicalCommand::ScoreInspect(params) => Ok(ControlOutput::ScoreInspection(
-                crate::score_yaml_import::inspect(
+                crate::score_yaml::import::inspect(
                     &params.path,
                     &params.bindings,
                     params.events,

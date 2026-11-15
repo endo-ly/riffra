@@ -294,7 +294,7 @@ mod tests {
             },
         )
         .unwrap();
-        let imported = crate::score_yaml_import::import(
+        let imported = crate::score_yaml::import::import(
             &crate::api::params::ProjectImportScoreParams {
                 path: score_path.clone(),
                 bindings: Default::default(),
