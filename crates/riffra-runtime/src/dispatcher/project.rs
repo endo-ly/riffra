@@ -111,6 +111,9 @@ impl HostDispatcher<'_> {
             ProjectCommand::ProjectExportScore(params) => {
                 let writer = writer.expect("project mutation holds the writer");
                 let current = writer.project().core.canonical_state();
+                if params.link && already_linked(&current.session) {
+                    return Err(already_linked_error());
+                }
                 let plan = crate::score_yaml::export::plan(
                     &current.session,
                     &params.path,
@@ -132,9 +135,6 @@ impl HostDispatcher<'_> {
                 }
                 if !plan.omissions.is_empty() {
                     return Err(omissions_error(&plan.omissions));
-                }
-                if already_linked(&current.session) {
-                    return Err(already_linked_error());
                 }
                 let path = plan.write().map_err(export_error)?;
                 let linked = linked_session(&current.session, &plan.score_instruments);
