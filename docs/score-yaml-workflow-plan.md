@@ -2,8 +2,6 @@
 
 Score YAML を、曲を打ち込む唯一の方法にする。設計担当と実装担当が同じ1ファイルを順番に書き、Riffra のプロジェクトはそこから作られる派生物にする。GUI で直した内容も YAML に戻す。
 
-担当とフェーズの手順は `agents/skills/composition/references/score-workflow.md`。
-
 この文書の「仮決定」は、作業を始めるためのたたき台であり、確定した仕様ではない。各段階の作業に入るときに見直し、実装や試作で分かったことに合わせて変えてよい。変えたら、この文書を更新する。
 
 ---
@@ -48,7 +46,7 @@ Score YAML を、曲を打ち込む唯一の方法にする。設計担当と実
 | `EventSource`                   | Riffra `crates/riffra-runtime/src/score/mod.rs`                                      |
 | 読み込みのコマンド              | Riffra `apps/cli/src/args.rs`、`crates/riffra-runtime/src/dispatcher/project.rs`     |
 | MCP ツールの定義と説明文        | Riffra `apps/mcp/src/tools.rs`                                                       |
-| スキル                          | Riffra `agents/skills/riffra-headless/`、`agents/skills/composition/`                |
+| スキル                          | Riffra `agents/skills/riffra-headless/`                                              |
 
 ---
 
