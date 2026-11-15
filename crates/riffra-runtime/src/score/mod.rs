@@ -2472,15 +2472,19 @@ mod tests {
                 .contains("trigger notes")
         );
         doc["sections"]["phrase"]["lines"]["main"]["instrument"] = json!("part");
-        doc["sections"]["phrase"]["events"] = json!([
-            {"kind":"mod_wheel", "instrument":"kick", "value":0, "at":{"bar":1,"step":1}}
-        ]);
-        assert!(
-            compile(&to_yaml(&doc).unwrap())
-                .unwrap_err()
-                .message
-                .contains("control events")
-        );
+        for event in [
+            json!({"kind":"mod_wheel", "instrument":"kick", "value":0, "at":{"bar":1,"step":1}}),
+            json!({"kind":"sustain_pedal", "instrument":"kick", "down":true, "at":{"bar":1,"step":1}}),
+        ] {
+            doc["sections"]["phrase"]["events"] = json!([event]);
+            let error = compile(&to_yaml(&doc).unwrap()).unwrap_err();
+            assert_eq!(error.path, "sections.phrase.events[0]");
+            assert!(
+                error
+                    .message
+                    .contains("VST3 instruments support only note, articulation, and cc")
+            );
+        }
         doc["sections"]["phrase"]["events"] =
             json!([{"kind":"hit", "instrument":"kick", "at":{"bar":1,"step":1}}]);
 

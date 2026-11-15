@@ -4675,6 +4675,7 @@ mod tests {
                     {"kind":"articulation","instrument":"bass","name":"open","at":{"bar":1,"step":13},"duration_quarters":1},
                     {"kind":"cc","instrument":"bass","number":1,"value":100,"at":{"bar":1,"step":15}},
                     {"kind":"articulation","instrument":"drums","name":"mute","at":{"bar":1,"step":1},"duration_quarters":2},
+                    {"kind":"cc","instrument":"drums","number":74,"value":96,"at":{"bar":1,"step":9}},
                     {"kind":"hit","instrument":"kick","at":{"bar":1,"step":1}}
                 ]
             }},
@@ -4752,6 +4753,18 @@ mod tests {
                         note: 26,
                         mode: KeySwitchMode::Latch,
                         down: true
+                    }
+                ))
+        );
+        assert!(
+            kit_clip
+                .instrument_control_events
+                .iter()
+                .any(|event| matches!(
+                    event.kind,
+                    InstrumentControlEventKind::ControlChange {
+                        number: 74,
+                        value: 96
                     }
                 ))
         );

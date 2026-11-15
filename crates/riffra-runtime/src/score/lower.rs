@@ -540,7 +540,9 @@ impl Builder<'_> {
             if matches!(event.kind, MusicalEvent::Note { .. }) {
                 continue;
             }
-            if self.controls.articulations.contains_key(&event.id) {
+            if self.controls.articulations.contains_key(&event.id)
+                || self.controls.members.contains_key(&event.id)
+            {
                 return Err(Error::new(
                     &event.source,
                     "VST3 instruments support only note, articulation, and cc performance events",
