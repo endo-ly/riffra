@@ -57,9 +57,11 @@ Attachedは current-user registry から稼働中のHostを発見し、DataRoot�
 
 ### MCPクライアントからの操作
 
-MCPを使う場合もHostは同じで、`riffra-mcp` がstdio経由でControl Commandへ転送する。Hostを先に起動し、MCPクライアントの `command` に `riffra-mcp.exe` の絶対パスを指定する。複数のHostがある場合は `args` に `--host <instance-id>` を渡す。設定の詳細は [docs/mcp.md](../../../docs/mcp.md) を参照する。
+MCPを使う場合もHostは同じで、`riffra-mcp` がstdio経由でControl Commandへ転送する。Hostを先に起動し、MCPクライアントの `command` に `riffra-mcp.exe` の絶対パスを指定する。複数のHostがある場合は `args` に `--host <instance-id>` を渡す。
 
-ツールは操作対象ごとにまとまり、`action` と `params` でControl Commandを選ぶ。状況把握には `session_read.inspect`、複数変更の原子的な適用には `session_edit.apply`、書き出しや測定の完了確認には `job.wait` を使う。位置・音価・音高はCLIと同じく音楽座標を優先する。Render→Job→Analysisの制作手順もCLIと同じである。ツール名と引数の一覧はここへ複写しない。
+ツールは操作対象ごとにまとまり、`action` と `params` でControl Commandを選ぶ。状況把握には `session_read.inspect`、複数変更の原子的な適用には `session_edit.apply`、書き出しや測定の完了確認には `job.wait` を使う。位置・音価・音高はCLIと同じく音楽座標を優先し、制作の手順もCLIと同じである。
+
+MCPクライアントの設定とツールの一覧は [docs/mcp.md](../../../docs/mcp.md) を参照する。
 
 ### Safe Mode の範囲
 
@@ -163,7 +165,7 @@ riffra --attach session apply --file ./song.jsonl --include-created-ids
 {"command":"device.parameter.set","params":{"owner":{"kind":"track","name":"Lead"},"deviceId":"@effect","parameterIndex":0,"value":0.45}}
 ```
 
-デバイスを1件作る操作に `bind` で名前を付けると、後続操作のデバイスIDに `@名前` を使える。名前はそのBatchの中だけで有効で、同じ名前は再利用できない。Batch内のパラメーター設定には正規化値 `value` を使う。
+デバイスを1件作る操作に `bind` で名前を付けると、後続操作のデバイスIDに `@名前` を使える。名前はそのBatchの中だけで有効な一意名である。
 
 既存ClipのNoteだけをまとめて置き換えるには、同じBatchに `clip.midi.note.clear` → `music.note.insert` の順で含める。raw MIDI値でよければ `clip.midi.update` の `patch.notes` へNote配列を渡す。
 
@@ -173,7 +175,7 @@ paramsキーはCLIフラグ名と対応する(`--notes-json` → `notes`、`--fi
 
 ### Score YAML を正本にする
 
-Score YAML から Project を作ると、Project はそのファイルへリンクされ、YAML が曲の編集正本になる。YAML を直したら `project rebuild-score` で同じ Project を更新する。新しい Project は作らない。Live Host では保存を検知して自動で更新されるため、通常は明示操作も不要である。
+Score YAML から Project を作ると、Project はそのファイルへリンクされ、YAML が曲の編集正本になる。YAML を直したら `project rebuild-score` で同じ Project を更新する。Live Host では保存を検知して自動で更新される。
 
 - `project import-score <path>`: YAML を新しい Project として読み込み、リンクする。`--bind ID=DEFINITION` で外部楽器の Definition を結び付ける
 - `project rebuild-score [--path PATH] [--bind ID=DEFINITION]`: アクティブな Project をリンク先の YAML で更新する。`--path` を省略するとリンク先を読む
@@ -210,7 +212,7 @@ Trackは `track add`、MIDI Clipは `music midi-clip create`(「楽曲の入力�
 
 tickを直接扱う操作での換算基準は `session inspect.project.ppq` である(Instrument previewの `ticksPerBeat` はpreview固有の値)。
 
-Noteの取得は `music note list` で範囲を絞って行う。一括調整は `music note transform`、個別の更新・削除は `--include-ids` で取得したIDに対して行い、raw tickやMIDI値で扱うときだけ `--raw` を付ける。`position` はClip内部の相対位置ではなくArrangement全体の絶対位置である。複数Noteは1回の `music note insert` で渡す。Clip末尾を越えるNoteは `--clip-to-end` を指定すると末尾までに短縮でき、開始位置はClip内でなければならない。
+Noteの取得は `music note list` で範囲を絞って行う。一括調整は `music note transform`、個別の更新・削除は `--include-ids` で取得したIDに対して行い、raw tickやMIDI値で扱うときだけ `--raw` を付ける。`position` はClip内部の相対位置ではなくArrangement全体の絶対位置である。複数Noteは1回の `music note insert` で渡す。Clip末尾を越えるNoteは `--clip-to-end` を指定すると末尾までに短縮できる。開始位置はClip内でなければならない。
 
 各Noteの `lyric` は `music note update --lyric` / `--clear-lyric` で変更・削除し、一括変更は `clip midi note update-many` のpatchの `lyric`(`null` で削除)で扱う。
 
