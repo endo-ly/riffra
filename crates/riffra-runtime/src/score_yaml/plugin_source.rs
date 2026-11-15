@@ -30,7 +30,7 @@ pub(super) fn resolve_plugin(
     base: &Path,
     vst3: &Vst3Spec,
     role: PluginRole,
-    dependencies: &mut super::Dependencies,
+    dependencies: &mut super::import::Dependencies,
 ) -> Result<ResolvedPlugin, ResolveError> {
     let name = &vst3.plugin;
     let entry = crate::plugins::catalog::selected_named_plugin(
@@ -42,9 +42,9 @@ pub(super) fn resolve_plugin(
     .map_err(|error| ResolveError::new("plugin", error))?;
     let mut plugin = Vst3Plugin::new(entry.path.clone());
     if let Some(path) = &vst3.state {
-        let path = super::local_input_path(base, path)
+        let path = super::import::local_input_path(base, path)
             .map_err(|error| ResolveError::new("state", error))?;
-        super::record_dependency(dependencies, &path)
+        super::import::record_dependency(dependencies, &path)
             .map_err(|error| ResolveError::new("state", error))?;
         let bytes = std::fs::read(&path).map_err(|error| {
             ResolveError::new(
@@ -131,7 +131,7 @@ mod tests {
             patch: Vec::new(),
             params: BTreeMap::new(),
         };
-        let mut dependencies = super::super::Dependencies::new();
+        let mut dependencies = crate::score_yaml::import::Dependencies::new();
         let resolved = resolve_plugin(
             &root,
             &root,

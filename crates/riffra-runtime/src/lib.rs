@@ -26,7 +26,7 @@ mod recording;
 mod render;
 mod runtime;
 mod score;
-mod score_yaml_import;
+mod score_yaml;
 mod session;
 mod startup;
 #[cfg(test)]

@@ -6,9 +6,7 @@
 //! Project reuses tracks, devices, and instrument snapshots whose sources did
 //! not change.
 
-mod parameters;
-mod plugin_source;
-
+use super::{parameters, plugin_source};
 use crate::api::output::{
     ScoreAudioClipInspection, ScoreAutomationInspection, ScoreBusInspection, ScoreChordInspection,
     ScoreDiagnostic, ScoreDiagnosticSeverity, ScoreEffectInspection, ScoreInspection,
@@ -44,14 +42,14 @@ impl From<String> for ImportError {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-struct Fingerprint {
+pub(super) struct Fingerprint {
     bytes: u64,
     digest: [u8; 32],
 }
 
-type Dependencies = BTreeMap<PathBuf, Fingerprint>;
+pub(super) type Dependencies = BTreeMap<PathBuf, Fingerprint>;
 
-fn fingerprint(path: &Path) -> Result<Fingerprint, String> {
+pub(super) fn fingerprint(path: &Path) -> Result<Fingerprint, String> {
     let mut file =
         std::fs::File::open(path).map_err(|error| format!("{}: {error}", path.display()))?;
     let mut hasher = Sha256::new();
@@ -73,7 +71,10 @@ fn fingerprint(path: &Path) -> Result<Fingerprint, String> {
     })
 }
 
-fn record_dependency(dependencies: &mut Dependencies, path: &Path) -> Result<(), String> {
+pub(super) fn record_dependency(
+    dependencies: &mut Dependencies,
+    path: &Path,
+) -> Result<(), String> {
     let canonical =
         std::fs::canonicalize(path).map_err(|error| format!("{}: {error}", path.display()))?;
     let value = match dependencies.get(&canonical) {
@@ -168,7 +169,7 @@ fn is_production_instrument(plan: &ScorePlan, id: &str) -> bool {
         || plan.audio_instruments.contains(id)
 }
 
-fn local_input_path(base: &Path, input: &str) -> Result<PathBuf, String> {
+pub(super) fn local_input_path(base: &Path, input: &str) -> Result<PathBuf, String> {
     let path = Path::new(input);
     if path.components().any(|part| {
         !matches!(

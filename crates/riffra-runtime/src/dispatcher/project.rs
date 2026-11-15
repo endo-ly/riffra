@@ -48,7 +48,7 @@ impl HostDispatcher<'_> {
             }
             ProjectCommand::ProjectImportScore(params) => {
                 let writer = writer.expect("project mutation holds the writer");
-                let mut imported = crate::score_yaml_import::import(
+                let mut imported = crate::score_yaml::import::import(
                     &params,
                     &self.data_root,
                     &self.built_in_instruments,
@@ -94,7 +94,7 @@ impl HostDispatcher<'_> {
             ProjectCommand::ProjectRebuildScore(params) => {
                 let writer = writer.expect("project mutation holds the writer");
                 let current = writer.project().core.canonical_state();
-                let mut rebuilt = crate::score_yaml_import::rebuild(
+                let mut rebuilt = crate::score_yaml::import::rebuild(
                     &current.session,
                     params.path.as_deref(),
                     &params.bindings,

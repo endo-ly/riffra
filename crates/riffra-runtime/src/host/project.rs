@@ -82,7 +82,7 @@ pub(super) fn dispatch(
             let writer = writer.as_mut().expect("project mutation holds the writer");
             ensure_switch_allowed(state)?;
             state.take_pending_plugin_changes(writer)?;
-            let mut imported = crate::score_yaml_import::import(
+            let mut imported = crate::score_yaml::import::import(
                 &params,
                 &state.data_root,
                 &state.built_in_instruments,
@@ -394,7 +394,7 @@ fn rebuild_score(
 ) -> Result<ScoreRebuild, ProtocolError> {
     ensure_recording_idle(state)?;
     let current = writer.project().core.canonical_state();
-    let mut rebuilt = crate::score_yaml_import::rebuild(
+    let mut rebuilt = crate::score_yaml::import::rebuild(
         &current.session,
         params.path.as_deref(),
         &params.bindings,
