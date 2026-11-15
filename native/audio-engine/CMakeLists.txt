@@ -22,7 +22,7 @@ endif()
 option(RIFFRA_BUILTIN_RESOURCE_STAGE_ONLY
   "Configure only the built-in resource staging target." OFF)
 
-set(RIFFRA_SONALLOY_VERSION "2026.11.13")
+set(RIFFRA_SONALLOY_VERSION "2026.11.15")
 set(RIFFRA_SONALLOY_SOURCE_RELEASE "v${RIFFRA_SONALLOY_VERSION}")
 
 FetchContent_Declare(
