@@ -541,6 +541,128 @@ mod tests {
     }
 
     #[test]
+    fn export_score_reports_a_bypassed_kit_and_refuses_link() {
+        use crate::api::output::{
+            PluginEntry, PluginFormat, PluginRole, PluginScanState, ScanReport,
+        };
+
+        let root = std::env::temp_dir().join(format!(
+            "riffra-score-export-bypassed-kit-{}",
+            riffra_control::new_instance_id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let plugin = root.join("Drums.vst3");
+        std::fs::create_dir_all(&plugin).unwrap();
+        crate::plugins::catalog::save(
+            &root,
+            &ScanReport {
+                root: root.to_string_lossy().into_owned(),
+                started_at_ms: 0,
+                finished_at_ms: 0,
+                plugins: vec![PluginEntry {
+                    id: "Drums".into(),
+                    name: "Drums".into(),
+                    vendor: None,
+                    version: None,
+                    identifier: Some("Drums-class".into()),
+                    format: PluginFormat::Vst3,
+                    role: Some(PluginRole::Instrument),
+                    path: plugin.to_string_lossy().into_owned(),
+                    bundle: true,
+                    modified_at_ms: None,
+                    scan_state: PluginScanState::Validated,
+                }],
+                issues: Vec::new(),
+            },
+        )
+        .unwrap();
+        let dispatcher = Dispatcher::open(
+            root.clone(),
+            crate::test_support::prepare_built_in_resource_root(&root),
+        )
+        .unwrap();
+        let score = root.join("kit.yaml");
+        std::fs::write(
+            &score,
+            r#"{
+                "meta":{"title":"Kit","bpm":120,"meter":"4/4","tuning":"12edo","gate":1},
+                "form":[{"section":"verse","bars":1,"tonic":"C"}],
+                "sections":{"verse":{"drums":"beat"}},
+                "drums":{"beat":{"parts":{"kick":["x..............."]}}},
+                "instruments":{"kick":{"kit":"drums","trigger_note_midi":36}},
+                "kits":{"drums":{"source":{"vst3":{"plugin":"Drums"}}}}
+            }"#,
+        )
+        .unwrap();
+        dispatcher
+            .dispatch(
+                request("project.import-score", json!({"path": score})),
+                None,
+            )
+            .unwrap();
+        let mut canonical = session(&dispatcher);
+        canonical.score_source = None;
+        let kit = canonical
+            .arrangement
+            .tracks
+            .iter_mut()
+            .find(|track| {
+                track
+                    .score_instrument
+                    .as_deref()
+                    .is_some_and(|id| id.starts_with("kit:"))
+            })
+            .expect("the Score has a kit track");
+        kit.instrument
+            .as_mut()
+            .expect("the kit has an instrument")
+            .bypassed = true;
+        let _ = dispatcher
+            .core
+            .cell()
+            .write()
+            .commit_accepted(canonical)
+            .unwrap();
+
+        let before = session(&dispatcher);
+        let folder = root.join("song");
+        let error = dispatcher
+            .dispatch(
+                request(
+                    "project.export-score",
+                    json!({"path": folder, "link": true}),
+                ),
+                None,
+            )
+            .unwrap_err();
+        let crate::dispatcher::DispatchError::InvalidRequest {
+            details: Some(details),
+            ..
+        } = error
+        else {
+            panic!("expected an omission error, got {error:?}");
+        };
+        assert_eq!(details["kind"], "scoreExportOmissions");
+        assert!(
+            details["omissions"].as_array().is_some_and(|omissions| {
+                omissions.iter().any(|omission| {
+                    omission["subject"]
+                        .as_str()
+                        .is_some_and(|subject| subject.contains("instrument"))
+                        && omission["message"]
+                            .as_str()
+                            .is_some_and(|message| message.contains("bypassed"))
+                })
+            }),
+            "{details}"
+        );
+        assert!(!folder.exists());
+        let after = session(&dispatcher);
+        assert_eq!(after.arrangement.revision, before.arrangement.revision);
+        assert!(after.score_source.is_none());
+    }
+
+    #[test]
     fn midi_export_uses_clip_or_track_origin() {
         use crate::test_support::mutated_session;
         let root = std::env::temp_dir().join(format!(

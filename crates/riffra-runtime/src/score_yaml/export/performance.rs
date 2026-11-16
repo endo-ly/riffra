@@ -914,9 +914,15 @@ fn audio(
         .tracks
         .iter()
         .filter(|track| matches!(track.role, TrackRole::Audio))
-        .map(|track| (track.id.clone(), track.track.id.clone()))
+        .map(|track| {
+            (
+                track.id.clone(),
+                track.track.id.clone(),
+                track.track.name.clone(),
+            )
+        })
         .collect::<Vec<_>>();
-    for (instrument, track_id) in tracks {
+    for (instrument, track_id, track_name) in tracks {
         for clip in export
             .session
             .arrangement
@@ -927,7 +933,7 @@ fn audio(
             if clip.start_tick.0 < section.start_tick || clip.start_tick.0 >= section.end_tick {
                 continue;
             }
-            if !exportable_clip(export, clip) {
+            if !exportable_clip(export, clip, &track_name) {
                 continue;
             }
             if clip.fade_shape != FadeShape::EqualPower {
@@ -966,7 +972,7 @@ fn audio(
 }
 
 /// Reports whether one audio clip can be written and reports the rest.
-fn exportable_clip(export: &mut Export<'_>, clip: &AudioClip) -> bool {
+fn exportable_clip(export: &mut Export<'_>, clip: &AudioClip, track_name: &str) -> bool {
     if clip.muted {
         omit(
             &mut export.omissions,
@@ -990,6 +996,28 @@ fn exportable_clip(export: &mut Export<'_>, clip: &AudioClip) -> bool {
             "the clip uses a processed take",
         );
         return false;
+    }
+    let source_frames = u128::from(
+        clip.source_range
+            .end
+            .saturating_sub(clip.source_range.start),
+    );
+    let source_rate = u128::from(clip.source_sample_rate);
+    let timeline_frames = u128::from(clip.timeline_duration.frames);
+    let timeline_rate = u128::from(clip.timeline_duration.sample_rate);
+    if source_rate == 0
+        || timeline_rate == 0
+        || source_frames.saturating_mul(timeline_rate)
+            != timeline_frames.saturating_mul(source_rate)
+    {
+        omit(
+            &mut export.omissions,
+            format!(
+                "track \"{track_name}\" / clip \"{}\" / playback length",
+                clip.name
+            ),
+            "the clip plays for a different length than its source",
+        );
     }
     true
 }
@@ -1072,6 +1100,30 @@ fn events(
                     continue;
                 }
                 if event.kind == riffra_core::MidiEventKind::ControlChange {
+                    if !vst3 {
+                        omit(
+                            omissions,
+                            format!(
+                                "track \"{}\" / clip \"{}\" / MIDI CC at tick {tick}",
+                                track.track.name, clip.name
+                            ),
+                            "the Score cannot send MIDI CC to a built-in instrument",
+                        );
+                        continue;
+                    }
+                    if event.channel != 1 {
+                        omit(
+                            omissions,
+                            format!(
+                                "track \"{}\" / clip \"{}\" / MIDI CC at tick {tick}",
+                                track.track.name, clip.name
+                            ),
+                            format!(
+                                "the Score cannot store MIDI channel {}; the CC is written on channel 1",
+                                event.channel
+                            ),
+                        );
+                    }
                     controls.push((
                         tick,
                         u32::MAX,
