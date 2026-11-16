@@ -91,7 +91,7 @@ riffra project export-score ./music/song --link
 riffra --attach project export-score ./music/song
 ```
 
-出力先には新しいフォルダを指定する。書き出しに失敗したときは、作りかけの一時フォルダだけを消し、既存のファイルには触れない。
+出力先には新しいフォルダを指定する。書き出しに失敗した場合も、既存のファイルは変更しない。
 
 ```text
 <path>/
