@@ -84,6 +84,17 @@ pub struct ProjectExportParams {
     pub output: PathBuf,
 }
 
+/// Writes the active Project as a Score song folder.
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ProjectExportScoreParams {
+    /// Song folder to create; it must not exist.
+    pub path: PathBuf,
+    /// Links the Project to the exported Score.
+    #[serde(default)]
+    pub link: bool,
+}
+
 /// Restores one saved generation of the active Project.
 #[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]

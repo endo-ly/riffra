@@ -137,6 +137,7 @@ export type ControlCommandResults = {
   'project.rebuild-score': OutputValue<'scoreRebuild'>;
   'music.export-midi': OutputValue<'midiExport'>;
   'project.export': OutputValue<'projectExport'>;
+  'project.export-score': OutputValue<'scoreExport'>;
   'host.status': OutputValue<'hostStatus'>;
   'host.info': OutputValue<'hostInfo'>;
   'host.bootstrap': OutputValue<'hostBootstrap'>;

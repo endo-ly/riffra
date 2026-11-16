@@ -1,10 +1,11 @@
+pub(crate) mod emit;
 pub(crate) mod events;
 mod lower;
 mod parse;
 pub(super) mod production;
 mod resolve;
 pub(super) mod syntax;
-mod time;
+pub(crate) mod time;
 
 use std::collections::BTreeMap;
 
@@ -389,6 +390,18 @@ impl ScorePlan {
         section.bar_start_ticks[bar - 1]
             + time::tick(&position.offset, self.ticks_per_beat).expect("validated position")
     }
+}
+
+/// Parses a Score document into its YAML value without compiling it.
+///
+/// The value keeps the document's own text forms, including quantities that
+/// the reader stores as strings. Callers use it to retain declarations that
+/// the expanded plan does not carry.
+///
+/// # Errors
+/// Returns a source-located error for invalid syntax or structure.
+pub(crate) fn parse_document(text: &str) -> Result<Value> {
+    parse::parse(text, &mut Source::default())
 }
 
 /// Parse, validate, and expand Score YAML into a musical plan.
@@ -918,33 +931,8 @@ fn fields(v: &Value, allowed: &[&str], path: &str) -> Result<()> {
 }
 
 #[cfg(test)]
-fn to_yaml(document: &Value) -> std::result::Result<String, yaml_rust2::emitter::EmitError> {
-    fn node(value: &Value) -> yaml_rust2::Yaml {
-        use yaml_rust2::Yaml;
-        match value {
-            Value::Null => Yaml::Null,
-            Value::Bool(value) => Yaml::Boolean(*value),
-            Value::String(value) => Yaml::String(value.clone()),
-            Value::Number(value) => value
-                .as_i64()
-                .map_or_else(|| Yaml::Real(value.to_string()), Yaml::Integer),
-            Value::Array(values) => Yaml::Array(values.iter().map(node).collect()),
-            Value::Object(values) => Yaml::Hash(
-                values
-                    .iter()
-                    .map(|(key, value)| (Yaml::String(key.clone()), node(value)))
-                    .collect(),
-            ),
-        }
-    }
-    let mut output = String::new();
-    yaml_rust2::YamlEmitter::new(&mut output).dump(&node(document))?;
-    output.push('\n');
-    Ok(output)
-}
-
-#[cfg(test)]
 mod tests {
+    use super::emit::yaml;
     use super::time::{Quarter, q};
     use super::*;
     use serde_json::json;
@@ -1075,7 +1063,7 @@ mod tests {
                 "instrument": "part",
                 "melody": melody
             });
-            let yaml = super::to_yaml(&doc).expect("Score YAML");
+            let yaml = super::emit::yaml(&doc);
             let text = format!("# 日本語のコメント\n{yaml}");
             let expected_token = text.find(". - - -").expect("quoted tie token") + 2;
             let error = super::compile(&text).expect_err("unmatched tie fails");
@@ -2193,7 +2181,7 @@ mod tests {
             {"kind": "articulation", "instrument": "part", "name": "open", "at": {"bar": 1, "step": 5}, "duration_quarters": 1},
             {"kind": "cc", "instrument": "part", "number": 11, "value": 96, "at": {"bar": 1, "step": 9}}
         ]);
-        let plan = compile(&to_yaml(&doc).unwrap()).unwrap();
+        let plan = compile(&yaml(&doc)).unwrap();
         let controls = &plan.performance_controls;
         assert!(matches!(
             controls[0].kind,
@@ -2247,7 +2235,7 @@ mod tests {
             {"kind": "articulation", "instrument": "drums", "name": "mute", "at": {"bar": 1, "step": 1}, "duration_quarters": 1},
             {"kind": "automation", "instrument": "drums", "control": "cc:74", "from_value": 0, "to_value": 127, "at": {"bar": 1, "step": 9}, "duration_quarters": 1}
         ]);
-        let kit_plan = compile(&to_yaml(&doc).unwrap()).unwrap();
+        let kit_plan = compile(&yaml(&doc)).unwrap();
         assert!(
             kit_plan
                 .performance_controls
@@ -2267,7 +2255,7 @@ mod tests {
             {"kind": "automation", "instrument": "part", "control": "cc:11", "from_value": 96, "to_value": 64, "at": {"bar": 1, "step": 1}, "duration_quarters": 1}
         ]);
         assert_eq!(
-            compile(&to_yaml(&doc).unwrap()).unwrap_err().path,
+            compile(&yaml(&doc)).unwrap_err().path,
             "sections.phrase.events[0]"
         );
 
@@ -2275,7 +2263,7 @@ mod tests {
             {"kind": "articulation", "instrument": "part", "name": "open", "at": {"bar": 1, "step": 1}, "duration_quarters": 1},
             {"kind": "articulation", "instrument": "part", "name": "open", "at": {"bar": 1, "step": 5}, "duration_quarters": 1}
         ]);
-        let adjacent = compile(&to_yaml(&doc).unwrap()).unwrap();
+        let adjacent = compile(&yaml(&doc)).unwrap();
         assert_eq!(
             adjacent
                 .performance_controls
@@ -2304,7 +2292,7 @@ mod tests {
         doc["sections"]["phrase"]["events"] = json!([
             {"kind": "articulation", "instrument": "part", "name": "open", "at": {"bar": 1, "step": 13}, "duration_quarters": 1}
         ]);
-        let ending = compile(&to_yaml(&doc).unwrap()).unwrap();
+        let ending = compile(&yaml(&doc)).unwrap();
         let last = ending.performance_controls.last().expect("hold release");
         assert_eq!(last.tick, ending.length_ticks);
         assert!(matches!(
@@ -2319,7 +2307,7 @@ mod tests {
         doc["sections"]["phrase"]["events"] = json!([
             {"kind": "articulation", "instrument": "part", "name": "mute", "at": {"bar": 1, "step": 13}, "duration_quarters": 1}
         ]);
-        let final_latch = compile(&to_yaml(&doc).unwrap()).unwrap();
+        let final_latch = compile(&yaml(&doc)).unwrap();
         assert_eq!(final_latch.performance_controls.len(), 2);
         assert_eq!(final_latch.performance_controls[0].tick, 0);
         assert!(matches!(
@@ -2335,7 +2323,7 @@ mod tests {
             {"kind": "mod_wheel", "instrument": "part", "value": 0.5, "at": {"bar": 1, "step": 1}},
             {"kind": "automation", "instrument": "part", "control": "cc:1", "from_value": 0, "to_value": 127, "at": {"bar": 1, "step": 1}, "duration_quarters": 1}
         ]);
-        let error = compile(&to_yaml(&doc).unwrap()).unwrap_err();
+        let error = compile(&yaml(&doc)).unwrap_err();
         assert_eq!(error.path, "sections.phrase.events[0]");
         assert!(
             error
@@ -2348,7 +2336,7 @@ mod tests {
             {"kind": "articulation", "instrument": "part", "name": "open", "at": {"bar": 1, "step": 5}, "duration_quarters": 1}
         ]);
         assert_eq!(
-            compile(&to_yaml(&doc).unwrap()).unwrap_err().path,
+            compile(&yaml(&doc)).unwrap_err().path,
             "sections.phrase.events[1]"
         );
 
@@ -2356,7 +2344,7 @@ mod tests {
             {"kind": "articulation", "instrument": "part", "name": "harmonic", "at": {"bar": 1, "step": 1}, "duration_quarters": 1},
             {"kind": "cc", "instrument": "part", "number": 68, "value": 64, "at": {"bar": 1, "step": 5}}
         ]);
-        let boundary = compile(&to_yaml(&doc).unwrap()).unwrap();
+        let boundary = compile(&yaml(&doc)).unwrap();
         let boundary_tick = u64::from(boundary.ticks_per_beat);
         let values = boundary
             .performance_controls
@@ -2373,7 +2361,7 @@ mod tests {
             {"kind": "articulation", "instrument": "part", "name": "missing", "at": {"bar": 1, "step": 1}, "duration_quarters": 1}
         ]);
         assert_eq!(
-            compile(&to_yaml(&doc).unwrap()).unwrap_err().path,
+            compile(&yaml(&doc)).unwrap_err().path,
             "sections.phrase.events[0].name"
         );
 
@@ -2381,7 +2369,7 @@ mod tests {
             {"kind": "articulation", "instrument": "part", "name": "default", "at": {"bar": 1, "step": 1}, "duration_quarters": 1}
         ]);
         assert_eq!(
-            compile(&to_yaml(&doc).unwrap()).unwrap_err().path,
+            compile(&yaml(&doc)).unwrap_err().path,
             "sections.phrase.events[0].name"
         );
     }
@@ -2402,9 +2390,8 @@ mod tests {
                 }
             }
         });
-        let compile_document = |doc: &serde_json::Value| {
-            compile(&to_yaml(doc).unwrap()).expect("performance control transition")
-        };
+        let compile_document =
+            |doc: &serde_json::Value| compile(&yaml(doc)).expect("performance control transition");
         let key_switches = |plan: &ScorePlan| {
             plan.performance_controls
                 .iter()
@@ -2609,7 +2596,7 @@ mod tests {
             {"kind":"articulation","instrument":"part","name":"open","at":{"bar":1,"step":1},"duration_quarters":4},
             {"kind":"cc","instrument":"part","number":11,"value":96,"at":{"bar":1,"step":5}}
         ]);
-        let plan = compile(&to_yaml(&doc).unwrap()).unwrap();
+        let plan = compile(&yaml(&doc)).unwrap();
         let starts: Vec<_> = plan
             .performance_controls
             .iter()
@@ -2688,7 +2675,7 @@ mod tests {
         doc["sections"]["phrase"]["events"] = json!([
             {"kind":"articulation","instrument":"part","name":"expression","at":{"bar":1,"step":1},"duration_quarters":4}
         ]);
-        let repeated = compile(&to_yaml(&doc).unwrap()).unwrap();
+        let repeated = compile(&yaml(&doc)).unwrap();
         assert_eq!(
             repeated
                 .performance_controls
@@ -2710,8 +2697,8 @@ mod tests {
     fn production_source_preserves_musical_lanes_and_original_locations() {
         let mut doc = document();
         doc["instruments"]["part"] = json!({"source":{"vst3":{"plugin":"Synth"}}});
-        let yaml = to_yaml(&doc).unwrap();
-        let plan = compile(&yaml).unwrap();
+        let text = yaml(&doc);
+        let plan = compile(&text).unwrap();
         assert_eq!(plan.lanes[0].id, "part");
         assert_eq!(plan.production_sources["part"].vst3.plugin, "Synth");
         assert_eq!(
@@ -2720,7 +2707,7 @@ mod tests {
         );
 
         doc["instruments"]["part"]["source"]["vst3"]["params"] = json!({"Mix": 1.5});
-        let error = compile(&to_yaml(&doc).unwrap()).unwrap_err();
+        let error = compile(&yaml(&doc)).unwrap_err();
         assert_eq!(error.path, "instruments.part.source.vst3.params.Mix");
         assert!(error.detail["line"].as_u64().unwrap() > 0);
     }
@@ -2730,22 +2717,22 @@ mod tests {
         let mut doc = document();
         doc["kits"] = json!({"drums":{"source":{"use":"drum-kit"}}});
         assert_eq!(
-            compile(&to_yaml(&doc).unwrap()).unwrap_err().path,
+            compile(&yaml(&doc)).unwrap_err().path,
             "kits.drums.source.use"
         );
         doc["kits"] = json!({"drums":{"source":{"vst3":{"plugin":"drum-kit"}}}});
         doc["instruments"]["kick"] = json!({"kit":"drums", "trigger_note_midi":36});
-        let plan = compile(&to_yaml(&doc).unwrap()).unwrap();
+        let plan = compile(&yaml(&doc)).unwrap();
         assert_eq!(plan.kit_members["kick"], "drums");
         assert_eq!(plan.kits["drums"].source.vst3.plugin, "drum-kit");
         assert!(plan.kits["drums"].effects.is_empty());
 
         doc["sections"]["phrase"]["events"] =
             json!([{"kind":"hit", "instrument":"kick", "at":{"bar":1,"step":1}}]);
-        assert!(compile(&to_yaml(&doc).unwrap()).is_ok());
+        assert!(compile(&yaml(&doc)).is_ok());
         doc["sections"]["phrase"]["part_gains"] = json!({"kick":-1});
         assert_eq!(
-            compile(&to_yaml(&doc).unwrap()).unwrap_err().path,
+            compile(&yaml(&doc)).unwrap_err().path,
             "sections.phrase.part_gains.kick"
         );
         doc["sections"]["phrase"]
@@ -2754,7 +2741,7 @@ mod tests {
             .remove("part_gains");
         doc["sections"]["phrase"]["lines"]["main"]["instrument"] = json!("kick");
         assert!(
-            compile(&to_yaml(&doc).unwrap())
+            compile(&yaml(&doc))
                 .unwrap_err()
                 .message
                 .contains("trigger notes")
@@ -2765,7 +2752,7 @@ mod tests {
             json!({"kind":"sustain_pedal", "instrument":"kick", "down":true, "at":{"bar":1,"step":1}}),
         ] {
             doc["sections"]["phrase"]["events"] = json!([event]);
-            let error = compile(&to_yaml(&doc).unwrap()).unwrap_err();
+            let error = compile(&yaml(&doc)).unwrap_err();
             assert_eq!(error.path, "sections.phrase.events[0]");
             assert!(
                 error
@@ -2778,13 +2765,13 @@ mod tests {
 
         doc["instruments"]["kick"]["kit"] = json!("missing");
         assert_eq!(
-            compile(&to_yaml(&doc).unwrap()).unwrap_err().path,
+            compile(&yaml(&doc)).unwrap_err().path,
             "instruments.kick.kit"
         );
         doc["instruments"]["kick"]["kit"] = json!("drums");
         doc["instruments"]["kick"]["effects"] = json!([]);
         assert_eq!(
-            compile(&to_yaml(&doc).unwrap()).unwrap_err().path,
+            compile(&yaml(&doc)).unwrap_err().path,
             "instruments.kick.effects"
         );
     }
@@ -2853,11 +2840,11 @@ mod tests {
     fn audio_instruments_cannot_be_played_or_combined_with_a_source() {
         let mut doc = document();
         doc["instruments"]["take"] = json!({"audio":true});
-        let plan = compile(&to_yaml(&doc).unwrap()).unwrap();
+        let plan = compile(&yaml(&doc)).unwrap();
         assert!(plan.audio_instruments.contains("take"));
         doc["instruments"]["take"]["preset"] = json!("piano");
         assert_eq!(
-            compile(&to_yaml(&doc).unwrap()).unwrap_err().path,
+            compile(&yaml(&doc)).unwrap_err().path,
             "instruments.take.preset"
         );
         doc["instruments"]["take"]
@@ -2866,7 +2853,7 @@ mod tests {
             .remove("preset");
         doc["sections"]["phrase"]["lines"]["main"]["instrument"] = json!("take");
         assert!(
-            compile(&to_yaml(&doc).unwrap())
+            compile(&yaml(&doc))
                 .unwrap_err()
                 .message
                 .contains("cannot receive performance events")
@@ -2884,18 +2871,18 @@ mod tests {
         }]);
         let occurrence = doc["form"][0].clone();
         doc["form"].as_array_mut().unwrap().push(occurrence);
-        let plan = compile(&to_yaml(&doc).unwrap()).unwrap();
+        let plan = compile(&yaml(&doc)).unwrap();
         assert_eq!(plan.sections.len(), 2);
         assert_eq!(plan.ticks_per_beat % 7, 0);
         assert_eq!(plan.audio_clips["phrase"][0].id, "rain");
         doc["sections"]["phrase"]["audio_clips"][0]["at"]["offset_quarters"] = json!("4");
         assert_eq!(
-            compile(&to_yaml(&doc).unwrap()).unwrap_err().path,
+            compile(&yaml(&doc)).unwrap_err().path,
             "sections.phrase.audio_clips[0].at"
         );
         doc["sections"]["phrase"]["audio_clips"][0]["instrument"] = json!("part");
         assert_eq!(
-            compile(&to_yaml(&doc).unwrap()).unwrap_err().path,
+            compile(&yaml(&doc)).unwrap_err().path,
             "sections.phrase.audio_clips[0].instrument"
         );
     }
@@ -2914,7 +2901,7 @@ mod tests {
             "sidechain":[{"from":"drums", "to":{"instrument":"part", "effect":"duck"}}],
             "automation":[{"target":{"source":"part", "parameter":"Cutoff"},"section":"phrase", "points":[{"at":{"bar":1,"offset_quarters":"1/7"},"value":0.5}]}]
         });
-        let plan = compile(&to_yaml(&doc).unwrap()).unwrap();
+        let plan = compile(&yaml(&doc)).unwrap();
         let mix = plan.mix.unwrap();
         assert_eq!(mix.tracks.len(), 2);
         assert_eq!(mix.buses.len(), 2);
@@ -2924,19 +2911,19 @@ mod tests {
 
         doc["mix"]["tracks"]["part"]["output"] = json!("room");
         assert_eq!(
-            compile(&to_yaml(&doc).unwrap()).unwrap_err().path,
+            compile(&yaml(&doc)).unwrap_err().path,
             "mix.tracks.part.output"
         );
         doc["mix"]["tracks"]["part"]["output"] = json!("rhythm");
         doc["mix"]["sidechain"][0]["to"]["effect"] = json!("missing");
         assert_eq!(
-            compile(&to_yaml(&doc).unwrap()).unwrap_err().path,
+            compile(&yaml(&doc)).unwrap_err().path,
             "mix.sidechain[0].to"
         );
         doc["mix"]["sidechain"][0]["to"]["effect"] = json!("duck");
         doc["mix"]["automation"][0]["occurrence"] = json!(2);
         assert_eq!(
-            compile(&to_yaml(&doc).unwrap()).unwrap_err().path,
+            compile(&yaml(&doc)).unwrap_err().path,
             "mix.automation[0].occurrence"
         );
     }

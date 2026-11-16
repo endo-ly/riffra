@@ -6,9 +6,7 @@
 //! Project reuses tracks, devices, and instrument snapshots whose sources did
 //! not change.
 
-mod parameters;
-mod plugin_source;
-
+use super::{parameters, plugin_source};
 use crate::api::output::{
     ScoreAudioClipInspection, ScoreAutomationInspection, ScoreBusInspection, ScoreChordInspection,
     ScoreDiagnostic, ScoreDiagnosticSeverity, ScoreEffectInspection, ScoreInspection,
@@ -44,14 +42,14 @@ impl From<String> for ImportError {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-struct Fingerprint {
+pub(super) struct Fingerprint {
     bytes: u64,
     digest: [u8; 32],
 }
 
-type Dependencies = BTreeMap<PathBuf, Fingerprint>;
+pub(super) type Dependencies = BTreeMap<PathBuf, Fingerprint>;
 
-fn fingerprint(path: &Path) -> Result<Fingerprint, String> {
+pub(super) fn fingerprint(path: &Path) -> Result<Fingerprint, String> {
     let mut file =
         std::fs::File::open(path).map_err(|error| format!("{}: {error}", path.display()))?;
     let mut hasher = Sha256::new();
@@ -73,7 +71,10 @@ fn fingerprint(path: &Path) -> Result<Fingerprint, String> {
     })
 }
 
-fn record_dependency(dependencies: &mut Dependencies, path: &Path) -> Result<(), String> {
+pub(super) fn record_dependency(
+    dependencies: &mut Dependencies,
+    path: &Path,
+) -> Result<(), String> {
     let canonical =
         std::fs::canonicalize(path).map_err(|error| format!("{}: {error}", path.display()))?;
     let value = match dependencies.get(&canonical) {
@@ -168,7 +169,7 @@ fn is_production_instrument(plan: &ScorePlan, id: &str) -> bool {
         || plan.audio_instruments.contains(id)
 }
 
-fn local_input_path(base: &Path, input: &str) -> Result<PathBuf, String> {
+pub(super) fn local_input_path(base: &Path, input: &str) -> Result<PathBuf, String> {
     let path = Path::new(input);
     if path.components().any(|part| {
         !matches!(
@@ -1031,18 +1032,57 @@ pub(crate) fn rebuild(
     scanner: &Path,
     sonalloy: &Path,
 ) -> Result<ScoreOutcome, ImportError> {
-    rebuild_with_probe(
-        RebuildInput {
-            previous,
-            path,
-            bindings,
-            data_root,
-            catalog,
-            scanner,
-            sonalloy,
-        },
-        &crate::plugins::validation::describe_parameters,
-    )
+    rebuild_input(RebuildInput {
+        previous,
+        path,
+        bindings,
+        data_root,
+        catalog,
+        scanner,
+        sonalloy,
+        allow_unlinked: false,
+    })
+}
+
+/// Links a Project to a Score file that becomes its new source of truth.
+///
+/// A Project that already links a Score file is refused because that file owns
+/// the Score-determined state.
+///
+/// # Errors
+/// Returns structured diagnostics for Score, source, and instrument failures.
+pub(crate) fn link(
+    previous: &CreativeSession,
+    path: &Path,
+    data_root: &Path,
+    catalog: &BuiltInInstrumentCatalog,
+    scanner: &Path,
+    sonalloy: &Path,
+) -> Result<ScoreOutcome, ImportError> {
+    if previous
+        .score_source
+        .as_ref()
+        .is_some_and(|source| source.path.is_some())
+    {
+        return Err(ImportError::from(
+            "the active Project is already linked to a Score file".to_string(),
+        ));
+    }
+    let bindings = BTreeMap::new();
+    rebuild_input(RebuildInput {
+        previous,
+        path: Some(path),
+        bindings: &bindings,
+        data_root,
+        catalog,
+        scanner,
+        sonalloy,
+        allow_unlinked: true,
+    })
+}
+
+fn rebuild_input(input: RebuildInput<'_>) -> Result<ScoreOutcome, ImportError> {
+    rebuild_with_probe(input, &crate::plugins::validation::describe_parameters)
 }
 
 struct RebuildInput<'a> {
@@ -1053,6 +1093,7 @@ struct RebuildInput<'a> {
     catalog: &'a BuiltInInstrumentCatalog,
     scanner: &'a Path,
     sonalloy: &'a Path,
+    allow_unlinked: bool,
 }
 
 fn rebuild_with_probe(
@@ -1067,23 +1108,38 @@ fn rebuild_with_probe(
         catalog,
         scanner,
         sonalloy,
+        allow_unlinked,
     } = input;
-    let source = previous.score_source.as_ref().ok_or_else(|| {
-        ImportError::from("the active Project is not linked to a Score".to_string())
-    })?;
+    let source = match previous.score_source.as_ref() {
+        Some(source) => Some(source),
+        None if allow_unlinked => None,
+        None => {
+            return Err(ImportError::from(
+                "the active Project is not linked to a Score".to_string(),
+            ));
+        }
+    };
     let path = match path {
         Some(path) => path.to_path_buf(),
-        None => source.path.as_ref().map(PathBuf::from).ok_or_else(|| {
-            ImportError::from(
-                "the active Project has no linked Score file; rebuild it with --path".to_string(),
-            )
-        })?,
+        None => source
+            .and_then(|source| source.path.as_ref())
+            .map(PathBuf::from)
+            .ok_or_else(|| {
+                ImportError::from(
+                    "the active Project has no linked Score file; rebuild it with --path"
+                        .to_string(),
+                )
+            })?,
     };
     let mut effective: BTreeMap<String, PathBuf> = source
-        .bindings
-        .iter()
-        .map(|(id, path)| (id.clone(), PathBuf::from(path)))
-        .collect();
+        .map(|source| {
+            source
+                .bindings
+                .iter()
+                .map(|(id, path)| (id.clone(), PathBuf::from(path)))
+                .collect()
+        })
+        .unwrap_or_default();
     effective.extend(bindings.iter().map(|(id, path)| (id.clone(), path.clone())));
     let mut document = read_with_probe(
         ReadInput {
@@ -1097,6 +1153,7 @@ fn rebuild_with_probe(
             previous: Some(previous),
         },
         describe,
+        &|definition| inspect_definition(sonalloy, definition),
     )?;
     let store = UserInstrumentStore::new(data_root, sonalloy);
     let mut staged = StagedResources::new(data_root);
@@ -1118,7 +1175,7 @@ fn rebuild_with_probe(
         .as_ref()
         .is_none_or(|source| source.production_inputs != document.production_inputs);
     Ok(ScoreOutcome {
-        changed: !previous.score_performance_equals(&session),
+        changed: allow_unlinked || !previous.score_performance_equals(&session),
         link_changed: link_changed(previous, &session),
         inputs_changed,
         session,
@@ -1876,12 +1933,18 @@ struct ReadInput<'a> {
 }
 
 fn read(input: ReadInput<'_>) -> Result<ScoreDocument, ImportError> {
-    read_with_probe(input, &crate::plugins::validation::describe_parameters)
+    let sonalloy = input.sonalloy.to_path_buf();
+    read_with_probe(
+        input,
+        &crate::plugins::validation::describe_parameters,
+        &|definition| inspect_definition(&sonalloy, definition),
+    )
 }
 
 fn read_with_probe(
     input: ReadInput<'_>,
     describe: &impl Fn(&Path, &Vst3Plugin, &[DisplayRequest]) -> Result<ParameterDescription, String>,
+    inspect: &impl Fn(&Path) -> Result<Value, String>,
 ) -> Result<ScoreDocument, ImportError> {
     let ReadInput {
         path,
@@ -1890,7 +1953,7 @@ fn read_with_probe(
         data_root,
         catalog,
         scanner,
-        sonalloy,
+        sonalloy: _,
         previous,
     } = input;
     let yaml = std::fs::read_to_string(path)
@@ -1966,7 +2029,7 @@ fn read_with_probe(
             effective.insert(id.clone(), canonical.clone());
         }
         if !resolved.contains_key(&canonical) {
-            let report = inspect_definition(sonalloy, &canonical)?;
+            let report = inspect(&canonical)?;
             let built_in = spec["preset"].as_str().and_then(|preset| {
                 let preset_id = preset_id(preset);
                 let builtin = catalog.resolve(&preset_id).ok()?;
@@ -2002,6 +2065,55 @@ fn read_with_probe(
         production_inputs,
         dependencies,
     })
+}
+
+/// Builds a Session from a Score file for tests that do not probe plugins.
+#[cfg(test)]
+pub(super) fn session_from_score(
+    yaml: &str,
+    directory: &Path,
+    data_root: &Path,
+    catalog: &BuiltInInstrumentCatalog,
+) -> CreativeSession {
+    std::fs::create_dir_all(directory).unwrap();
+    let path = directory.join("score.yaml");
+    std::fs::write(&path, yaml).unwrap();
+    let bindings = BTreeMap::new();
+    let explicit = BTreeSet::new();
+    let mut document = read_with_probe(
+        ReadInput {
+            path: &path,
+            bindings: &bindings,
+            explicit: &explicit,
+            data_root,
+            catalog,
+            scanner: Path::new("unused"),
+            sonalloy: Path::new("unused"),
+            previous: None,
+        },
+        &|_, plugin, displays| {
+            assert!(displays.is_empty());
+            Ok(serde_json::from_value(json!({
+                "type": "pluginParameters",
+                "path": plugin.path,
+                "parameters": [],
+                "parameterValues": [],
+                "conversions": []
+            }))
+            .unwrap())
+        },
+        &|definition| {
+            std::fs::read_to_string(definition)
+                .map_err(|error| error.to_string())
+                .and_then(|text| serde_json::from_str(&text).map_err(|error| error.to_string()))
+        },
+    )
+    .unwrap();
+    let store = UserInstrumentStore::new(data_root, Path::new("unused"));
+    let mut staged = StagedResources::new(data_root);
+    let session = build(&mut document, None, &store, &mut staged, BuildMode::Stage).unwrap();
+    staged.clear();
+    session
 }
 
 /// How a Score build treats resources that outlive the candidate Session.
@@ -4015,7 +4127,7 @@ fn inspect_definition(sonalloy: &Path, definition: &Path) -> Result<Value, Strin
         .map_err(|error| format!("invalid instrument inspection: {error}"))
 }
 
-fn validate_note(report: &Value, note: u8, velocity: u8) -> Result<(), String> {
+pub(super) fn validate_note(report: &Value, note: u8, velocity: u8) -> Result<(), String> {
     let triggered = report["layers"].as_array().is_some_and(|layers| {
         layers.iter().any(|layer| {
             let trigger = &layer["trigger"];
@@ -4049,7 +4161,7 @@ fn parameter<'a>(report: &'a Value, id: &str) -> Result<&'a Value, String> {
         .ok_or_else(|| format!("unknown instrument parameter '{id}'"))
 }
 
-fn validate_parameter(report: &Value, id: &str, values: &[f32]) -> Result<(), String> {
+pub(super) fn validate_parameter(report: &Value, id: &str, values: &[f32]) -> Result<(), String> {
     let descriptor = parameter(report, id)?;
     let min = descriptor["min"]
         .as_f64()
@@ -5363,6 +5475,11 @@ mod tests {
                 previous: None,
             },
             &describe,
+            &|definition| {
+                std::fs::read_to_string(definition)
+                    .map_err(|error| error.to_string())
+                    .and_then(|text| serde_json::from_str(&text).map_err(|error| error.to_string()))
+            },
         )
         .unwrap();
         let session = build(&mut document, None, &store, &mut staged, BuildMode::Stage).unwrap();
@@ -5399,6 +5516,7 @@ mod tests {
                 catalog,
                 scanner: Path::new("unused"),
                 sonalloy: Path::new("unused"),
+                allow_unlinked: false,
             },
             &describe,
         )
