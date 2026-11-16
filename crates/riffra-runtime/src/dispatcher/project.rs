@@ -540,14 +540,13 @@ mod tests {
         assert!(after.score_source.is_none());
     }
 
-    #[test]
-    fn export_score_reports_a_bypassed_kit_and_refuses_link() {
+    fn kit_export_dispatcher(label: &str) -> (Dispatcher, std::path::PathBuf) {
         use crate::api::output::{
             PluginEntry, PluginFormat, PluginRole, PluginScanState, ScanReport,
         };
 
         let root = std::env::temp_dir().join(format!(
-            "riffra-score-export-bypassed-kit-{}",
+            "riffra-score-export-{label}-{}",
             riffra_control::new_instance_id()
         ));
         std::fs::create_dir_all(&root).unwrap();
@@ -587,9 +586,10 @@ mod tests {
             r#"{
                 "meta":{"title":"Kit","bpm":120,"meter":"4/4","tuning":"12edo","gate":1},
                 "form":[{"section":"verse","bars":1,"tonic":"C"}],
-                "sections":{"verse":{"drums":"beat"}},
+                "sections":{"verse":{"drums":"beat","lines":{"main":{"instrument":"lead","melody":"theme"}}}},
+                "melodies":{"theme":["1:16"]},
                 "drums":{"beat":{"parts":{"kick":["x..............."]}}},
-                "instruments":{"kick":{"kit":"drums","trigger_note_midi":36}},
+                "instruments":{"kick":{"kit":"drums","trigger_note_midi":36},"lead":{"source":{"vst3":{"plugin":"Drums"}}}},
                 "kits":{"drums":{"source":{"vst3":{"plugin":"Drums"}}}}
             }"#,
         )
@@ -602,29 +602,22 @@ mod tests {
             .unwrap();
         let mut canonical = session(&dispatcher);
         canonical.score_source = None;
-        let kit = canonical
-            .arrangement
-            .tracks
-            .iter_mut()
-            .find(|track| {
-                track
-                    .score_instrument
-                    .as_deref()
-                    .is_some_and(|id| id.starts_with("kit:"))
-            })
-            .expect("the Score has a kit track");
-        kit.instrument
-            .as_mut()
-            .expect("the kit has an instrument")
-            .bypassed = true;
         let _ = dispatcher
             .core
             .cell()
             .write()
             .commit_accepted(canonical)
             .unwrap();
+        (dispatcher, root)
+    }
 
-        let before = session(&dispatcher);
+    fn assert_kit_export_refused(
+        dispatcher: &Dispatcher,
+        root: &std::path::Path,
+        subject: &str,
+        message: &str,
+    ) {
+        let before = session(dispatcher);
         let folder = root.join("song");
         let error = dispatcher
             .dispatch(
@@ -648,18 +641,81 @@ mod tests {
                 omissions.iter().any(|omission| {
                     omission["subject"]
                         .as_str()
-                        .is_some_and(|subject| subject.contains("instrument"))
+                        .is_some_and(|candidate| candidate.contains(subject))
                         && omission["message"]
                             .as_str()
-                            .is_some_and(|message| message.contains("bypassed"))
+                            .is_some_and(|candidate| candidate.contains(message))
                 })
             }),
             "{details}"
         );
         assert!(!folder.exists());
-        let after = session(&dispatcher);
+        let after = session(dispatcher);
         assert_eq!(after.arrangement.revision, before.arrangement.revision);
         assert!(after.score_source.is_none());
+    }
+
+    #[test]
+    fn export_score_reports_a_bypassed_kit_and_refuses_link() {
+        let (dispatcher, root) = kit_export_dispatcher("bypassed-kit");
+        let mut canonical = session(&dispatcher);
+        let kit = canonical
+            .arrangement
+            .tracks
+            .iter_mut()
+            .find(|track| {
+                track
+                    .score_instrument
+                    .as_deref()
+                    .is_some_and(|id| id.starts_with("kit:"))
+            })
+            .expect("the Score has a kit track");
+        kit.instrument
+            .as_mut()
+            .expect("the kit has an instrument")
+            .bypassed = true;
+        let _ = dispatcher
+            .core
+            .cell()
+            .write()
+            .commit_accepted(canonical)
+            .unwrap();
+
+        assert_kit_export_refused(&dispatcher, &root, "instrument", "bypassed");
+    }
+
+    #[test]
+    fn export_score_reports_an_unassigned_kit_and_refuses_link() {
+        let (dispatcher, root) = kit_export_dispatcher("unassigned-kit");
+        let mut canonical = session(&dispatcher);
+        let kit = canonical
+            .arrangement
+            .tracks
+            .iter_mut()
+            .find(|track| {
+                track
+                    .score_instrument
+                    .as_deref()
+                    .is_some_and(|id| id.starts_with("kit:"))
+            })
+            .expect("the Score has a kit track");
+        kit.instrument = None;
+        let _ = dispatcher
+            .core
+            .cell()
+            .write()
+            .commit_accepted(canonical)
+            .unwrap();
+
+        assert_kit_export_refused(&dispatcher, &root, "track", "no instrument");
+        let canonical = session(&dispatcher);
+        let lead = canonical
+            .arrangement
+            .tracks
+            .iter()
+            .find(|track| track.score_instrument.as_deref() == Some("lead"))
+            .expect("the normal track stays in the Project");
+        assert!(lead.instrument.is_some());
     }
 
     #[test]

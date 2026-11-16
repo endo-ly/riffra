@@ -1004,6 +1004,8 @@ instruments: {lead: {preset: LEAD/001-analog-saw-lead, voices: 8}}
             None,
         )
         .unwrap();
+        // The link path must decide from the omission without copying the source.
+        std::fs::remove_file(&wav).unwrap();
         let mut session = CreativeSession::new(1);
         session
             .arrangement

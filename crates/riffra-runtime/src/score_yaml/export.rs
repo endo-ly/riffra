@@ -39,6 +39,15 @@ impl From<String> for ExportError {
     }
 }
 
+/// One file of the song folder, either generated or copied from its source.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum ExportFile {
+    /// Bytes Riffra generated for this file.
+    Bytes(Vec<u8>),
+    /// An existing file copied into the staged folder.
+    Copy(PathBuf),
+}
+
 /// One Score section occurrence resolved from the arrangement.
 #[derive(Clone, Debug)]
 pub(super) struct SongSection {
@@ -165,8 +174,8 @@ pub(super) struct Export<'a> {
     pub(super) kits: BTreeMap<String, Vec<KitMember>>,
     pub(super) original: Option<Original>,
     pub(super) omissions: Vec<ScoreExportOmission>,
-    /// Files of the song folder by their relative path.
-    pub(super) files: BTreeMap<String, Vec<u8>>,
+    /// Files of the song folder by their relative path, generated or copied at write time.
+    pub(super) files: BTreeMap<String, ExportFile>,
     /// WAV files written for each shared audio asset.
     pub(super) audio_files: BTreeMap<riffra_core::AssetId, String>,
     /// Cached plugin parameter names by device id.
@@ -182,13 +191,13 @@ pub(super) struct PluginParameter {
     pub(super) index: u32,
 }
 
-/// A song folder assembled in memory.
+/// A planned song folder and its file list.
 pub(crate) struct ExportPlan {
     pub(crate) path: PathBuf,
     pub(crate) omissions: Vec<ScoreExportOmission>,
     /// Score instrument ID written for each canonical Track.
     pub(crate) score_instruments: BTreeMap<String, String>,
-    files: BTreeMap<String, Vec<u8>>,
+    files: BTreeMap<String, ExportFile>,
     score: String,
 }
 
@@ -707,20 +716,20 @@ fn resolve_tracks<'a>(
             .unwrap_or_else(|| format!("track_{}", index + 1));
         let role = match track.kind {
             TrackKind::Audio => TrackRole::Audio,
+            TrackKind::Instrument if track.instrument.is_none() => {
+                if has_performance(session, &track.id) {
+                    omissions.push(ScoreExportOmission {
+                        subject: format!("track \"{}\"", track.name),
+                        message: "the track has performance content but no instrument".into(),
+                    });
+                }
+                continue;
+            }
             TrackKind::Instrument => match track.score_instrument.as_deref() {
                 Some(score) if score.starts_with("kit:") => TrackRole::Kit(
                     identifier(&score[4..]).unwrap_or_else(|| format!("kit_{}", index + 1)),
                 ),
-                _ if track.instrument.is_some() => TrackRole::Instrument,
-                _ => {
-                    if has_performance(session, &track.id) {
-                        omissions.push(ScoreExportOmission {
-                            subject: format!("track \"{}\"", track.name),
-                            message: "the track has performance content but no instrument".into(),
-                        });
-                    }
-                    continue;
-                }
+                _ => TrackRole::Instrument,
             },
         };
         let base = match &role {
@@ -829,7 +838,11 @@ pub(super) fn clips_for<'a>(
 }
 
 /// Writes the staged song folder and renames it into place.
-fn stage(path: &Path, files: &BTreeMap<String, Vec<u8>>, score: &str) -> Result<(), ExportError> {
+fn stage(
+    path: &Path,
+    files: &BTreeMap<String, ExportFile>,
+    score: &str,
+) -> Result<(), ExportError> {
     let parent = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -845,16 +858,27 @@ fn stage(path: &Path, files: &BTreeMap<String, Vec<u8>>, score: &str) -> Result<
         ExportError::new(format!("could not create {}: {error}", staging.display()))
     })?;
     let result = (|| {
-        for (relative, bytes) in files {
+        for (relative, file) in files {
             let target = staging.join(relative);
             if let Some(parent) = target.parent() {
                 std::fs::create_dir_all(parent).map_err(|error| {
                     ExportError::new(format!("could not create {}: {error}", parent.display()))
                 })?;
             }
-            std::fs::write(&target, bytes).map_err(|error| {
-                ExportError::new(format!("could not write {}: {error}", target.display()))
-            })?;
+            match file {
+                ExportFile::Bytes(bytes) => std::fs::write(&target, bytes).map_err(|error| {
+                    ExportError::new(format!("could not write {}: {error}", target.display()))
+                })?,
+                ExportFile::Copy(source) => {
+                    std::fs::copy(source, &target).map_err(|error| {
+                        ExportError::new(format!(
+                            "could not copy {} to {}: {error}",
+                            source.display(),
+                            target.display()
+                        ))
+                    })?;
+                }
+            }
         }
         std::fs::write(staging.join("score.yaml"), score)
             .map_err(|error| ExportError::new(format!("could not write score.yaml: {error}")))?;
@@ -868,20 +892,16 @@ fn stage(path: &Path, files: &BTreeMap<String, Vec<u8>>, score: &str) -> Result<
     result
 }
 
-/// Copies a package directory into the staged song folder.
+/// Registers a package directory's files for the staged song folder.
 pub(super) fn copy_package(
     export: &mut Export,
     source: &Path,
     destination: &str,
 ) -> Result<(), ExportError> {
-    copy_tree(source, destination, &mut export.files)
+    copy_tree(source, destination, export)
 }
 
-fn copy_tree(
-    directory: &Path,
-    destination: &str,
-    files: &mut BTreeMap<String, Vec<u8>>,
-) -> Result<(), ExportError> {
+fn copy_tree(directory: &Path, destination: &str, export: &mut Export) -> Result<(), ExportError> {
     let mut entries = std::fs::read_dir(directory)
         .map_err(|error| {
             ExportError::new(format!("could not read {}: {error}", directory.display()))
@@ -903,24 +923,21 @@ fn copy_tree(
             .map_err(|error| ExportError::new(error.to_string()))?
             .is_dir()
         {
-            copy_tree(&path, &relative, files)?;
+            copy_tree(&path, &relative, export)?;
         } else {
-            let bytes = std::fs::read(&path).map_err(|error| {
-                ExportError::new(format!("could not read {}: {error}", path.display()))
-            })?;
-            files.insert(relative, bytes);
+            add_file(export, relative, ExportFile::Copy(path))?;
         }
     }
     Ok(())
 }
 
-/// Adds a relative file to the staged folder.
+/// Adds one relative file to the staged folder.
 pub(super) fn add_file(
     export: &mut Export,
     relative: String,
-    bytes: Vec<u8>,
+    file: ExportFile,
 ) -> Result<(), ExportError> {
-    if export.files.insert(relative.clone(), bytes).is_some() {
+    if export.files.insert(relative.clone(), file).is_some() {
         return Err(ExportError::new(format!(
             "two Score files share the path {relative}"
         )));
@@ -2321,11 +2338,10 @@ mod tests {
         let snapshot = "00000000-0000-4000-8000-000000000001";
         let package = root.join("project-instruments").join(snapshot);
         std::fs::create_dir_all(&package).unwrap();
-        std::fs::write(
-            package.join("definition.json"),
-            r#"{"layers":[{"id":"main","trigger":{"event":"note_on","key_min":60,"key_max":60,"velocity_min":1,"velocity_max":127}}]}"#,
-        )
-        .unwrap();
+        let definition = r#"{"layers":[{"id":"main","trigger":{"event":"note_on","key_min":60,"key_max":60,"velocity_min":1,"velocity_max":127}}]}"#;
+        std::fs::write(package.join("definition.json"), definition).unwrap();
+        std::fs::create_dir_all(package.join("samples")).unwrap();
+        std::fs::write(package.join("samples/raw.bin"), b"sample payload").unwrap();
         let mut session = crate::score_yaml::import::session_from_score(
             CC_SCORE,
             &root.join("source"),
@@ -2356,6 +2372,115 @@ mod tests {
         assert_eq!(
             document["instruments"]["user"]["definition"],
             "sounds/user/definition.json"
+        );
+        assert_eq!(
+            std::fs::read_to_string(exported.path.join("sounds/user/definition.json")).unwrap(),
+            definition
+        );
+        assert_eq!(
+            std::fs::read(exported.path.join("sounds/user/samples/raw.bin")).unwrap(),
+            b"sample payload"
+        );
+    }
+
+    #[test]
+    fn a_missing_audio_source_fails_the_write_and_removes_the_staging_folder() {
+        let root = root("missing-audio");
+        catalog(&root);
+        let catalog = crate::test_support::empty_built_in_catalog();
+        let source = root.join("source");
+        std::fs::create_dir_all(source.join("audio")).unwrap();
+        let wav = source.join("audio/rain.wav");
+        std::fs::write(&wav, one_sample_wav()).unwrap();
+        let session =
+            crate::score_yaml::import::session_from_score(AUDIO_SCORE, &source, &root, catalog);
+        let destination = root.join("song");
+        let plan = plan(&session, &destination, &root, catalog, Path::new("unused")).expect("plan");
+        let location = crate::asset::resolve_content_location(
+            &root,
+            &session.arrangement.audio_clips[0].asset_id,
+        )
+        .unwrap()
+        .expect("the imported asset has a content location");
+        std::fs::remove_file(location).unwrap();
+
+        let error = plan.write().unwrap_err();
+        assert!(
+            error.message.contains("could not copy"),
+            "{}",
+            error.message
+        );
+        assert!(!destination.exists());
+        let staging = std::fs::read_dir(&root)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".riffra-export-")
+            })
+            .count();
+        assert_eq!(staging, 0, "the failed staging folder must be removed");
+    }
+
+    #[test]
+    fn unassigned_kit_tracks_are_reported_and_not_exported() {
+        let root = root("unassigned-kit");
+        catalog(&root);
+        let catalog = crate::test_support::empty_built_in_catalog();
+        let mut session = crate::score_yaml::import::session_from_score(
+            SCORE,
+            &root.join("source"),
+            &root,
+            catalog,
+        );
+        let kit = session
+            .arrangement
+            .tracks
+            .iter_mut()
+            .find(|track| {
+                track
+                    .score_instrument
+                    .as_deref()
+                    .is_some_and(|id| id.starts_with("kit:"))
+            })
+            .expect("the Score has a kit track");
+        kit.instrument = None;
+        let kit_name = kit.name.clone();
+
+        let exported = exported(&session, &root, catalog);
+        assert!(
+            exported.omissions.iter().any(|omission| {
+                omission.subject.contains(&kit_name)
+                    && omission
+                        .message
+                        .contains("performance content but no instrument")
+            }),
+            "{:?}",
+            exported.omissions
+        );
+        let yaml = std::fs::read_to_string(exported.path.join("score.yaml")).unwrap();
+        crate::score::compile(&yaml).expect("the exported Score compiles");
+        let document = crate::score::parse_document(&yaml).expect("the document parses");
+        assert!(document.get("drums").is_none(), "{document}");
+        assert!(document["instruments"].get("lead").is_some(), "{document}");
+        let imported =
+            crate::score_yaml::import::session_from_score(&yaml, &exported.path, &root, catalog);
+        let lead = imported
+            .arrangement
+            .tracks
+            .iter()
+            .find(|track| track.score_instrument.as_deref() == Some("lead"))
+            .expect("the normal instrument track survives");
+        assert!(
+            imported
+                .arrangement
+                .midi_clips
+                .iter()
+                .filter(|clip| clip.track_id == lead.id)
+                .any(|clip| !clip.notes.is_empty()),
+            "the normal instrument keeps its notes"
         );
     }
 
@@ -2531,6 +2656,11 @@ mod tests {
             .filter(|path| path.starts_with("audio/"))
             .collect::<Vec<_>>();
         assert_eq!(wavs.len(), 1, "one WAV is shared by both clips: {wavs:?}");
+        assert_eq!(
+            std::fs::read(exported.path.join(wavs[0])).unwrap(),
+            one_sample_wav(),
+            "the exported WAV keeps the source bytes"
+        );
         let ambience = imported
             .arrangement
             .tracks
