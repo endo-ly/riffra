@@ -5,14 +5,16 @@ use super::{
     file_identifier, fraction, instrument_of, omit, rational, to_quarters,
 };
 use crate::api::output::ScoreExportOmission;
+use crate::instrument::BuiltInInstrumentCatalog;
 use crate::score::syntax;
 use num_rational::BigRational;
 use riffra_core::{
-    AudioClip, FadeShape, HarmonyEvent, InstrumentControlEventKind, KeySwitchMode,
-    TrackInstrumentSource,
+    AudioClip, FadeShape, HarmonyEvent, InstrumentControlEventKind, InternalInstrumentResource,
+    KeySwitchMode, TrackInstrumentSource,
 };
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 
 /// Scale spellings used when a section names a known scale.
 const SCALES: &[(&str, &[&str])] = &[
@@ -158,7 +160,7 @@ pub(super) fn apply(
     document: &mut Map<String, Value>,
 ) -> Result<(), ExportError> {
     report_clips(export);
-    let performance = performance(export);
+    let performance = performance(export)?;
     let articulations = articulations(export);
     for articulation in &articulations {
         export
@@ -288,7 +290,28 @@ fn report_clips(export: &mut Export<'_>) {
                 omit(omissions, subject.clone(), "the clip loops");
             }
             if clip.notes.iter().any(|note| note.lyric.is_some()) {
-                omit(omissions, subject, "the Score cannot store note lyrics");
+                omit(
+                    omissions,
+                    subject.clone(),
+                    "the Score cannot store note lyrics",
+                );
+            }
+            for note in &clip.notes {
+                if note.channel != 1 {
+                    omit(
+                        omissions,
+                        format!(
+                            "{} / note {} at tick {}",
+                            subject,
+                            note.note,
+                            clip.start_tick.0.saturating_add(note.start_tick.0)
+                        ),
+                        format!(
+                            "the Score cannot store MIDI channel {}; the note is written on channel 1",
+                            note.channel
+                        ),
+                    );
+                }
             }
         }
     }
@@ -359,18 +382,23 @@ fn unique_name(base: &str, used: &mut BTreeSet<String>) -> String {
 struct Performance {
     voices: BTreeMap<String, Vec<Vec<Note>>>,
     hits: BTreeMap<String, Vec<Hit>>,
+    /// Parsed instrument definitions by Score track ID.
+    definitions: BTreeMap<String, Value>,
 }
 
 /// Collects the playable notes and drum hits of every Track.
-fn performance(export: &mut Export<'_>) -> Performance {
+fn performance(export: &mut Export<'_>) -> Result<Performance, ExportError> {
     let tracks = &export.tracks;
     let session = export.session;
     let kits = &export.kits;
+    let catalog = export.catalog;
+    let data_root = export.data_root;
     let omissions = &mut export.omissions;
     let mut voices = BTreeMap::new();
     let mut hits = BTreeMap::new();
+    let mut definitions = BTreeMap::new();
     for track in tracks {
-        let rules = note_rules(track);
+        let rules = note_rules(catalog, data_root, track)?;
         match &track.role {
             TrackRole::Instrument => {
                 let mut notes = Vec::new();
@@ -385,7 +413,7 @@ fn performance(export: &mut Export<'_>) -> Performance {
                             midi: note.note,
                             velocity: note.velocity,
                         };
-                        if playable(omissions, track, &rules, note) {
+                        if playable(omissions, track, rules.as_ref(), note) {
                             notes.push(note);
                         }
                     }
@@ -406,16 +434,15 @@ fn performance(export: &mut Export<'_>) -> Performance {
                             midi: note.note,
                             velocity: note.velocity,
                         };
-                        if !playable(omissions, track, &rules, note) {
+                        if !playable(omissions, track, rules.as_ref(), note) {
                             continue;
                         }
                         let part = members
                             .iter()
                             .find(|member| member.trigger == note.midi)
-                            .map_or_else(
-                                || format!("{kit}_{}", note.midi),
-                                |member| member.id.clone(),
-                            );
+                            .expect("every kit trigger has a member")
+                            .id
+                            .clone();
                         list.push(Hit {
                             part,
                             start: note.start,
@@ -429,51 +456,84 @@ fn performance(export: &mut Export<'_>) -> Performance {
             }
             TrackRole::Audio => {}
         }
+        if let Some(definition) = rules {
+            definitions.insert(track.id.clone(), definition);
+        }
     }
-    Performance { voices, hits }
+    Ok(Performance {
+        voices,
+        hits,
+        definitions,
+    })
 }
 
-/// The note rules a built-in instrument applies when it receives a note.
-enum NoteRules {
-    /// The instrument accepts every note.
-    Free,
-    /// The parsed instrument definition that decides trigger ranges.
-    Definition(Value),
-    /// A definition that could not be read.
-    Unreadable(String),
-}
-
-fn note_rules(track: &ExportTrack<'_>) -> NoteRules {
+/// Resolves the definition that will be written for one Track.
+///
+/// The Score reads built-in presets from the catalog and user snapshots from
+/// the package copied into the song folder, so note rules come from those
+/// sources rather than the canonical `definition_json` copy.
+fn note_rules(
+    catalog: &BuiltInInstrumentCatalog,
+    data_root: &Path,
+    track: &ExportTrack<'_>,
+) -> Result<Option<Value>, ExportError> {
     let Some(instrument) = instrument_of(track.track) else {
-        return NoteRules::Free;
+        return Ok(None);
     };
-    let TrackInstrumentSource::Internal {
-        definition_json, ..
-    } = &instrument.source
-    else {
-        return NoteRules::Free;
+    let TrackInstrumentSource::Internal { resource, .. } = &instrument.source else {
+        return Ok(None);
     };
-    match serde_json::from_str(definition_json) {
-        Ok(definition) => NoteRules::Definition(definition),
-        Err(error) => NoteRules::Unreadable(error.to_string()),
+    match resource {
+        InternalInstrumentResource::BuiltInPreset { preset_id } => {
+            let definition = catalog.resolve(preset_id).map_err(|error| {
+                ExportError::new(format!("built-in preset {preset_id}: {error}"))
+            })?;
+            parse_definition(
+                &format!("built-in preset {preset_id}"),
+                &definition.definition_json,
+            )
+            .map(Some)
+        }
+        InternalInstrumentResource::UserSnapshot { snapshot_id, .. } => {
+            let path = data_root
+                .join("project-instruments")
+                .join(snapshot_id)
+                .join("definition.json");
+            let text = std::fs::read_to_string(&path).map_err(|error| {
+                ExportError::new(format!(
+                    "user instrument {snapshot_id} definition could not be read: {error}"
+                ))
+            })?;
+            parse_definition(&format!("user instrument {snapshot_id}"), &text).map(Some)
+        }
     }
+}
+
+fn parse_definition(description: &str, text: &str) -> Result<Value, ExportError> {
+    let definition: Value = serde_json::from_str(text).map_err(|error| {
+        ExportError::new(format!("{description} definition is invalid: {error}"))
+    })?;
+    if definition["layers"].as_array().is_none() {
+        return Err(ExportError::new(format!(
+            "{description} definition has no layers"
+        )));
+    }
+    Ok(definition)
 }
 
 /// Reports whether one note can trigger the instrument.
 fn playable(
     omissions: &mut Vec<ScoreExportOmission>,
     track: &ExportTrack<'_>,
-    rules: &NoteRules,
+    definition: Option<&Value>,
     note: Note,
 ) -> bool {
-    let result = match rules {
-        NoteRules::Free => return true,
-        NoteRules::Definition(definition) => {
-            crate::score_yaml::import::validate_note(definition, note.midi, note.velocity)
-        }
-        NoteRules::Unreadable(reason) => Err(reason.clone()),
+    let Some(definition) = definition else {
+        return true;
     };
-    if let Err(reason) = result {
+    if let Err(reason) =
+        crate::score_yaml::import::validate_note(definition, note.midi, note.velocity)
+    {
         omit(
             omissions,
             format!(
@@ -613,6 +673,7 @@ fn build(
         export.ppq,
         omissions,
         section,
+        &performance.definitions,
         articulations,
     );
     content.events.append(&mut content.hits);
@@ -978,6 +1039,7 @@ fn events(
     ppq: u32,
     omissions: &mut Vec<ScoreExportOmission>,
     section: &SongSection,
+    definitions: &BTreeMap<String, Value>,
     articulations: &[Articulation],
 ) -> Vec<Value> {
     let mut events: Vec<(u64, u32, Value)> = Vec::new();
@@ -992,6 +1054,7 @@ fn events(
         }
         let vst3 =
             instrument_of(track.track).is_some_and(|instrument| instrument.as_vst3().is_some());
+        let definition = definitions.get(&track.id);
         let mut controls: Vec<(u64, u32, InstrumentControlEventKind)> = Vec::new();
         for clip in clips_for(session, &track.track.id) {
             if clip.muted {
@@ -1068,7 +1131,9 @@ fn events(
                     parameter,
                     native_value,
                 } => {
-                    if let Err(reason) = internal_parameter(track, &parameter, &[native_value]) {
+                    if let Err(reason) =
+                        internal_parameter(vst3, definition, &parameter, &[native_value])
+                    {
                         omit(
                             omissions,
                             format!("track \"{}\" / parameter {parameter}", track.track.name),
@@ -1099,7 +1164,7 @@ fn events(
                         continue;
                     }
                     if let Err(reason) =
-                        internal_parameter(track, &parameter, &[from_value, to_value])
+                        internal_parameter(vst3, definition, &parameter, &[from_value, to_value])
                     {
                         omit(
                             omissions,
@@ -1189,25 +1254,18 @@ fn report_kit_controls(
 
 /// Validates a built-in instrument parameter event against its definition.
 fn internal_parameter(
-    track: &ExportTrack<'_>,
+    vst3: bool,
+    definition: Option<&Value>,
     parameter: &str,
     values: &[f32],
 ) -> Result<(), String> {
-    let Some(instrument) = instrument_of(track.track) else {
-        return Err("the track has no instrument".into());
-    };
-    if instrument.as_vst3().is_some() {
+    if vst3 {
         return Err("the Score cannot change a VST3 instrument parameter".into());
     }
-    let TrackInstrumentSource::Internal {
-        definition_json, ..
-    } = &instrument.source
-    else {
-        return Err("the instrument source is not available".into());
+    let Some(definition) = definition else {
+        return Err("the track has no built-in instrument definition".into());
     };
-    let definition: Value =
-        serde_json::from_str(definition_json).map_err(|error| error.to_string())?;
-    crate::score_yaml::import::validate_parameter(&definition, parameter, values)
+    crate::score_yaml::import::validate_parameter(definition, parameter, values)
 }
 
 /// One control event of a section, before automation runs are detected.
@@ -1305,7 +1363,7 @@ fn coalesce(
             let limit = if points[index].2.is_cc() {
                 limit.min(index + 127)
             } else {
-                limit
+                geometric_limit(points, index, limit)
             };
             for candidate in (index + 1..=limit).rev() {
                 let run = &points[index..=candidate];
@@ -1351,6 +1409,35 @@ fn coalesce(
         index = end + 1;
     }
     result
+}
+
+/// Narrows a run to the prefix one straight line can describe.
+///
+/// A longer ramp that starts at the same point must stay on the line through
+/// the current end, so a point that leaves it ends every possible match.
+fn geometric_limit(points: &[(u64, u32, Point)], start: usize, limit: usize) -> usize {
+    let mut end = start + 1;
+    while end < limit {
+        let first = points[start].2;
+        let last = points[end].2;
+        let next = points[end + 1].2;
+        let ratio =
+            (points[end + 1].0 - points[start].0) as f64 / (points[end].0 - points[start].0) as f64;
+        let expected = (f64::from(first.value)
+            + (f64::from(last.value) - f64::from(first.value)) * ratio)
+            as f32;
+        let scale = first
+            .value
+            .abs()
+            .max(last.value.abs())
+            .max(next.value.abs())
+            .max(1.0);
+        if (next.value - expected).abs() > 16.0 * f32::EPSILON * scale {
+            break;
+        }
+        end += 1;
+    }
+    end
 }
 
 /// Renders one control that is not an automation run.
@@ -1692,10 +1779,24 @@ fn harmony(
         return (None, Vec::new(), omissions);
     }
     events.sort_by_key(|(start, _, _)| *start);
-    let mut changes = Vec::new();
+    let mut written = Vec::new();
+    let mut previous: Option<(u64, &str)> = None;
     for (start, end, event) in events {
+        if let Some((previous_end, previous_name)) = previous
+            && start < previous_end
+        {
+            omit(
+                &mut omissions,
+                format!("harmony \"{}\"", event.chord.name),
+                format!(
+                    "the chord overlaps \"{previous_name}\" and cannot be written at the same time"
+                ),
+            );
+            continue;
+        }
+        previous = Some((end, &event.chord.name));
         if let Some(chord) = chord(section, event) {
-            changes.push((start, end, chord));
+            written.push((start, end, chord));
         } else {
             omit(
                 &mut omissions,
@@ -1704,7 +1805,7 @@ fn harmony(
             );
         }
     }
-    if changes.is_empty() {
+    if written.is_empty() {
         return (None, Vec::new(), omissions);
     }
     let bar_start = |tick: u64| section.bar_starts.iter().position(|start| *start == tick);
@@ -1715,26 +1816,36 @@ fn harmony(
             bar_start(tick)
         }
     };
-    let per_bar = changes[0].0 == section.start_tick
-        && changes
+    let per_bar = written[0].0 == section.start_tick
+        && written
             .last()
             .is_some_and(|(_, end, _)| *end == section.end_tick)
-        && changes.windows(2).all(|pair| pair[0].1 == pair[1].0)
-        && changes
+        && written.windows(2).all(|pair| pair[0].1 == pair[1].0)
+        && written
             .iter()
             .all(|(start, end, _)| boundary(*start).is_some() && boundary(*end).is_some());
     if per_bar {
         let mut bars = vec![String::new(); section.bars()];
-        for (start, end, chord) in &changes {
+        for (start, end, chord) in &written {
             let from = boundary(*start).expect("bar start");
             let to = boundary(*end).expect("bar end");
             bars[from..to].fill(chord.clone());
         }
         return (Some(bars), Vec::new(), omissions);
     }
+    let mut changes: Vec<(u64, String)> = Vec::new();
+    for (index, (start, end, chord)) in written.iter().enumerate() {
+        changes.push((*start, chord.clone()));
+        let next = written
+            .get(index + 1)
+            .map_or(section.end_tick, |(start, _, _)| *start);
+        if *end < next {
+            changes.push((*end, "NC".into()));
+        }
+    }
     let changes = changes
         .into_iter()
-        .map(|(start, _, chord)| {
+        .map(|(start, chord)| {
             json!({
                 "at": section.position(start, ppq),
                 "chord": chord,
@@ -2019,6 +2130,106 @@ mod tests {
         assert_eq!(events[1].2["kind"], "automation");
     }
 
+    fn harmony_event(
+        name: &str,
+        tones: &[&str],
+        root: &str,
+        bass: &str,
+        start: u64,
+        end: u64,
+    ) -> HarmonyEvent {
+        HarmonyEvent {
+            id: format!("harmony:{start}"),
+            start_tick: TimelineTick(start),
+            end_tick: TimelineTick(end),
+            chord: HarmonyChord::from_explicit(
+                tones.iter().map(|tone| note_name(tone)).collect(),
+                Some(note_name(root)),
+                Some(note_name(bass)),
+                Some(name.into()),
+            )
+            .unwrap(),
+        }
+    }
+
+    #[test]
+    fn harmony_uses_bar_chords_only_for_continuous_bar_aligned_events() {
+        let section = section();
+        let (chords, changes, omissions) = harmony(
+            &[
+                harmony_event("C", &["C", "E", "G"], "C", "C", 0, 1920),
+                harmony_event("G", &["G", "B", "D"], "G", "G", 1920, 3840),
+            ],
+            &section,
+            960,
+        );
+        assert_eq!(chords.unwrap(), ["1:maj", "5:maj"]);
+        assert!(changes.is_empty());
+        assert!(omissions.is_empty());
+
+        let (chords, changes, omissions) = harmony(
+            &[harmony_event("C", &["C", "E", "G"], "C", "C", 0, 5000)],
+            &section,
+            960,
+        );
+        assert_eq!(chords.unwrap(), ["1:maj", "1:maj"]);
+        assert!(changes.is_empty());
+        assert!(omissions.is_empty());
+    }
+
+    #[test]
+    fn harmony_reports_overlaps_and_keeps_silent_gaps() {
+        let section = section();
+        let (chords, changes, omissions) = harmony(
+            &[
+                harmony_event("C", &["C", "E", "G"], "C", "C", 0, 960),
+                harmony_event("G", &["G", "B", "D"], "G", "G", 1920, 2880),
+            ],
+            &section,
+            960,
+        );
+        assert!(chords.is_none());
+        assert!(omissions.is_empty());
+        assert_eq!(
+            changes
+                .iter()
+                .map(|change| change["chord"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            ["1:maj", "NC", "5:maj", "NC"]
+        );
+        assert_eq!(
+            changes
+                .iter()
+                .map(|change| change["at"].clone())
+                .collect::<Vec<_>>(),
+            [
+                json!({"bar": 1, "step": 1}),
+                json!({"bar": 1, "step": 5}),
+                json!({"bar": 2, "step": 1}),
+                json!({"bar": 2, "step": 5}),
+            ]
+        );
+
+        let (chords, changes, omissions) = harmony(
+            &[
+                harmony_event("C", &["C", "E", "G"], "C", "C", 0, 1920),
+                harmony_event("G", &["G", "B", "D"], "G", "G", 960, 3840),
+            ],
+            &section,
+            960,
+        );
+        assert!(chords.is_none());
+        assert_eq!(
+            changes
+                .iter()
+                .map(|change| change["chord"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            ["1:maj", "NC"]
+        );
+        assert_eq!(omissions.len(), 1);
+        assert!(omissions[0].message.contains("overlaps"));
+    }
+
     #[test]
     fn slash_basses_do_not_change_the_chord_quality() {
         let harmony = HarmonyChord::from_explicit(
@@ -2038,7 +2249,7 @@ mod tests {
     }
 
     #[test]
-    fn long_automation_runs_are_walked_once() {
+    fn long_automation_runs_keep_their_exact_compression() {
         let values = (0..2000)
             .map(|index| {
                 (
@@ -2074,5 +2285,24 @@ mod tests {
         let events = coalesce(&linear, 960, &section(), "lead");
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].2["kind"], "automation");
+
+        let mut broken = (0..500)
+            .map(|index| {
+                (
+                    index as u64 * 15,
+                    index as u32,
+                    Point::value(
+                        PointKind::ModWheel,
+                        ramp_value(0, 499 * 15, index as u64 * 15, 0.0, 1.0),
+                    ),
+                )
+            })
+            .collect::<Vec<_>>();
+        broken.push((500 * 15, 500, Point::value(PointKind::ModWheel, 0.75)));
+        let events = coalesce(&broken, 960, &section(), "lead");
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].2["kind"], "automation");
+        assert_eq!(events[0].2["duration_quarters"], rational(499 * 15, 960));
+        assert_eq!(events[1].2["kind"], "mod_wheel");
     }
 }

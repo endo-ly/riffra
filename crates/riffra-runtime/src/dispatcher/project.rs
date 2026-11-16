@@ -432,7 +432,7 @@ mod tests {
     }
 
     #[test]
-    fn export_score_reports_keyswitches_without_a_declaration_and_refuses_link() {
+    fn export_score_reports_unrepresentable_performance_and_refuses_link() {
         let root = std::env::temp_dir().join(format!(
             "riffra-score-export-keyswitch-{}",
             riffra_control::new_instance_id()
@@ -441,7 +441,7 @@ mod tests {
         std::fs::create_dir_all(resources.join("01-keys")).unwrap();
         std::fs::write(
             resources.join("01-keys/definition.json"),
-            r#"{"metadata":{"name":"Keys"},"layers":[]}"#,
+            r#"{"metadata":{"name":"Keys"},"layers":[{"id":"main","trigger":{"event":"note_on","key_min":60,"key_max":60,"velocity_min":1,"velocity_max":127}}]}"#,
         )
         .unwrap();
         std::fs::write(
@@ -489,6 +489,15 @@ mod tests {
                 None,
             )
             .unwrap();
+        dispatcher
+            .dispatch(
+                request(
+                    "clip.midi.note.add",
+                    json!({"clipId":clip_id,"pitch":60,"startTick":0,"durationTicks":480,"velocity":100,"channel":10}),
+                ),
+                None,
+            )
+            .unwrap();
         let before = session(&dispatcher);
         let folder = root.join("song");
         let error = dispatcher
@@ -508,10 +517,21 @@ mod tests {
             panic!("expected an omission error, got {error:?}");
         };
         assert_eq!(details["kind"], "scoreExportOmissions");
+        let omissions = details["omissions"].as_array().expect("omissions");
         assert!(
-            details["omissions"][0]["subject"]
-                .as_str()
-                .is_some_and(|subject| subject.contains("key switch 24")),
+            omissions.iter().any(|omission| {
+                omission["subject"]
+                    .as_str()
+                    .is_some_and(|subject| subject.contains("key switch 24"))
+            }),
+            "{details}"
+        );
+        assert!(
+            omissions.iter().any(|omission| {
+                omission["message"]
+                    .as_str()
+                    .is_some_and(|message| message.contains("channel 10"))
+            }),
             "{details}"
         );
         assert!(!folder.exists());
