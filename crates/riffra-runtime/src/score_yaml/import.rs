@@ -2275,28 +2275,7 @@ fn build(
         track.pan_law = PanLaw::LinearBalance;
         track.effects.clear();
         track.score_instrument = Some(lane.id.clone());
-        if let Some(input) = spec["audio_input"].as_str() {
-            let source_tracks = instrument_tracks
-                .get(input)
-                .ok_or_else(|| format!("unknown audio input part '{input}'"))?
-                .clone();
-            track.external_audio_source_track_ids = source_tracks;
-        } else {
-            track.external_audio_source_track_ids.clear();
-        }
-        if resolved.is_none() {
-            let source = &sources[&lane.id];
-            let required_channels = source.report["external_audio"]["required_input_channels"]
-                .as_u64()
-                .unwrap_or(0);
-            if (required_channels > 0) != !track.external_audio_source_track_ids.is_empty() {
-                return Err(format!(
-                    "instrument '{}' audio input does not match its source routes",
-                    lane.id
-                )
-                .into());
-            }
-        }
+        track.external_audio_source_track_ids.clear();
         let previous_clip = claimed.and_then(|claimed| {
             previous.and_then(|session| {
                 session
@@ -2450,6 +2429,29 @@ fn build(
             .or_default()
             .push(track.id.clone());
         tracks.push(track);
+    }
+    for track in &mut tracks {
+        let Some(id) = track.score_instrument.as_deref() else {
+            continue;
+        };
+        let Some(input) = plan
+            .instruments
+            .get(id)
+            .and_then(|spec| spec["audio_input"].as_str())
+        else {
+            continue;
+        };
+        track.external_audio_source_track_ids = instrument_tracks
+            .get(input)
+            .ok_or_else(|| {
+                let path = format!("instruments.{id}.audio_input");
+                let message = format!("unknown audio input part '{input}'");
+                ImportError {
+                    details: plan.source_detail(&path, &message),
+                    message,
+                }
+            })?
+            .clone();
     }
     attach_track_effects(
         plan,
@@ -3928,6 +3930,22 @@ fn validate_performance(
     plan: &ScorePlan,
     sources: &BTreeMap<String, Source>,
 ) -> Result<(), ImportError> {
+    for (id, source) in sources {
+        let spec = &plan.instruments[id];
+        let required_channels = source.report["external_audio"]["required_input_channels"]
+            .as_u64()
+            .unwrap_or(0);
+        let routed = spec["audio_input"]
+            .as_str()
+            .is_some_and(|input| plan.instruments.contains_key(input));
+        if (required_channels > 0) != routed {
+            let field = format!("instruments.{id}.audio_input");
+            return Err(ImportError {
+                message: format!("instrument '{id}' audio input does not match its source routes"),
+                details: plan.source_detail(&field, "audio input mismatch"),
+            });
+        }
+    }
     for lane in &plan.lanes {
         if is_production_instrument(plan, &lane.id) {
             for (index, event) in lane.pattern.events.iter().enumerate() {
@@ -3949,23 +3967,6 @@ fn validate_performance(
             continue;
         }
         let source = &sources[&lane.id];
-        let spec = &plan.instruments[&lane.id];
-        let required_channels = source.report["external_audio"]["required_input_channels"]
-            .as_u64()
-            .unwrap_or(0);
-        let routed = spec["audio_input"]
-            .as_str()
-            .is_some_and(|input| plan.instruments.contains_key(input));
-        if (required_channels > 0) != routed {
-            let field = format!("instruments.{}.audio_input", lane.id);
-            return Err(ImportError {
-                message: format!(
-                    "instrument '{}' audio input does not match its source routes",
-                    lane.id
-                ),
-                details: plan.source_detail(&field, "audio input mismatch"),
-            });
-        }
         for (order, event) in lane.pattern.events.iter().enumerate() {
             let path = lane
                 .sources
@@ -4421,6 +4422,45 @@ mod tests {
 
     fn store(root: &Path) -> UserInstrumentStore {
         UserInstrumentStore::new(root, Path::new("sonalloy"))
+    }
+
+    #[test]
+    fn audio_inputs_connect_all_source_lanes_independently_of_name_order() {
+        let root =
+            std::env::temp_dir().join(format!("riffra-score-input-{}", uuid::Uuid::now_v7()));
+        let store = store(&root);
+        let mut staged = StagedResources::new(&root);
+        for (sender, receiver) in [("a", "z"), ("z", "a")] {
+            let mut score: Value = serde_json::from_str(SCORE).unwrap();
+            score["instruments"] = json!({
+                sender: {"preset": "TEST/001-lead"},
+                receiver: {"preset": "TEST/002-input", "audio_input": sender}
+            });
+            score["sections"]["verse"]["lines"] = json!({
+                "first": {"instrument": sender, "melody": "theme"},
+                "second": {"instrument": sender, "melody": "theme", "gain_db": -6},
+                "receiver": {"instrument": receiver, "melody": "theme"}
+            });
+            let mut document = document(&score.to_string());
+            document.sources.get_mut(receiver).unwrap().report["external_audio"] =
+                json!({"required_input_channels": 2});
+
+            let session = build(&mut document, None, &store, &mut staged, BuildMode::Stage)
+                .expect("external input build");
+
+            let tracks = &session.arrangement.tracks;
+            let source_ids = tracks
+                .iter()
+                .filter(|track| track.score_instrument.as_deref() == Some(sender))
+                .map(|track| track.id.clone())
+                .collect::<Vec<_>>();
+            assert_eq!(source_ids.len(), 2);
+            let receiver_track = tracks
+                .iter()
+                .find(|track| track.score_instrument.as_deref() == Some(receiver))
+                .unwrap();
+            assert_eq!(receiver_track.external_audio_source_track_ids, source_ids);
+        }
     }
 
     #[test]
