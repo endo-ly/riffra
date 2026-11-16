@@ -63,6 +63,7 @@ const QUALITIES: &[(&str, &[i32])] = &[
 ];
 
 /// One melodic line in a section.
+#[derive(PartialEq)]
 struct Line {
     instrument: String,
     part: String,
@@ -70,7 +71,7 @@ struct Line {
 }
 
 /// One section's rendered body.
-#[derive(Default)]
+#[derive(Default, PartialEq)]
 struct Content {
     velocity: Option<u8>,
     lines: Vec<Line>,
@@ -87,34 +88,6 @@ struct Content {
     notes: Option<String>,
     tonic: String,
     scale: Option<String>,
-}
-
-impl Content {
-    fn fingerprint(&self) -> String {
-        serde_json::to_string(&json!({
-            "velocity": self.velocity,
-            "lines": self
-                .lines
-                .iter()
-                .map(|line| (&line.instrument, &line.part, &line.material))
-                .collect::<Vec<_>>(),
-            "placements": self.placements,
-            "events": self.events,
-            "chords": self.chords,
-            "chord_changes": self.chord_changes,
-            "drums": self.drums,
-            "hits": self.hits,
-            "audio": self
-                .audio
-                .iter()
-                .map(|clip| (&clip.name, &clip.body))
-                .collect::<Vec<_>>(),
-            "notes": self.notes,
-            "tonic": self.tonic,
-            "scale": self.scale,
-        }))
-        .expect("section content serializes")
-    }
 }
 
 /// One note on the absolute timeline.
@@ -136,6 +109,7 @@ struct Hit {
 }
 
 /// One audio clip of a section before its Score ID is assigned.
+#[derive(PartialEq)]
 struct AudioDeclaration {
     name: String,
     body: Value,
@@ -169,67 +143,56 @@ pub(super) fn apply(
             .or_default()
             .insert(articulation.name.clone());
     }
-    let mut contents = Vec::with_capacity(export.sections.len());
+    let mut contents: Vec<Content> = Vec::new();
+    let mut names = Vec::new();
+    let mut used = BTreeSet::new();
+    let mut bodies = Vec::with_capacity(export.sections.len());
     for index in 0..export.sections.len() {
         let section = export.sections[index].clone();
-        contents.push(build(export, &section, &performance, &articulations)?);
-    }
-    let mut fingerprints: Vec<String> = Vec::new();
-    let mut names: Vec<String> = Vec::new();
-    let mut used = BTreeSet::new();
-    let mut bodies = Vec::with_capacity(contents.len());
-    for (index, content) in contents.iter().enumerate() {
-        let fingerprint = content.fingerprint();
-        let body = match fingerprints.iter().position(|other| *other == fingerprint) {
-            Some(position) => position,
+        let content = build(export, &section, &performance, &articulations)?;
+        let body = contents.iter().position(|other| other == &content);
+        bodies.push(match body {
+            Some(body) => body,
             None => {
-                names.push(unique_name(&export.sections[index].base, &mut used));
-                fingerprints.push(fingerprint);
-                fingerprints.len() - 1
+                names.push(super::unique_id(
+                    &export.sections[index].base,
+                    "section",
+                    &mut used,
+                ));
+                contents.push(content);
+                contents.len() - 1
             }
-        };
-        bodies.push(body);
+        });
     }
     let mut melodies = Map::new();
     let mut drums = Map::new();
     let mut sections = Map::new();
-    let mut materials = BTreeMap::<String, String>::new();
+    let mut materials = BTreeMap::<Vec<String>, String>::new();
     let mut clip_ids = BTreeSet::new();
-    for (body, name) in names.iter().enumerate() {
-        let content = &contents[first_body(&bodies, body)];
+    for (body, content) in contents.into_iter().enumerate() {
+        let name = &names[body];
         let mut section = Map::new();
-        if let Some(lines) = lines(content, name, &mut melodies, &mut materials) {
+        if let Some(lines) = lines(&content, name, &mut melodies, &mut materials) {
             section.insert("lines".into(), lines);
         }
         if !content.drums.is_empty() {
-            drums.insert(format!("{name}_drums"), drum_phrase(content));
+            drums.insert(format!("{name}_drums"), drum_phrase(&content));
             section.insert("drums".into(), Value::String(format!("{name}_drums")));
         }
         if !content.placements.is_empty() {
-            section.insert(
-                "placements".into(),
-                Value::Array(content.placements.clone()),
-            );
+            section.insert("placements".into(), Value::Array(content.placements));
         }
         if !content.events.is_empty() {
-            section.insert("events".into(), Value::Array(content.events.clone()));
+            section.insert("events".into(), Value::Array(content.events));
         }
-        if let Some(chords) = &content.chords {
+        if let Some(chords) = content.chords {
             section.insert(
                 "chords".into(),
-                Value::Array(
-                    chords
-                        .iter()
-                        .map(|chord| Value::String(chord.clone()))
-                        .collect(),
-                ),
+                Value::Array(chords.into_iter().map(Value::String).collect()),
             );
         }
         if !content.chord_changes.is_empty() {
-            section.insert(
-                "chord_changes".into(),
-                Value::Array(content.chord_changes.clone()),
-            );
+            section.insert("chord_changes".into(), Value::Array(content.chord_changes));
         }
         if !content.audio.is_empty() {
             section.insert(
@@ -237,10 +200,13 @@ pub(super) fn apply(
                 Value::Array(
                     content
                         .audio
-                        .iter()
+                        .into_iter()
                         .map(|clip| {
-                            let mut body = clip.body.clone();
-                            body["id"] = json!(super::unique_id(&clip.name, "clip", &mut clip_ids));
+                            let AudioDeclaration {
+                                name: clip_name,
+                                mut body,
+                            } = clip;
+                            body["id"] = json!(super::unique_id(&clip_name, "clip", &mut clip_ids));
                             body
                         })
                         .collect(),
@@ -250,8 +216,8 @@ pub(super) fn apply(
         if let Some(velocity) = content.velocity {
             section.insert("velocity".into(), json!(velocity));
         }
-        if let Some(notes) = &content.notes {
-            section.insert("notes".into(), Value::String(notes.clone()));
+        if let Some(notes) = content.notes {
+            section.insert("notes".into(), Value::String(notes));
         }
         sections.insert(name.clone(), Value::Object(section));
     }
@@ -317,23 +283,15 @@ fn report_clips(export: &mut Export<'_>) {
     }
 }
 
-fn first_body(bodies: &[usize], body: usize) -> usize {
-    bodies
-        .iter()
-        .position(|candidate| *candidate == body)
-        .expect("a body occurs at least once")
-}
-
 fn lines(
     content: &Content,
     section: &str,
     melodies: &mut Map<String, Value>,
-    materials: &mut BTreeMap<String, String>,
+    materials: &mut BTreeMap<Vec<String>, String>,
 ) -> Option<Value> {
     let mut result = Map::new();
     for line in &content.lines {
-        let key = serde_json::to_string(&line.material).expect("material serializes");
-        let name = materials.entry(key).or_insert_with(|| {
+        let name = materials.entry(line.material.clone()).or_insert_with(|| {
             let name = format!("{section}_{}", line.part);
             melodies.insert(
                 name.clone(),
@@ -365,17 +323,6 @@ fn drum_phrase(content: &Content) -> Value {
         }
     }
     json!({"parts": parts})
-}
-
-fn unique_name(base: &str, used: &mut BTreeSet<String>) -> String {
-    let stem = super::identifier(base).unwrap_or_else(|| "section".into());
-    let mut candidate = stem.clone();
-    let mut number = 2;
-    while !used.insert(candidate.clone()) {
-        candidate = format!("{stem}_{number}");
-        number += 1;
-    }
-    candidate
 }
 
 /// The material every section of the song is rendered from.
@@ -1470,9 +1417,9 @@ fn coalesce(
 /// A longer ramp that starts at the same point must stay on the line through
 /// the current end, so a point that leaves it ends every possible match.
 fn geometric_limit(points: &[(u64, u32, Point)], start: usize, limit: usize) -> usize {
+    let first = points[start].2;
     let mut end = start + 1;
     while end < limit {
-        let first = points[start].2;
         let last = points[end].2;
         let next = points[end + 1].2;
         let ratio =
@@ -2137,7 +2084,6 @@ mod tests {
             (15, 1, Point::value(PointKind::ModWheel, 0.5)),
             (30, 2, Point::value(PointKind::ModWheel, 1.0)),
         ];
-        assert!(matches(&points, 960));
         let section = section();
         let events = coalesce(&points, 960, &section, "lead");
         assert_eq!(events.len(), 1);
@@ -2149,7 +2095,6 @@ mod tests {
             (15, 1, Point::value(PointKind::ModWheel, 0.9)),
             (30, 2, Point::value(PointKind::ModWheel, 1.0)),
         ];
-        assert!(!matches(&broken, 960));
         assert_eq!(coalesce(&broken, 960, &section, "lead").len(), 2);
 
         let cc = [
@@ -2157,7 +2102,6 @@ mod tests {
             (15, 1, Point::cc(11, 64)),
             (30, 2, Point::cc(11, 127)),
         ];
-        assert!(matches(&cc, 960));
         let events = coalesce(&cc, 960, &section, "lead");
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].2["kind"], "automation");
@@ -2170,14 +2114,16 @@ mod tests {
             (15, 1, Point::cc(11, 63)),
             (30, 2, Point::cc(11, 127)),
         ];
-        assert!(!matches(&off, 960));
+        let events = coalesce(&off, 960, &section, "lead");
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].2["from_value"], 0);
+        assert_eq!(events[0].2["to_value"], 63);
 
         let repeated = [
             (0, 0, Point::cc(11, 0)),
             (15, 1, Point::cc(11, 0)),
             (30, 2, Point::cc(11, 127)),
         ];
-        assert!(!matches(&repeated, 960));
         let events = coalesce(&repeated, 960, &section, "lead");
         assert_eq!(events.len(), 2);
         assert_eq!(events[0].2["kind"], "cc");

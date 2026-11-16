@@ -137,7 +137,7 @@ impl HostDispatcher<'_> {
                     return Err(omissions_error(&plan.omissions));
                 }
                 let path = plan.write().map_err(export_error)?;
-                let linked = linked_session(&current.session, &plan.score_instruments);
+                let linked = plan.linked_session(&current.session);
                 let rebuilt = crate::score_yaml::import::link(
                     &linked,
                     &path,
@@ -275,20 +275,6 @@ impl HostDispatcher<'_> {
             sequence,
         })
     }
-}
-
-/// Marks the Tracks with the Score instruments they were exported as.
-fn linked_session(
-    session: &riffra_core::CreativeSession,
-    instruments: &std::collections::BTreeMap<String, String>,
-) -> riffra_core::CreativeSession {
-    let mut session = session.clone();
-    for track in &mut session.arrangement.tracks {
-        if let Some(id) = instruments.get(&track.id) {
-            track.score_instrument = Some(id.clone());
-        }
-    }
-    session
 }
 
 fn already_linked(session: &riffra_core::CreativeSession) -> bool {

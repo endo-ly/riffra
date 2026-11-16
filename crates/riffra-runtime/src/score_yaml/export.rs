@@ -196,7 +196,7 @@ pub(crate) struct ExportPlan {
     pub(crate) path: PathBuf,
     pub(crate) omissions: Vec<ScoreExportOmission>,
     /// Score instrument ID written for each canonical Track.
-    pub(crate) score_instruments: BTreeMap<String, String>,
+    score_instruments: BTreeMap<String, String>,
     files: BTreeMap<String, ExportFile>,
     score: String,
 }
@@ -215,6 +215,17 @@ impl ExportPlan {
         }
         stage(&self.path, &self.files, &self.score)?;
         Ok(self.path.join("score.yaml"))
+    }
+
+    /// Returns the Session with the Score instrument IDs this plan wrote.
+    pub(crate) fn linked_session(&self, session: &CreativeSession) -> CreativeSession {
+        let mut linked = session.clone();
+        for track in &mut linked.arrangement.tracks {
+            if let Some(id) = self.score_instruments.get(&track.id) {
+                track.score_instrument = Some(id.clone());
+            }
+        }
+        linked
     }
 }
 
@@ -976,7 +987,7 @@ mod tests {
     use super::*;
     use crate::api::output::{PluginEntry, PluginFormat, PluginRole, PluginScanState, ScanReport};
     use riffra_core::{
-        CreativeSession, InstrumentControlEventKind, MidiClip, MidiNote, TimelineTick,
+        CreativeSession, InstrumentControlEventKind, MidiClip, MidiNote, MixBusKind, TimelineTick,
     };
 
     const SCORE: &str = r#"{
@@ -1018,13 +1029,35 @@ mod tests {
         }
     }"#;
 
-    fn root(name: &str) -> PathBuf {
+    struct TempRoot(PathBuf);
+
+    impl std::ops::Deref for TempRoot {
+        type Target = Path;
+
+        fn deref(&self) -> &Self::Target {
+            &self.0
+        }
+    }
+
+    impl AsRef<Path> for TempRoot {
+        fn as_ref(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TempRoot {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn root(name: &str) -> TempRoot {
         let root = std::env::temp_dir().join(format!(
             "riffra-score-export-{name}-{}",
             riffra_control::new_instance_id()
         ));
         std::fs::create_dir_all(&root).unwrap();
-        root
+        TempRoot(root)
     }
 
     fn catalog(root: &Path) {
@@ -1168,23 +1201,6 @@ mod tests {
     }
 
     #[test]
-    fn pan_laws_convert_to_matching_linear_balance_gains() {
-        let (gain, pan) = pan_law(PanLaw::EqualPower, 0.0, 0.0);
-        assert!((gain - 20.0 * (std::f64::consts::FRAC_1_SQRT_2).log10()).abs() < 1e-9);
-        assert!(pan.abs() < 1e-9);
-
-        let (gain, pan) = pan_law(PanLaw::EqualPower, -6.0, -1.0);
-        assert!((gain + 6.0).abs() < 1e-9);
-        assert!((pan + 1.0).abs() < 1e-9);
-
-        let (gain, pan) = pan_law(PanLaw::UnityCenterStereo, 3.0, 1.0);
-        assert!((gain - 3.0).abs() < 1e-9);
-        assert!((pan - 1.0).abs() < 1e-9);
-
-        assert_eq!(pan_law(PanLaw::LinearBalance, -6.0, 0.5), (-6.0, 0.5));
-    }
-
-    #[test]
     fn audio_end_follows_the_tempo_map_and_sample_rate() {
         use riffra_core::{
             AudioTakeVariant, FadeShape, FrameDuration, FrameRange, TempoChange, TimelineTick,
@@ -1244,23 +1260,33 @@ mod tests {
             )
         };
         for law in [PanLaw::EqualPower, PanLaw::UnityCenterStereo] {
-            for pan in [-1.0, -0.3, 0.0, 0.4, 1.0] {
-                let angle = (pan + 1.0) * std::f64::consts::PI / 4.0;
-                let scale = if law == PanLaw::UnityCenterStereo {
-                    std::f64::consts::SQRT_2
-                } else {
-                    1.0
-                };
-                let expected = (
-                    10.0_f64.powf(0.0 / 20.0) * (angle.cos() * scale).min(1.0),
-                    (angle.sin() * scale).min(1.0),
-                );
-                let (gain_db, out_pan) = pan_law(law, 0.0, pan);
-                let converted = linear(gain_db, out_pan);
-                assert!((converted.0 - expected.0).abs() < 1e-9, "{law:?} {pan}");
-                assert!((converted.1 - expected.1).abs() < 1e-9, "{law:?} {pan}");
+            for gain_db in [0.0, -6.0, 3.0] {
+                for pan in [-1.0, -0.3, 0.0, 0.4, 1.0] {
+                    let angle = (pan + 1.0) * std::f64::consts::PI / 4.0;
+                    let scale = if law == PanLaw::UnityCenterStereo {
+                        std::f64::consts::SQRT_2
+                    } else {
+                        1.0
+                    };
+                    let amplitude = 10.0_f64.powf(gain_db / 20.0);
+                    let expected = (
+                        amplitude * (angle.cos() * scale).min(1.0),
+                        amplitude * (angle.sin() * scale).min(1.0),
+                    );
+                    let (converted_gain, out_pan) = pan_law(law, gain_db, pan);
+                    let converted = linear(converted_gain, out_pan);
+                    assert!(
+                        (converted.0 - expected.0).abs() < 1e-9,
+                        "{law:?} {gain_db} {pan}"
+                    );
+                    assert!(
+                        (converted.1 - expected.1).abs() < 1e-9,
+                        "{law:?} {gain_db} {pan}"
+                    );
+                }
             }
         }
+        assert_eq!(pan_law(PanLaw::LinearBalance, -6.0, 0.5), (-6.0, 0.5));
     }
 
     #[test]
@@ -1321,9 +1347,23 @@ mod tests {
         assert_eq!(first.files, second.files, "bundled files are deterministic");
     }
 
-    /// Collects the musical content the round trip must preserve.
-    fn performance(session: &CreativeSession) -> String {
-        let mut lines = Vec::new();
+    /// The musical content the round trip must preserve.
+    #[derive(Debug, PartialEq)]
+    struct PerformanceView {
+        tracks: BTreeMap<String, TrackView>,
+        tempo: Vec<(u64, f64)>,
+        meters: Vec<(u64, u8, u8)>,
+        buses: Vec<(String, MixBusKind)>,
+    }
+
+    #[derive(Debug, PartialEq)]
+    struct TrackView {
+        notes: Vec<(u64, u64, u8, u8)>,
+        controls: Vec<(u64, InstrumentControlEventKind)>,
+    }
+
+    fn performance(session: &CreativeSession) -> PerformanceView {
+        let mut tracks = BTreeMap::new();
         for track in &session.arrangement.tracks {
             let Some(id) = &track.score_instrument else {
                 continue;
@@ -1337,68 +1377,49 @@ mod tests {
                 .filter(|clip| clip.track_id == track.id && !clip.muted)
             {
                 for note in &clip.notes {
-                    notes.push(format!(
-                        "{}:{}:{}:{}",
+                    notes.push((
                         clip.start_tick.0 + note.start_tick.0,
                         note.duration_ticks,
                         note.note,
-                        note.velocity
+                        note.velocity,
                     ));
                 }
                 for event in &clip.instrument_control_events {
-                    let tick = clip.start_tick.0 + event.tick.0;
-                    controls.push(match &event.kind {
-                        InstrumentControlEventKind::SustainPedal { down } => {
-                            format!("{tick}:sustain:{down}")
-                        }
-                        InstrumentControlEventKind::PitchBend { value } => {
-                            format!("{tick}:bend:{value}")
-                        }
-                        InstrumentControlEventKind::ModWheel { value } => {
-                            format!("{tick}:mod:{value}")
-                        }
-                        InstrumentControlEventKind::Aftertouch { value } => {
-                            format!("{tick}:after:{value}")
-                        }
-                        InstrumentControlEventKind::ParameterChange {
-                            parameter,
-                            native_value,
-                        } => format!("{tick}:parameter:{parameter}:{native_value}"),
-                        InstrumentControlEventKind::ParameterRamp {
-                            parameter,
-                            from_value,
-                            to_value,
-                            duration_ticks,
-                        } => format!(
-                            "{tick}:ramp:{parameter}:{from_value}:{to_value}:{duration_ticks}"
-                        ),
-                        InstrumentControlEventKind::KeySwitch { note, mode, down } => {
-                            format!("{tick}:keyswitch:{note}:{mode:?}:{down}")
-                        }
-                        InstrumentControlEventKind::ControlChange { number, value } => {
-                            format!("{tick}:cc:{number}:{value}")
-                        }
-                    });
+                    controls.push((clip.start_tick.0 + event.tick.0, event.kind.clone()));
                 }
             }
-            notes.sort();
-            controls.sort();
-            lines.push(format!("{id}|{}|{}", notes.join(","), controls.join(",")));
+            notes.sort_unstable();
+            controls.sort_by_key(|(tick, kind)| (*tick, format!("{kind:?}")));
+            tracks.insert(id.clone(), TrackView { notes, controls });
         }
-        lines.sort();
-        for change in &session.arrangement.timebase.tempo_changes {
-            lines.push(format!("tempo:{}:{}", change.tick, change.bpm));
+        let tempo = session
+            .arrangement
+            .timebase
+            .tempo_changes
+            .iter()
+            .map(|change| (change.tick, change.bpm))
+            .collect();
+        let meters = session
+            .arrangement
+            .timebase
+            .time_signature_changes
+            .iter()
+            .map(|change| (change.tick, change.numerator, change.denominator))
+            .collect();
+        let mut buses = session
+            .arrangement
+            .mixer
+            .buses
+            .iter()
+            .map(|bus| (bus.name.clone(), bus.kind))
+            .collect::<Vec<_>>();
+        buses.sort_by_key(|bus| (bus.0.clone(), format!("{:?}", bus.1)));
+        PerformanceView {
+            tracks,
+            tempo,
+            meters,
+            buses,
         }
-        for change in &session.arrangement.timebase.time_signature_changes {
-            lines.push(format!(
-                "meter:{}:{}/{}",
-                change.tick, change.numerator, change.denominator
-            ));
-        }
-        for bus in &session.arrangement.mixer.buses {
-            lines.push(format!("bus:{}:{:?}", bus.name, bus.kind));
-        }
-        lines.join("\n")
     }
 
     const ARTICULATION_SCORE: &str = r#"{
@@ -2912,22 +2933,14 @@ mod tests {
 
         let root = root("trigger-range");
         let definition = r#"{"metadata":{"name":"Range"},"layers":[{"id":"main","trigger":{"event":"note_on","key_min":60,"key_max":72,"velocity_min":1,"velocity_max":100}}]}"#;
-        let resources = root.join("resources");
-        std::fs::create_dir_all(resources.join("01-range")).unwrap();
-        std::fs::write(resources.join("01-range/definition.json"), definition).unwrap();
-        std::fs::write(
-            resources.join("manifest.json"),
-            br#"{"sourceRelease":"vtest","presets":[{"id":"01-range","name":"Range","author":"Riffra","description":"Range","category":"Keys","tags":["test"],"recommendedRange":{"minMidi":36,"maxMidi":84},"preview":{"tempoBpm":120,"ticksPerBeat":480,"timeSignature":{"numerator":4,"denominator":4},"lengthTicks":1920,"notes":[{"tick":0,"durationTicks":480,"note":60,"velocity":100}]},"definitionPath":"01-range/definition.json","resourceBasePath":"01-range"}]}"#,
-        )
-        .unwrap();
-        let catalog = crate::instrument::BuiltInInstrumentCatalog::load(&resources).unwrap();
+        let catalog = built_in_catalog(&root, definition);
         let mut session = CreativeSession::new(1);
         let mut track = Track::instrument("track:lead".into(), "Lead".into());
         track.instrument = Some(
             TrackInstrument::built_in(
                 "device:lead".into(),
                 "Range".into(),
-                "01-range".into(),
+                "TEST-001".into(),
                 definition.into(),
             )
             .unwrap(),
