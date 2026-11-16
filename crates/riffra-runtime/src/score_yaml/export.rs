@@ -141,6 +141,16 @@ pub(super) struct ExportTrack<'a> {
     pub(super) role: TrackRole,
 }
 
+impl ExportTrack<'_> {
+    /// The Score instrument ID the canonical Track came from, without a kit prefix.
+    pub(super) fn source_id(&self) -> Option<&str> {
+        self.track
+            .score_instrument
+            .as_deref()
+            .map(|id| id.strip_prefix("kit:").unwrap_or(id))
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(super) enum TrackRole {
     Instrument,
@@ -783,12 +793,15 @@ fn kit_members(export: &Export, used: &mut BTreeSet<String>) -> BTreeMap<String,
                 triggers.insert(note.note);
             }
         }
+        let source_kit = track.source_id();
         let mut parts = Vec::new();
         for trigger in triggers {
-            let source = export
-                .original
-                .as_ref()
-                .and_then(|original| original_kit_part(original, kit, trigger));
+            let source = source_kit.and_then(|kit| {
+                export
+                    .original
+                    .as_ref()
+                    .and_then(|original| original_kit_part(original, kit, trigger))
+            });
             let base = source.clone().unwrap_or_else(|| format!("{kit}_{trigger}"));
             let id = unique_id(&base, &format!("{kit}_{trigger}"), used);
             parts.push(KitMember {
@@ -1435,7 +1448,7 @@ mod tests {
             ]
         }},
         "melodies":{"line":["1:16","1:16"]},
-        "instruments":{"part":{"source":{
+        "instruments":{"part":{"role":"Lead role","sound":"Lead sound","source":{
             "vst3":{"plugin":"Synth"},
             "articulations":{
                 "default":{"keyswitch":24,"mode":"latch"},
@@ -1496,21 +1509,49 @@ mod tests {
         let root = root("articulations");
         catalog(&root);
         let catalog = crate::test_support::empty_built_in_catalog();
-        let session = crate::score_yaml::import::session_from_score(
+        let mut session = crate::score_yaml::import::session_from_score(
             ARTICULATION_SCORE,
             &root.join("source"),
             &root,
             catalog,
         );
+        let source_track_id = session.arrangement.tracks[0].id.clone();
+        let mut second = session.arrangement.tracks[0].clone();
+        second.id = "track:part-2".into();
+        second.name = "Part 2".into();
+        second
+            .instrument
+            .as_mut()
+            .expect("the source track has an instrument")
+            .id = "device:part-2".into();
+        session.arrangement.tracks.push(second);
+        let clips = session
+            .arrangement
+            .midi_clips
+            .iter()
+            .filter(|clip| clip.track_id == source_track_id)
+            .cloned()
+            .collect::<Vec<_>>();
+        for (index, mut clip) in clips.into_iter().enumerate() {
+            clip.id = format!("clip:part-2:{index}");
+            clip.track_id = "track:part-2".into();
+            session.arrangement.midi_clips.push(clip);
+        }
+
         let first = exported(&session, &root, catalog);
         let text = std::fs::read_to_string(first.path.join("score.yaml")).unwrap();
         crate::score::compile(&text).expect("the exported Score compiles");
         let document = crate::score::parse_document(&text).expect("the document parses");
-        let declarations = &document["instruments"]["part"]["source"]["articulations"];
-        assert!(declarations["default"].is_object(), "{declarations}");
-        assert!(declarations["mute"].is_object(), "{declarations}");
-        assert!(declarations["open"].is_object(), "{declarations}");
-        assert!(declarations.get("unused").is_none(), "{declarations}");
+        for id in ["part", "part_2"] {
+            let instrument = &document["instruments"][id];
+            assert_eq!(instrument["role"], "Lead role", "{instrument}");
+            assert_eq!(instrument["sound"], "Lead sound", "{instrument}");
+            let declarations = &instrument["source"]["articulations"];
+            assert!(declarations["default"].is_object(), "{declarations}");
+            assert!(declarations["mute"].is_object(), "{declarations}");
+            assert!(declarations["open"].is_object(), "{declarations}");
+            assert!(declarations.get("unused").is_none(), "{declarations}");
+        }
         let imported = crate::score_yaml::import::session_from_score(
             &text,
             &root.join("song"),
@@ -1588,7 +1629,10 @@ mod tests {
             }
         },
         "drums":{"beat":{"parts":{"kick":["x...x.","x....."],"snare":["....x.","..x..."]}}},
-        "instruments":{"kick":{"kit":"drums","trigger_note_midi":36},"snare":{"kit":"drums","trigger_note_midi":38}},
+        "instruments":{
+            "kick":{"kit":"drums","trigger_note_midi":36,"role":"Kick role","sound":"Kick sound"},
+            "snare":{"kit":"drums","trigger_note_midi":38,"role":"Snare role","sound":"Snare sound"}
+        },
         "kits":{"drums":{"source":{"vst3":{"plugin":"Drums"}}}}
     }"#;
 
@@ -1714,7 +1758,7 @@ mod tests {
 
         let mut third = session.arrangement.tracks[0].clone();
         third.id = "track:clashing-instrument".into();
-        third.name = "drums_2_36".into();
+        third.name = "snare".into();
         third.kind = TrackKind::Instrument;
         third.score_instrument = None;
         let mut instrument = third.instrument.clone().unwrap();
@@ -1783,29 +1827,30 @@ mod tests {
             document["kits"]["drums_2"]["source"]["vst3"]["state"],
             "states/kits/drums_2/instrument.json"
         );
-        assert_eq!(document["instruments"]["snare"]["kit"], "drums");
-        assert_eq!(document["instruments"]["snare"]["trigger_note_midi"], 38);
-        assert_eq!(document["instruments"]["drums_2_38"]["kit"], "drums_2");
-        assert_eq!(
-            document["instruments"]["drums_2_38"]["trigger_note_midi"],
-            38
-        );
-        assert!(document["instruments"]["drums_2_36"].is_object());
+        assert_eq!(document["instruments"]["kick"]["kit"], "drums");
+        assert_eq!(document["instruments"]["kick"]["trigger_note_midi"], 36);
+        assert_eq!(document["instruments"]["kick"]["role"], "Kick role");
+        assert_eq!(document["instruments"]["kick"]["sound"], "Kick sound");
+        assert_eq!(document["instruments"]["snare_2"]["kit"], "drums");
+        assert_eq!(document["instruments"]["snare_2"]["trigger_note_midi"], 38);
+        assert_eq!(document["instruments"]["snare_2"]["role"], "Snare role");
+        assert_eq!(document["instruments"]["kick_2"]["kit"], "drums_2");
+        assert_eq!(document["instruments"]["kick_2"]["role"], "Kick role");
+        assert_eq!(document["instruments"]["snare_3"]["kit"], "drums_2");
+        assert_eq!(document["instruments"]["snare_3"]["trigger_note_midi"], 38);
+        assert_eq!(document["instruments"]["snare_3"]["sound"], "Snare sound");
+        assert!(document["instruments"]["snare"].is_object());
         assert!(
-            document["instruments"]["drums_2_36"].get("kit").is_none(),
+            document["instruments"]["snare"].get("kit").is_none(),
             "the standalone instrument keeps its own declaration"
         );
-        assert_eq!(
-            document["instruments"]["drums_2_36_2"]["kit"], "drums_2",
-            "{document}"
-        );
-        assert_eq!(
-            document["instruments"]["drums_2_36_2"]["trigger_note_midi"],
-            36
+        assert!(
+            document["instruments"]["snare"].get("role").is_none(),
+            "the standalone instrument does not inherit a kit member declaration"
         );
         assert!(
             document["drums"]["grid_drums"]["parts"]
-                .get("drums_2_36_2")
+                .get("snare_3")
                 .is_some(),
             "{document}"
         );
@@ -1869,7 +1914,7 @@ mod tests {
             .arrangement
             .tracks
             .iter()
-            .find(|track| track.score_instrument.as_deref() == Some("drums_2_36"))
+            .find(|track| track.score_instrument.as_deref() == Some("snare"))
             .expect("the standalone instrument keeps its ID");
         let notes = imported
             .arrangement
