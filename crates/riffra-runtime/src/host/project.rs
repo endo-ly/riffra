@@ -952,13 +952,6 @@ instruments: {lead: {preset: LEAD/001-analog-saw-lead, voices: 8}}
             .midi_clips[0]
             .id
             .clone();
-        assert!(
-            request(
-                "clip.midi.update",
-                json!({"clipId":clip,"patch":{"muted":true}})
-            )
-            .ok
-        );
         assert!(request(
             "clip.midi.note.add",
             json!({"clipId":clip,"pitch":60,"startTick":0,"durationTicks":480,"velocity":100,"channel":1})

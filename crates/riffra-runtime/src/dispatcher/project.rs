@@ -432,6 +432,95 @@ mod tests {
     }
 
     #[test]
+    fn export_score_reports_keyswitches_without_a_declaration_and_refuses_link() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-score-export-keyswitch-{}",
+            riffra_control::new_instance_id()
+        ));
+        let resources = root.join("resources");
+        std::fs::create_dir_all(resources.join("01-keys")).unwrap();
+        std::fs::write(
+            resources.join("01-keys/definition.json"),
+            r#"{"metadata":{"name":"Keys"},"layers":[]}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            resources.join("manifest.json"),
+            br#"{"sourceRelease":"vtest","presets":[{"id":"01-keys","name":"Keys","author":"Riffra","description":"Keys","category":"Keys","tags":["test"],"recommendedRange":{"minMidi":36,"maxMidi":84},"preview":{"tempoBpm":120,"ticksPerBeat":480,"timeSignature":{"numerator":4,"denominator":4},"lengthTicks":1920,"notes":[{"tick":0,"durationTicks":480,"note":48,"velocity":100}]},"definitionPath":"01-keys/definition.json","resourceBasePath":"01-keys"}]}"#,
+        )
+        .unwrap();
+        let dispatcher = Dispatcher::open(root.clone(), resources).unwrap();
+        dispatcher
+            .dispatch(
+                request("track.add", json!({"name":"Keys","kind":"instrument"})),
+                None,
+            )
+            .unwrap();
+        let track_id = session(&dispatcher).arrangement.tracks[0].id.clone();
+        dispatcher
+            .dispatch(
+                request(
+                    "instrument.apply",
+                    json!({"trackId":track_id,"instrumentId":"builtin:01-keys"}),
+                ),
+                None,
+            )
+            .unwrap();
+        dispatcher
+            .dispatch(
+                request(
+                    "clip.midi.create",
+                    json!({"trackId":track_id,"startTick":0,"durationTicks":1920,"name":"Keys"}),
+                ),
+                None,
+            )
+            .unwrap();
+        let clip_id = session(&dispatcher).arrangement.midi_clips[0].id.clone();
+        dispatcher
+            .dispatch(
+                request(
+                    "clip.midi.instrument-event.add",
+                    json!({
+                        "clipId": clip_id,
+                        "tick": 480,
+                        "kind": {"type":"keySwitch","note":24,"mode":"latch","down":true},
+                    }),
+                ),
+                None,
+            )
+            .unwrap();
+        let before = session(&dispatcher);
+        let folder = root.join("song");
+        let error = dispatcher
+            .dispatch(
+                request(
+                    "project.export-score",
+                    json!({"path": folder, "link": true}),
+                ),
+                None,
+            )
+            .unwrap_err();
+        let crate::dispatcher::DispatchError::InvalidRequest {
+            details: Some(details),
+            ..
+        } = error
+        else {
+            panic!("expected an omission error, got {error:?}");
+        };
+        assert_eq!(details["kind"], "scoreExportOmissions");
+        assert!(
+            details["omissions"][0]["subject"]
+                .as_str()
+                .is_some_and(|subject| subject.contains("key switch 24")),
+            "{details}"
+        );
+        assert!(!folder.exists());
+        let after = session(&dispatcher);
+        assert_eq!(after.arrangement.revision, before.arrangement.revision);
+        assert!(after.score_source.is_none());
+    }
+
+    #[test]
     fn midi_export_uses_clip_or_track_origin() {
         use crate::test_support::mutated_session;
         let root = std::env::temp_dir().join(format!(

@@ -169,6 +169,8 @@ pub(super) struct Export<'a> {
     pub(super) audio_files: BTreeMap<riffra_core::AssetId, String>,
     /// Cached plugin parameter names by device id.
     pub(super) parameters: BTreeMap<String, Vec<PluginParameter>>,
+    /// Articulation declarations the exported events use, by Score instrument.
+    pub(super) written_articulations: BTreeMap<String, BTreeSet<String>>,
 }
 
 /// One automatable plugin parameter reported by the scanner.
@@ -243,6 +245,7 @@ pub(crate) fn plan(
         files: BTreeMap::new(),
         audio_files: BTreeMap::new(),
         parameters: BTreeMap::new(),
+        written_articulations: BTreeMap::new(),
     };
     export.kits = kit_members(&export);
     let mut document = Map::new();
@@ -708,10 +711,10 @@ fn resolve_tracks<'a>(
                 ),
                 _ if track.instrument.is_some() => TrackRole::Instrument,
                 _ => {
-                    if has_notes(session, &track.id) {
+                    if has_performance(session, &track.id) {
                         omissions.push(ScoreExportOmission {
                             subject: format!("track \"{}\"", track.name),
-                            message: "the track has notes but no instrument".into(),
+                            message: "the track has performance content but no instrument".into(),
                         });
                     }
                     continue;
@@ -723,17 +726,23 @@ fn resolve_tracks<'a>(
             _ => base,
         };
         let id = unique_id(&base, &format!("track_{}", index + 1), &mut used);
+        let role = match role {
+            TrackRole::Kit(_) => TrackRole::Kit(id.clone()),
+            role => role,
+        };
         tracks.push(ExportTrack { id, track, role });
     }
     tracks
 }
 
-fn has_notes(session: &CreativeSession, track_id: &str) -> bool {
-    session
-        .arrangement
-        .midi_clips
-        .iter()
-        .any(|clip| clip.track_id == track_id && !clip.notes.is_empty())
+fn has_performance(session: &CreativeSession, track_id: &str) -> bool {
+    session.arrangement.midi_clips.iter().any(|clip| {
+        clip.track_id == track_id
+            && !clip.muted
+            && (!clip.notes.is_empty()
+                || !clip.events.is_empty()
+                || !clip.instrument_control_events.is_empty())
+    })
 }
 
 /// Resolves kit member identifiers from the kit's trigger notes.
@@ -745,6 +754,9 @@ fn kit_members(export: &Export) -> BTreeMap<String, Vec<KitMember>> {
         };
         let mut triggers = BTreeSet::new();
         for clip in clips_for(export.session, &track.track.id) {
+            if clip.muted {
+                continue;
+            }
             for note in &clip.notes {
                 triggers.insert(note.note);
             }
@@ -1310,7 +1322,8 @@ mod tests {
             "articulations":{
                 "default":{"keyswitch":24,"mode":"latch"},
                 "mute":{"keyswitch":26,"mode":"latch"},
-                "open":{"keyswitch":27,"mode":"hold"}
+                "open":{"keyswitch":27,"mode":"hold"},
+                "unused":{"keyswitch":28,"mode":"latch"}
             }
         }}}
     }"#;
@@ -1354,6 +1367,12 @@ mod tests {
         let first = exported(&session, &root, catalog);
         let text = std::fs::read_to_string(first.path.join("score.yaml")).unwrap();
         crate::score::compile(&text).expect("the exported Score compiles");
+        let document = crate::score::parse_document(&text).expect("the document parses");
+        let declarations = &document["instruments"]["part"]["source"]["articulations"];
+        assert!(declarations["default"].is_object(), "{declarations}");
+        assert!(declarations["mute"].is_object(), "{declarations}");
+        assert!(declarations["open"].is_object(), "{declarations}");
+        assert!(declarations.get("unused").is_none(), "{declarations}");
         let imported = crate::score_yaml::import::session_from_score(
             &text,
             &root.join("song"),
@@ -1409,6 +1428,191 @@ mod tests {
             catalog,
         );
         assert_eq!(performance(&session), performance(&imported));
+    }
+
+    const CC_SCORE: &str = r#"{
+        "meta":{"title":"CC","bpm":120,"meter":"4/4","tuning":"12edo","gate":1},
+        "form":[{"section":"verse","bars":1,"tonic":"C"}],
+        "sections":{"verse":{
+            "lines":{"main":{"instrument":"lead","melody":"theme"}},
+            "events":[{"kind":"automation","instrument":"lead","control":"cc:11","at":{"bar":1,"step":1},"from_value":0,"to_value":127,"duration_quarters":"1/32"}]
+        }},
+        "melodies":{"theme":["1:16"]},
+        "instruments":{"lead":{"source":{"vst3":{"plugin":"Synth"}}}}
+    }"#;
+
+    #[test]
+    fn cc_automation_round_trips_through_one_ramp() {
+        let root = root("cc");
+        catalog(&root);
+        let catalog = crate::test_support::empty_built_in_catalog();
+        let session = crate::score_yaml::import::session_from_score(
+            CC_SCORE,
+            &root.join("source"),
+            &root,
+            catalog,
+        );
+        let controls = session.arrangement.midi_clips[0]
+            .instrument_control_events
+            .iter()
+            .filter_map(|event| match event.kind {
+                InstrumentControlEventKind::ControlChange { number, value } => {
+                    Some((event.tick.0, number, value))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(controls.len(), 3, "{controls:?}");
+
+        let exported = exported(&session, &root, catalog);
+        let yaml = std::fs::read_to_string(exported.path.join("score.yaml")).unwrap();
+        let document = crate::score::parse_document(&yaml).expect("the document parses");
+        let events = document["sections"]["verse"]["events"]
+            .as_array()
+            .expect("section events");
+        assert!(
+            events.iter().any(|event| {
+                event["kind"] == "automation"
+                    && event["control"] == "cc:11"
+                    && event["from_value"] == 0
+                    && event["to_value"] == 127
+            }),
+            "{events:?}"
+        );
+
+        let imported = crate::score_yaml::import::session_from_score(
+            &yaml,
+            &root.join("song"),
+            &root,
+            catalog,
+        );
+        assert_eq!(performance(&session), performance(&imported));
+    }
+
+    #[test]
+    fn separate_kit_tracks_keep_their_kits_states_and_mix() {
+        use riffra_core::{MidiClip, MidiNote};
+
+        let root = root("multi-kit");
+        catalog(&root);
+        let catalog = crate::test_support::empty_built_in_catalog();
+        let mut session = crate::score_yaml::import::session_from_score(
+            WALTZ,
+            &root.join("source"),
+            &root,
+            catalog,
+        );
+        let ppq = u64::from(session.arrangement.timebase.ppq);
+        let mut second = session.arrangement.tracks[0].clone();
+        second.id = "track:second-kit".into();
+        second.name = "Second Kit".into();
+        second.gain_db = -6.0;
+        second.pan = 0.4;
+        let mut instrument = second.instrument.clone().unwrap();
+        instrument.id = "device:second-kit".into();
+        if let riffra_core::TrackInstrumentSource::Vst3(plugin) = &mut instrument.source {
+            plugin.state_data = Some("c2Vjb25k".into());
+            plugin.parameter_values = vec![0.5];
+        }
+        second.instrument = Some(instrument);
+        session.arrangement.tracks.push(second);
+        session.arrangement.midi_clips.push(MidiClip {
+            id: "clip:second-kit".into(),
+            name: "Second Kit".into(),
+            track_id: "track:second-kit".into(),
+            asset_id: None,
+            start_tick: TimelineTick(0),
+            duration_ticks: ppq * 4,
+            notes: vec![MidiNote {
+                id: "note:second-kit".into(),
+                lyric: None,
+                note: 38,
+                start_tick: TimelineTick(ppq),
+                duration_ticks: ppq / 4,
+                velocity: 96,
+                channel: 1,
+            }],
+            events: Vec::new(),
+            instrument_control_events: Vec::new(),
+            muted: false,
+            loop_enabled: false,
+            recording_take_id: None,
+        });
+
+        let exported = exported(&session, &root, catalog);
+        assert_eq!(
+            exported.score_instruments[&session.arrangement.tracks[0].id],
+            "kit:drums"
+        );
+        assert_eq!(
+            exported.score_instruments["track:second-kit"],
+            "kit:drums_2"
+        );
+        let yaml = std::fs::read_to_string(exported.path.join("score.yaml")).unwrap();
+        let document = crate::score::parse_document(&yaml).expect("the document parses");
+        assert!(document["kits"]["drums"].is_object(), "{document}");
+        assert!(document["kits"]["drums_2"].is_object(), "{document}");
+        assert_eq!(
+            document["kits"]["drums_2"]["source"]["vst3"]["state"],
+            "states/kits/drums_2/instrument.json"
+        );
+        assert_eq!(document["instruments"]["snare"]["kit"], "drums");
+        assert_eq!(document["instruments"]["snare"]["trigger_note_midi"], 38);
+        assert_eq!(document["instruments"]["drums_2_38"]["kit"], "drums_2");
+        assert_eq!(
+            document["instruments"]["drums_2_38"]["trigger_note_midi"],
+            38
+        );
+        assert!(
+            exported
+                .files
+                .contains_key("states/kits/drums_2/instrument.json")
+        );
+        assert!(
+            exported
+                .files
+                .contains_key("states/kits/drums/instrument.json")
+        );
+
+        let imported = crate::score_yaml::import::session_from_score(
+            &yaml,
+            &root.join("song"),
+            &root,
+            catalog,
+        );
+        assert_eq!(imported.arrangement.tracks.len(), 2, "{yaml}");
+        let second = imported
+            .arrangement
+            .tracks
+            .iter()
+            .find(|track| track.score_instrument.as_deref() == Some("kit:drums_2"))
+            .expect("the second kit keeps its own identity");
+        assert!((second.gain_db + 6.0).abs() < 1e-9, "{}", second.gain_db);
+        assert!((second.pan - 0.4).abs() < 1e-9, "{}", second.pan);
+        let instrument = second.instrument.as_ref().unwrap();
+        let riffra_core::TrackInstrumentSource::Vst3(plugin) = &instrument.source else {
+            panic!("the second kit is a VST3 instrument");
+        };
+        assert_eq!(plugin.state_data.as_deref(), Some("c2Vjb25k"));
+        assert_eq!(plugin.parameter_values, [0.5]);
+
+        let notes = imported
+            .arrangement
+            .midi_clips
+            .iter()
+            .filter(|clip| clip.track_id == second.id)
+            .flat_map(|clip| clip.notes.iter())
+            .map(|note| (note.note, note.start_tick.0, note.duration_ticks))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            notes,
+            [(
+                38,
+                imported.arrangement.timebase.ppq.into(),
+                u64::from(imported.arrangement.timebase.ppq) / 4
+            )]
+        );
+        assert_ne!(second.id, imported.arrangement.tracks[0].id);
     }
 
     const AUDIO_SCORE: &str = r#"{
@@ -1684,6 +1888,117 @@ mod tests {
                 .iter()
                 .any(|lane| matches!(lane.target, riffra_core::AutomationTarget::BusMix { .. })),
             "the bus gain automation is kept"
+        );
+    }
+
+    #[test]
+    fn notes_outside_the_instrument_triggers_are_reported_and_not_exported() {
+        use riffra_core::{MidiClip, MidiNote, Track, TrackInstrument};
+
+        let root = root("trigger-range");
+        let definition = r#"{"metadata":{"name":"Range"},"layers":[{"id":"main","trigger":{"event":"note_on","key_min":60,"key_max":72,"velocity_min":1,"velocity_max":100}}]}"#;
+        let resources = root.join("resources");
+        std::fs::create_dir_all(resources.join("01-range")).unwrap();
+        std::fs::write(resources.join("01-range/definition.json"), definition).unwrap();
+        std::fs::write(
+            resources.join("manifest.json"),
+            br#"{"sourceRelease":"vtest","presets":[{"id":"01-range","name":"Range","author":"Riffra","description":"Range","category":"Keys","tags":["test"],"recommendedRange":{"minMidi":36,"maxMidi":84},"preview":{"tempoBpm":120,"ticksPerBeat":480,"timeSignature":{"numerator":4,"denominator":4},"lengthTicks":1920,"notes":[{"tick":0,"durationTicks":480,"note":60,"velocity":100}]},"definitionPath":"01-range/definition.json","resourceBasePath":"01-range"}]}"#,
+        )
+        .unwrap();
+        let catalog = crate::instrument::BuiltInInstrumentCatalog::load(&resources).unwrap();
+        let mut session = CreativeSession::new(1);
+        let mut track = Track::instrument("track:lead".into(), "Lead".into());
+        track.instrument = Some(
+            TrackInstrument::built_in(
+                "device:lead".into(),
+                "Range".into(),
+                "01-range".into(),
+                definition.into(),
+            )
+            .unwrap(),
+        );
+        let track_id = track.id.clone();
+        session.arrangement.tracks.push(track);
+        session.arrangement.midi_clips.push(MidiClip {
+            id: "clip:lead".into(),
+            name: "Lead".into(),
+            track_id,
+            asset_id: None,
+            start_tick: TimelineTick(0),
+            duration_ticks: 1920,
+            notes: vec![
+                MidiNote {
+                    id: "note:in-range".into(),
+                    lyric: None,
+                    note: 64,
+                    start_tick: TimelineTick(0),
+                    duration_ticks: 480,
+                    velocity: 100,
+                    channel: 1,
+                },
+                MidiNote {
+                    id: "note:out-of-range".into(),
+                    lyric: None,
+                    note: 40,
+                    start_tick: TimelineTick(480),
+                    duration_ticks: 480,
+                    velocity: 100,
+                    channel: 1,
+                },
+                MidiNote {
+                    id: "velocity-out-of-range".into(),
+                    lyric: None,
+                    note: 72,
+                    start_tick: TimelineTick(960),
+                    duration_ticks: 480,
+                    velocity: 120,
+                    channel: 1,
+                },
+            ],
+            events: Vec::new(),
+            instrument_control_events: Vec::new(),
+            muted: false,
+            loop_enabled: false,
+            recording_take_id: None,
+        });
+
+        let plan = plan(
+            &session,
+            &root.join("song"),
+            &root,
+            &catalog,
+            Path::new("unused"),
+        )
+        .expect("export");
+        assert!(
+            plan.omissions.iter().any(|omission| {
+                omission.subject.contains("note 40") && omission.message.contains("cannot trigger")
+            }),
+            "{:?}",
+            plan.omissions
+        );
+        plan.write().expect("write");
+        let yaml = std::fs::read_to_string(root.join("song/score.yaml")).unwrap();
+        crate::score::compile(&yaml).expect("the exported Score compiles");
+        let imported = crate::score_yaml::import::session_from_score(
+            &yaml,
+            &root.join("song"),
+            &root,
+            &catalog,
+        );
+        let notes = imported
+            .arrangement
+            .midi_clips
+            .iter()
+            .flat_map(|clip| clip.notes.iter())
+            .collect::<Vec<_>>();
+        assert_eq!(notes.len(), 1, "{yaml}");
+        assert_eq!(notes[0].note, 64);
+        assert_eq!(notes[0].velocity, 100);
+        assert_eq!(notes[0].start_tick.0, 0);
+        assert_eq!(
+            notes[0].duration_ticks * 2,
+            u64::from(imported.arrangement.timebase.ppq)
         );
     }
 

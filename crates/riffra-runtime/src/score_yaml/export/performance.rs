@@ -158,12 +158,19 @@ pub(super) fn apply(
     document: &mut Map<String, Value>,
 ) -> Result<(), ExportError> {
     report_clips(export);
-    let voices = voices(export);
+    let performance = performance(export);
     let articulations = articulations(export);
+    for articulation in &articulations {
+        export
+            .written_articulations
+            .entry(articulation.instrument.clone())
+            .or_default()
+            .insert(articulation.name.clone());
+    }
     let mut contents = Vec::with_capacity(export.sections.len());
     for index in 0..export.sections.len() {
         let section = export.sections[index].clone();
-        contents.push(build(export, &section, &voices, &articulations)?);
+        contents.push(build(export, &section, &performance, &articulations)?);
     }
     let mut fingerprints: Vec<String> = Vec::new();
     let mut names: Vec<String> = Vec::new();
@@ -348,28 +355,136 @@ fn unique_name(base: &str, used: &mut BTreeSet<String>) -> String {
     candidate
 }
 
-/// Assigns every note to the lowest-numbered voice that is free.
-fn voices(export: &Export<'_>) -> BTreeMap<String, Vec<Vec<Note>>> {
-    let mut result = BTreeMap::new();
-    for track in &export.tracks {
-        if matches!(track.role, TrackRole::Kit(_) | TrackRole::Audio) {
-            continue;
-        }
-        let mut notes = Vec::new();
-        for clip in clips_for(export.session, &track.track.id) {
-            if clip.muted {
-                continue;
+/// The material every section of the song is rendered from.
+struct Performance {
+    voices: BTreeMap<String, Vec<Vec<Note>>>,
+    hits: BTreeMap<String, Vec<Hit>>,
+}
+
+/// Collects the playable notes and drum hits of every Track.
+fn performance(export: &mut Export<'_>) -> Performance {
+    let tracks = &export.tracks;
+    let session = export.session;
+    let kits = &export.kits;
+    let omissions = &mut export.omissions;
+    let mut voices = BTreeMap::new();
+    let mut hits = BTreeMap::new();
+    for track in tracks {
+        let rules = note_rules(track);
+        match &track.role {
+            TrackRole::Instrument => {
+                let mut notes = Vec::new();
+                for clip in clips_for(session, &track.track.id) {
+                    if clip.muted {
+                        continue;
+                    }
+                    for note in &clip.notes {
+                        let note = Note {
+                            start: clip.start_tick.0 + note.start_tick.0,
+                            end: clip.start_tick.0 + note.start_tick.0 + note.duration_ticks,
+                            midi: note.note,
+                            velocity: note.velocity,
+                        };
+                        if playable(omissions, track, &rules, note) {
+                            notes.push(note);
+                        }
+                    }
+                }
+                voices.insert(track.track.id.clone(), assign_voices(notes));
             }
-            notes.extend(clip.notes.iter().map(|note| Note {
-                start: clip.start_tick.0 + note.start_tick.0,
-                end: clip.start_tick.0 + note.start_tick.0 + note.duration_ticks,
-                midi: note.note,
-                velocity: note.velocity,
-            }));
+            TrackRole::Kit(kit) => {
+                let members = kits.get(kit).map(Vec::as_slice).unwrap_or_default();
+                let mut list = Vec::new();
+                for clip in clips_for(session, &track.track.id) {
+                    if clip.muted {
+                        continue;
+                    }
+                    for note in &clip.notes {
+                        let note = Note {
+                            start: clip.start_tick.0 + note.start_tick.0,
+                            end: clip.start_tick.0 + note.start_tick.0 + note.duration_ticks,
+                            midi: note.note,
+                            velocity: note.velocity,
+                        };
+                        if !playable(omissions, track, &rules, note) {
+                            continue;
+                        }
+                        let part = members
+                            .iter()
+                            .find(|member| member.trigger == note.midi)
+                            .map_or_else(
+                                || format!("{kit}_{}", note.midi),
+                                |member| member.id.clone(),
+                            );
+                        list.push(Hit {
+                            part,
+                            start: note.start,
+                            length: note.end - note.start,
+                            velocity: note.velocity,
+                        });
+                    }
+                }
+                list.sort_by_key(|hit| (hit.start, hit.part.clone(), hit.velocity));
+                hits.insert(track.track.id.clone(), list);
+            }
+            TrackRole::Audio => {}
         }
-        result.insert(track.track.id.clone(), assign_voices(notes));
     }
-    result
+    Performance { voices, hits }
+}
+
+/// The note rules a built-in instrument applies when it receives a note.
+enum NoteRules {
+    /// The instrument accepts every note.
+    Free,
+    /// The parsed instrument definition that decides trigger ranges.
+    Definition(Value),
+    /// A definition that could not be read.
+    Unreadable(String),
+}
+
+fn note_rules(track: &ExportTrack<'_>) -> NoteRules {
+    let Some(instrument) = instrument_of(track.track) else {
+        return NoteRules::Free;
+    };
+    let TrackInstrumentSource::Internal {
+        definition_json, ..
+    } = &instrument.source
+    else {
+        return NoteRules::Free;
+    };
+    match serde_json::from_str(definition_json) {
+        Ok(definition) => NoteRules::Definition(definition),
+        Err(error) => NoteRules::Unreadable(error.to_string()),
+    }
+}
+
+/// Reports whether one note can trigger the instrument.
+fn playable(
+    omissions: &mut Vec<ScoreExportOmission>,
+    track: &ExportTrack<'_>,
+    rules: &NoteRules,
+    note: Note,
+) -> bool {
+    let result = match rules {
+        NoteRules::Free => return true,
+        NoteRules::Definition(definition) => {
+            crate::score_yaml::import::validate_note(definition, note.midi, note.velocity)
+        }
+        NoteRules::Unreadable(reason) => Err(reason.clone()),
+    };
+    if let Err(reason) = result {
+        omit(
+            omissions,
+            format!(
+                "track \"{}\" / note {} at tick {}",
+                track.track.name, note.midi, note.start
+            ),
+            reason,
+        );
+        return false;
+    }
+    true
 }
 
 /// Splits notes into voices, using the lowest free voice for each onset.
@@ -391,20 +506,28 @@ fn assign_voices(mut notes: Vec<Note>) -> Vec<Vec<Note>> {
 fn build(
     export: &mut Export<'_>,
     section: &SongSection,
-    voices: &BTreeMap<String, Vec<Vec<Note>>>,
+    performance: &Performance,
     articulations: &[Articulation],
 ) -> Result<Content, ExportError> {
+    let audio = audio(export, section)?;
     let mut content = Content {
         tonic: section.tonic.clone(),
         scale: section.scale.clone(),
+        audio,
         ..Content::default()
     };
-    let tracks = export.tracks.clone();
-    let velocity = section_velocity(export, section, voices);
-    for track in &tracks {
+    let tracks = &export.tracks;
+    let session = export.session;
+    let omissions = &mut export.omissions;
+    let velocity = section_velocity(tracks, section, &performance.voices);
+    for track in tracks {
         match &track.role {
             TrackRole::Instrument => {
-                let lanes = voices.get(&track.track.id).cloned().unwrap_or_default();
+                let lanes = performance
+                    .voices
+                    .get(&track.track.id)
+                    .map(Vec::as_slice)
+                    .unwrap_or_default();
                 let notes = lanes
                     .iter()
                     .flatten()
@@ -452,7 +575,18 @@ fn build(
                 }
             }
             TrackRole::Kit(kit) => {
-                let hits = kit_hits(export, section, &track.track.id, kit);
+                let hits = performance
+                    .hits
+                    .get(&track.track.id)
+                    .map(|hits| {
+                        hits.iter()
+                            .filter(|hit| {
+                                hit.start >= section.start_tick && hit.start < section.end_tick
+                            })
+                            .cloned()
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
                 if hits.is_empty() {
                     continue;
                 }
@@ -469,22 +603,24 @@ fn build(
                     }
                 }
             }
-            TrackRole::Audio => {
-                content.audio = audio(export, section)?;
-            }
+            TrackRole::Audio => {}
         }
     }
     content.velocity = velocity;
-    content.events = events(export, section, articulations);
-    content.events.append(&mut content.hits);
-    let (chords, chord_changes, omitted) = harmony(
-        &export.session.arrangement.harmony_events,
-        section,
+    content.events = events(
+        session,
+        tracks,
         export.ppq,
+        omissions,
+        section,
+        articulations,
     );
+    content.events.append(&mut content.hits);
+    let (chords, chord_changes, omitted) =
+        harmony(&session.arrangement.harmony_events, section, export.ppq);
     content.chords = chords;
     content.chord_changes = chord_changes;
-    export.omissions.extend(omitted);
+    omissions.extend(omitted);
     if let Some(original) = export.original.as_ref() {
         content.notes = original
             .section_notes(&section.base)
@@ -496,11 +632,11 @@ fn build(
 
 /// Returns the most common velocity of the section, preferring the lower one.
 fn section_velocity(
-    export: &Export<'_>,
+    tracks: &[ExportTrack<'_>],
     section: &SongSection,
     voices: &BTreeMap<String, Vec<Vec<Note>>>,
 ) -> Option<u8> {
-    let notes = export.tracks.iter().filter_map(|track| {
+    let notes = tracks.iter().filter_map(|track| {
         let TrackRole::Instrument = track.role else {
             return None;
         };
@@ -620,37 +756,6 @@ fn scale_spelling(name: &str) -> Option<&'static [&'static str]> {
         .map(|(_, degrees)| *degrees)
 }
 
-fn kit_hits(export: &Export<'_>, section: &SongSection, track_id: &str, kit: &str) -> Vec<Hit> {
-    let members = export.kits.get(kit).cloned().unwrap_or_default();
-    let mut hits = Vec::new();
-    for clip in clips_for(export.session, track_id) {
-        if clip.muted {
-            continue;
-        }
-        for note in &clip.notes {
-            let start = clip.start_tick.0 + note.start_tick.0;
-            if start < section.start_tick || start >= section.end_tick {
-                continue;
-            }
-            let part = members
-                .iter()
-                .find(|member| member.trigger == note.note)
-                .map_or_else(
-                    || format!("{kit}_{}", note.note),
-                    |member| member.id.clone(),
-                );
-            hits.push(Hit {
-                part,
-                start,
-                length: note.duration_ticks,
-                velocity: note.velocity,
-            });
-        }
-    }
-    hits.sort_by_key(|hit| (hit.start, hit.part.clone(), hit.velocity));
-    hits
-}
-
 fn drum_grid(
     section: &SongSection,
     ppq: u32,
@@ -744,16 +849,19 @@ fn audio(
     section: &SongSection,
 ) -> Result<Vec<AudioDeclaration>, ExportError> {
     let mut result = Vec::new();
-    for track in export.tracks.clone() {
-        let TrackRole::Audio = track.role else {
-            continue;
-        };
+    let tracks = export
+        .tracks
+        .iter()
+        .filter(|track| matches!(track.role, TrackRole::Audio))
+        .map(|track| (track.id.clone(), track.track.id.clone()))
+        .collect::<Vec<_>>();
+    for (instrument, track_id) in tracks {
         for clip in export
             .session
             .arrangement
             .audio_clips
             .iter()
-            .filter(|clip| clip.track_id == track.track.id)
+            .filter(|clip| clip.track_id == track_id)
         {
             if clip.start_tick.0 < section.start_tick || clip.start_tick.0 >= section.end_tick {
                 continue;
@@ -771,7 +879,7 @@ fn audio(
             let file = audio_file(export, clip)?;
             let rate = f64::from(clip.source_sample_rate);
             let mut body = json!({
-                "instrument": track.id,
+                "instrument": instrument,
                 "file": file,
                 "at": section.position(clip.start_tick.0, export.ppq),
                 "offset_seconds": clip.source_range.start as f64 / rate,
@@ -865,15 +973,18 @@ fn audio_file(export: &mut Export<'_>, clip: &AudioClip) -> Result<String, Expor
 
 /// Renders every performance control of one section.
 fn events(
-    export: &mut Export<'_>,
+    session: &riffra_core::CreativeSession,
+    tracks: &[ExportTrack<'_>],
+    ppq: u32,
+    omissions: &mut Vec<ScoreExportOmission>,
     section: &SongSection,
     articulations: &[Articulation],
 ) -> Vec<Value> {
     let mut events: Vec<(u64, u32, Value)> = Vec::new();
-    for track in export.tracks.clone() {
+    for track in tracks {
         match track.role {
             TrackRole::Kit(_) => {
-                report_kit_controls(export, section, &track);
+                report_kit_controls(session, omissions, section, track);
                 continue;
             }
             TrackRole::Audio => continue,
@@ -882,7 +993,7 @@ fn events(
         let vst3 =
             instrument_of(track.track).is_some_and(|instrument| instrument.as_vst3().is_some());
         let mut controls: Vec<(u64, u32, InstrumentControlEventKind)> = Vec::new();
-        for clip in clips_for(export.session, &track.track.id) {
+        for clip in clips_for(session, &track.track.id) {
             if clip.muted {
                 continue;
             }
@@ -908,7 +1019,7 @@ fn events(
                     ));
                 } else {
                     omit(
-                        &mut export.omissions,
+                        omissions,
                         format!("track \"{}\" / MIDI event", track.track.name),
                         "the Score cannot express this MIDI event",
                     );
@@ -918,7 +1029,7 @@ fn events(
         controls.sort_by_key(|(tick, order, _)| (*tick, *order));
         let mut points: Vec<(u64, u32, Point)> = Vec::new();
         for (tick, order, control) in controls {
-            let at = section.position(tick, export.ppq);
+            let at = section.position(tick, ppq);
             if vst3
                 && !matches!(
                     control,
@@ -927,7 +1038,7 @@ fn events(
                 )
             {
                 omit(
-                    &mut export.omissions,
+                    omissions,
                     format!("track \"{}\" / control", track.track.name),
                     "Score sends only note, articulation, and cc events to VST3 tracks",
                 );
@@ -957,9 +1068,9 @@ fn events(
                     parameter,
                     native_value,
                 } => {
-                    if let Err(reason) = internal_parameter(&track, &parameter, &[native_value]) {
+                    if let Err(reason) = internal_parameter(track, &parameter, &[native_value]) {
                         omit(
-                            &mut export.omissions,
+                            omissions,
                             format!("track \"{}\" / parameter {parameter}", track.track.name),
                             reason,
                         );
@@ -981,17 +1092,17 @@ fn events(
                 } => {
                     if tick + duration_ticks > section.end_tick {
                         omit(
-                            &mut export.omissions,
+                            omissions,
                             format!("track \"{}\" / control", track.track.name),
                             "a parameter ramp crosses a section boundary",
                         );
                         continue;
                     }
                     if let Err(reason) =
-                        internal_parameter(&track, &parameter, &[from_value, to_value])
+                        internal_parameter(track, &parameter, &[from_value, to_value])
                     {
                         omit(
-                            &mut export.omissions,
+                            omissions,
                             format!("track \"{}\" / parameter {parameter}", track.track.name),
                             reason,
                         );
@@ -1004,7 +1115,7 @@ fn events(
                         "parameter": parameter,
                         "from_value": from_value,
                         "to_value": to_value,
-                        "duration_quarters": rational(duration_ticks, export.ppq),
+                        "duration_quarters": rational(duration_ticks, ppq),
                     }))
                 }
             };
@@ -1013,7 +1124,7 @@ fn events(
                 Control::Event(event) => events.push((tick, order, event)),
             }
         }
-        for (tick, order, event) in coalesce(&points, export.ppq, section, &track.id) {
+        for (tick, order, event) in coalesce(&points, ppq, section, &track.id) {
             events.push((tick, order, event));
         }
         for articulation in articulations
@@ -1032,8 +1143,8 @@ fn events(
                     "kind": "articulation",
                     "instrument": track.id,
                     "name": articulation.name,
-                    "at": section.position(start, export.ppq),
-                    "duration_quarters": rational(end - start, export.ppq),
+                    "at": section.position(start, ppq),
+                    "duration_quarters": rational(end - start, ppq),
                 }),
             ));
         }
@@ -1043,8 +1154,13 @@ fn events(
 }
 
 /// Reports the kit controls the Score cannot address per drum part.
-fn report_kit_controls(export: &mut Export<'_>, section: &SongSection, track: &ExportTrack<'_>) {
-    for clip in clips_for(export.session, &track.track.id) {
+fn report_kit_controls(
+    session: &riffra_core::CreativeSession,
+    omissions: &mut Vec<ScoreExportOmission>,
+    section: &SongSection,
+    track: &ExportTrack<'_>,
+) {
+    for clip in clips_for(session, &track.track.id) {
         if clip.muted {
             continue;
         }
@@ -1052,7 +1168,7 @@ fn report_kit_controls(export: &mut Export<'_>, section: &SongSection, track: &E
             let tick = clip.start_tick.0 + event.tick.0;
             if tick >= section.start_tick && tick < section.end_tick {
                 omit(
-                    &mut export.omissions,
+                    omissions,
                     format!("track \"{}\" / control", track.track.name),
                     "the Score cannot send control events to a kit track",
                 );
@@ -1062,7 +1178,7 @@ fn report_kit_controls(export: &mut Export<'_>, section: &SongSection, track: &E
             let tick = clip.start_tick.0 + event.tick.0;
             if tick >= section.start_tick && tick < section.end_tick {
                 omit(
-                    &mut export.omissions,
+                    omissions,
                     format!("track \"{}\" / MIDI event", track.track.name),
                     "the Score cannot express this MIDI event",
                 );
@@ -1091,30 +1207,7 @@ fn internal_parameter(
     };
     let definition: Value =
         serde_json::from_str(definition_json).map_err(|error| error.to_string())?;
-    let Some(descriptor) = definition["parameters"]
-        .as_array()
-        .and_then(|parameters| parameters.iter().find(|entry| entry["id"] == parameter))
-    else {
-        return Err(format!(
-            "the instrument definition does not describe parameter {parameter:?}"
-        ));
-    };
-    let min = descriptor["min"]
-        .as_f64()
-        .ok_or("the parameter has no minimum")?;
-    let max = descriptor["max"]
-        .as_f64()
-        .ok_or("the parameter has no maximum")?;
-    if values.iter().any(|value| {
-        !value.is_finite()
-            || (descriptor["scale"] != "linear_unbounded"
-                && !(min..=max).contains(&f64::from(*value)))
-    }) {
-        return Err(format!(
-            "instrument parameter {parameter:?} is out of range"
-        ));
-    }
-    Ok(())
+    crate::score_yaml::import::validate_parameter(&definition, parameter, values)
 }
 
 /// One control event of a section, before automation runs are detected.
@@ -1149,9 +1242,9 @@ impl Point {
         }
     }
 
-    /// Returns whether the Score can expand this control from a ramp.
-    fn rampable(self) -> bool {
-        !matches!(self.kind, PointKind::Cc(_))
+    /// Returns whether the Score expands this control as an integer CC.
+    fn is_cc(self) -> bool {
+        matches!(self.kind, PointKind::Cc(_))
     }
 
     fn control(self) -> String {
@@ -1181,20 +1274,56 @@ fn coalesce(
     instrument: &str,
 ) -> Vec<(u64, u32, Value)> {
     let mut result = Vec::new();
+    if !ppq.is_multiple_of(64) {
+        for (tick, order, point) in points {
+            result.push((
+                *tick,
+                *order,
+                point_json(section, ppq, *tick, instrument, &point_body(*point)),
+            ));
+        }
+        return result;
+    }
+    let step = u64::from(ppq) / 64;
+    let mut run_end = vec![0; points.len()];
+    for index in (0..points.len()).rev() {
+        let next = index + 1;
+        run_end[index] = if next < points.len()
+            && points[next].0 == points[index].0 + step
+            && points[next].2.kind == points[index].2.kind
+        {
+            run_end[next]
+        } else {
+            index
+        };
+    }
     let mut index = 0;
     while index < points.len() {
+        let limit = run_end[index];
         let mut end = index;
-        if ppq.is_multiple_of(64) && points[index].2.rampable() {
-            for candidate in (index + 1..points.len()).rev() {
-                if matches(&points[index..=candidate], ppq) {
-                    end = candidate;
-                    break;
+        if limit > index {
+            let limit = if points[index].2.is_cc() {
+                limit.min(index + 127)
+            } else {
+                limit
+            };
+            for candidate in (index + 1..=limit).rev() {
+                let run = &points[index..=candidate];
+                if !linear_at_end(run) || !matches(run, ppq) {
+                    continue;
                 }
+                end = candidate;
+                break;
             }
         }
         let (tick, order, point) = points[index];
         if end > index {
             let last = points[end].2;
+            let (from_value, to_value) = if point.is_cc() {
+                (json!(point.value as u8), json!(last.value as u8))
+            } else {
+                (json!(point.value), json!(last.value))
+            };
             result.push((
                 tick,
                 order,
@@ -1206,26 +1335,17 @@ fn coalesce(
                     &json!({
                         "kind": "automation",
                         "control": point.control(),
-                        "from_value": point.value,
-                        "to_value": last.value,
+                        "from_value": from_value,
+                        "to_value": to_value,
                         "duration_quarters": rational(points[end].0 - tick, ppq),
                     }),
                 ),
             ));
         } else {
-            let mut body = json!({
-                "kind": point.name(),
-                "value": point.value,
-            });
-            if let PointKind::Cc(number) = point.kind {
-                body["kind"] = json!("cc");
-                body["number"] = json!(number);
-                body["value"] = json!(point.value as u8);
-            }
             result.push((
                 tick,
                 order,
-                point_json(section, ppq, tick, instrument, &body),
+                point_json(section, ppq, tick, instrument, &point_body(point)),
             ));
         }
         index = end + 1;
@@ -1233,11 +1353,67 @@ fn coalesce(
     result
 }
 
+/// Renders one control that is not an automation run.
+fn point_body(point: Point) -> Value {
+    let mut body = json!({
+        "kind": point.name(),
+        "value": point.value,
+    });
+    if let PointKind::Cc(number) = point.kind {
+        body["kind"] = json!("cc");
+        body["number"] = json!(number);
+        body["value"] = json!(point.value as u8);
+    }
+    body
+}
+
 fn point_json(section: &SongSection, ppq: u32, tick: u64, instrument: &str, body: &Value) -> Value {
     let mut body = body.clone();
     body["instrument"] = json!(instrument);
     body["at"] = section.position(tick, ppq);
     body
+}
+
+/// The ramp value at one tick, using the Score importer's arithmetic.
+fn ramp_value(start: u64, end: u64, tick: u64, from: f32, to: f32) -> f32 {
+    if tick <= start {
+        return from;
+    }
+    if tick >= end {
+        return to;
+    }
+    let ratio = (tick - start) as f64 / (end - start) as f64;
+    (f64::from(from) + (f64::from(to) - f64::from(from)) * ratio) as f32
+}
+
+/// The integer CC value at one tick, using the Score importer's rounding.
+fn cc_ramp_value(start: u64, end: u64, tick: u64, from: u8, to: u8) -> u8 {
+    ramp_value(start, end, tick, f32::from(from), f32::from(to)).round() as u8
+}
+
+/// Rejects a candidate whose last interior point is off the ramp.
+fn linear_at_end(points: &[(u64, u32, Point)]) -> bool {
+    let Some(interior) = points.len().checked_sub(2) else {
+        return false;
+    };
+    if interior == 0 {
+        return true;
+    }
+    let first = points[0];
+    let last = points[points.len() - 1];
+    let point = points[interior];
+    if first.2.is_cc() {
+        cc_ramp_value(
+            first.0,
+            last.0,
+            point.0,
+            first.2.value as u8,
+            last.2.value as u8,
+        ) == point.2.value as u8
+    } else {
+        ramp_value(first.0, last.0, point.0, first.2.value, last.2.value).to_bits()
+            == point.2.value.to_bits()
+    }
 }
 
 /// Reports whether a run re-expands to exactly its own points.
@@ -1256,36 +1432,42 @@ fn matches(points: &[(u64, u32, Point)], ppq: u32) -> bool {
     }
     let start = points[0].0;
     let end = points[points.len() - 1].0;
-    let mut expanded = Vec::new();
-    for (tick, _, _) in points {
-        let ratio = (tick - start) as f64 / (end - start) as f64;
-        let value = if *tick == start {
-            first.value
-        } else if *tick == end {
-            last.value
-        } else {
-            (f64::from(first.value) + (f64::from(last.value) - f64::from(first.value)) * ratio)
-                as f32
-        };
-        expanded.push(value);
+    if first.is_cc() {
+        let from = first.value as u8;
+        let to = last.value as u8;
+        let mut expected = Vec::new();
+        let mut cursor = start;
+        let mut previous = None;
+        loop {
+            let value = cc_ramp_value(start, end, cursor, from, to);
+            if previous != Some(value) {
+                expected.push((cursor, value));
+                previous = Some(value);
+            }
+            if cursor == end {
+                break;
+            }
+            cursor = (cursor + step).min(end);
+        }
+        return expected.len() == points.len()
+            && expected
+                .iter()
+                .zip(points)
+                .all(|((tick, value), (at, _, point))| {
+                    *tick == *at && *value == point.value as u8
+                });
     }
-    expanded.len() == points.len()
-        && expanded
-            .iter()
-            .zip(points)
-            .all(|(value, (_, _, point))| value.to_bits() == point.value.to_bits())
+    points.iter().all(|(tick, _, point)| {
+        ramp_value(start, end, *tick, first.value, last.value).to_bits() == point.value.to_bits()
+    })
 }
 
 /// Reconstructs articulation intervals from their key switch sends.
 fn articulations(export: &mut Export<'_>) -> Vec<Articulation> {
     let mut result = Vec::new();
-    let Some(original) = export.original.as_ref() else {
-        return result;
-    };
-    let tracks = export.tracks.clone();
     let song_end = export.sections.last().map_or(0, |section| section.end_tick);
     let mut omissions = Vec::new();
-    for track in &tracks {
+    for track in &export.tracks {
         let TrackRole::Instrument = track.role else {
             continue;
         };
@@ -1310,7 +1492,11 @@ fn articulations(export: &mut Export<'_>) -> Vec<Articulation> {
             continue;
         }
         sends.sort_by_key(|(tick, order, note, _, down)| (*tick, *order, *note, *down));
-        let Some(declarations) = original.articulations(&track.id).and_then(Value::as_object)
+        let Some(declarations) = export
+            .original
+            .as_ref()
+            .and_then(|original| original.articulations(&track.id))
+            .and_then(Value::as_object)
         else {
             for (_, _, note, _, _) in &sends {
                 omissions.push(ScoreExportOmission {
@@ -1574,16 +1760,25 @@ fn chord(section: &SongSection, event: &HarmonyEvent) -> Option<String> {
     for tone in &event.chord.tones {
         tones.insert((i32::from(tone.pitch_class()) - root).rem_euclid(12));
     }
-    tones.insert((bass - root).rem_euclid(12));
-    let intervals = tones.into_iter().collect::<Vec<_>>();
-    let quality = QUALITIES
-        .iter()
-        .find(|(_, semitones)| {
-            let mut expected = semitones.to_vec();
-            expected.sort_unstable();
-            expected == intervals
-        })
-        .map(|(name, _)| *name)?;
+    let bass_interval = (bass - root).rem_euclid(12);
+    let mut without_bass = tones.clone();
+    without_bass.remove(&bass_interval);
+    let quality_of = |intervals: &BTreeSet<i32>| {
+        let intervals = intervals.iter().copied().collect::<Vec<_>>();
+        QUALITIES
+            .iter()
+            .find(|(_, semitones)| {
+                let mut expected = semitones.to_vec();
+                expected.sort_unstable();
+                expected == intervals
+            })
+            .map(|(name, _)| *name)
+    };
+    let quality = if bass == root {
+        quality_of(&tones)
+    } else {
+        quality_of(&without_bass).or_else(|| quality_of(&tones))
+    }?;
     let root_degree = CHROMATIC[usize::try_from((root - tonic).rem_euclid(12)).ok()?];
     let bass_degree = CHROMATIC[usize::try_from((bass - tonic).rem_euclid(12)).ok()?];
     if bass == root {
@@ -1596,6 +1791,11 @@ fn chord(section: &SongSection, event: &HarmonyEvent) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use riffra_core::{HarmonyChord, HarmonyEvent, MusicalNoteName, TimelineTick};
+
+    fn note_name(name: &str) -> MusicalNoteName {
+        MusicalNoteName::new(name).unwrap()
+    }
 
     fn section() -> SongSection {
         SongSection {
@@ -1792,11 +1992,87 @@ mod tests {
             (15, 1, Point::cc(11, 64)),
             (30, 2, Point::cc(11, 127)),
         ];
-        assert!(!matches(&cc, 960));
+        assert!(matches(&cc, 960));
         let events = coalesce(&cc, 960, &section, "lead");
-        assert_eq!(events.len(), 3);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].2["kind"], "automation");
+        assert_eq!(events[0].2["control"], "cc:11");
+        assert_eq!(events[0].2["from_value"], 0);
+        assert_eq!(events[0].2["to_value"], 127);
+
+        let off = [
+            (0, 0, Point::cc(11, 0)),
+            (15, 1, Point::cc(11, 63)),
+            (30, 2, Point::cc(11, 127)),
+        ];
+        assert!(!matches(&off, 960));
+
+        let repeated = [
+            (0, 0, Point::cc(11, 0)),
+            (15, 1, Point::cc(11, 0)),
+            (30, 2, Point::cc(11, 127)),
+        ];
+        assert!(!matches(&repeated, 960));
+        let events = coalesce(&repeated, 960, &section, "lead");
+        assert_eq!(events.len(), 2);
         assert_eq!(events[0].2["kind"], "cc");
-        assert_eq!(events[0].2["number"], 11);
-        assert_eq!(events[0].2["value"], 0);
+        assert_eq!(events[1].2["kind"], "automation");
+    }
+
+    #[test]
+    fn slash_basses_do_not_change_the_chord_quality() {
+        let harmony = HarmonyChord::from_explicit(
+            ["D", "C", "E", "G"].into_iter().map(note_name).collect(),
+            Some(note_name("C")),
+            Some(note_name("D")),
+            Some("C/D".into()),
+        )
+        .unwrap();
+        let event = HarmonyEvent {
+            id: "harmony".into(),
+            start_tick: TimelineTick(0),
+            end_tick: TimelineTick(3840),
+            chord: harmony,
+        };
+        assert_eq!(chord(&section(), &event), Some("1:maj/2".into()));
+    }
+
+    #[test]
+    fn long_automation_runs_are_walked_once() {
+        let values = (0..2000)
+            .map(|index| {
+                (
+                    index as u64 * 15,
+                    index as u32,
+                    Point::value(
+                        PointKind::ModWheel,
+                        f32::from(u8::try_from(index % 2).unwrap()),
+                    ),
+                )
+            })
+            .collect::<Vec<_>>();
+        let events = coalesce(&values, 960, &section(), "lead");
+        assert_eq!(events.len(), 1000);
+        assert!(
+            events
+                .iter()
+                .all(|(_, _, event)| event["kind"] == "automation")
+        );
+
+        let linear = (0..4000)
+            .map(|index| {
+                (
+                    index as u64 * 15,
+                    index as u32,
+                    Point::value(
+                        PointKind::ModWheel,
+                        ramp_value(0, 3999 * 15, index as u64 * 15, 0.0, 1.0),
+                    ),
+                )
+            })
+            .collect::<Vec<_>>();
+        let events = coalesce(&linear, 960, &section(), "lead");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].2["kind"], "automation");
     }
 }

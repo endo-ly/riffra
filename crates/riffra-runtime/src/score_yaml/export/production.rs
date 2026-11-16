@@ -23,7 +23,8 @@ pub(super) fn apply(
     meta(export, document);
     form(export, document);
     time_changes(export, document);
-    let (instruments, kits) = instruments(export)?;
+    let ids = MixIds::new(export);
+    let (instruments, kits) = instruments(export, &ids)?;
     if instruments.is_empty() {
         return Err(ExportError::new(
             "the Project has no instrument the Score can express",
@@ -33,7 +34,7 @@ pub(super) fn apply(
     if !kits.is_empty() {
         document.insert("kits".into(), Value::Object(kits));
     }
-    mix(export, document)?;
+    mix(export, document, &ids)?;
     Ok(())
 }
 
@@ -164,7 +165,7 @@ fn time_changes(export: &mut Export<'_>, document: &mut Map<String, Value>) {
 type Declarations = (Map<String, Value>, Map<String, Value>);
 
 /// Builds the instrument and kit declarations.
-fn instruments(export: &mut Export<'_>) -> Result<Declarations, ExportError> {
+fn instruments(export: &mut Export<'_>, ids: &MixIds) -> Result<Declarations, ExportError> {
     let mut instruments = Map::new();
     let mut kits = Map::new();
     for track in export.tracks.clone() {
@@ -190,6 +191,7 @@ fn instruments(export: &mut Export<'_>) -> Result<Declarations, ExportError> {
                     "effects".into(),
                     Value::Array(effects(
                         export,
+                        ids,
                         &format!("instruments/{}", track.id),
                         &track.track.effects,
                     )?),
@@ -233,12 +235,19 @@ fn instruments(export: &mut Export<'_>) -> Result<Declarations, ExportError> {
                 {
                     source["role"] = role.clone();
                 }
-                if let Some(articulations) = export
+                if let Some(declarations) = export
                     .original
                     .as_ref()
                     .and_then(|original| original.articulations(kit))
                 {
-                    source["articulations"] = articulations.clone();
+                    let declarations =
+                        used_articulations(declarations, export.written_articulations.get(kit));
+                    if declarations
+                        .as_object()
+                        .is_some_and(|object| !object.is_empty())
+                    {
+                        source["articulations"] = declarations;
+                    }
                 }
                 kits.insert(
                     kit.clone(),
@@ -246,6 +255,7 @@ fn instruments(export: &mut Export<'_>) -> Result<Declarations, ExportError> {
                         "source": source,
                         "effects": Value::Array(effects(
                             export,
+                            ids,
                             &format!("kits/{kit}"),
                             &track.track.effects,
                         )?),
@@ -284,6 +294,7 @@ fn instruments(export: &mut Export<'_>) -> Result<Declarations, ExportError> {
                         "pan": pan,
                         "effects": Value::Array(effects(
                             export,
+                            ids,
                             &format!("instruments/{}", track.id),
                             &track.track.effects,
                         )?),
@@ -293,6 +304,19 @@ fn instruments(export: &mut Export<'_>) -> Result<Declarations, ExportError> {
         }
     }
     Ok((instruments, kits))
+}
+
+/// Keeps the articulation declarations the exported events use.
+fn used_articulations(declarations: &Value, used: Option<&BTreeSet<String>>) -> Value {
+    let mut result = Map::new();
+    if let Some(object) = declarations.as_object() {
+        for (name, declaration) in object {
+            if name == "default" || used.is_some_and(|used| used.contains(name)) {
+                result.insert(name.clone(), declaration.clone());
+            }
+        }
+    }
+    Value::Object(result)
 }
 
 /// Copies the declarations only the linked Score still knows.
@@ -343,12 +367,19 @@ fn source(
             let mut spec = json!({
                 "vst3": vst3_spec(export, &format!("instruments/{id}"), id, plugin)?,
             });
-            if let Some(articulations) = export
+            if let Some(declarations) = export
                 .original
                 .as_ref()
                 .and_then(|original| original.articulations(id))
             {
-                spec["articulations"] = articulations.clone();
+                let declarations =
+                    used_articulations(declarations, export.written_articulations.get(id));
+                if declarations
+                    .as_object()
+                    .is_some_and(|object| !object.is_empty())
+                {
+                    spec["articulations"] = declarations;
+                }
             }
             declaration.insert("source".into(), spec);
         }
@@ -444,11 +475,13 @@ fn chain_ids(chain: &[EffectDevice]) -> Vec<(String, String)> {
 /// Builds one effect chain declaration.
 fn effects(
     export: &mut Export<'_>,
+    ids: &MixIds,
     scope: &str,
     effects: &[EffectDevice],
 ) -> Result<Vec<Value>, ExportError> {
     let mut result = Vec::with_capacity(effects.len());
-    for (effect, (_, id)) in effects.iter().zip(chain_ids(effects)) {
+    for effect in effects {
+        let (_, id) = &ids.effects[&effect.id];
         let entry = plugin_entry(export, &effect.plugin, PluginRole::Effect, &effect.name)?;
         let mut vst3 = json!({"plugin": entry.name});
         if let Some(identifier) = &entry.identifier {
@@ -513,8 +546,11 @@ impl MixIds {
 }
 
 /// Builds the mixer, routing, and automation declarations.
-fn mix(export: &mut Export<'_>, document: &mut Map<String, Value>) -> Result<(), ExportError> {
-    let ids = MixIds::new(export);
+fn mix(
+    export: &mut Export<'_>,
+    document: &mut Map<String, Value>,
+    ids: &MixIds,
+) -> Result<(), ExportError> {
     let mut mix = Map::new();
     let mut buses = Map::new();
     for bus in &export.session.arrangement.mixer.buses {
@@ -531,6 +567,7 @@ fn mix(export: &mut Export<'_>, document: &mut Map<String, Value>) -> Result<(),
                 "pan": pan,
                 "effects": Value::Array(effects(
                     export,
+                    ids,
                     &format!("buses/{id}"),
                     &bus.effects,
                 )?),
@@ -593,7 +630,7 @@ fn mix(export: &mut Export<'_>, document: &mut Map<String, Value>) -> Result<(),
     if !buses.is_empty() {
         mix.insert("buses".into(), Value::Object(buses));
     }
-    let sidechain = sidechain(export, &ids);
+    let sidechain = sidechain(export, ids);
     if !sidechain.is_empty() {
         mix.insert("sidechain".into(), Value::Array(sidechain));
     }
@@ -603,6 +640,7 @@ fn mix(export: &mut Export<'_>, document: &mut Map<String, Value>) -> Result<(),
     }
     let master_effects = effects(
         export,
+        ids,
         "master",
         &export.session.arrangement.mixer.master_effects,
     )?;
@@ -612,7 +650,7 @@ fn mix(export: &mut Export<'_>, document: &mut Map<String, Value>) -> Result<(),
     if !master.is_empty() {
         mix.insert("master".into(), Value::Object(master));
     }
-    let automation = automation(export, &ids);
+    let automation = automation(export, ids);
     if !automation.is_empty() {
         mix.insert("automation".into(), Value::Array(automation));
     }
@@ -1166,6 +1204,7 @@ mod tests {
             files: BTreeMap::new(),
             audio_files: BTreeMap::new(),
             parameters: BTreeMap::new(),
+            written_articulations: BTreeMap::new(),
         }
     }
 
