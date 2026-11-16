@@ -1408,6 +1408,26 @@ mod tests {
         }}}
     }"#;
 
+    const HOLD_ARTICULATION_SCORE: &str = r#"{
+        "meta":{"title":"Hold","bpm":120,"meter":"4/4","tuning":"12edo","gate":1},
+        "form":[{"section":"verse","bars":1,"tonic":"C"}],
+        "sections":{"verse":{
+            "lines":{"main":{"instrument":"part","melody":"line"}},
+            "events":[
+                {"kind":"articulation","instrument":"part","name":"open","at":{"bar":1,"step":1},"duration_quarters":1}
+            ]
+        }},
+        "melodies":{"line":["1:16"]},
+        "instruments":{"part":{"source":{
+            "vst3":{"plugin":"Synth"},
+            "articulations":{
+                "default":{"keyswitch":24,"mode":"latch"},
+                "open":{"keyswitch":27,"mode":"hold"},
+                "unused":{"keyswitch":28,"mode":"hold"}
+            }
+        }}}
+    }"#;
+
     fn key_switches(session: &CreativeSession) -> Vec<(u64, u8, bool, String)> {
         let mut sends = Vec::new();
         for track in &session.arrangement.tracks {
@@ -1460,6 +1480,63 @@ mod tests {
             catalog,
         );
         assert_eq!(key_switches(&session), key_switches(&imported));
+    }
+
+    #[test]
+    fn hold_articulations_keep_only_their_own_declarations() {
+        let root = root("articulations-hold");
+        catalog(&root);
+        let catalog = crate::test_support::empty_built_in_catalog();
+        let session = crate::score_yaml::import::session_from_score(
+            HOLD_ARTICULATION_SCORE,
+            &root.join("source"),
+            &root,
+            catalog,
+        );
+        let exported = exported(&session, &root, catalog);
+        let text = std::fs::read_to_string(exported.path.join("score.yaml")).unwrap();
+        let document = crate::score::parse_document(&text).expect("the document parses");
+        let declarations = document["instruments"]["part"]["source"]["articulations"]
+            .as_object()
+            .expect("the used declaration is kept");
+        assert_eq!(
+            declarations.keys().collect::<Vec<_>>(),
+            ["open"],
+            "{declarations:?}"
+        );
+
+        let imported = crate::score_yaml::import::session_from_score(
+            &text,
+            &root.join("song"),
+            &root,
+            catalog,
+        );
+        assert_eq!(key_switches(&session), key_switches(&imported));
+    }
+
+    #[test]
+    fn instruments_without_articulation_events_keep_no_declarations() {
+        let root = root("articulations-none");
+        catalog(&root);
+        let catalog = crate::test_support::empty_built_in_catalog();
+        let mut session = crate::score_yaml::import::session_from_score(
+            HOLD_ARTICULATION_SCORE,
+            &root.join("source"),
+            &root,
+            catalog,
+        );
+        for clip in &mut session.arrangement.midi_clips {
+            clip.instrument_control_events.clear();
+        }
+        let exported = exported(&session, &root, catalog);
+        let text = std::fs::read_to_string(exported.path.join("score.yaml")).unwrap();
+        let document = crate::score::parse_document(&text).expect("the document parses");
+        assert!(
+            document["instruments"]["part"]["source"]
+                .get("articulations")
+                .is_none(),
+            "{document}"
+        );
     }
 
     const WALTZ: &str = r#"{
@@ -1931,6 +2008,166 @@ mod tests {
     }
 
     #[test]
+    fn vst3_raw_midi_cc_keeps_channel_one_and_reports_other_channels() {
+        use riffra_core::{MidiEvent, MidiEventKind};
+
+        let root = root("raw-cc-vst3");
+        catalog(&root);
+        let catalog = crate::test_support::empty_built_in_catalog();
+        let mut session = crate::score_yaml::import::session_from_score(
+            CC_SCORE,
+            &root.join("source"),
+            &root,
+            catalog,
+        );
+        let clip = session
+            .arrangement
+            .midi_clips
+            .first_mut()
+            .expect("the Score has a clip");
+        clip.events = vec![
+            MidiEvent {
+                id: "event:cc-one".into(),
+                kind: MidiEventKind::ControlChange,
+                tick: TimelineTick(0),
+                channel: 1,
+                data1: 7,
+                data2: 100,
+            },
+            MidiEvent {
+                id: "event:cc-ten".into(),
+                kind: MidiEventKind::ControlChange,
+                tick: TimelineTick(480),
+                channel: 10,
+                data1: 7,
+                data2: 64,
+            },
+        ];
+
+        let exported = exported(&session, &root, catalog);
+        assert!(
+            exported.omissions.iter().any(|omission| {
+                omission.subject.contains("MIDI CC")
+                    && omission.subject.contains("tick 480")
+                    && omission.message.contains("channel 10")
+            }),
+            "{:?}",
+            exported.omissions
+        );
+        let yaml = std::fs::read_to_string(exported.path.join("score.yaml")).unwrap();
+        assert!(yaml.contains("number: 7"), "{yaml}");
+        let imported = crate::score_yaml::import::session_from_score(
+            &yaml,
+            &root.join("song"),
+            &root,
+            catalog,
+        );
+        let controls = imported
+            .arrangement
+            .midi_clips
+            .iter()
+            .flat_map(|clip| {
+                clip.instrument_control_events
+                    .iter()
+                    .filter_map(|event| match event.kind {
+                        InstrumentControlEventKind::ControlChange { number: 7, value } => {
+                            Some((clip.start_tick.0 + event.tick.0, value))
+                        }
+                        _ => None,
+                    })
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(controls, [(0, 100), (480, 64)]);
+    }
+
+    #[test]
+    fn built_in_raw_midi_cc_is_reported_and_notes_survive() {
+        use riffra_core::{MidiEvent, MidiEventKind};
+
+        let root = root("raw-cc-built-in");
+        catalog(&root);
+        let catalog = built_in_catalog(
+            &root,
+            r#"{"layers":[{"id":"main","trigger":{"event":"note_on","key_min":60,"key_max":60,"velocity_min":1,"velocity_max":127}}]}"#,
+        );
+        let mut session = crate::score_yaml::import::session_from_score(
+            CC_SCORE,
+            &root.join("source"),
+            &root,
+            crate::test_support::empty_built_in_catalog(),
+        );
+        let instrument = TrackInstrument::built_in(
+            "device:test".into(),
+            "Test".into(),
+            "TEST-001".into(),
+            r#"{"layers":[{"id":"main","trigger":{"event":"note_on","key_min":60,"key_max":60,"velocity_min":1,"velocity_max":127}}]}"#.into(),
+        )
+        .unwrap();
+        let track = add_played_track(&mut session, "test", instrument, &[60]);
+        let clip = session
+            .arrangement
+            .midi_clips
+            .iter_mut()
+            .find(|clip| clip.track_id == track)
+            .expect("the built-in track has a clip");
+        clip.events.push(MidiEvent {
+            id: "event:cc".into(),
+            kind: MidiEventKind::ControlChange,
+            tick: TimelineTick(0),
+            channel: 1,
+            data1: 7,
+            data2: 100,
+        });
+
+        let exported = exported(&session, &root, &catalog);
+        assert!(
+            exported.omissions.iter().any(|omission| {
+                omission.subject.contains("MIDI CC")
+                    && omission.message.contains("built-in instrument")
+            }),
+            "{:?}",
+            exported.omissions
+        );
+        let yaml = std::fs::read_to_string(exported.path.join("score.yaml")).unwrap();
+        assert!(!yaml.contains("cc:7"), "{yaml}");
+        let imported = crate::score_yaml::import::session_from_score(
+            &yaml,
+            &root.join("song"),
+            &root,
+            &catalog,
+        );
+        let imported_track = imported
+            .arrangement
+            .tracks
+            .iter()
+            .find(|track| track.score_instrument.as_deref() == Some("test"))
+            .expect("the built-in track survives");
+        let notes = imported
+            .arrangement
+            .midi_clips
+            .iter()
+            .filter(|clip| clip.track_id == imported_track.id)
+            .flat_map(|clip| clip.notes.iter())
+            .map(|note| note.note)
+            .collect::<Vec<_>>();
+        assert_eq!(notes, [60]);
+        let controls = imported
+            .arrangement
+            .midi_clips
+            .iter()
+            .filter(|clip| clip.track_id == imported_track.id)
+            .flat_map(|clip| clip.instrument_control_events.iter())
+            .filter(|event| {
+                matches!(
+                    event.kind,
+                    InstrumentControlEventKind::ControlChange { number: 7, .. }
+                )
+            })
+            .count();
+        assert_eq!(controls, 0);
+    }
+
+    #[test]
     fn non_default_channels_are_reported() {
         let root = root("channels");
         catalog(&root);
@@ -2249,6 +2486,14 @@ mod tests {
             crate::score_yaml::import::session_from_score(AUDIO_SCORE, &source, &root, catalog);
         assert_eq!(session.arrangement.audio_clips.len(), 2);
         let exported = exported(&session, &root, catalog);
+        assert!(
+            !exported
+                .omissions
+                .iter()
+                .any(|omission| omission.subject.contains("playback length")),
+            "{:?}",
+            exported.omissions
+        );
         let yaml = std::fs::read_to_string(exported.path.join("score.yaml")).unwrap();
         let document = crate::score::parse_document(&yaml).expect("the document parses");
         let mut ids = BTreeSet::new();
@@ -2316,6 +2561,62 @@ mod tests {
             .expect("ambience send");
         assert_eq!(send.return_bus_id, room.id);
         assert!((send.level_db + 6.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn audio_clips_with_a_different_playback_length_are_reported() {
+        use riffra_core::{FrameDuration, FrameRange};
+
+        let root = root("audio-length");
+        catalog(&root);
+        let catalog = crate::test_support::empty_built_in_catalog();
+        let source = root.join("source");
+        std::fs::create_dir_all(source.join("audio")).unwrap();
+        std::fs::write(source.join("audio/rain.wav"), one_sample_wav()).unwrap();
+        let mut session =
+            crate::score_yaml::import::session_from_score(AUDIO_SCORE, &source, &root, catalog);
+        let clip = session
+            .arrangement
+            .audio_clips
+            .first_mut()
+            .expect("the Score has an audio clip");
+        clip.source_sample_rate = 48_000;
+        clip.source_range = FrameRange {
+            start: 0,
+            end: 48_000,
+        };
+        clip.timeline_duration = FrameDuration {
+            frames: 96_000,
+            sample_rate: 48_000,
+        };
+
+        let exported = exported(&session, &root, catalog);
+        assert!(
+            exported.omissions.iter().any(|omission| {
+                omission.subject.contains("ambience")
+                    && omission.subject.contains("rain")
+                    && omission.subject.contains("playback length")
+                    && omission
+                        .message
+                        .contains("different length than its source")
+            }),
+            "{:?}",
+            exported.omissions
+        );
+        let yaml = std::fs::read_to_string(exported.path.join("score.yaml")).unwrap();
+        let document = crate::score::parse_document(&yaml).expect("the document parses");
+        let clips = document["sections"]
+            .as_object()
+            .expect("sections")
+            .values()
+            .filter_map(|section| section.get("audio_clips").and_then(Value::as_array))
+            .flatten()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            clips.len(),
+            2,
+            "the clip is still written from its source range"
+        );
     }
 
     const STATE_SCORE: &str = r#"{

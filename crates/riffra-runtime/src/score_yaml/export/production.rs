@@ -179,6 +179,21 @@ fn declare(
     Ok(())
 }
 
+/// Reports an instrument that is bypassed in the Project.
+fn report_bypassed(
+    export: &mut Export<'_>,
+    track_name: &str,
+    instrument: &riffra_core::TrackInstrument,
+) {
+    if instrument.bypassed {
+        omit(
+            &mut export.omissions,
+            format!("track \"{track_name}\" / instrument"),
+            "a bypassed instrument cannot be written",
+        );
+    }
+}
+
 /// Builds the instrument and kit declarations.
 fn instruments(export: &mut Export<'_>, ids: &MixIds) -> Result<Declarations, ExportError> {
     let mut instruments = Map::new();
@@ -191,13 +206,7 @@ fn instruments(export: &mut Export<'_>, ids: &MixIds) -> Result<Declarations, Ex
                 };
                 let mut declaration = Map::new();
                 source(export, &track.id, instrument, &mut declaration)?;
-                if instrument.bypassed {
-                    omit(
-                        &mut export.omissions,
-                        format!("track \"{}\" / instrument", track.track.name),
-                        "a bypassed instrument cannot be written",
-                    );
-                }
+                report_bypassed(export, &track.track.name, instrument);
                 let (gain, pan) =
                     pan_law(track.track.pan_law, track.track.gain_db, track.track.pan);
                 declaration.insert("gain_db".into(), json!(gain));
@@ -235,6 +244,7 @@ fn instruments(export: &mut Export<'_>, ids: &MixIds) -> Result<Declarations, Ex
                 let Some(instrument) = instrument_of(track.track) else {
                     continue;
                 };
+                report_bypassed(export, &track.track.name, instrument);
                 let TrackInstrumentSource::Vst3(plugin) = &instrument.source else {
                     return Err(ExportError::new(format!(
                         "kit \"{kit}\" does not host a VST3 instrument"
@@ -325,12 +335,20 @@ fn instruments(export: &mut Export<'_>, ids: &MixIds) -> Result<Declarations, Ex
 
 /// Keeps the articulation declarations the exported events use.
 fn used_articulations(declarations: &Value, used: Option<&BTreeSet<String>>) -> Value {
+    let Some(object) = declarations.as_object() else {
+        return Value::Object(Map::new());
+    };
+    let needs_default = used.is_some_and(|used| {
+        used.iter().any(|name| {
+            object.get(name).is_some_and(|declaration| {
+                declaration.get("mode").and_then(Value::as_str) == Some("latch")
+            })
+        })
+    });
     let mut result = Map::new();
-    if let Some(object) = declarations.as_object() {
-        for (name, declaration) in object {
-            if name == "default" || used.is_some_and(|used| used.contains(name)) {
-                result.insert(name.clone(), declaration.clone());
-            }
+    for (name, declaration) in object {
+        if used.is_some_and(|used| used.contains(name)) || (name == "default" && needs_default) {
+            result.insert(name.clone(), declaration.clone());
         }
     }
     Value::Object(result)

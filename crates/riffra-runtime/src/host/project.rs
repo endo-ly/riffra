@@ -988,6 +988,78 @@ instruments: {lead: {preset: LEAD/001-analog-saw-lead, voices: 8}}
     }
 
     #[test]
+    fn export_score_refuses_link_when_an_audio_clip_changes_its_playback_length() {
+        use riffra_core::{AudioClip, CreativeSession, TimelineTick, Track};
+
+        let root =
+            std::env::temp_dir().join(format!("riffra-host-audio-length-{}", new_instance_id()));
+        std::fs::create_dir_all(root.join("media")).unwrap();
+        let wav = root.join("media/rain.wav");
+        std::fs::write(&wav, b"RIFF").unwrap();
+        let asset = crate::asset::register(
+            &root,
+            riffra_core::AssetKind::Audio,
+            "Rain",
+            wav.to_str().unwrap(),
+            None,
+        )
+        .unwrap();
+        let mut session = CreativeSession::new(1);
+        session
+            .arrangement
+            .tracks
+            .push(Track::audio("track:audio".into(), "Audio".into()));
+        let mut clip = AudioClip::full_source(
+            "clip:rain".into(),
+            "Rain".into(),
+            "track:audio".into(),
+            asset,
+            TimelineTick(0),
+            48_000,
+            48_000,
+        );
+        clip.timeline_duration.frames = 96_000;
+        session.arrangement.audio_clips.push(clip);
+
+        let state = super::HostState::for_test(
+            &root,
+            session,
+            crate::AudioSupervisor::offline("test"),
+            true,
+        );
+        let before = state.canonical().unwrap();
+        let project_id = before.project_id.clone();
+        let revision = before.session.arrangement.revision;
+        let folder = root.join("song");
+        let response = Arc::clone(&state).dispatch_request(
+            ControlRequest::new(
+                "audio-length-test",
+                "project.export-score",
+                json!({"path": folder, "link": true}),
+                None,
+            )
+            .with_expected_project_id(project_id.clone()),
+        );
+        assert!(!response.ok, "{:?}", response.error);
+        let error = response.error.unwrap();
+        assert_eq!(error.code, ErrorCode::CommandFailed);
+        assert_eq!(
+            error
+                .details
+                .as_ref()
+                .and_then(|details| details.get("kind")),
+            Some(&json!("scoreExportOmissions"))
+        );
+        assert!(!folder.exists());
+        let after = state.canonical().unwrap();
+        assert_eq!(after.sequence, 0);
+        assert_eq!(after.session.arrangement.revision, revision);
+        assert!(after.session.score_source.is_none());
+        drop(state);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn attached_host_exports_midi_from_canonical_state() {
         let (host, data_root) = open_safe_host("midi-export");
         let project_id = host.bootstrap().unwrap().project_state.active_project_id;
