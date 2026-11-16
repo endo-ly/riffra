@@ -124,19 +124,19 @@ Track ごとの楽器は次のように書く。
 | Audio Track          | `instruments.<id>` に `audio: true`。`mix.tracks` の出力と Send |
 | ミュートしたクリップ | 書かずに省略として報告する                                      |
 
-Kit Track が複数あっても、それぞれを独立した `kits.<id>` として書く。同じ `kit:` を指す Track が複数ある場合は、2つ目以降を `drums_2` のように一意な ID にし、その Track の部品・状態・ミックスも同じ ID の Kit に属させる。Kit 部品の ID は Track と共通の名前空間で一意にし、元の `instruments` 宣言があればその ID を優先する。通常の Instrument や他の Kit 部品と衝突する場合は `_2` 以降を付ける。
+Kit Track が複数あっても、それぞれを独立した `kits.<id>` として書く。同じ `kit:` を指す Track が複数ある場合は、2つ目以降を `drums_2` のように一意な ID にし、その Track の部品・状態・ミックスも同じ ID の Kit に属させる。Kit 部品の ID は Track と共通の名前空間で一意にし、元の `instruments` 宣言があればその ID を優先する。通常の Instrument や他の Kit 部品と衝突する場合は `_2` 以降を付ける。Bypass された音源は、Instrument Track と Kit Track のどちらも、音源宣言を書きつつ省略として報告する。
 
-内蔵音源の音符は、音源定義の Layer が持つ Key と Velocity の Trigger で検証する。検証には実際に出力する定義を使う。組み込みプリセットはカタログが解決した定義、ユーザー音源は曲フォルダへコピーする `definition.json` を読む。発音できない音符は書かず、Track・音符・理由を省略として報告する。VST3 音源は Trigger を持たないため、すべての音符を書く。MIDI Note の Channel は Score の旋律記述に保存できないため、Channel 1 以外の音符は Channel が変わったことを省略として報告する。音符そのものは Channel 1 として書き、読み込み後も音高・位置・長さを保つ。
+内蔵音源の音符は、音源定義の Layer が持つ Key と Velocity の Trigger で検証する。検証には実際に出力する定義を使う。組み込みプリセットはカタログが解決した定義、ユーザー音源は曲フォルダへコピーする `definition.json` を読む。発音できない音符は書かず、Track・音符・理由を省略として報告する。VST3 音源は Trigger を持たないため、すべての音符を書く。MIDI Note の Channel は Score の旋律記述に保存できないため、Channel 1 以外の音符は Channel が変わったことを省略として報告する。音符そのものは Channel 1 として書き、読み込み後も音高・位置・長さを保つ。VST3 Track の生 MIDI CC は `cc` として書く。Channel 1 以外の CC は Channel が変わったことを報告する。内蔵音源 Track と Kit Track の生 MIDI CC は Score から送れないため、書かずに報告する。
 
 Score から作る Track は `LinearBalance` でパンされるため、GUI 既定の `EqualPower` や `UnityCenterStereo` のパンは、左右のゲインが一致する `gain_db` と `pan` に換算する。音量・バスのゲインのオートメーションがある場合は、すべての点に同じ dB を足す。パンのオートメーションは補間の形が変わるため、`LinearBalance` 以外では換算せずに報告する。
 
 VST3 の State は所有者の種類と ID を含むパス `states/<種類>/<ID>/...` に書く。楽器は `states/instruments/<楽器ID>/instrument.json`、キットは `states/kits/<Kit ID>/instrument.json`、エフェクトは `states/<種類>/<ID>/effects/<エフェクトID>.json`、Master は `states/master/effects/...` になる。同じ名前の Track と Bus があっても State のパスは衝突しない。
 
-AudioClip は、同じ名前が複数あってもセクション内で重複しない ID を付ける。同じ Asset は1つの WAV を共有し、`source_range`、再生位置、長さ、ゲイン、パン、フェードを書く。Score が持たないフェード形状や、ミュート・ループ・処理済みテイクは演奏に影響するため、書かずに報告する。
+AudioClip は、同じ名前が複数あってもセクション内で重複しない ID を付ける。同じ Asset は1つの WAV を共有し、`source_range`、再生位置、長さ、ゲイン、パン、フェードを書く。Score が持たないフェード形状や、ミュート・ループ・処理済みテイクは演奏に影響するため、書かずに報告する。`source_range` の実時間と `timeline_duration` の実時間が一致しない Clip は、素材範囲の長さを書き、再生時間の不一致を報告する。
 
 ミュート・ソロ・armed・monitoring と Bus のミュート・ソロは作業状態であり、書き出しでは省略として報告しない。それ以外で演奏に影響する内容を書けない場合は、対象と理由を `omissions` に含める。
 
-キースイッチは、元の Score の `source.articulations` にある宣言を使って奏法区間へ戻す。宣言がない、または送信と一致する宣言がないキースイッチは、書かずに報告する。書き出す奏法イベントが使う宣言だけを引き継ぎ、`default` は復帰先として残す。
+キースイッチは、元の Score の `source.articulations` にある宣言を使って奏法区間へ戻す。宣言がない、または送信と一致する宣言がないキースイッチは、書かずに報告する。書き出す奏法イベントが使う宣言だけを引き継ぐ。`mode: latch` の奏法を書く場合だけ、復帰先の `default` も残す。
 
 CC を含む制御イベントは、再展開したときの値・位置・順序が元の点列と完全に一致する場合だけ `automation` にまとめる。CC は整数値で書き、連続する同じ値の重複除去も取り込み側と同じ規則にする。一致しない点は単発のイベントとして書く。
 
