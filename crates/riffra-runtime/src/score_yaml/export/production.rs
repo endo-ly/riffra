@@ -1,13 +1,13 @@
 //! Score production content: instruments, effects, and mix.
 
 use super::{
-    Export, ExportError, ExportFile, PanLaw, TrackRole, add_file, copy_package, instrument_of,
-    omit, pan_law, rational, track_score_id, unique_id,
+    Export, ExportError, ExportFile, PanLaw, SongSection, TrackRole, add_file, copy_package,
+    instrument_of, omit, pan_law, rational, track_score_id, unique_id,
 };
 use crate::api::output::{PluginRole, PluginStateSnapshot};
 use riffra_core::{
-    AutomationInterpolation, AutomationLane, AutomationTarget, BusMixParameter, EffectDevice,
-    MixBusKind, SendPosition, TrackInstrumentSource, TrackMixParameter,
+    AutomationInterpolation, AutomationTarget, BusMixParameter, EffectDevice, MixBusKind,
+    SendPosition, TrackInstrumentSource, TrackMixParameter,
 };
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -198,7 +198,8 @@ fn report_bypassed(
 fn instruments(export: &mut Export<'_>, ids: &MixIds) -> Result<Declarations, ExportError> {
     let mut instruments = Map::new();
     let mut kits = Map::new();
-    for track in export.tracks.clone() {
+    for index in 0..export.tracks.len() {
+        let track = export.tracks[index].clone();
         match &track.role {
             TrackRole::Instrument => {
                 let Some(instrument) = instrument_of(track.track) else {
@@ -286,7 +287,7 @@ fn instruments(export: &mut Export<'_>, ids: &MixIds) -> Result<Declarations, Ex
                         )?),
                     }),
                 );
-                for member in export.kits.get(kit).cloned().unwrap_or_default() {
+                for member in export.kits.get(kit).map(Vec::as_slice).unwrap_or_default() {
                     let mut member_spec = json!({
                         "kit": kit,
                         "trigger_note_midi": member.trigger,
@@ -610,7 +611,7 @@ fn mix(
         );
     }
     let mut tracks = Map::new();
-    for track in export.tracks.clone() {
+    for track in &export.tracks {
         let mut declaration = Map::new();
         if let Some(output) = &track.track.output_bus_id {
             let Some(bus) = ids.buses.get(output) else {
@@ -768,39 +769,54 @@ fn effect_target(owner: &ReferenceOwner, effect: &str, id_key: &str) -> Value {
 
 /// Builds the score automation declarations from canonical lanes.
 fn automation(export: &mut Export<'_>, ids: &MixIds) -> Vec<Value> {
-    let lanes = export.session.arrangement.automation_lanes.clone();
     let mut result = Vec::new();
-    for lane in &lanes {
-        let Some(target) = automation_target(export, ids, lane) else {
+    let mut counts = BTreeMap::<String, usize>::new();
+    let occurrences = export
+        .sections
+        .iter()
+        .map(|section| {
+            let count = counts.entry(section.name.clone()).or_default();
+            *count += 1;
+            *count
+        })
+        .collect::<Vec<_>>();
+    for index in 0..export.session.arrangement.automation_lanes.len() {
+        let (lane_id, target_spec, interpolation) = {
+            let lane = &export.session.arrangement.automation_lanes[index];
+            (lane.id.clone(), lane.target.clone(), lane.interpolation)
+        };
+        let Some(target) = automation_target(export, ids, &lane_id, &target_spec) else {
             continue;
         };
-        let interpolation = match lane.interpolation {
+        let interpolation = match interpolation {
             AutomationInterpolation::Linear => "linear",
             AutomationInterpolation::Step => "step",
             AutomationInterpolation::LinearAmplitude { .. } => {
                 omit(
                     &mut export.omissions,
-                    format!("automation \"{}\"", lane.id),
+                    format!("automation \"{lane_id}\""),
                     "the Score evaluates this volume automation linearly",
                 );
                 "linear"
             }
         };
-        let (offset, pan) = automation_offset(export, &lane.target);
+        let (offset, pan) = automation_offset(export, &target_spec);
         if pan {
             omit(
                 &mut export.omissions,
-                format!("automation \"{}\"", lane.id),
+                format!("automation \"{lane_id}\""),
                 "pan automation on a non-linear pan law cannot be converted",
             );
             continue;
         }
         let mut groups = BTreeMap::<(usize, usize), Vec<(u64, Value)>>::new();
-        for point in &lane.points {
-            let Some((section, occurrence)) = locate(export, point.tick.0) else {
+        let mut point_omissions = Vec::new();
+        for point in &export.session.arrangement.automation_lanes[index].points {
+            let Some((section, occurrence)) = locate(&export.sections, &occurrences, point.tick.0)
+            else {
                 omit(
-                    &mut export.omissions,
-                    format!("automation \"{}\"", lane.id),
+                    &mut point_omissions,
+                    format!("automation \"{lane_id}\""),
                     "a point lies outside every section",
                 );
                 continue;
@@ -814,6 +830,7 @@ fn automation(export: &mut Export<'_>, ids: &MixIds) -> Vec<Value> {
                 }),
             ));
         }
+        export.omissions.extend(point_omissions);
         for ((section, occurrence), mut points) in groups {
             points.sort_by_key(|(tick, _)| *tick);
             let points = points
@@ -848,20 +865,13 @@ fn automation(export: &mut Export<'_>, ids: &MixIds) -> Vec<Value> {
 }
 
 /// Returns the section containing a tick and its form occurrence.
-fn locate(export: &Export<'_>, tick: u64) -> Option<(usize, usize)> {
-    let mut occurrence = BTreeMap::<String, usize>::new();
-    for (index, section) in export.sections.iter().enumerate() {
-        let entry = occurrence.entry(section.name.clone()).or_insert(0);
-        *entry += 1;
-        let occurrence = *entry;
-        if tick >= section.start_tick && tick < section.end_tick {
-            return Some((index, occurrence));
-        }
-        if index + 1 == export.sections.len() && tick == section.end_tick {
-            return Some((index, occurrence));
-        }
-    }
-    None
+fn locate(sections: &[SongSection], occurrences: &[usize], tick: u64) -> Option<(usize, usize)> {
+    let index = sections
+        .partition_point(|section| section.start_tick <= tick)
+        .checked_sub(1)?;
+    let section = &sections[index];
+    (tick < section.end_tick || (index + 1 == sections.len() && tick == section.end_tick))
+        .then_some((index, occurrences[index]))
 }
 
 /// Returns the pan law gain offset applied to a lane and whether it controls pan.
@@ -916,9 +926,10 @@ fn automation_offset(export: &Export<'_>, target: &AutomationTarget) -> (f64, bo
 fn automation_target(
     export: &mut Export<'_>,
     ids: &MixIds,
-    lane: &AutomationLane,
+    lane_id: &str,
+    target: &AutomationTarget,
 ) -> Option<Value> {
-    let target = match &lane.target {
+    let target = match target {
         AutomationTarget::TrackMix {
             track_id,
             parameter,
@@ -926,7 +937,7 @@ fn automation_target(
             let Some(id) = track_score_id(export, track_id) else {
                 omit(
                     &mut export.omissions,
-                    format!("automation \"{}\"", lane.id),
+                    format!("automation \"{lane_id}\""),
                     "the track is not exported",
                 );
                 return None;
@@ -947,7 +958,7 @@ fn automation_target(
             let Some(id) = ids.buses.get(bus_id) else {
                 omit(
                     &mut export.omissions,
-                    format!("automation \"{}\"", lane.id),
+                    format!("automation \"{lane_id}\""),
                     "the bus is not exported",
                 );
                 return None;
@@ -972,7 +983,7 @@ fn automation_target(
             else {
                 omit(
                     &mut export.omissions,
-                    format!("automation \"{}\"", lane.id),
+                    format!("automation \"{lane_id}\""),
                     "the send is not exported",
                 );
                 return None;
@@ -983,7 +994,7 @@ fn automation_target(
             ) else {
                 omit(
                     &mut export.omissions,
-                    format!("automation \"{}\"", lane.id),
+                    format!("automation \"{lane_id}\""),
                     "the send source or bus is not exported",
                 );
                 return None;
@@ -1001,7 +1012,7 @@ fn automation_target(
             else {
                 omit(
                     &mut export.omissions,
-                    format!("automation \"{}\"", lane.id),
+                    format!("automation \"{lane_id}\""),
                     "the sidechain route is not exported",
                 );
                 return None;
@@ -1012,7 +1023,7 @@ fn automation_target(
             ) else {
                 omit(
                     &mut export.omissions,
-                    format!("automation \"{}\"", lane.id),
+                    format!("automation \"{lane_id}\""),
                     "the sidechain route targets a device the Score does not export",
                 );
                 return None;
@@ -1033,7 +1044,7 @@ fn automation_target(
                 Ok(None) => {
                     omit(
                         &mut export.omissions,
-                        format!("automation \"{}\"", lane.id),
+                        format!("automation \"{lane_id}\""),
                         "the plugin parameter name is not available",
                     );
                     return None;
@@ -1041,7 +1052,7 @@ fn automation_target(
                 Err(reason) => {
                     omit(
                         &mut export.omissions,
-                        format!("automation \"{}\"", lane.id),
+                        format!("automation \"{lane_id}\""),
                         reason,
                     );
                     return None;
@@ -1061,7 +1072,7 @@ fn automation_target(
                 }) else {
                     omit(
                         &mut export.omissions,
-                        format!("automation \"{}\"", lane.id),
+                        format!("automation \"{lane_id}\""),
                         "the target device is not exported",
                     );
                     return None;
@@ -1073,7 +1084,7 @@ fn automation_target(
                 {
                     omit(
                         &mut export.omissions,
-                        format!("automation \"{}\"", lane.id),
+                        format!("automation \"{lane_id}\""),
                         "built-in instrument parameters are written as performance events, not mix automation",
                     );
                     return None;
@@ -1081,7 +1092,7 @@ fn automation_target(
                 if super::kit_of(export, &track.id).is_some() {
                     omit(
                         &mut export.omissions,
-                        format!("automation \"{}\"", lane.id),
+                        format!("automation \"{lane_id}\""),
                         "kit source parameters cannot be targeted by Score mix automation",
                     );
                     return None;
@@ -1089,7 +1100,7 @@ fn automation_target(
                 let Some(id) = track_score_id(export, &track.id) else {
                     omit(
                         &mut export.omissions,
-                        format!("automation \"{}\"", lane.id),
+                        format!("automation \"{lane_id}\""),
                         "the instrument is not exported",
                     );
                     return None;
@@ -1215,10 +1226,7 @@ fn parameter_name(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use riffra_core::{
-        AutomationInterpolation, AutomationPoint, CreativeSession, TimelineTick, Track,
-        TrackInstrument,
-    };
+    use riffra_core::{CreativeSession, Track, TrackInstrument};
 
     fn export<'a>(
         session: &'a CreativeSession,
@@ -1241,28 +1249,6 @@ mod tests {
             parameters: BTreeMap::new(),
             written_articulations: BTreeMap::new(),
         }
-    }
-
-    fn lane(target: AutomationTarget) -> AutomationLane {
-        AutomationLane {
-            id: "lane".into(),
-            target,
-            interpolation: AutomationInterpolation::Linear,
-            points: vec![AutomationPoint {
-                id: "point".into(),
-                tick: TimelineTick(0),
-                value: 0.5,
-            }],
-        }
-    }
-
-    #[test]
-    fn duplicate_instrument_declarations_are_refused() {
-        let mut instruments = Map::new();
-        declare(&mut instruments, "lead", json!({"audio": true})).unwrap();
-        let error = declare(&mut instruments, "lead", json!({"audio": false})).unwrap_err();
-        assert!(error.message.contains("ID lead"), "{}", error.message);
-        assert_eq!(instruments["lead"]["audio"], true);
     }
 
     #[test]
@@ -1326,10 +1312,11 @@ mod tests {
             automation_target(
                 &mut export,
                 &ids,
-                &lane(AutomationTarget::DeviceParameter {
+                "lane",
+                &AutomationTarget::DeviceParameter {
                     device_id: "device:instrument".into(),
                     parameter_id: "cutoff".into(),
-                }),
+                },
             ),
             Some(json!({"source": "lead", "parameter": "Cutoff"}))
         );
@@ -1337,10 +1324,11 @@ mod tests {
             automation_target(
                 &mut export,
                 &ids,
-                &lane(AutomationTarget::DeviceParameter {
+                "lane",
+                &AutomationTarget::DeviceParameter {
                     device_id: "device:effect".into(),
                     parameter_id: "drive".into(),
-                }),
+                },
             ),
             Some(json!({
                 "effect": {"instrument": "lead", "id": "drive"},

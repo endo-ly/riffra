@@ -77,12 +77,7 @@ pub(super) fn dispatch(
                 return Err(omissions_error(&plan.omissions));
             }
             let path = plan.write().map_err(export_error)?;
-            let mut linked = current.session.clone();
-            for track in &mut linked.arrangement.tracks {
-                if let Some(id) = plan.score_instruments.get(&track.id) {
-                    track.score_instrument = Some(id.clone());
-                }
-            }
+            let linked = plan.linked_session(&current.session);
             let rebuild = rebuild_score_for(
                 state,
                 writer,
