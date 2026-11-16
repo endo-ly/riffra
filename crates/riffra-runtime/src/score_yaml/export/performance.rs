@@ -1,8 +1,8 @@
 //! Score performance content: notes, drums, control events, harmony.
 
 use super::{
-    Export, ExportError, ExportTrack, Original, SongSection, TrackRole, add_file, clips_for,
-    file_identifier, fraction, instrument_of, omit, rational, to_quarters,
+    Export, ExportError, ExportFile, ExportTrack, Original, SongSection, TrackRole, add_file,
+    clips_for, file_identifier, fraction, instrument_of, omit, rational, to_quarters,
 };
 use crate::api::output::ScoreExportOmission;
 use crate::instrument::BuiltInInstrumentCatalog;
@@ -14,7 +14,7 @@ use riffra_core::{
 };
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Scale spellings used when a section names a known scale.
 const SCALES: &[(&str, &[&str])] = &[
@@ -1022,7 +1022,7 @@ fn exportable_clip(export: &mut Export<'_>, clip: &AudioClip, track_name: &str) 
     true
 }
 
-/// Copies the WAV of one asset once and returns its Score path.
+/// Registers the WAV of one asset once and returns its Score path.
 fn audio_file(export: &mut Export<'_>, clip: &AudioClip) -> Result<String, ExportError> {
     if let Some(file) = export.audio_files.get(&clip.asset_id) {
         return Ok(file.clone());
@@ -1051,9 +1051,11 @@ fn audio_file(export: &mut Export<'_>, clip: &AudioClip) -> Result<String, Expor
         relative = format!("audio/{name}_{number}.wav");
         number += 1;
     }
-    let bytes = std::fs::read(&location)
-        .map_err(|error| ExportError::new(format!("could not read {}: {error}", location)))?;
-    add_file(export, relative.clone(), bytes)?;
+    add_file(
+        export,
+        relative.clone(),
+        ExportFile::Copy(PathBuf::from(location)),
+    )?;
     export
         .audio_files
         .insert(clip.asset_id.clone(), relative.clone());

@@ -1,8 +1,8 @@
 //! Score production content: instruments, effects, and mix.
 
 use super::{
-    Export, ExportError, PanLaw, TrackRole, add_file, copy_package, instrument_of, omit, pan_law,
-    rational, track_score_id, unique_id,
+    Export, ExportError, ExportFile, PanLaw, TrackRole, add_file, copy_package, instrument_of,
+    omit, pan_law, rational, track_score_id, unique_id,
 };
 use crate::api::output::{PluginRole, PluginStateSnapshot};
 use riffra_core::{
@@ -489,7 +489,7 @@ fn state_file(
     };
     let bytes = serde_json::to_vec_pretty(&snapshot)
         .map_err(|error| ExportError::new(format!("plugin state could not be encoded: {error}")))?;
-    add_file(export, relative.clone(), bytes)?;
+    add_file(export, relative.clone(), ExportFile::Bytes(bytes))?;
     Ok(Some(relative))
 }
 
