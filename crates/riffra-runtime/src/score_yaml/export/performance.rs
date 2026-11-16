@@ -1580,10 +1580,14 @@ fn articulations(export: &mut Export<'_>) -> Vec<Articulation> {
             continue;
         }
         sends.sort_by_key(|(tick, order, note, _, down)| (*tick, *order, *note, *down));
-        let Some(declarations) = export
-            .original
-            .as_ref()
-            .and_then(|original| original.articulations(&track.id))
+        let Some(declarations) = track
+            .source_id()
+            .and_then(|id| {
+                export
+                    .original
+                    .as_ref()
+                    .and_then(|original| original.articulations(id))
+            })
             .and_then(Value::as_object)
         else {
             for (_, _, note, _, _) in &sends {

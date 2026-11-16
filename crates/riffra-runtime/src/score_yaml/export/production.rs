@@ -206,7 +206,13 @@ fn instruments(export: &mut Export<'_>, ids: &MixIds) -> Result<Declarations, Ex
                     continue;
                 };
                 let mut declaration = Map::new();
-                source(export, &track.id, instrument, &mut declaration)?;
+                source(
+                    export,
+                    &track.id,
+                    track.source_id(),
+                    instrument,
+                    &mut declaration,
+                )?;
                 report_bypassed(export, &track.track.name, instrument);
                 let (gain, pan) =
                     pan_law(track.track.pan_law, track.track.gain_db, track.track.pan);
@@ -238,7 +244,7 @@ fn instruments(export: &mut Export<'_>, ids: &MixIds) -> Result<Declarations, Ex
                         );
                     }
                 }
-                inherited_instrument(export, &track.id, &mut declaration);
+                inherited_instrument(export, track.source_id(), &mut declaration);
                 declare(&mut instruments, &track.id, Value::Object(declaration))?;
             }
             TrackRole::Kit(kit) => {
@@ -251,28 +257,29 @@ fn instruments(export: &mut Export<'_>, ids: &MixIds) -> Result<Declarations, Ex
                         "kit \"{kit}\" does not host a VST3 instrument"
                     )));
                 };
+                let source_kit = track.source_id();
                 let mut source = json!({
                     "vst3": vst3_spec(export, &format!("kits/{kit}"), kit, plugin)?,
                 });
-                if let Some(role) = export
-                    .original
-                    .as_ref()
-                    .and_then(|original| original.field(&["kits", kit, "source", "role"]))
-                {
-                    source["role"] = role.clone();
-                }
-                if let Some(declarations) = export
-                    .original
-                    .as_ref()
-                    .and_then(|original| original.articulations(kit))
-                {
-                    let declarations =
-                        used_articulations(declarations, export.written_articulations.get(kit));
-                    if declarations
-                        .as_object()
-                        .is_some_and(|object| !object.is_empty())
+                if let Some(source_kit) = source_kit {
+                    if let Some(role) = export.original.as_ref().and_then(|original| {
+                        original.field(&["kits", source_kit, "source", "role"])
+                    }) {
+                        source["role"] = role.clone();
+                    }
+                    if let Some(declarations) = export
+                        .original
+                        .as_ref()
+                        .and_then(|original| original.articulations(source_kit))
                     {
-                        source["articulations"] = declarations;
+                        let declarations =
+                            used_articulations(declarations, export.written_articulations.get(kit));
+                        if declarations
+                            .as_object()
+                            .is_some_and(|object| !object.is_empty())
+                        {
+                            source["articulations"] = declarations;
+                        }
                     }
                 }
                 kits.insert(
@@ -292,20 +299,15 @@ fn instruments(export: &mut Export<'_>, ids: &MixIds) -> Result<Declarations, Ex
                         "kit": kit,
                         "trigger_note_midi": member.trigger,
                     });
-                    let source = member.source.as_deref().unwrap_or(&member.id);
-                    if let Some(role) = export
-                        .original
-                        .as_ref()
-                        .and_then(|original| original.field(&["instruments", source, "role"]))
+                    if let (Some(original), Some(source)) =
+                        (export.original.as_ref(), member.source.as_deref())
                     {
-                        member_spec["role"] = role.clone();
-                    }
-                    if let Some(sound) = export
-                        .original
-                        .as_ref()
-                        .and_then(|original| original.field(&["instruments", source, "sound"]))
-                    {
-                        member_spec["sound"] = sound.clone();
+                        if let Some(role) = original.field(&["instruments", source, "role"]) {
+                            member_spec["role"] = role.clone();
+                        }
+                        if let Some(sound) = original.field(&["instruments", source, "sound"]) {
+                            member_spec["sound"] = sound.clone();
+                        }
                     }
                     declare(&mut instruments, &member.id, member_spec)?;
                 }
@@ -356,8 +358,12 @@ fn used_articulations(declarations: &Value, used: Option<&BTreeSet<String>>) -> 
 }
 
 /// Copies the declarations only the linked Score still knows.
-fn inherited_instrument(export: &mut Export<'_>, id: &str, declaration: &mut Map<String, Value>) {
-    let Some(original) = export.original.as_ref() else {
+fn inherited_instrument(
+    export: &mut Export<'_>,
+    id: Option<&str>,
+    declaration: &mut Map<String, Value>,
+) {
+    let (Some(original), Some(id)) = (export.original.as_ref(), id) else {
         return;
     };
     for key in ["role", "sound"] {
@@ -371,6 +377,7 @@ fn inherited_instrument(export: &mut Export<'_>, id: &str, declaration: &mut Map
 fn source(
     export: &mut Export<'_>,
     id: &str,
+    source_id: Option<&str>,
     instrument: &riffra_core::TrackInstrument,
     declaration: &mut Map<String, Value>,
 ) -> Result<(), ExportError> {
@@ -403,11 +410,12 @@ fn source(
             let mut spec = json!({
                 "vst3": vst3_spec(export, &format!("instruments/{id}"), id, plugin)?,
             });
-            if let Some(declarations) = export
-                .original
-                .as_ref()
-                .and_then(|original| original.articulations(id))
-            {
+            if let Some(declarations) = source_id.and_then(|source_id| {
+                export
+                    .original
+                    .as_ref()
+                    .and_then(|original| original.articulations(source_id))
+            }) {
                 let declarations =
                     used_articulations(declarations, export.written_articulations.get(id));
                 if declarations
