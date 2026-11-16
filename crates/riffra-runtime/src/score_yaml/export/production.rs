@@ -164,6 +164,21 @@ fn time_changes(export: &mut Export<'_>, document: &mut Map<String, Value>) {
 /// The instrument and kit mappings of one Score document.
 type Declarations = (Map<String, Value>, Map<String, Value>);
 
+/// Adds one instrument declaration, refusing to overwrite another.
+fn declare(
+    instruments: &mut Map<String, Value>,
+    id: &str,
+    value: Value,
+) -> Result<(), ExportError> {
+    if instruments.contains_key(id) {
+        return Err(ExportError::new(format!(
+            "two Score instruments share the ID {id}"
+        )));
+    }
+    instruments.insert(id.to_owned(), value);
+    Ok(())
+}
+
 /// Builds the instrument and kit declarations.
 fn instruments(export: &mut Export<'_>, ids: &MixIds) -> Result<Declarations, ExportError> {
     let mut instruments = Map::new();
@@ -214,7 +229,7 @@ fn instruments(export: &mut Export<'_>, ids: &MixIds) -> Result<Declarations, Ex
                     }
                 }
                 inherited_instrument(export, &track.id, &mut declaration);
-                instruments.insert(track.id.clone(), Value::Object(declaration));
+                declare(&mut instruments, &track.id, Value::Object(declaration))?;
             }
             TrackRole::Kit(kit) => {
                 let Some(instrument) = instrument_of(track.track) else {
@@ -266,28 +281,30 @@ fn instruments(export: &mut Export<'_>, ids: &MixIds) -> Result<Declarations, Ex
                         "kit": kit,
                         "trigger_note_midi": member.trigger,
                     });
+                    let source = member.source.as_deref().unwrap_or(&member.id);
                     if let Some(role) = export
                         .original
                         .as_ref()
-                        .and_then(|original| original.field(&["instruments", &member.id, "role"]))
+                        .and_then(|original| original.field(&["instruments", source, "role"]))
                     {
                         member_spec["role"] = role.clone();
                     }
                     if let Some(sound) = export
                         .original
                         .as_ref()
-                        .and_then(|original| original.field(&["instruments", &member.id, "sound"]))
+                        .and_then(|original| original.field(&["instruments", source, "sound"]))
                     {
                         member_spec["sound"] = sound.clone();
                     }
-                    instruments.insert(member.id.clone(), member_spec);
+                    declare(&mut instruments, &member.id, member_spec)?;
                 }
             }
             TrackRole::Audio => {
                 let (gain, pan) =
                     pan_law(track.track.pan_law, track.track.gain_db, track.track.pan);
-                instruments.insert(
-                    track.id.clone(),
+                declare(
+                    &mut instruments,
+                    &track.id,
                     json!({
                         "audio": true,
                         "gain_db": gain,
@@ -299,7 +316,7 @@ fn instruments(export: &mut Export<'_>, ids: &MixIds) -> Result<Declarations, Ex
                             &track.track.effects,
                         )?),
                     }),
-                );
+                )?;
             }
         }
     }
@@ -1219,6 +1236,15 @@ mod tests {
                 value: 0.5,
             }],
         }
+    }
+
+    #[test]
+    fn duplicate_instrument_declarations_are_refused() {
+        let mut instruments = Map::new();
+        declare(&mut instruments, "lead", json!({"audio": true})).unwrap();
+        let error = declare(&mut instruments, "lead", json!({"audio": false})).unwrap_err();
+        assert!(error.message.contains("ID lead"), "{}", error.message);
+        assert_eq!(instruments["lead"]["audio"], true);
     }
 
     #[test]

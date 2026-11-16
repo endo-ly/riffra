@@ -144,6 +144,8 @@ pub(super) enum TrackRole {
 pub(super) struct KitMember {
     pub(super) id: String,
     pub(super) trigger: u8,
+    /// Score ID the member carried over from the source declaration.
+    pub(super) source: Option<String>,
 }
 
 /// Original Score declarations the Session cannot reconstruct.
@@ -230,7 +232,7 @@ pub(crate) fn plan(
     let song_end = song_end(session, &clock);
     let mut omissions = Vec::new();
     let sections = clock.sections(session, song_end, original.as_ref(), &mut omissions);
-    let tracks = resolve_tracks(session, &mut omissions);
+    let (tracks, mut used) = resolve_tracks(session, &mut omissions);
     let mut export = Export {
         session,
         data_root,
@@ -247,7 +249,7 @@ pub(crate) fn plan(
         parameters: BTreeMap::new(),
         written_articulations: BTreeMap::new(),
     };
-    export.kits = kit_members(&export);
+    export.kits = kit_members(&export, &mut used);
     let mut document = Map::new();
     performance::apply(&mut export, &mut document)?;
     production::apply(&mut export, &mut document)?;
@@ -469,19 +471,19 @@ fn content_end(session: &CreativeSession) -> u64 {
         for note in &clip.notes {
             end = end.max(clip.start_tick.0 + note.start_tick.0 + note.duration_ticks);
         }
-        for event in clip.events.iter().map(|event| event.tick.0).chain(
-            clip.instrument_control_events.iter().map(|event| {
-                event.tick.0
-                    + match event.kind {
-                        riffra_core::InstrumentControlEventKind::ParameterRamp {
-                            duration_ticks,
-                            ..
-                        } => duration_ticks,
-                        _ => 0,
-                    }
-            }),
-        ) {
-            end = end.max(clip.start_tick.0 + event);
+        for event in &clip.events {
+            let tick = clip.start_tick.0.saturating_add(event.tick.0);
+            end = end.max(tick.saturating_add(1));
+        }
+        for event in &clip.instrument_control_events {
+            let tick = clip.start_tick.0.saturating_add(event.tick.0);
+            let length = match event.kind {
+                riffra_core::InstrumentControlEventKind::ParameterRamp {
+                    duration_ticks, ..
+                } if duration_ticks > 0 => duration_ticks,
+                _ => 1,
+            };
+            end = end.max(tick.saturating_add(length));
         }
     }
     for clip in &session.arrangement.audio_clips {
@@ -693,7 +695,7 @@ fn defaults() -> (String, Option<String>, bool) {
 fn resolve_tracks<'a>(
     session: &'a CreativeSession,
     omissions: &mut Vec<ScoreExportOmission>,
-) -> Vec<ExportTrack<'a>> {
+) -> (Vec<ExportTrack<'a>>, BTreeSet<String>) {
     let mut used = BTreeSet::new();
     let mut tracks = Vec::new();
     for (index, track) in session.arrangement.tracks.iter().enumerate() {
@@ -732,7 +734,7 @@ fn resolve_tracks<'a>(
         };
         tracks.push(ExportTrack { id, track, role });
     }
-    tracks
+    (tracks, used)
 }
 
 fn has_performance(session: &CreativeSession, track_id: &str) -> bool {
@@ -746,7 +748,7 @@ fn has_performance(session: &CreativeSession, track_id: &str) -> bool {
 }
 
 /// Resolves kit member identifiers from the kit's trigger notes.
-fn kit_members(export: &Export) -> BTreeMap<String, Vec<KitMember>> {
+fn kit_members(export: &Export, used: &mut BTreeSet<String>) -> BTreeMap<String, Vec<KitMember>> {
     let mut kits = BTreeMap::new();
     for track in &export.tracks {
         let TrackRole::Kit(kit) = &track.role else {
@@ -763,12 +765,17 @@ fn kit_members(export: &Export) -> BTreeMap<String, Vec<KitMember>> {
         }
         let mut parts = Vec::new();
         for trigger in triggers {
-            let id = export
+            let source = export
                 .original
                 .as_ref()
-                .and_then(|original| original_kit_part(original, kit, trigger))
-                .unwrap_or_else(|| format!("{kit}_{trigger}"));
-            parts.push(KitMember { id, trigger });
+                .and_then(|original| original_kit_part(original, kit, trigger));
+            let base = source.clone().unwrap_or_else(|| format!("{kit}_{trigger}"));
+            let id = unique_id(&base, &format!("{kit}_{trigger}"), used);
+            parts.push(KitMember {
+                id,
+                trigger,
+                source,
+            });
         }
         kits.insert(kit.clone(), parts);
     }
@@ -784,8 +791,7 @@ fn original_kit_part(original: &Original, kit: &str, trigger: u8) -> Option<Stri
                 .and_then(Value::as_u64)
                 .and_then(|note| u8::try_from(note).ok())
                 == Some(trigger))
-        .then(|| identifier(id))
-        .flatten()
+        .then(|| id.clone())
     })
 }
 
@@ -952,7 +958,9 @@ pub(super) fn instrument_of(track: &Track) -> Option<&TrackInstrument> {
 mod tests {
     use super::*;
     use crate::api::output::{PluginEntry, PluginFormat, PluginRole, PluginScanState, ScanReport};
-    use riffra_core::{CreativeSession, InstrumentControlEventKind, TimelineTick};
+    use riffra_core::{
+        CreativeSession, InstrumentControlEventKind, MidiClip, MidiNote, TimelineTick,
+    };
 
     const SCORE: &str = r#"{
         "meta":{"title":"Export","bpm":120,"meter":"4/4","tuning":"12edo","gate":1},
@@ -1056,6 +1064,78 @@ mod tests {
         .expect("export");
         plan.write().expect("write");
         plan
+    }
+
+    fn midi_clip(id: &str, track_id: &str) -> MidiClip {
+        MidiClip {
+            id: id.into(),
+            name: id.into(),
+            track_id: track_id.into(),
+            asset_id: None,
+            start_tick: TimelineTick(0),
+            duration_ticks: 3840,
+            notes: Vec::new(),
+            events: Vec::new(),
+            instrument_control_events: Vec::new(),
+            muted: false,
+            loop_enabled: false,
+            recording_take_id: None,
+        }
+    }
+
+    fn built_in_catalog(root: &Path, definition: &str) -> BuiltInInstrumentCatalog {
+        let resources = root.join("built-ins");
+        std::fs::create_dir_all(resources.join("preset")).unwrap();
+        std::fs::write(resources.join("preset").join("definition.json"), definition).unwrap();
+        let manifest = json!({
+            "sourceRelease": "test",
+            "presets": [{
+                "id": "TEST-001", "name": "Test", "category": "Test", "tags": ["test"],
+                "recommendedRange": {"minMidi": 0, "maxMidi": 127},
+                "preview": {"tempoBpm": 120.0, "ticksPerBeat": 480,
+                    "timeSignature": {"numerator": 4, "denominator": 4},
+                    "lengthTicks": 1920,
+                    "notes": [{"tick": 0, "durationTicks": 480, "note": 60, "velocity": 100}]},
+                "definitionPath": "preset/definition.json", "resourceBasePath": "preset"
+            }]
+        });
+        std::fs::write(resources.join("manifest.json"), manifest.to_string()).unwrap();
+        BuiltInInstrumentCatalog::load(&resources).unwrap()
+    }
+
+    fn add_played_track(
+        session: &mut CreativeSession,
+        name: &str,
+        instrument: TrackInstrument,
+        notes: &[u8],
+    ) -> String {
+        let mut track = session.arrangement.tracks[0].clone();
+        track.id = format!("track:{name}");
+        track.name = name.into();
+        track.kind = TrackKind::Instrument;
+        track.score_instrument = None;
+        track.instrument = Some(instrument);
+        track.effects.clear();
+        track.output_bus_id = None;
+        track.external_audio_source_track_ids.clear();
+        let id = track.id.clone();
+        session.arrangement.tracks.push(track);
+        let mut clip = midi_clip(&format!("clip:{name}"), &id);
+        clip.notes = notes
+            .iter()
+            .enumerate()
+            .map(|(index, note)| MidiNote {
+                id: format!("note:{name}:{index}"),
+                lyric: None,
+                note: *note,
+                start_tick: TimelineTick(index as u64 * 480),
+                duration_ticks: 480,
+                velocity: 100,
+                channel: 1,
+            })
+            .collect();
+        session.arrangement.midi_clips.push(clip);
+        id
     }
 
     #[test]
@@ -1516,6 +1596,27 @@ mod tests {
         }
         second.instrument = Some(instrument);
         session.arrangement.tracks.push(second);
+
+        let mut third = session.arrangement.tracks[0].clone();
+        third.id = "track:clashing-instrument".into();
+        third.name = "drums_2_36".into();
+        third.kind = TrackKind::Instrument;
+        third.score_instrument = None;
+        let mut instrument = third.instrument.clone().unwrap();
+        instrument.id = "device:clashing-instrument".into();
+        third.instrument = Some(instrument);
+        session.arrangement.tracks.push(third);
+        let mut clash_clip = midi_clip("clip:clashing-instrument", "track:clashing-instrument");
+        clash_clip.notes.push(MidiNote {
+            id: "note:clashing-instrument".into(),
+            lyric: None,
+            note: 60,
+            start_tick: TimelineTick(0),
+            duration_ticks: ppq / 4,
+            velocity: 100,
+            channel: 1,
+        });
+        session.arrangement.midi_clips.push(clash_clip);
         session.arrangement.midi_clips.push(MidiClip {
             id: "clip:second-kit".into(),
             name: "Second Kit".into(),
@@ -1523,15 +1624,26 @@ mod tests {
             asset_id: None,
             start_tick: TimelineTick(0),
             duration_ticks: ppq * 4,
-            notes: vec![MidiNote {
-                id: "note:second-kit".into(),
-                lyric: None,
-                note: 38,
-                start_tick: TimelineTick(ppq),
-                duration_ticks: ppq / 4,
-                velocity: 96,
-                channel: 1,
-            }],
+            notes: vec![
+                MidiNote {
+                    id: "note:second-kit".into(),
+                    lyric: None,
+                    note: 38,
+                    start_tick: TimelineTick(ppq),
+                    duration_ticks: ppq / 4,
+                    velocity: 96,
+                    channel: 1,
+                },
+                MidiNote {
+                    id: "note:second-kit-kick".into(),
+                    lyric: None,
+                    note: 36,
+                    start_tick: TimelineTick(ppq),
+                    duration_ticks: ppq / 4,
+                    velocity: 96,
+                    channel: 1,
+                },
+            ],
             events: Vec::new(),
             instrument_control_events: Vec::new(),
             muted: false,
@@ -1563,6 +1675,25 @@ mod tests {
             document["instruments"]["drums_2_38"]["trigger_note_midi"],
             38
         );
+        assert!(document["instruments"]["drums_2_36"].is_object());
+        assert!(
+            document["instruments"]["drums_2_36"].get("kit").is_none(),
+            "the standalone instrument keeps its own declaration"
+        );
+        assert_eq!(
+            document["instruments"]["drums_2_36_2"]["kit"], "drums_2",
+            "{document}"
+        );
+        assert_eq!(
+            document["instruments"]["drums_2_36_2"]["trigger_note_midi"],
+            36
+        );
+        assert!(
+            document["drums"]["grid_drums"]["parts"]
+                .get("drums_2_36_2")
+                .is_some(),
+            "{document}"
+        );
         assert!(
             exported
                 .files
@@ -1580,7 +1711,7 @@ mod tests {
             &root,
             catalog,
         );
-        assert_eq!(imported.arrangement.tracks.len(), 2, "{yaml}");
+        assert_eq!(imported.arrangement.tracks.len(), 3, "{yaml}");
         let second = imported
             .arrangement
             .tracks
@@ -1606,13 +1737,466 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             notes,
-            [(
-                38,
-                imported.arrangement.timebase.ppq.into(),
-                u64::from(imported.arrangement.timebase.ppq) / 4
-            )]
+            [
+                (
+                    36,
+                    imported.arrangement.timebase.ppq.into(),
+                    u64::from(imported.arrangement.timebase.ppq) / 4
+                ),
+                (
+                    38,
+                    imported.arrangement.timebase.ppq.into(),
+                    u64::from(imported.arrangement.timebase.ppq) / 4
+                )
+            ]
         );
+        let clash = imported
+            .arrangement
+            .tracks
+            .iter()
+            .find(|track| track.score_instrument.as_deref() == Some("drums_2_36"))
+            .expect("the standalone instrument keeps its ID");
+        let notes = imported
+            .arrangement
+            .midi_clips
+            .iter()
+            .filter(|clip| clip.track_id == clash.id)
+            .flat_map(|clip| clip.notes.iter())
+            .map(|note| note.note)
+            .collect::<Vec<_>>();
+        assert_eq!(notes, [60]);
         assert_ne!(second.id, imported.arrangement.tracks[0].id);
+    }
+
+    #[test]
+    fn instant_controls_at_the_last_tick_are_written() {
+        use riffra_core::{MidiEvent, MidiEventKind};
+
+        let root = root("end-control");
+        catalog(&root);
+        let catalog = crate::test_support::empty_built_in_catalog();
+        let mut session = crate::score_yaml::import::session_from_score(
+            CC_SCORE,
+            &root.join("source"),
+            &root,
+            catalog,
+        );
+        let track = session.arrangement.tracks[0].id.clone();
+        session.arrangement.midi_clips.clear();
+        session.arrangement.regions.clear();
+        let mut clip = midi_clip("clip:end", &track);
+        clip.events.push(MidiEvent {
+            id: "event:end".into(),
+            kind: MidiEventKind::ControlChange,
+            tick: TimelineTick(3840),
+            channel: 1,
+            data1: 11,
+            data2: 64,
+        });
+        session.arrangement.midi_clips.push(clip);
+
+        let exported = exported(&session, &root, catalog);
+        let yaml = std::fs::read_to_string(exported.path.join("score.yaml")).unwrap();
+        let imported = crate::score_yaml::import::session_from_score(
+            &yaml,
+            &root.join("song"),
+            &root,
+            catalog,
+        );
+        let controls = imported
+            .arrangement
+            .midi_clips
+            .iter()
+            .flat_map(|clip| {
+                clip.instrument_control_events
+                    .iter()
+                    .filter_map(|event| match event.kind {
+                        InstrumentControlEventKind::ControlChange { number, value } => {
+                            Some((clip.start_tick.0 + event.tick.0, number, value))
+                        }
+                        _ => None,
+                    })
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(controls, [(3840, 11, 64)]);
+    }
+
+    #[test]
+    fn instant_controls_at_the_configured_end_are_written() {
+        use riffra_core::{InstrumentControlEvent, InstrumentControlEventKind};
+
+        let root = root("end-configured");
+        catalog(&root);
+        let catalog = built_in_catalog(&root, r#"{"layers":[],"parameters":[]}"#);
+        let mut session = crate::score_yaml::import::session_from_score(
+            CC_SCORE,
+            &root.join("source"),
+            &root,
+            &catalog,
+        );
+        session.arrangement.midi_clips.clear();
+        session.arrangement.regions.clear();
+        session.settings.mixdown.musical_end_tick = 3840;
+        let instrument = TrackInstrument::built_in(
+            "device:end".into(),
+            "End".into(),
+            "TEST-001".into(),
+            r#"{"layers":[],"parameters":[]}"#.into(),
+        )
+        .unwrap();
+        add_played_track(&mut session, "end", instrument, &[]);
+        let clip = session
+            .arrangement
+            .midi_clips
+            .last_mut()
+            .expect("the track has a clip");
+        clip.instrument_control_events.push(InstrumentControlEvent {
+            id: "event:end".into(),
+            tick: TimelineTick(3840),
+            source_order: 0,
+            kind: InstrumentControlEventKind::ModWheel { value: 0.5 },
+        });
+
+        let exported = exported(&session, &root, &catalog);
+        let yaml = std::fs::read_to_string(exported.path.join("score.yaml")).unwrap();
+        let imported = crate::score_yaml::import::session_from_score(
+            &yaml,
+            &root.join("song"),
+            &root,
+            &catalog,
+        );
+        let controls = imported
+            .arrangement
+            .midi_clips
+            .iter()
+            .flat_map(|clip| {
+                clip.instrument_control_events
+                    .iter()
+                    .filter_map(|event| match event.kind {
+                        InstrumentControlEventKind::ModWheel { value } => {
+                            Some((clip.start_tick.0 + event.tick.0, value))
+                        }
+                        _ => None,
+                    })
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            controls.len(),
+            1,
+            "{controls:?}
+{yaml}"
+        );
+        assert_eq!(controls[0].0, 3840);
+        assert!((controls[0].1 - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn kit_controls_at_the_song_end_are_reported() {
+        use riffra_core::{InstrumentControlEvent, InstrumentControlEventKind};
+
+        let root = root("end-kit");
+        catalog(&root);
+        let catalog = crate::test_support::empty_built_in_catalog();
+        let mut session = crate::score_yaml::import::session_from_score(
+            WALTZ,
+            &root.join("source"),
+            &root,
+            catalog,
+        );
+        let track = session.arrangement.tracks[0].id.clone();
+        let clip = session
+            .arrangement
+            .midi_clips
+            .iter_mut()
+            .find(|clip| clip.track_id == track)
+            .expect("the kit has a clip");
+        clip.instrument_control_events.push(InstrumentControlEvent {
+            id: "event:end".into(),
+            tick: TimelineTick(2880),
+            source_order: 0,
+            kind: InstrumentControlEventKind::ControlChange {
+                number: 1,
+                value: 64,
+            },
+        });
+
+        let exported = exported(&session, &root, catalog);
+        assert!(
+            exported.omissions.iter().any(|omission| {
+                omission.subject.contains("control") && omission.message.contains("kit track")
+            }),
+            "{:?}",
+            exported.omissions
+        );
+    }
+
+    #[test]
+    fn non_default_channels_are_reported() {
+        let root = root("channels");
+        catalog(&root);
+        let catalog = crate::test_support::empty_built_in_catalog();
+        let mut session = crate::score_yaml::import::session_from_score(
+            CC_SCORE,
+            &root.join("source"),
+            &root,
+            catalog,
+        );
+        let clip = session
+            .arrangement
+            .midi_clips
+            .first_mut()
+            .expect("the Score has a clip");
+        clip.notes.push(MidiNote {
+            id: "note:channel-one".into(),
+            lyric: None,
+            note: 67,
+            start_tick: TimelineTick(480),
+            duration_ticks: 480,
+            velocity: 100,
+            channel: 1,
+        });
+        let pitches = clip.notes.iter().map(|note| note.note).collect::<Vec<_>>();
+        clip.notes[0].channel = 10;
+
+        let exported = exported(&session, &root, catalog);
+        assert!(
+            exported.omissions.iter().any(|omission| {
+                omission.subject.contains("note") && omission.message.contains("channel 10")
+            }),
+            "{:?}",
+            exported.omissions
+        );
+        let yaml = std::fs::read_to_string(exported.path.join("score.yaml")).unwrap();
+        let imported = crate::score_yaml::import::session_from_score(
+            &yaml,
+            &root.join("song"),
+            &root,
+            catalog,
+        );
+        let pitches_after = imported.arrangement.midi_clips[0]
+            .notes
+            .iter()
+            .map(|note| note.note)
+            .collect::<Vec<_>>();
+        assert_eq!(pitches_after, pitches);
+    }
+
+    #[test]
+    fn built_in_notes_use_the_catalog_definition() {
+        let root = root("built-in-rules");
+        catalog(&root);
+        let catalog = built_in_catalog(
+            &root,
+            r#"{"layers":[{"id":"main","trigger":{"event":"note_on","key_min":60,"key_max":60,"velocity_min":1,"velocity_max":127}}]}"#,
+        );
+        let mut session = crate::score_yaml::import::session_from_score(
+            CC_SCORE,
+            &root.join("source"),
+            &root,
+            crate::test_support::empty_built_in_catalog(),
+        );
+        let instrument = TrackInstrument::built_in(
+            "device:test".into(),
+            "Test".into(),
+            "TEST-001".into(),
+            r#"{"layers":[{"id":"main","trigger":{"event":"note_on","key_min":48,"key_max":72,"velocity_min":1,"velocity_max":127}}]}"#.into(),
+        )
+        .unwrap();
+        add_played_track(&mut session, "test", instrument, &[60, 64]);
+
+        let exported = exported(&session, &root, &catalog);
+        assert!(
+            exported.omissions.iter().any(|omission| {
+                omission.subject.contains("note 64") && omission.message.contains("cannot trigger")
+            }),
+            "{:?}",
+            exported.omissions
+        );
+        let yaml = std::fs::read_to_string(exported.path.join("score.yaml")).unwrap();
+        let imported = crate::score_yaml::import::session_from_score(
+            &yaml,
+            &root.join("song"),
+            &root,
+            &catalog,
+        );
+        let notes = imported
+            .arrangement
+            .midi_clips
+            .iter()
+            .filter(|clip| {
+                imported.arrangement.tracks.iter().any(|candidate| {
+                    candidate.id == clip.track_id
+                        && candidate.score_instrument.as_deref() == Some("test")
+                })
+            })
+            .flat_map(|clip| clip.notes.iter())
+            .map(|note| note.note)
+            .collect::<Vec<_>>();
+        assert_eq!(notes, [60]);
+    }
+
+    #[test]
+    fn unreadable_instrument_definitions_fail_the_export() {
+        let root = root("invalid-definition");
+        catalog(&root);
+        let snapshot = "00000000-0000-4000-8000-000000000002";
+        let package = root.join("project-instruments").join(snapshot);
+        std::fs::create_dir_all(&package).unwrap();
+        std::fs::write(package.join("definition.json"), "not a definition").unwrap();
+        let mut session = crate::score_yaml::import::session_from_score(
+            CC_SCORE,
+            &root.join("source"),
+            &root,
+            crate::test_support::empty_built_in_catalog(),
+        );
+        let instrument = TrackInstrument::user_snapshot(
+            "device:broken".into(),
+            "Broken".into(),
+            format!("user:{snapshot}"),
+            snapshot.into(),
+            r#"{"layers":[]}"#.into(),
+        )
+        .unwrap();
+        add_played_track(&mut session, "broken", instrument, &[]);
+
+        let error = match plan(
+            &session,
+            &root.join("song"),
+            &root,
+            crate::test_support::empty_built_in_catalog(),
+            Path::new("unused"),
+        ) {
+            Ok(_) => panic!("the invalid definition must fail the export"),
+            Err(error) => error,
+        };
+        assert!(
+            error.message.contains("definition is invalid"),
+            "{}",
+            error.message
+        );
+        assert!(!root.join("song").exists());
+    }
+
+    #[test]
+    fn user_snapshot_notes_use_the_copied_definition() {
+        let root = root("user-rules");
+        catalog(&root);
+        let snapshot = "00000000-0000-4000-8000-000000000001";
+        let package = root.join("project-instruments").join(snapshot);
+        std::fs::create_dir_all(&package).unwrap();
+        std::fs::write(
+            package.join("definition.json"),
+            r#"{"layers":[{"id":"main","trigger":{"event":"note_on","key_min":60,"key_max":60,"velocity_min":1,"velocity_max":127}}]}"#,
+        )
+        .unwrap();
+        let mut session = crate::score_yaml::import::session_from_score(
+            CC_SCORE,
+            &root.join("source"),
+            &root,
+            crate::test_support::empty_built_in_catalog(),
+        );
+        let instrument = TrackInstrument::user_snapshot(
+            "device:user".into(),
+            "User".into(),
+            format!("user:{snapshot}"),
+            snapshot.into(),
+            r#"{"layers":[{"id":"main","trigger":{"event":"note_on","key_min":48,"key_max":72,"velocity_min":1,"velocity_max":127}}]}"#.into(),
+        )
+        .unwrap();
+        add_played_track(&mut session, "user", instrument, &[60, 64]);
+
+        let catalog = crate::test_support::empty_built_in_catalog();
+        let exported = exported(&session, &root, catalog);
+        assert!(
+            exported.omissions.iter().any(|omission| {
+                omission.subject.contains("note 64") && omission.message.contains("cannot trigger")
+            }),
+            "{:?}",
+            exported.omissions
+        );
+        let yaml = std::fs::read_to_string(exported.path.join("score.yaml")).unwrap();
+        let document = crate::score::parse_document(&yaml).expect("the document parses");
+        assert_eq!(
+            document["instruments"]["user"]["definition"],
+            "sounds/user/definition.json"
+        );
+    }
+
+    #[test]
+    fn harmony_gaps_survive_the_round_trip() {
+        let root = root("harmony-gaps");
+        catalog(&root);
+        let catalog = crate::test_support::empty_built_in_catalog();
+        let mut session = crate::score_yaml::import::session_from_score(
+            SCORE,
+            &root.join("source"),
+            &root,
+            catalog,
+        );
+        assert!(session.arrangement.harmony_events.len() >= 2);
+        session.arrangement.harmony_events[0].end_tick = TimelineTick(960);
+        session.arrangement.harmony_events[1].end_tick = TimelineTick(5760);
+        let expected = session
+            .arrangement
+            .harmony_events
+            .iter()
+            .map(|event| {
+                (
+                    event.start_tick.0,
+                    event.end_tick.0,
+                    event.chord.root.map(|root| i32::from(root.pitch_class())),
+                    event.chord.bass.map(|bass| i32::from(bass.pitch_class())),
+                    event
+                        .chord
+                        .tones
+                        .iter()
+                        .map(|tone| i32::from(tone.pitch_class()))
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let exported = exported(&session, &root, catalog);
+        let yaml = std::fs::read_to_string(exported.path.join("score.yaml")).unwrap();
+        let document = crate::score::parse_document(&yaml).expect("the document parses");
+        let changes = document["sections"]["verse"]["chord_changes"]
+            .as_array()
+            .expect("the verse has explicit changes");
+        assert_eq!(
+            changes
+                .iter()
+                .map(|change| change["chord"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            ["1:maj", "NC", "6:m7", "NC"]
+        );
+
+        let imported = crate::score_yaml::import::session_from_score(
+            &yaml,
+            &root.join("song"),
+            &root,
+            catalog,
+        );
+        let actual = imported
+            .arrangement
+            .harmony_events
+            .iter()
+            .filter(|event| event.start_tick.0 < 7680)
+            .map(|event| {
+                (
+                    event.start_tick.0,
+                    event.end_tick.0,
+                    event.chord.root.map(|root| i32::from(root.pitch_class())),
+                    event.chord.bass.map(|bass| i32::from(bass.pitch_class())),
+                    event
+                        .chord
+                        .tones
+                        .iter()
+                        .map(|tone| i32::from(tone.pitch_class()))
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(actual, expected);
     }
 
     const AUDIO_SCORE: &str = r#"{
