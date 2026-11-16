@@ -111,6 +111,9 @@ impl HostDispatcher<'_> {
             ProjectCommand::ProjectExportScore(params) => {
                 let writer = writer.expect("project mutation holds the writer");
                 let current = writer.project().core.canonical_state();
+                if params.link && already_linked(&current.session) {
+                    return Err(already_linked_error());
+                }
                 let plan = crate::score_yaml::export::plan(
                     &current.session,
                     &params.path,
@@ -133,11 +136,8 @@ impl HostDispatcher<'_> {
                 if !plan.omissions.is_empty() {
                     return Err(omissions_error(&plan.omissions));
                 }
-                if already_linked(&current.session) {
-                    return Err(already_linked_error());
-                }
                 let path = plan.write().map_err(export_error)?;
-                let linked = linked_session(&current.session, &plan.score_instruments);
+                let linked = plan.linked_session(&current.session);
                 let rebuilt = crate::score_yaml::import::link(
                     &linked,
                     &path,
@@ -275,20 +275,6 @@ impl HostDispatcher<'_> {
             sequence,
         })
     }
-}
-
-/// Marks the Tracks with the Score instruments they were exported as.
-fn linked_session(
-    session: &riffra_core::CreativeSession,
-    instruments: &std::collections::BTreeMap<String, String>,
-) -> riffra_core::CreativeSession {
-    let mut session = session.clone();
-    for track in &mut session.arrangement.tracks {
-        if let Some(id) = instruments.get(&track.id) {
-            track.score_instrument = Some(id.clone());
-        }
-    }
-    session
 }
 
 fn already_linked(session: &riffra_core::CreativeSession) -> bool {
@@ -429,6 +415,293 @@ mod tests {
         assert_eq!(output_type(&exported), "scoreExport");
         assert!(folder.join("score.yaml").is_file());
         assert!(session(&dispatcher).score_source.is_none());
+    }
+
+    #[test]
+    fn export_score_reports_unrepresentable_performance_and_refuses_link() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-score-export-keyswitch-{}",
+            riffra_control::new_instance_id()
+        ));
+        let resources = root.join("resources");
+        std::fs::create_dir_all(resources.join("01-keys")).unwrap();
+        std::fs::write(
+            resources.join("01-keys/definition.json"),
+            r#"{"metadata":{"name":"Keys"},"layers":[{"id":"main","trigger":{"event":"note_on","key_min":60,"key_max":60,"velocity_min":1,"velocity_max":127}}]}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            resources.join("manifest.json"),
+            br#"{"sourceRelease":"vtest","presets":[{"id":"01-keys","name":"Keys","author":"Riffra","description":"Keys","category":"Keys","tags":["test"],"recommendedRange":{"minMidi":36,"maxMidi":84},"preview":{"tempoBpm":120,"ticksPerBeat":480,"timeSignature":{"numerator":4,"denominator":4},"lengthTicks":1920,"notes":[{"tick":0,"durationTicks":480,"note":48,"velocity":100}]},"definitionPath":"01-keys/definition.json","resourceBasePath":"01-keys"}]}"#,
+        )
+        .unwrap();
+        let dispatcher = Dispatcher::open(root.clone(), resources).unwrap();
+        dispatcher
+            .dispatch(
+                request("track.add", json!({"name":"Keys","kind":"instrument"})),
+                None,
+            )
+            .unwrap();
+        let track_id = session(&dispatcher).arrangement.tracks[0].id.clone();
+        dispatcher
+            .dispatch(
+                request(
+                    "instrument.apply",
+                    json!({"trackId":track_id,"instrumentId":"builtin:01-keys"}),
+                ),
+                None,
+            )
+            .unwrap();
+        dispatcher
+            .dispatch(
+                request(
+                    "clip.midi.create",
+                    json!({"trackId":track_id,"startTick":0,"durationTicks":1920,"name":"Keys"}),
+                ),
+                None,
+            )
+            .unwrap();
+        let clip_id = session(&dispatcher).arrangement.midi_clips[0].id.clone();
+        dispatcher
+            .dispatch(
+                request(
+                    "clip.midi.instrument-event.add",
+                    json!({
+                        "clipId": clip_id,
+                        "tick": 480,
+                        "kind": {"type":"keySwitch","note":24,"mode":"latch","down":true},
+                    }),
+                ),
+                None,
+            )
+            .unwrap();
+        dispatcher
+            .dispatch(
+                request(
+                    "clip.midi.note.add",
+                    json!({"clipId":clip_id,"pitch":60,"startTick":0,"durationTicks":480,"velocity":100,"channel":10}),
+                ),
+                None,
+            )
+            .unwrap();
+        let before = session(&dispatcher);
+        let folder = root.join("song");
+        let error = dispatcher
+            .dispatch(
+                request(
+                    "project.export-score",
+                    json!({"path": folder, "link": true}),
+                ),
+                None,
+            )
+            .unwrap_err();
+        let crate::dispatcher::DispatchError::InvalidRequest {
+            details: Some(details),
+            ..
+        } = error
+        else {
+            panic!("expected an omission error, got {error:?}");
+        };
+        assert_eq!(details["kind"], "scoreExportOmissions");
+        let omissions = details["omissions"].as_array().expect("omissions");
+        assert!(
+            omissions.iter().any(|omission| {
+                omission["subject"]
+                    .as_str()
+                    .is_some_and(|subject| subject.contains("key switch 24"))
+            }),
+            "{details}"
+        );
+        assert!(
+            omissions.iter().any(|omission| {
+                omission["message"]
+                    .as_str()
+                    .is_some_and(|message| message.contains("channel 10"))
+            }),
+            "{details}"
+        );
+        assert!(!folder.exists());
+        let after = session(&dispatcher);
+        assert_eq!(after.arrangement.revision, before.arrangement.revision);
+        assert!(after.score_source.is_none());
+    }
+
+    fn kit_export_dispatcher(label: &str) -> (Dispatcher, std::path::PathBuf) {
+        use crate::api::output::{
+            PluginEntry, PluginFormat, PluginRole, PluginScanState, ScanReport,
+        };
+
+        let root = std::env::temp_dir().join(format!(
+            "riffra-score-export-{label}-{}",
+            riffra_control::new_instance_id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let plugin = root.join("Drums.vst3");
+        std::fs::create_dir_all(&plugin).unwrap();
+        crate::plugins::catalog::save(
+            &root,
+            &ScanReport {
+                root: root.to_string_lossy().into_owned(),
+                started_at_ms: 0,
+                finished_at_ms: 0,
+                plugins: vec![PluginEntry {
+                    id: "Drums".into(),
+                    name: "Drums".into(),
+                    vendor: None,
+                    version: None,
+                    identifier: Some("Drums-class".into()),
+                    format: PluginFormat::Vst3,
+                    role: Some(PluginRole::Instrument),
+                    path: plugin.to_string_lossy().into_owned(),
+                    bundle: true,
+                    modified_at_ms: None,
+                    scan_state: PluginScanState::Validated,
+                }],
+                issues: Vec::new(),
+            },
+        )
+        .unwrap();
+        let dispatcher = Dispatcher::open(
+            root.clone(),
+            crate::test_support::prepare_built_in_resource_root(&root),
+        )
+        .unwrap();
+        let score = root.join("kit.yaml");
+        std::fs::write(
+            &score,
+            r#"{
+                "meta":{"title":"Kit","bpm":120,"meter":"4/4","tuning":"12edo","gate":1},
+                "form":[{"section":"verse","bars":1,"tonic":"C"}],
+                "sections":{"verse":{"drums":"beat","lines":{"main":{"instrument":"lead","melody":"theme"}}}},
+                "melodies":{"theme":["1:16"]},
+                "drums":{"beat":{"parts":{"kick":["x..............."]}}},
+                "instruments":{"kick":{"kit":"drums","trigger_note_midi":36},"lead":{"source":{"vst3":{"plugin":"Drums"}}}},
+                "kits":{"drums":{"source":{"vst3":{"plugin":"Drums"}}}}
+            }"#,
+        )
+        .unwrap();
+        dispatcher
+            .dispatch(
+                request("project.import-score", json!({"path": score})),
+                None,
+            )
+            .unwrap();
+        let mut canonical = session(&dispatcher);
+        canonical.score_source = None;
+        let _ = dispatcher
+            .core
+            .cell()
+            .write()
+            .commit_accepted(canonical)
+            .unwrap();
+        (dispatcher, root)
+    }
+
+    fn assert_kit_export_refused(
+        dispatcher: &Dispatcher,
+        root: &std::path::Path,
+        subject: &str,
+        message: &str,
+    ) {
+        let before = session(dispatcher);
+        let folder = root.join("song");
+        let error = dispatcher
+            .dispatch(
+                request(
+                    "project.export-score",
+                    json!({"path": folder, "link": true}),
+                ),
+                None,
+            )
+            .unwrap_err();
+        let crate::dispatcher::DispatchError::InvalidRequest {
+            details: Some(details),
+            ..
+        } = error
+        else {
+            panic!("expected an omission error, got {error:?}");
+        };
+        assert_eq!(details["kind"], "scoreExportOmissions");
+        assert!(
+            details["omissions"].as_array().is_some_and(|omissions| {
+                omissions.iter().any(|omission| {
+                    omission["subject"]
+                        .as_str()
+                        .is_some_and(|candidate| candidate.contains(subject))
+                        && omission["message"]
+                            .as_str()
+                            .is_some_and(|candidate| candidate.contains(message))
+                })
+            }),
+            "{details}"
+        );
+        assert!(!folder.exists());
+        let after = session(dispatcher);
+        assert_eq!(after.arrangement.revision, before.arrangement.revision);
+        assert!(after.score_source.is_none());
+    }
+
+    #[test]
+    fn export_score_reports_a_bypassed_kit_and_refuses_link() {
+        let (dispatcher, root) = kit_export_dispatcher("bypassed-kit");
+        let mut canonical = session(&dispatcher);
+        let kit = canonical
+            .arrangement
+            .tracks
+            .iter_mut()
+            .find(|track| {
+                track
+                    .score_instrument
+                    .as_deref()
+                    .is_some_and(|id| id.starts_with("kit:"))
+            })
+            .expect("the Score has a kit track");
+        kit.instrument
+            .as_mut()
+            .expect("the kit has an instrument")
+            .bypassed = true;
+        let _ = dispatcher
+            .core
+            .cell()
+            .write()
+            .commit_accepted(canonical)
+            .unwrap();
+
+        assert_kit_export_refused(&dispatcher, &root, "instrument", "bypassed");
+    }
+
+    #[test]
+    fn export_score_reports_an_unassigned_kit_and_refuses_link() {
+        let (dispatcher, root) = kit_export_dispatcher("unassigned-kit");
+        let mut canonical = session(&dispatcher);
+        let kit = canonical
+            .arrangement
+            .tracks
+            .iter_mut()
+            .find(|track| {
+                track
+                    .score_instrument
+                    .as_deref()
+                    .is_some_and(|id| id.starts_with("kit:"))
+            })
+            .expect("the Score has a kit track");
+        kit.instrument = None;
+        let _ = dispatcher
+            .core
+            .cell()
+            .write()
+            .commit_accepted(canonical)
+            .unwrap();
+
+        assert_kit_export_refused(&dispatcher, &root, "track", "no instrument");
+        let canonical = session(&dispatcher);
+        let lead = canonical
+            .arrangement
+            .tracks
+            .iter()
+            .find(|track| track.score_instrument.as_deref() == Some("lead"))
+            .expect("the normal track stays in the Project");
+        assert!(lead.instrument.is_some());
     }
 
     #[test]

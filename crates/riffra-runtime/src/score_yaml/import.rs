@@ -1153,6 +1153,7 @@ fn rebuild_with_probe(
             previous: Some(previous),
         },
         describe,
+        &|definition| inspect_definition(sonalloy, definition),
     )?;
     let store = UserInstrumentStore::new(data_root, sonalloy);
     let mut staged = StagedResources::new(data_root);
@@ -1932,12 +1933,18 @@ struct ReadInput<'a> {
 }
 
 fn read(input: ReadInput<'_>) -> Result<ScoreDocument, ImportError> {
-    read_with_probe(input, &crate::plugins::validation::describe_parameters)
+    let sonalloy = input.sonalloy.to_path_buf();
+    read_with_probe(
+        input,
+        &crate::plugins::validation::describe_parameters,
+        &|definition| inspect_definition(&sonalloy, definition),
+    )
 }
 
 fn read_with_probe(
     input: ReadInput<'_>,
     describe: &impl Fn(&Path, &Vst3Plugin, &[DisplayRequest]) -> Result<ParameterDescription, String>,
+    inspect: &impl Fn(&Path) -> Result<Value, String>,
 ) -> Result<ScoreDocument, ImportError> {
     let ReadInput {
         path,
@@ -1946,7 +1953,7 @@ fn read_with_probe(
         data_root,
         catalog,
         scanner,
-        sonalloy,
+        sonalloy: _,
         previous,
     } = input;
     let yaml = std::fs::read_to_string(path)
@@ -2022,7 +2029,7 @@ fn read_with_probe(
             effective.insert(id.clone(), canonical.clone());
         }
         if !resolved.contains_key(&canonical) {
-            let report = inspect_definition(sonalloy, &canonical)?;
+            let report = inspect(&canonical)?;
             let built_in = spec["preset"].as_str().and_then(|preset| {
                 let preset_id = preset_id(preset);
                 let builtin = catalog.resolve(&preset_id).ok()?;
@@ -2095,11 +2102,18 @@ pub(super) fn session_from_score(
             }))
             .unwrap())
         },
+        &|definition| {
+            std::fs::read_to_string(definition)
+                .map_err(|error| error.to_string())
+                .and_then(|text| serde_json::from_str(&text).map_err(|error| error.to_string()))
+        },
     )
     .unwrap();
     let store = UserInstrumentStore::new(data_root, Path::new("unused"));
     let mut staged = StagedResources::new(data_root);
-    build(&mut document, None, &store, &mut staged, BuildMode::Stage).unwrap()
+    let session = build(&mut document, None, &store, &mut staged, BuildMode::Stage).unwrap();
+    staged.clear();
+    session
 }
 
 /// How a Score build treats resources that outlive the candidate Session.
@@ -4113,7 +4127,7 @@ fn inspect_definition(sonalloy: &Path, definition: &Path) -> Result<Value, Strin
         .map_err(|error| format!("invalid instrument inspection: {error}"))
 }
 
-fn validate_note(report: &Value, note: u8, velocity: u8) -> Result<(), String> {
+pub(super) fn validate_note(report: &Value, note: u8, velocity: u8) -> Result<(), String> {
     let triggered = report["layers"].as_array().is_some_and(|layers| {
         layers.iter().any(|layer| {
             let trigger = &layer["trigger"];
@@ -4147,7 +4161,7 @@ fn parameter<'a>(report: &'a Value, id: &str) -> Result<&'a Value, String> {
         .ok_or_else(|| format!("unknown instrument parameter '{id}'"))
 }
 
-fn validate_parameter(report: &Value, id: &str, values: &[f32]) -> Result<(), String> {
+pub(super) fn validate_parameter(report: &Value, id: &str, values: &[f32]) -> Result<(), String> {
     let descriptor = parameter(report, id)?;
     let min = descriptor["min"]
         .as_f64()
@@ -5461,6 +5475,11 @@ mod tests {
                 previous: None,
             },
             &describe,
+            &|definition| {
+                std::fs::read_to_string(definition)
+                    .map_err(|error| error.to_string())
+                    .and_then(|text| serde_json::from_str(&text).map_err(|error| error.to_string()))
+            },
         )
         .unwrap();
         let session = build(&mut document, None, &store, &mut staged, BuildMode::Stage).unwrap();

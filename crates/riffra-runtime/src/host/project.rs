@@ -45,6 +45,15 @@ pub(super) fn dispatch(
         ProjectCommand::ProjectExportScore(params) => {
             let writer = writer.as_mut().expect("project mutation holds the writer");
             let current = writer.project().core.canonical_state();
+            if params.link && linked(&current.session) {
+                return Err(
+                    command_error("the active Project is already linked to a Score file")
+                        .with_details(serde_json::json!({
+                            "domain": "score",
+                            "kind": "scoreExportLinked",
+                        })),
+                );
+            }
             let plan = crate::score_yaml::export::plan(
                 &current.session,
                 &params.path,
@@ -67,27 +76,8 @@ pub(super) fn dispatch(
             if !plan.omissions.is_empty() {
                 return Err(omissions_error(&plan.omissions));
             }
-            if current
-                .session
-                .score_source
-                .as_ref()
-                .is_some_and(|source| source.path.is_some())
-            {
-                return Err(
-                    command_error("the active Project is already linked to a Score file")
-                        .with_details(serde_json::json!({
-                            "domain": "score",
-                            "kind": "scoreExportLinked",
-                        })),
-                );
-            }
             let path = plan.write().map_err(export_error)?;
-            let mut linked = current.session.clone();
-            for track in &mut linked.arrangement.tracks {
-                if let Some(id) = plan.score_instruments.get(&track.id) {
-                    track.score_instrument = Some(id.clone());
-                }
-            }
+            let linked = plan.linked_session(&current.session);
             let rebuild = rebuild_score_for(
                 state,
                 writer,
@@ -701,6 +691,14 @@ fn project_runtime_projection_error(error: crate::RuntimeError) -> ProtocolError
     }))
 }
 
+/// Reports whether the Project's canonical Score file is linked.
+fn linked(session: &CreativeSession) -> bool {
+    session
+        .score_source
+        .as_ref()
+        .is_some_and(|source| source.path.is_some())
+}
+
 fn export_error(error: crate::score_yaml::export::ExportError) -> ProtocolError {
     command_error(error.message).with_details(error.details)
 }
@@ -884,6 +882,178 @@ instruments: {lead: {preset: LEAD/001-analog-saw-lead, voices: 8}}
         host.shutdown();
         drop(host);
         let _ = std::fs::remove_dir_all(data_root);
+    }
+
+    #[test]
+    fn export_score_links_work_state_but_refuses_omissions() {
+        let (host, data_root) = open_safe_host("export-score");
+        let project_id = host.bootstrap().unwrap().project_state.active_project_id;
+        let request = |command: &str, params| {
+            host.dispatch_control(
+                ControlRequest::new("export-score-test", command, params, None)
+                    .with_expected_project_id(project_id.clone()),
+            )
+        };
+        assert!(request("track.add", json!({"name":"Take","kind":"audio"})).ok);
+        let track_id = host.canonical_state().unwrap().session.arrangement.tracks[0]
+            .id
+            .clone();
+        assert!(request("track.update", json!({"trackId":track_id,"muted":true})).ok);
+
+        let folder = data_root.join("linked");
+        let response = request(
+            "project.export-score",
+            json!({"path": folder, "link": true}),
+        );
+        assert!(response.ok, "{:?}", response.error);
+        assert!(folder.join("score.yaml").is_file());
+        let linked = host.canonical_state().unwrap();
+        assert_eq!(linked.session.arrangement.tracks[0].id, track_id);
+        assert!(linked.session.arrangement.tracks[0].muted);
+        assert!(linked.session.score_source.as_ref().unwrap().path.is_some());
+        let again = request(
+            "project.export-score",
+            json!({"path": data_root.join("second"), "link": true}),
+        );
+        assert!(!again.ok);
+        assert!(!data_root.join("second").exists());
+
+        let created = request("project.create", json!({"name":"Second"}));
+        assert!(created.ok, "{:?}", created.error);
+        let second_id = host.bootstrap().unwrap().project_state.active_project_id;
+        let request = |command: &str, params| {
+            host.dispatch_control(
+                ControlRequest::new("export-score-test", command, params, None)
+                    .with_expected_project_id(second_id.clone()),
+            )
+        };
+        assert!(request("track.add", json!({"name":"Bed","kind":"audio"})).ok);
+        assert!(request("track.add", json!({"name":"Keys","kind":"instrument"})).ok);
+        let keys = host.canonical_state().unwrap().session.arrangement.tracks[1]
+            .id
+            .clone();
+        assert!(
+            request(
+                "clip.midi.create",
+                json!({"trackId":keys,"startTick":0,"durationTicks":1920,"name":"Keys"})
+            )
+            .ok
+        );
+        let clip = host
+            .canonical_state()
+            .unwrap()
+            .session
+            .arrangement
+            .midi_clips[0]
+            .id
+            .clone();
+        assert!(request(
+            "clip.midi.note.add",
+            json!({"clipId":clip,"pitch":60,"startTick":0,"durationTicks":480,"velocity":100,"channel":1})
+        )
+        .ok);
+        let sequence = host.canonical_state().unwrap().sequence;
+        let refused = request(
+            "project.export-score",
+            json!({"path": data_root.join("refused"), "link": true}),
+        );
+        assert!(!refused.ok);
+        let error = refused.error.unwrap();
+        assert_eq!(error.code, ErrorCode::CommandFailed);
+        assert_eq!(
+            error
+                .details
+                .as_ref()
+                .and_then(|details| details.get("kind")),
+            Some(&json!("scoreExportOmissions"))
+        );
+        assert!(!data_root.join("refused").exists());
+        assert_eq!(host.canonical_state().unwrap().sequence, sequence);
+        assert!(
+            host.canonical_state()
+                .unwrap()
+                .session
+                .score_source
+                .is_none()
+        );
+
+        host.shutdown();
+        drop(host);
+        let _ = std::fs::remove_dir_all(data_root);
+    }
+
+    #[test]
+    fn export_score_refuses_link_when_an_audio_clip_changes_its_playback_length() {
+        use riffra_core::{AudioClip, CreativeSession, TimelineTick, Track};
+
+        let root =
+            std::env::temp_dir().join(format!("riffra-host-audio-length-{}", new_instance_id()));
+        std::fs::create_dir_all(root.join("media")).unwrap();
+        let wav = root.join("media/rain.wav");
+        std::fs::write(&wav, b"RIFF").unwrap();
+        let asset = crate::asset::register(
+            &root,
+            riffra_core::AssetKind::Audio,
+            "Rain",
+            wav.to_str().unwrap(),
+            None,
+        )
+        .unwrap();
+        // The link path must decide from the omission without copying the source.
+        std::fs::remove_file(&wav).unwrap();
+        let mut session = CreativeSession::new(1);
+        session
+            .arrangement
+            .tracks
+            .push(Track::audio("track:audio".into(), "Audio".into()));
+        let mut clip = AudioClip::full_source(
+            "clip:rain".into(),
+            "Rain".into(),
+            "track:audio".into(),
+            asset,
+            TimelineTick(0),
+            48_000,
+            48_000,
+        );
+        clip.timeline_duration.frames = 96_000;
+        session.arrangement.audio_clips.push(clip);
+
+        let state = super::HostState::for_test(
+            &root,
+            session,
+            crate::AudioSupervisor::offline("test"),
+            true,
+        );
+        let before = state.canonical().unwrap();
+        let project_id = before.project_id.clone();
+        let revision = before.session.arrangement.revision;
+        let folder = root.join("song");
+        let response = Arc::clone(&state).dispatch_request(
+            ControlRequest::new(
+                "audio-length-test",
+                "project.export-score",
+                json!({"path": folder, "link": true}),
+                None,
+            )
+            .with_expected_project_id(project_id.clone()),
+        );
+        assert!(!response.ok, "{:?}", response.error);
+        let error = response.error.unwrap();
+        assert_eq!(error.code, ErrorCode::CommandFailed);
+        assert_eq!(
+            error
+                .details
+                .as_ref()
+                .and_then(|details| details.get("kind")),
+            Some(&json!("scoreExportOmissions"))
+        );
+        assert!(!folder.exists());
+        let after = state.canonical().unwrap();
+        assert_eq!(after.sequence, 0);
+        assert_eq!(after.session.arrangement.revision, revision);
+        assert!(after.session.score_source.is_none());
+        drop(state);
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

@@ -1,13 +1,13 @@
-//! Score production content: instruments, effects, mix, audio clips.
+//! Score production content: instruments, effects, and mix.
 
 use super::{
-    Export, ExportError, PanLaw, TrackRole, add_file, copy_package, file_identifier, instrument_of,
-    kit_of, omit, pan_law, rational, track_score_id, unique_id,
+    Export, ExportError, ExportFile, PanLaw, SongSection, TrackRole, add_file, copy_package,
+    instrument_of, omit, pan_law, rational, track_score_id, unique_id,
 };
 use crate::api::output::{PluginRole, PluginStateSnapshot};
 use riffra_core::{
-    AudioClip, AutomationInterpolation, AutomationLane, AutomationTarget, BusMixParameter,
-    MixBusKind, SendPosition, Track, TrackInstrumentSource, TrackMixParameter,
+    AutomationInterpolation, AutomationTarget, BusMixParameter, EffectDevice, MixBusKind,
+    SendPosition, TrackInstrumentSource, TrackMixParameter,
 };
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -15,7 +15,7 @@ use std::collections::{BTreeMap, BTreeSet};
 /// Writes every production declaration of the Score document.
 ///
 /// # Errors
-/// Returns an error when a plugin or audio file cannot be expressed.
+/// Returns an error when a plugin or instrument cannot be expressed.
 pub(super) fn apply(
     export: &mut Export<'_>,
     document: &mut Map<String, Value>,
@@ -23,7 +23,8 @@ pub(super) fn apply(
     meta(export, document);
     form(export, document);
     time_changes(export, document);
-    let (instruments, kits) = instruments(export)?;
+    let ids = MixIds::new(export);
+    let (instruments, kits) = instruments(export, &ids)?;
     if instruments.is_empty() {
         return Err(ExportError::new(
             "the Project has no instrument the Score can express",
@@ -33,8 +34,7 @@ pub(super) fn apply(
     if !kits.is_empty() {
         document.insert("kits".into(), Value::Object(kits));
     }
-    mix(export, document)?;
-    audio(export, document)?;
+    mix(export, document, &ids)?;
     Ok(())
 }
 
@@ -51,8 +51,7 @@ fn meta(export: &mut Export<'_>, document: &mut Map<String, Value>) {
                 .unwrap_or_else(|| "Untitled".into()),
         ),
     );
-    let first = export.sections.first().cloned();
-    if let Some(section) = &first {
+    if let Some(section) = export.sections.first() {
         meta.insert("bpm".into(), json!(section.bpm));
         meta.insert(
             "meter".into(),
@@ -60,10 +59,10 @@ fn meta(export: &mut Export<'_>, document: &mut Map<String, Value>) {
         );
     }
     meta.insert("tuning".into(), Value::String("12edo".into()));
-    if export.session.settings.mixdown.fade_out_seconds > 0.0 {
+    if session.settings.mixdown.fade_out_seconds > 0.0 {
         meta.insert(
             "fade_out_seconds".into(),
-            json!(export.session.settings.mixdown.fade_out_seconds),
+            json!(session.settings.mixdown.fade_out_seconds),
         );
     }
     if let Some(mastering) = &session.settings.mixdown.mastering {
@@ -138,9 +137,6 @@ fn time_changes(export: &mut Export<'_>, document: &mut Map<String, Value>) {
         .map(|section| section.start_tick)
         .collect::<BTreeSet<_>>();
     let mut changes = Vec::new();
-    for section in &export.sections {
-        let _ = section;
-    }
     let mut previous = export.sections.first().map(|section| section.bpm);
     for change in &export.session.arrangement.timebase.tempo_changes {
         if change.tick == 0 {
@@ -168,26 +164,56 @@ fn time_changes(export: &mut Export<'_>, document: &mut Map<String, Value>) {
 /// The instrument and kit mappings of one Score document.
 type Declarations = (Map<String, Value>, Map<String, Value>);
 
+/// Adds one instrument declaration, refusing to overwrite another.
+fn declare(
+    instruments: &mut Map<String, Value>,
+    id: &str,
+    value: Value,
+) -> Result<(), ExportError> {
+    if instruments.contains_key(id) {
+        return Err(ExportError::new(format!(
+            "two Score instruments share the ID {id}"
+        )));
+    }
+    instruments.insert(id.to_owned(), value);
+    Ok(())
+}
+
+/// Reports an instrument that is bypassed in the Project.
+fn report_bypassed(
+    export: &mut Export<'_>,
+    track_name: &str,
+    instrument: &riffra_core::TrackInstrument,
+) {
+    if instrument.bypassed {
+        omit(
+            &mut export.omissions,
+            format!("track \"{track_name}\" / instrument"),
+            "a bypassed instrument cannot be written",
+        );
+    }
+}
+
 /// Builds the instrument and kit declarations.
-fn instruments(export: &mut Export<'_>) -> Result<Declarations, ExportError> {
+fn instruments(export: &mut Export<'_>, ids: &MixIds) -> Result<Declarations, ExportError> {
     let mut instruments = Map::new();
     let mut kits = Map::new();
-    let tracks = export.tracks.clone();
-    for track in &tracks {
+    for index in 0..export.tracks.len() {
+        let track = export.tracks[index].clone();
         match &track.role {
             TrackRole::Instrument => {
                 let Some(instrument) = instrument_of(track.track) else {
                     continue;
                 };
                 let mut declaration = Map::new();
-                source(export, &track.id, instrument, &mut declaration)?;
-                if instrument.bypassed {
-                    omit(
-                        &mut export.omissions,
-                        format!("track \"{}\" / instrument", track.track.name),
-                        "a bypassed instrument cannot be written",
-                    );
-                }
+                source(
+                    export,
+                    &track.id,
+                    track.source_id(),
+                    instrument,
+                    &mut declaration,
+                )?;
+                report_bypassed(export, &track.track.name, instrument);
                 let (gain, pan) =
                     pan_law(track.track.pan_law, track.track.gain_db, track.track.pan);
                 declaration.insert("gain_db".into(), json!(gain));
@@ -196,9 +222,9 @@ fn instruments(export: &mut Export<'_>) -> Result<Declarations, ExportError> {
                     "effects".into(),
                     Value::Array(effects(
                         export,
-                        &track.id,
+                        ids,
+                        &format!("instruments/{}", track.id),
                         &track.track.effects,
-                        "instruments",
                     )?),
                 );
                 if !track.track.external_audio_source_track_ids.is_empty() {
@@ -218,88 +244,126 @@ fn instruments(export: &mut Export<'_>) -> Result<Declarations, ExportError> {
                         );
                     }
                 }
-                inherited_instrument(export, &track.id, &mut declaration);
-                instruments.insert(track.id.clone(), Value::Object(declaration));
+                inherited_instrument(export, track.source_id(), &mut declaration);
+                declare(&mut instruments, &track.id, Value::Object(declaration))?;
             }
             TrackRole::Kit(kit) => {
                 let Some(instrument) = instrument_of(track.track) else {
                     continue;
                 };
+                report_bypassed(export, &track.track.name, instrument);
                 let TrackInstrumentSource::Vst3(plugin) = &instrument.source else {
                     return Err(ExportError::new(format!(
                         "kit \"{kit}\" does not host a VST3 instrument"
                     )));
                 };
-                let vst3 = vst3_spec(export, kit, plugin)?;
-                let mut source = json!({"vst3": vst3});
-                if let Some(role) = export
-                    .original
-                    .as_ref()
-                    .and_then(|original| original.field(&["kits", kit, "source", "role"]))
-                {
-                    source["role"] = role.clone();
-                }
-                if let Some(articulations) = export
-                    .original
-                    .as_ref()
-                    .and_then(|original| original.articulations(kit))
-                {
-                    source["articulations"] = articulations.clone();
+                let source_kit = track.source_id();
+                let mut source = json!({
+                    "vst3": vst3_spec(export, &format!("kits/{kit}"), kit, plugin)?,
+                });
+                if let Some(source_kit) = source_kit {
+                    if let Some(role) = export.original.as_ref().and_then(|original| {
+                        original.field(&["kits", source_kit, "source", "role"])
+                    }) {
+                        source["role"] = role.clone();
+                    }
+                    if let Some(declarations) = export
+                        .original
+                        .as_ref()
+                        .and_then(|original| original.articulations(source_kit))
+                    {
+                        let declarations =
+                            used_articulations(declarations, export.written_articulations.get(kit));
+                        if declarations
+                            .as_object()
+                            .is_some_and(|object| !object.is_empty())
+                        {
+                            source["articulations"] = declarations;
+                        }
+                    }
                 }
                 kits.insert(
                     kit.clone(),
                     json!({
                         "source": source,
-                        "effects": Value::Array(
-                            effects(export, kit, &track.track.effects, "kits")?
-                        ),
+                        "effects": Value::Array(effects(
+                            export,
+                            ids,
+                            &format!("kits/{kit}"),
+                            &track.track.effects,
+                        )?),
                     }),
                 );
-                for member in export.kits.get(kit).cloned().unwrap_or_default() {
+                for member in export.kits.get(kit).map(Vec::as_slice).unwrap_or_default() {
                     let mut member_spec = json!({
                         "kit": kit,
                         "trigger_note_midi": member.trigger,
                     });
-                    if let Some(role) = export
-                        .original
-                        .as_ref()
-                        .and_then(|original| original.field(&["instruments", &member.id, "role"]))
+                    if let (Some(original), Some(source)) =
+                        (export.original.as_ref(), member.source.as_deref())
                     {
-                        member_spec["role"] = role.clone();
+                        if let Some(role) = original.field(&["instruments", source, "role"]) {
+                            member_spec["role"] = role.clone();
+                        }
+                        if let Some(sound) = original.field(&["instruments", source, "sound"]) {
+                            member_spec["sound"] = sound.clone();
+                        }
                     }
-                    if let Some(sound) = export
-                        .original
-                        .as_ref()
-                        .and_then(|original| original.field(&["instruments", &member.id, "sound"]))
-                    {
-                        member_spec["sound"] = sound.clone();
-                    }
-                    instruments.insert(member.id.clone(), member_spec);
+                    declare(&mut instruments, &member.id, member_spec)?;
                 }
             }
             TrackRole::Audio => {
                 let (gain, pan) =
                     pan_law(track.track.pan_law, track.track.gain_db, track.track.pan);
-                instruments.insert(
-                    track.id.clone(),
+                declare(
+                    &mut instruments,
+                    &track.id,
                     json!({
                         "audio": true,
                         "gain_db": gain,
                         "pan": pan,
-                        "effects": Value::Array(
-                            effects(export, &track.id, &track.track.effects, "instruments")?
-                        ),
+                        "effects": Value::Array(effects(
+                            export,
+                            ids,
+                            &format!("instruments/{}", track.id),
+                            &track.track.effects,
+                        )?),
                     }),
-                );
+                )?;
             }
         }
     }
     Ok((instruments, kits))
 }
 
+/// Keeps the articulation declarations the exported events use.
+fn used_articulations(declarations: &Value, used: Option<&BTreeSet<String>>) -> Value {
+    let Some(object) = declarations.as_object() else {
+        return Value::Object(Map::new());
+    };
+    let needs_default = used.is_some_and(|used| {
+        used.iter().any(|name| {
+            object.get(name).is_some_and(|declaration| {
+                declaration.get("mode").and_then(Value::as_str) == Some("latch")
+            })
+        })
+    });
+    let mut result = Map::new();
+    for (name, declaration) in object {
+        if used.is_some_and(|used| used.contains(name)) || (name == "default" && needs_default) {
+            result.insert(name.clone(), declaration.clone());
+        }
+    }
+    Value::Object(result)
+}
+
 /// Copies the declarations only the linked Score still knows.
-fn inherited_instrument(export: &mut Export<'_>, id: &str, declaration: &mut Map<String, Value>) {
-    let Some(original) = export.original.as_ref() else {
+fn inherited_instrument(
+    export: &mut Export<'_>,
+    id: Option<&str>,
+    declaration: &mut Map<String, Value>,
+) {
+    let (Some(original), Some(id)) = (export.original.as_ref(), id) else {
         return;
     };
     for key in ["role", "sound"] {
@@ -313,6 +377,7 @@ fn inherited_instrument(export: &mut Export<'_>, id: &str, declaration: &mut Map
 fn source(
     export: &mut Export<'_>,
     id: &str,
+    source_id: Option<&str>,
     instrument: &riffra_core::TrackInstrument,
     declaration: &mut Map<String, Value>,
 ) -> Result<(), ExportError> {
@@ -342,13 +407,23 @@ fn source(
             );
         }
         TrackInstrumentSource::Vst3(plugin) => {
-            let mut spec = json!({"vst3": vst3_spec(export, id, plugin)?});
-            if let Some(articulations) = export
-                .original
-                .as_ref()
-                .and_then(|original| original.articulations(id))
-            {
-                spec["articulations"] = articulations.clone();
+            let mut spec = json!({
+                "vst3": vst3_spec(export, &format!("instruments/{id}"), id, plugin)?,
+            });
+            if let Some(declarations) = source_id.and_then(|source_id| {
+                export
+                    .original
+                    .as_ref()
+                    .and_then(|original| original.articulations(source_id))
+            }) {
+                let declarations =
+                    used_articulations(declarations, export.written_articulations.get(id));
+                if declarations
+                    .as_object()
+                    .is_some_and(|object| !object.is_empty())
+                {
+                    spec["articulations"] = declarations;
+                }
             }
             declaration.insert("source".into(), spec);
         }
@@ -359,6 +434,7 @@ fn source(
 /// Builds one `source.vst3` declaration and its state file.
 fn vst3_spec(
     export: &mut Export<'_>,
+    scope: &str,
     id: &str,
     plugin: &riffra_core::Vst3Plugin,
 ) -> Result<Value, ExportError> {
@@ -367,7 +443,7 @@ fn vst3_spec(
     if let Some(identifier) = &entry.identifier {
         vst3["identifier"] = json!(identifier);
     }
-    if let Some(state) = state_file(export, id, &entry, plugin)? {
+    if let Some(state) = state_file(export, scope, "instrument", &entry, plugin)? {
         vst3["state"] = json!(state);
     }
     Ok(vst3)
@@ -399,7 +475,8 @@ fn plugin_entry(
 /// Writes one plugin state file and returns its Score path.
 fn state_file(
     export: &mut Export<'_>,
-    owner: &str,
+    scope: &str,
+    device: &str,
     entry: &crate::api::output::PluginEntry,
     plugin: &riffra_core::Vst3Plugin,
 ) -> Result<Option<String>, ExportError> {
@@ -411,7 +488,7 @@ fn state_file(
         );
         return Ok(None);
     };
-    let relative = format!("states/{owner}.json");
+    let relative = format!("states/{scope}/{device}.json");
     let snapshot = PluginStateSnapshot {
         schema_version: 2,
         plugin_identifier: identifier,
@@ -421,27 +498,46 @@ fn state_file(
     };
     let bytes = serde_json::to_vec_pretty(&snapshot)
         .map_err(|error| ExportError::new(format!("plugin state could not be encoded: {error}")))?;
-    add_file(export, relative.clone(), bytes)?;
+    add_file(export, relative.clone(), ExportFile::Bytes(bytes))?;
     Ok(Some(relative))
+}
+
+/// Assigns the Score ID of every effect in one chain, in order.
+fn chain_ids(chain: &[EffectDevice]) -> Vec<(String, String)> {
+    let mut used = BTreeSet::new();
+    chain
+        .iter()
+        .map(|effect| {
+            (
+                effect.id.clone(),
+                unique_id(&effect.name, "effect", &mut used),
+            )
+        })
+        .collect()
 }
 
 /// Builds one effect chain declaration.
 fn effects(
     export: &mut Export<'_>,
-    owner: &str,
-    effects: &[riffra_core::EffectDevice],
-    field: &str,
+    ids: &MixIds,
+    scope: &str,
+    effects: &[EffectDevice],
 ) -> Result<Vec<Value>, ExportError> {
-    let mut used = BTreeSet::new();
     let mut result = Vec::with_capacity(effects.len());
     for effect in effects {
-        let id = unique_id(&effect.name, "effect", &mut used);
+        let (_, id) = &ids.effects[&effect.id];
         let entry = plugin_entry(export, &effect.plugin, PluginRole::Effect, &effect.name)?;
         let mut vst3 = json!({"plugin": entry.name});
         if let Some(identifier) = &entry.identifier {
             vst3["identifier"] = json!(identifier);
         }
-        if let Some(state) = state_file(export, &format!("{owner}-{id}"), &entry, &effect.plugin)? {
+        if let Some(state) = state_file(
+            export,
+            scope,
+            &format!("effects/{id}"),
+            &entry,
+            &effect.plugin,
+        )? {
             vst3["state"] = json!(state);
         }
         let mut declaration = json!({"id": id, "vst3": vst3});
@@ -449,56 +545,84 @@ fn effects(
             declaration["bypassed"] = json!(true);
         }
         result.push(declaration);
-        let _ = field;
     }
     Ok(result)
 }
 
-/// Builds the mixer, routing, and automation declarations.
-fn mix(export: &mut Export<'_>, document: &mut Map<String, Value>) -> Result<(), ExportError> {
-    let mut mix = Map::new();
-    let mut tracks = Map::new();
-    let mut buses = Map::new();
-    let mut bus_ids = BTreeMap::<String, String>::new();
-    let mut used_buses = BTreeSet::new();
-    for bus in &export.session.arrangement.mixer.buses {
-        let id = unique_id(&bus.name, "bus", &mut used_buses);
-        let (gain, pan) = pan_law(bus.pan_law, bus.gain_db, bus.pan);
-        let mut declaration = json!({
-            "kind": match bus.kind {
-                MixBusKind::Group => "group",
-                MixBusKind::Return => "return",
-            },
-            "gain_db": gain,
-            "pan": pan,
-            "effects": effects(export, &id, &bus.effects, "buses")?,
-        });
-        if bus.muted || bus.solo {
-            omit(
-                &mut export.omissions,
-                format!("bus \"{}\"", bus.name),
-                "mute and solo are work state",
-            );
+/// The Score IDs of the mixer and the owners of every effect device.
+struct MixIds {
+    buses: BTreeMap<String, String>,
+    effects: BTreeMap<String, (ReferenceOwner, String)>,
+}
+
+impl MixIds {
+    fn new(export: &Export<'_>) -> Self {
+        let mut used = BTreeSet::new();
+        let buses = export
+            .session
+            .arrangement
+            .mixer
+            .buses
+            .iter()
+            .map(|bus| (bus.id.clone(), unique_id(&bus.name, "bus", &mut used)))
+            .collect::<BTreeMap<_, _>>();
+        let mut effects = BTreeMap::new();
+        for track in &export.tracks {
+            let owner = match &track.role {
+                TrackRole::Kit(kit) => ReferenceOwner::Kit(kit.clone()),
+                _ => ReferenceOwner::Instrument(track.id.clone()),
+            };
+            for (device, id) in chain_ids(&track.track.effects) {
+                effects.insert(device, (owner.clone(), id));
+            }
         }
-        declaration["effects"] = json!(effects(export, &id, &bus.effects, "buses")?);
-        buses.insert(id.clone(), declaration);
-        bus_ids.insert(bus.id.clone(), id);
+        for bus in &export.session.arrangement.mixer.buses {
+            let owner = ReferenceOwner::Bus(buses[&bus.id].clone());
+            for (device, id) in chain_ids(&bus.effects) {
+                effects.insert(device, (owner.clone(), id));
+            }
+        }
+        for (device, id) in chain_ids(&export.session.arrangement.mixer.master_effects) {
+            effects.insert(device, (ReferenceOwner::Master, id));
+        }
+        Self { buses, effects }
     }
-    let mut used_track_ids = BTreeSet::new();
-    for track in export.tracks.clone() {
-        if matches!(track.role, TrackRole::Audio) {
-            continue;
-        }
+}
+
+/// Builds the mixer, routing, and automation declarations.
+fn mix(
+    export: &mut Export<'_>,
+    document: &mut Map<String, Value>,
+    ids: &MixIds,
+) -> Result<(), ExportError> {
+    let mut mix = Map::new();
+    let mut buses = Map::new();
+    for bus in &export.session.arrangement.mixer.buses {
+        let id = ids.buses[&bus.id].clone();
+        let (gain, pan) = pan_law(bus.pan_law, bus.gain_db, bus.pan);
+        buses.insert(
+            id.clone(),
+            json!({
+                "kind": match bus.kind {
+                    MixBusKind::Group => "group",
+                    MixBusKind::Return => "return",
+                },
+                "gain_db": gain,
+                "pan": pan,
+                "effects": Value::Array(effects(
+                    export,
+                    ids,
+                    &format!("buses/{id}"),
+                    &bus.effects,
+                )?),
+            }),
+        );
+    }
+    let mut tracks = Map::new();
+    for track in &export.tracks {
         let mut declaration = Map::new();
-        if track.track.muted || track.track.solo {
-            omit(
-                &mut export.omissions,
-                format!("track \"{}\"", track.track.name),
-                "mute and solo are work state",
-            );
-        }
         if let Some(output) = &track.track.output_bus_id {
-            let Some(bus) = bus_ids.get(output) else {
+            let Some(bus) = ids.buses.get(output) else {
                 return Err(ExportError::new(format!(
                     "track \"{}\" routes to an undefined bus",
                     track.track.name
@@ -515,7 +639,7 @@ fn mix(export: &mut Export<'_>, document: &mut Map<String, Value>) -> Result<(),
             .iter()
             .filter(|send| send.track_id == track.track.id)
         {
-            let Some(bus) = bus_ids.get(&send.return_bus_id) else {
+            let Some(bus) = ids.buses.get(&send.return_bus_id) else {
                 return Err(ExportError::new(format!(
                     "track \"{}\" sends to an undefined bus",
                     track.track.name
@@ -541,8 +665,7 @@ fn mix(export: &mut Export<'_>, document: &mut Map<String, Value>) -> Result<(),
             declaration.insert("pan".into(), json!(pan));
         }
         if !declaration.is_empty() {
-            let id = unique_id(&track.id, "track", &mut used_track_ids);
-            tracks.insert(id, Value::Object(declaration));
+            tracks.insert(track.id.clone(), Value::Object(declaration));
         }
     }
     if !tracks.is_empty() {
@@ -551,7 +674,7 @@ fn mix(export: &mut Export<'_>, document: &mut Map<String, Value>) -> Result<(),
     if !buses.is_empty() {
         mix.insert("buses".into(), Value::Object(buses));
     }
-    let sidechain = sidechain(export, &bus_ids)?;
+    let sidechain = sidechain(export, ids);
     if !sidechain.is_empty() {
         mix.insert("sidechain".into(), Value::Array(sidechain));
     }
@@ -561,9 +684,9 @@ fn mix(export: &mut Export<'_>, document: &mut Map<String, Value>) -> Result<(),
     }
     let master_effects = effects(
         export,
+        ids,
         "master",
         &export.session.arrangement.mixer.master_effects,
-        "master",
     )?;
     if !master_effects.is_empty() {
         master.insert("effects".into(), Value::Array(master_effects));
@@ -571,7 +694,7 @@ fn mix(export: &mut Export<'_>, document: &mut Map<String, Value>) -> Result<(),
     if !master.is_empty() {
         mix.insert("master".into(), Value::Object(master));
     }
-    let automation = automation(export)?;
+    let automation = automation(export, ids);
     if !automation.is_empty() {
         mix.insert("automation".into(), Value::Array(automation));
     }
@@ -582,35 +705,32 @@ fn mix(export: &mut Export<'_>, document: &mut Map<String, Value>) -> Result<(),
 }
 
 /// Builds the sidechain routes declared by the canonical mixer.
-fn sidechain(
-    export: &mut Export<'_>,
-    _buses: &BTreeMap<String, String>,
-) -> Result<Vec<Value>, ExportError> {
+fn sidechain(export: &mut Export<'_>, ids: &MixIds) -> Vec<Value> {
     let mut result = Vec::new();
     let mut seen = BTreeSet::new();
     for send in &export.session.arrangement.mixer.sidechain_sends {
-        let Some(from) = track_score_id(export, &send.source_track_id) else {
-            return Err(ExportError::new(
-                "a sidechain route starts from a track the Score does not export",
-            ));
-        };
-        let Some((owner, effect)) = effect_reference(export, &send.target_device_id) else {
-            return Err(ExportError::new(
-                "a sidechain route targets a device the Score does not export",
-            ));
+        let (Some(from), Some((owner, effect))) = (
+            track_score_id(export, &send.source_track_id),
+            ids.effects.get(&send.target_device_id),
+        ) else {
+            omit(
+                &mut export.omissions,
+                "sidechain",
+                format!(
+                    "the route from \"{}\" targets a device the Score does not export",
+                    send.source_track_id
+                ),
+            );
+            continue;
         };
         let key = (from.clone(), owner.clone(), effect.clone());
         if !seen.insert(key) {
             continue;
         }
-        let mut to = json!({ "effect": effect });
-        match &owner {
-            ReferenceOwner::Instrument(id) => to["instrument"] = json!(id),
-            ReferenceOwner::Kit(id) => to["kit"] = json!(id),
-            ReferenceOwner::Bus(id) => to["bus"] = json!(id),
-            ReferenceOwner::Master => to["master"] = json!(true),
-        }
-        let mut route = json!({ "from": from, "to": to });
+        let mut route = json!({
+            "from": from,
+            "to": effect_target(owner, effect, "effect"),
+        });
         if send.level_db != 0.0 {
             route["level_db"] = json!(send.level_db);
         }
@@ -631,7 +751,7 @@ fn sidechain(
                 .to_owned(),
         )
     });
-    Ok(result)
+    result
 }
 
 /// The Score owner of an effect device.
@@ -643,121 +763,88 @@ enum ReferenceOwner {
     Master,
 }
 
-fn effect_reference(export: &Export<'_>, device_id: &str) -> Option<(ReferenceOwner, String)> {
-    for track in &export.tracks {
-        if let Some(effect) = track
-            .track
-            .effects
-            .iter()
-            .find(|effect| effect.id == device_id)
-        {
-            let owner = match &track.role {
-                TrackRole::Instrument => ReferenceOwner::Instrument(track.id.clone()),
-                TrackRole::Kit(kit) => ReferenceOwner::Kit(kit.clone()),
-                TrackRole::Audio => return None,
-            };
-            let id = effect_id(&effect.name, &track.track.effects, effect);
-            return Some((owner, id));
-        }
+/// Renders the Score reference to one effect device.
+fn effect_target(owner: &ReferenceOwner, effect: &str, id_key: &str) -> Value {
+    let mut to = json!({ id_key: effect });
+    match owner {
+        ReferenceOwner::Instrument(id) => to["instrument"] = json!(id),
+        ReferenceOwner::Kit(id) => to["kit"] = json!(id),
+        ReferenceOwner::Bus(id) => to["bus"] = json!(id),
+        ReferenceOwner::Master => to["master"] = json!(true),
     }
-    for bus in &export.session.arrangement.mixer.buses {
-        if let Some(effect) = bus.effects.iter().find(|effect| effect.id == device_id) {
-            let id = effect_id(&effect.name, &bus.effects, effect);
-            return Some((ReferenceOwner::Bus(bus.name.clone()), id));
-        }
-    }
-    export
-        .session
-        .arrangement
-        .mixer
-        .master_effects
-        .iter()
-        .find(|effect| effect.id == device_id)
-        .map(|effect| {
-            (
-                ReferenceOwner::Master,
-                effect_id(
-                    &effect.name,
-                    &export.session.arrangement.mixer.master_effects,
-                    effect,
-                ),
-            )
-        })
-}
-
-/// Returns the Score ID assigned to one effect in its chain.
-fn effect_id(
-    name: &str,
-    chain: &[riffra_core::EffectDevice],
-    effect: &riffra_core::EffectDevice,
-) -> String {
-    let mut used = BTreeSet::new();
-    for candidate in chain {
-        let id = unique_id(&candidate.name, "effect", &mut used);
-        if candidate.id == effect.id {
-            return id;
-        }
-    }
-    let _ = name;
-    "effect".into()
+    to
 }
 
 /// Builds the score automation declarations from canonical lanes.
-fn automation(export: &mut Export<'_>) -> Result<Vec<Value>, ExportError> {
-    let lanes = export.session.arrangement.automation_lanes.clone();
+fn automation(export: &mut Export<'_>, ids: &MixIds) -> Vec<Value> {
     let mut result = Vec::new();
-    for lane in &lanes {
-        let Some(target) = automation_target(export, lane)? else {
+    let mut counts = BTreeMap::<String, usize>::new();
+    let occurrences = export
+        .sections
+        .iter()
+        .map(|section| {
+            let count = counts.entry(section.name.clone()).or_default();
+            *count += 1;
+            *count
+        })
+        .collect::<Vec<_>>();
+    for index in 0..export.session.arrangement.automation_lanes.len() {
+        let (lane_id, target_spec, interpolation) = {
+            let lane = &export.session.arrangement.automation_lanes[index];
+            (lane.id.clone(), lane.target.clone(), lane.interpolation)
+        };
+        let Some(target) = automation_target(export, ids, &lane_id, &target_spec) else {
             continue;
         };
-        let interpolation = match lane.interpolation {
+        let interpolation = match interpolation {
             AutomationInterpolation::Linear => "linear",
             AutomationInterpolation::Step => "step",
             AutomationInterpolation::LinearAmplitude { .. } => {
                 omit(
                     &mut export.omissions,
-                    format!("automation \"{}\"", lane.id),
+                    format!("automation \"{lane_id}\""),
                     "the Score evaluates this volume automation linearly",
                 );
                 "linear"
             }
         };
-        let (offset, pan) = automation_offset(export, &lane.target);
+        let (offset, pan) = automation_offset(export, &target_spec);
         if pan {
             omit(
                 &mut export.omissions,
-                format!("automation \"{}\"", lane.id),
+                format!("automation \"{lane_id}\""),
                 "pan automation on a non-linear pan law cannot be converted",
             );
             continue;
         }
-        let mut groups = BTreeMap::<(usize, usize), Vec<Value>>::new();
-        for point in &lane.points {
-            let Some((section, occurrence)) = locate(export, point.tick.0) else {
+        let mut groups = BTreeMap::<(usize, usize), Vec<(u64, Value)>>::new();
+        let mut point_omissions = Vec::new();
+        for point in &export.session.arrangement.automation_lanes[index].points {
+            let Some((section, occurrence)) = locate(&export.sections, &occurrences, point.tick.0)
+            else {
                 omit(
-                    &mut export.omissions,
-                    format!("automation \"{}\"", lane.id),
+                    &mut point_omissions,
+                    format!("automation \"{lane_id}\""),
                     "a point lies outside every section",
                 );
                 continue;
             };
             let section_ref = &export.sections[section];
-            groups
-                .entry((section, occurrence))
-                .or_default()
-                .push(json!({
+            groups.entry((section, occurrence)).or_default().push((
+                point.tick.0,
+                json!({
                     "at": section_ref.position(point.tick.0, export.ppq),
                     "value": point.value + offset,
-                }));
+                }),
+            ));
         }
+        export.omissions.extend(point_omissions);
         for ((section, occurrence), mut points) in groups {
-            points.sort_by_key(|point| {
-                (
-                    point["at"]["bar"].as_u64().unwrap_or(0),
-                    point["at"]["step"].as_u64().unwrap_or(0),
-                    point["at"]["offset_quarters"].as_str().map(str::to_owned),
-                )
-            });
+            points.sort_by_key(|(tick, _)| *tick);
+            let points = points
+                .into_iter()
+                .map(|(_, point)| point)
+                .collect::<Vec<_>>();
             let section = &export.sections[section];
             let mut declaration = json!({
                 "target": target,
@@ -782,24 +869,17 @@ fn automation(export: &mut Export<'_>) -> Result<Vec<Value>, ExportError> {
             declaration["target"].to_string(),
         )
     });
-    Ok(result)
+    result
 }
 
 /// Returns the section containing a tick and its form occurrence.
-fn locate(export: &Export<'_>, tick: u64) -> Option<(usize, usize)> {
-    let mut occurrence = BTreeMap::<String, usize>::new();
-    for (index, section) in export.sections.iter().enumerate() {
-        let entry = occurrence.entry(section.name.clone()).or_insert(0);
-        *entry += 1;
-        let occurrence = *entry;
-        if tick >= section.start_tick && tick < section.end_tick {
-            return Some((index, occurrence));
-        }
-        if index + 1 == export.sections.len() && tick == section.end_tick {
-            return Some((index, occurrence));
-        }
-    }
-    None
+fn locate(sections: &[SongSection], occurrences: &[usize], tick: u64) -> Option<(usize, usize)> {
+    let index = sections
+        .partition_point(|section| section.start_tick <= tick)
+        .checked_sub(1)?;
+    let section = &sections[index];
+    (tick < section.end_tick || (index + 1 == sections.len() && tick == section.end_tick))
+        .then_some((index, occurrences[index]))
 }
 
 /// Returns the pan law gain offset applied to a lane and whether it controls pan.
@@ -853,17 +933,24 @@ fn automation_offset(export: &Export<'_>, target: &AutomationTarget) -> (f64, bo
 /// Maps one canonical lane target to a Score automation target.
 fn automation_target(
     export: &mut Export<'_>,
-    lane: &AutomationLane,
-) -> Result<Option<Value>, ExportError> {
-    let target = match &lane.target {
+    ids: &MixIds,
+    lane_id: &str,
+    target: &AutomationTarget,
+) -> Option<Value> {
+    let target = match target {
         AutomationTarget::TrackMix {
             track_id,
             parameter,
         } => {
             let Some(id) = track_score_id(export, track_id) else {
-                return Ok(None);
+                omit(
+                    &mut export.omissions,
+                    format!("automation \"{lane_id}\""),
+                    "the track is not exported",
+                );
+                return None;
             };
-            let owner = if let Some(kit) = kit_of(export, track_id) {
+            let owner = if let Some(kit) = super::kit_of(export, track_id) {
                 json!({"kit": kit})
             } else {
                 json!({"instrument": id})
@@ -876,25 +963,14 @@ fn automation_target(
             target
         }
         AutomationTarget::BusMix { bus_id, parameter } => {
-            let Some(bus) = export
-                .session
-                .arrangement
-                .mixer
-                .buses
-                .iter()
-                .find(|bus| bus.id == *bus_id)
-            else {
-                return Ok(None);
+            let Some(id) = ids.buses.get(bus_id) else {
+                omit(
+                    &mut export.omissions,
+                    format!("automation \"{lane_id}\""),
+                    "the bus is not exported",
+                );
+                return None;
             };
-            let mut used = BTreeSet::new();
-            let mut id = String::new();
-            for candidate in &export.session.arrangement.mixer.buses {
-                let current = unique_id(&candidate.name, "bus", &mut used);
-                if candidate.id == bus.id {
-                    id = current;
-                    break;
-                }
-            }
             json!({
                 "bus": id,
                 "parameter": match parameter {
@@ -913,31 +989,25 @@ fn automation_target(
                 .iter()
                 .find(|send| send.id == *send_id)
             else {
-                return Ok(None);
+                omit(
+                    &mut export.omissions,
+                    format!("automation \"{lane_id}\""),
+                    "the send is not exported",
+                );
+                return None;
             };
-            let Some(instrument) = track_score_id(export, &send.track_id) else {
-                return Ok(None);
+            let (Some(instrument), Some(bus)) = (
+                track_score_id(export, &send.track_id),
+                ids.buses.get(&send.return_bus_id),
+            ) else {
+                omit(
+                    &mut export.omissions,
+                    format!("automation \"{lane_id}\""),
+                    "the send source or bus is not exported",
+                );
+                return None;
             };
-            let Some(bus) = export
-                .session
-                .arrangement
-                .mixer
-                .buses
-                .iter()
-                .find(|bus| bus.id == send.return_bus_id)
-            else {
-                return Ok(None);
-            };
-            let mut used = BTreeSet::new();
-            let mut id = String::new();
-            for candidate in &export.session.arrangement.mixer.buses {
-                let current = unique_id(&candidate.name, "bus", &mut used);
-                if candidate.id == bus.id {
-                    id = current;
-                    break;
-                }
-            }
-            json!({"send": {"instrument": instrument, "bus": id}})
+            json!({"send": {"instrument": instrument, "bus": bus}})
         }
         AutomationTarget::SidechainSendLevel { sidechain_send_id } => {
             let Some(send) = export
@@ -948,49 +1018,106 @@ fn automation_target(
                 .iter()
                 .find(|send| send.id == *sidechain_send_id)
             else {
-                return Ok(None);
+                omit(
+                    &mut export.omissions,
+                    format!("automation \"{lane_id}\""),
+                    "the sidechain route is not exported",
+                );
+                return None;
             };
-            let Some(from) = track_score_id(export, &send.source_track_id) else {
-                return Ok(None);
+            let (Some(from), Some((owner, effect))) = (
+                track_score_id(export, &send.source_track_id),
+                ids.effects.get(&send.target_device_id),
+            ) else {
+                omit(
+                    &mut export.omissions,
+                    format!("automation \"{lane_id}\""),
+                    "the sidechain route targets a device the Score does not export",
+                );
+                return None;
             };
-            let Some((owner, effect)) = effect_reference(export, &send.target_device_id) else {
-                return Ok(None);
-            };
-            let mut to = json!({"effect": effect});
-            match owner {
-                ReferenceOwner::Instrument(id) => to["instrument"] = json!(id),
-                ReferenceOwner::Kit(id) => to["kit"] = json!(id),
-                ReferenceOwner::Bus(id) => to["bus"] = json!(id),
-                ReferenceOwner::Master => to["master"] = json!(true),
-            }
-            json!({"sidechain": {"from": from, "to": to}})
+            json!({
+                "sidechain": {
+                    "from": from,
+                    "to": effect_target(owner, effect, "effect"),
+                }
+            })
         }
         AutomationTarget::DeviceParameter {
             device_id,
             parameter_id,
         } => {
-            let Some(name) = parameter_name(export, device_id, parameter_id)? else {
-                omit(
-                    &mut export.omissions,
-                    format!("automation \"{}\"", lane.id),
-                    "the plugin parameter name is not available",
-                );
-                return Ok(None);
+            let name = match parameter_name(export, device_id, parameter_id) {
+                Ok(Some(name)) => name,
+                Ok(None) => {
+                    omit(
+                        &mut export.omissions,
+                        format!("automation \"{lane_id}\""),
+                        "the plugin parameter name is not available",
+                    );
+                    return None;
+                }
+                Err(reason) => {
+                    omit(
+                        &mut export.omissions,
+                        format!("automation \"{lane_id}\""),
+                        reason,
+                    );
+                    return None;
+                }
             };
-            let Some((owner, effect)) = effect_reference(export, device_id) else {
-                return Ok(None);
-            };
-            let mut effect_ref = json!({"id": effect});
-            match owner {
-                ReferenceOwner::Instrument(id) => effect_ref["instrument"] = json!(id),
-                ReferenceOwner::Kit(id) => effect_ref["kit"] = json!(id),
-                ReferenceOwner::Bus(id) => effect_ref["bus"] = json!(id),
-                ReferenceOwner::Master => effect_ref["master"] = json!(true),
+            if let Some((owner, effect)) = ids.effects.get(device_id) {
+                json!({
+                    "effect": effect_target(owner, effect, "id"),
+                    "parameter": name,
+                })
+            } else {
+                let Some(track) = export.session.arrangement.tracks.iter().find(|track| {
+                    track
+                        .instrument
+                        .as_ref()
+                        .is_some_and(|instrument| instrument.id == *device_id)
+                }) else {
+                    omit(
+                        &mut export.omissions,
+                        format!("automation \"{lane_id}\""),
+                        "the target device is not exported",
+                    );
+                    return None;
+                };
+                if track
+                    .instrument
+                    .as_ref()
+                    .is_some_and(|instrument| instrument.as_vst3().is_none())
+                {
+                    omit(
+                        &mut export.omissions,
+                        format!("automation \"{lane_id}\""),
+                        "built-in instrument parameters are written as performance events, not mix automation",
+                    );
+                    return None;
+                }
+                if super::kit_of(export, &track.id).is_some() {
+                    omit(
+                        &mut export.omissions,
+                        format!("automation \"{lane_id}\""),
+                        "kit source parameters cannot be targeted by Score mix automation",
+                    );
+                    return None;
+                }
+                let Some(id) = track_score_id(export, &track.id) else {
+                    omit(
+                        &mut export.omissions,
+                        format!("automation \"{lane_id}\""),
+                        "the instrument is not exported",
+                    );
+                    return None;
+                };
+                json!({"source": id, "parameter": name})
             }
-            json!({"effect": effect_ref, "parameter": name})
         }
     };
-    Ok(Some(target))
+    Some(target)
 }
 
 /// Resolves a stable plugin parameter ID to its Score selector.
@@ -998,7 +1125,7 @@ fn parameter_name(
     export: &mut Export<'_>,
     device_id: &str,
     parameter_id: &str,
-) -> Result<Option<String>, ExportError> {
+) -> Result<Option<String>, String> {
     let plugin = export
         .session
         .arrangement
@@ -1008,8 +1135,11 @@ fn parameter_name(
             track
                 .instrument
                 .as_ref()
-                .and_then(|instrument| instrument.as_vst3())
-                .map(|plugin| (instrument_key(track), plugin))
+                .and_then(|instrument| {
+                    instrument
+                        .as_vst3()
+                        .map(|plugin| (instrument.id.clone(), plugin))
+                })
                 .into_iter()
                 .chain(
                     track
@@ -1041,10 +1171,10 @@ fn parameter_name(
                 .map(|effect| (effect.id.clone(), &effect.plugin)),
         )
         .find(|(id, _)| id == device_id);
-    let Some((key, plugin)) = plugin else {
-        return Ok(None);
+    let Some((_, plugin)) = plugin else {
+        return Err("the automation target is not a VST3 plugin".into());
     };
-    let parameters = if let Some(cached) = export.parameters.get(&key) {
+    let parameters = if let Some(cached) = export.parameters.get(device_id) {
         cached
             .iter()
             .map(|parameter| {
@@ -1057,9 +1187,8 @@ fn parameter_name(
             .collect::<Vec<_>>()
     } else {
         let described =
-            crate::plugins::validation::describe_parameters(export.scanner, plugin, &[]).map_err(
-                |error| ExportError::new(format!("plugin parameters could not be read: {error}")),
-            )?;
+            crate::plugins::validation::describe_parameters(export.scanner, plugin, &[])
+                .map_err(|error| format!("plugin parameters could not be read: {error}"))?;
         let parameters = described
             .parameters
             .iter()
@@ -1072,7 +1201,7 @@ fn parameter_name(
             })
             .collect::<Vec<_>>();
         export.parameters.insert(
-            key.clone(),
+            device_id.to_owned(),
             described
                 .parameters
                 .iter()
@@ -1102,157 +1231,117 @@ fn parameter_name(
     }))
 }
 
-fn instrument_key(track: &Track) -> String {
-    track
-        .instrument
-        .as_ref()
-        .map_or_else(|| track.id.clone(), |instrument| instrument.id.clone())
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use riffra_core::{CreativeSession, Track, TrackInstrument};
 
-/// Writes audio clips and their files.
-fn audio(export: &mut Export<'_>, document: &mut Map<String, Value>) -> Result<(), ExportError> {
-    let tracks = export.tracks.clone();
-    let mut files = BTreeMap::<riffra_core::AssetId, String>::new();
-    let mut by_section = BTreeMap::<usize, Vec<Value>>::new();
-    for track in &tracks {
-        let TrackRole::Audio = track.role else {
-            continue;
-        };
-        for clip in export
-            .session
-            .arrangement
-            .audio_clips
-            .iter()
-            .filter(|clip| clip.track_id == track.track.id)
-        {
-            if !exportable_clip(export, clip) {
-                continue;
-            }
-            let Some(section) = export.sections.iter().position(|section| {
-                clip.start_tick.0 >= section.start_tick && clip.start_tick.0 < section.end_tick
-            }) else {
-                omit(
-                    &mut export.omissions,
-                    format!("clip \"{}\"", clip.name),
-                    "the clip starts outside every section",
-                );
-                continue;
-            };
-            let file = match files.get(&clip.asset_id) {
-                Some(file) => file.clone(),
-                None => {
-                    let Some(asset) = crate::asset::load(export.data_root, &clip.asset_id)
-                        .map_err(|error| {
-                            ExportError::new(format!("asset could not be read: {error}"))
-                        })?
-                    else {
-                        return Err(ExportError::new(format!(
-                            "clip \"{}\" references a missing asset",
-                            clip.name
-                        )));
-                    };
-                    let Some(location) =
-                        crate::asset::resolve_content_location(export.data_root, &clip.asset_id)
-                            .map_err(|error| {
-                                ExportError::new(format!("asset could not be read: {error}"))
-                            })?
-                    else {
-                        return Err(ExportError::new(format!(
-                            "clip \"{}\" references a missing file",
-                            clip.name
-                        )));
-                    };
-                    let name = file_identifier(&asset.name);
-                    let mut relative = format!("audio/{name}.wav");
-                    let mut number = 2;
-                    while export.files.contains_key(&relative) {
-                        relative = format!("audio/{name}_{number}.wav");
-                        number += 1;
-                    }
-                    let bytes = std::fs::read(&location).map_err(|error| {
-                        ExportError::new(format!("could not read {}: {error}", location))
-                    })?;
-                    add_file(export, relative.clone(), bytes)?;
-                    files.insert(clip.asset_id.clone(), relative.clone());
-                    relative
-                }
-            };
-            let section_ref = &export.sections[section];
-            let rate = f64::from(clip.source_sample_rate);
-            let offset_seconds = clip.source_range.start as f64 / rate;
-            let duration_seconds = (clip
-                .source_range
-                .end
-                .saturating_sub(clip.source_range.start)) as f64
-                / rate;
-            let mut declaration = json!({
-                "id": format!("clip_{}", identifier_or(&clip.name, "clip")),
-                "instrument": track.id,
-                "file": file,
-                "at": section_ref.position(clip.start_tick.0, export.ppq),
-                "offset_seconds": offset_seconds,
-                "duration_seconds": duration_seconds,
-                "gain_db": clip.gain_db,
-                "pan": clip.pan,
-                "fade_in_seconds": clip.fade_in.frames as f64 / f64::from(clip.fade_in.sample_rate),
-                "fade_out_seconds": clip.fade_out.frames as f64 / f64::from(clip.fade_out.sample_rate),
-            });
-            if declaration["fade_in_seconds"].as_f64() == Some(0.0) {
-                declaration
-                    .as_object_mut()
-                    .expect("object")
-                    .remove("fade_in_seconds");
-            }
-            if declaration["fade_out_seconds"].as_f64() == Some(0.0) {
-                declaration
-                    .as_object_mut()
-                    .expect("object")
-                    .remove("fade_out_seconds");
-            }
-            by_section.entry(section).or_default().push(declaration);
+    fn export<'a>(
+        session: &'a CreativeSession,
+        sections: Vec<super::super::SongSection>,
+        tracks: Vec<super::super::ExportTrack<'a>>,
+    ) -> Export<'a> {
+        Export {
+            session,
+            data_root: std::path::Path::new("."),
+            catalog: crate::test_support::empty_built_in_catalog(),
+            scanner: std::path::Path::new("unused"),
+            ppq: 480,
+            sections,
+            tracks,
+            kits: BTreeMap::new(),
+            original: None,
+            omissions: Vec::new(),
+            files: BTreeMap::new(),
+            audio_files: BTreeMap::new(),
+            parameters: BTreeMap::new(),
+            written_articulations: BTreeMap::new(),
         }
     }
-    for (section, clips) in by_section {
-        let name = export.sections[section].name.clone();
-        let mut body = document["sections"][&name]
-            .as_object()
-            .cloned()
-            .unwrap_or_default();
-        body.insert("audio_clips".into(), Value::Array(clips));
-        document["sections"][&name] = Value::Object(body);
-    }
-    Ok(())
-}
 
-/// Reports whether one audio clip can be written and reports the rest.
-fn exportable_clip(export: &mut Export<'_>, clip: &AudioClip) -> bool {
-    if clip.muted {
-        omit(
-            &mut export.omissions,
-            format!("clip \"{}\"", clip.name),
-            "the clip is muted",
+    #[test]
+    fn plugin_automation_targets_the_source_or_the_effect() {
+        let mut session = CreativeSession::new(1);
+        let mut track = Track::instrument("track:1".into(), "Lead".into());
+        track.instrument = Some(
+            TrackInstrument::vst3(
+                "device:instrument".into(),
+                "Synth".into(),
+                "C:/plugins/synth.vst3".into(),
+            )
+            .unwrap(),
         );
-        return false;
-    }
-    if clip.loop_enabled {
-        omit(
-            &mut export.omissions,
-            format!("clip \"{}\"", clip.name),
-            "the clip loops",
+        track.effects.push(
+            EffectDevice::new(
+                "device:effect".into(),
+                "Drive".into(),
+                "C:/plugins/drive.vst3".into(),
+            )
+            .unwrap(),
         );
-        return false;
-    }
-    if clip.take_variant != riffra_core::AudioTakeVariant::Raw {
-        omit(
-            &mut export.omissions,
-            format!("clip \"{}\"", clip.name),
-            "the clip uses a processed take",
+        session.arrangement.tracks.push(track);
+        let section = super::super::SongSection {
+            base: "verse".into(),
+            name: "verse".into(),
+            start_tick: 0,
+            end_tick: 1920,
+            bar_lengths: vec![1920],
+            bar_starts: vec![0],
+            meter: (4, 4),
+            bpm: 120.0,
+            tonic: "C".into(),
+            scale: None,
+            inherited: false,
+        };
+        let tracks = vec![super::super::ExportTrack {
+            id: "lead".into(),
+            track: &session.arrangement.tracks[0],
+            role: TrackRole::Instrument,
+        }];
+        let mut export = export(&session, vec![section], tracks);
+        export.parameters.insert(
+            "device:instrument".into(),
+            vec![super::super::PluginParameter {
+                id: Some("cutoff".into()),
+                name: "Cutoff".into(),
+                index: 0,
+            }],
         );
-        return false;
+        export.parameters.insert(
+            "device:effect".into(),
+            vec![super::super::PluginParameter {
+                id: Some("drive".into()),
+                name: "Drive".into(),
+                index: 0,
+            }],
+        );
+        let ids = MixIds::new(&export);
+        assert_eq!(
+            automation_target(
+                &mut export,
+                &ids,
+                "lane",
+                &AutomationTarget::DeviceParameter {
+                    device_id: "device:instrument".into(),
+                    parameter_id: "cutoff".into(),
+                },
+            ),
+            Some(json!({"source": "lead", "parameter": "Cutoff"}))
+        );
+        assert_eq!(
+            automation_target(
+                &mut export,
+                &ids,
+                "lane",
+                &AutomationTarget::DeviceParameter {
+                    device_id: "device:effect".into(),
+                    parameter_id: "drive".into(),
+                },
+            ),
+            Some(json!({
+                "effect": {"instrument": "lead", "id": "drive"},
+                "parameter": "Drive",
+            }))
+        );
     }
-    true
-}
-
-fn identifier_or(text: &str, fallback: &str) -> String {
-    super::identifier(text).unwrap_or_else(|| fallback.into())
 }
