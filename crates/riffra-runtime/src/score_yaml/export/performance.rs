@@ -1424,9 +1424,7 @@ fn geometric_limit(points: &[(u64, u32, Point)], start: usize, limit: usize) -> 
         let next = points[end + 1].2;
         let ratio =
             (points[end + 1].0 - points[start].0) as f64 / (points[end].0 - points[start].0) as f64;
-        let expected = (f64::from(first.value)
-            + (f64::from(last.value) - f64::from(first.value)) * ratio)
-            as f32;
+        let expected = crate::score::ramp_value(first.value, last.value, ratio);
         let scale = first
             .value
             .abs()
@@ -1471,7 +1469,7 @@ fn ramp_value(start: u64, end: u64, tick: u64, from: f32, to: f32) -> f32 {
         return to;
     }
     let ratio = (tick - start) as f64 / (end - start) as f64;
-    (f64::from(from) + (f64::from(to) - f64::from(from)) * ratio) as f32
+    crate::score::ramp_value(from, to, ratio)
 }
 
 /// The integer CC value at one tick, using the Score importer's rounding.
