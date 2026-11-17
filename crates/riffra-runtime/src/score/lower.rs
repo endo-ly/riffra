@@ -2943,9 +2943,7 @@ fn quarter_ramp_value(start: &Quarter, end: &Quarter, at: &Quarter, from: f32, t
     let ratio = ((at - start) / (end - start))
         .to_f64()
         .expect("ramp interpolation ratio is between zero and one");
-    (f64::from(from) + (f64::from(to) - f64::from(from)) * ratio)
-        .to_f32()
-        .expect("interpolated ramp value is within the f32 range")
+    super::ramp_value(from, to, ratio)
 }
 
 fn validate_placement_shape(v: &Value, path: &str) -> Result<()> {

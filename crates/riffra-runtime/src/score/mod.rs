@@ -878,6 +878,14 @@ pub(crate) fn gain_linear(gain_db: f64) -> Option<f64> {
     gain.is_finite().then_some(gain)
 }
 
+/// The value of a linear ramp at `ratio` between its endpoints.
+///
+/// The Score importer expands ramps and the exporter decides whether a run is
+/// still one ramp with this arithmetic, so both stay on the same curve.
+pub(crate) fn ramp_value(from: f32, to: f32, ratio: f64) -> f32 {
+    (f64::from(from) + (f64::from(to) - f64::from(from)) * ratio) as f32
+}
+
 fn object<'a>(v: &'a Value, path: &str) -> Result<&'a serde_json::Map<String, Value>> {
     v.as_object()
         .ok_or_else(|| Error::new(path, "expected a mapping"))
