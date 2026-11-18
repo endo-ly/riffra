@@ -47,6 +47,7 @@ ProjectはDataRoot内の制作単位であり、`projects/<project-id>/` で識�
 - `CreativeSession.session_id` は制作セッション自身の識別子であり、Project packageをImportしても引き継ぐ
 - 表示名は `CreativeSession.project_name` から得る
 - `ProjectState` はActive ProjectのIDと `ProjectSummary` の一覧をまとめたUI・CLI向けの状態である。`ProjectSummary` はProject ID、表示名、更新時刻、読込エラーを持ち、読めないProjectも一覧に残ってエラーを表示できる
+- Projectの削除は `projects/<project-id>/`（`session.json` と保存世代）を完全に取り除く。読めないProjectも削除でき、Active Projectは削除できない。録音・レンダー・取り込み済みAssetなどDataRoot共有のデータはProjectに属さないため残る
 - `.riffra` はProjectの持ち出し用パッケージである。Importはpackageを検証して新しいProjectIdの `projects/<project-id>/` へ取り込み、Exportは利用者が指定した保存先へ書き出す。packageはDataRoot内の正準Projectではなく、通常のProject切替にも使われない
 - レンダリング結果は `renders/` へ保存する書き出し成果物であり、正準状態やpackageには含まれない
 

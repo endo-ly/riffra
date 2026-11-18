@@ -427,6 +427,7 @@ control_commands! {
         ProjectList = "project.list" (EmptyParams) -> ProjectState, host;
         ProjectCreate = "project.create" (ProjectCreateParams) -> ProjectActivation, project;
         ProjectOpen = "project.open" (ProjectOpenParams) -> ProjectActivation, project;
+        ProjectDelete = "project.delete" (ProjectDeleteParams) -> ProjectState, project;
         ProjectRename = "project.rename" (ProjectRenameParams) -> ProjectState, project;
         ProjectImport = "project.import" (ProjectImportParams) -> ProjectActivation, project;
         ProjectImportScore = "project.import-score" (ProjectImportScoreParams) -> ProjectActivation, project;
@@ -566,7 +567,7 @@ mod tests {
         let names = command_names();
 
         // Act / Assert
-        assert_eq!(names.len(), 228);
+        assert_eq!(names.len(), 229);
         let unique: std::collections::HashSet<_> = names.iter().copied().collect();
         assert_eq!(unique.len(), names.len());
         for name in names {
@@ -804,7 +805,7 @@ mod tests {
             .filter_map(|line| line.split_once('\'').map(|(name, _)| name))
             .collect();
         let unique: std::collections::HashSet<_> = names.iter().copied().collect();
-        assert_eq!(names.len(), 228);
+        assert_eq!(names.len(), 229);
         assert_eq!(unique.len(), names.len());
 
         for (name, params) in [

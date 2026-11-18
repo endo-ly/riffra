@@ -17,6 +17,13 @@ pub struct ProjectOpenParams {
     pub project_id: String,
 }
 
+/// Permanently deletes a Project that is not the active Project.
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ProjectDeleteParams {
+    pub project_id: String,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ProjectRenameParams {

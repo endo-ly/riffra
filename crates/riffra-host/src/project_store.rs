@@ -156,12 +156,13 @@ impl ProjectStore {
         result
     }
 
-    /// Removes a newly saved Project that has not become the active Project.
+    /// Removes a Project container, including a Project that cannot be read.
     ///
     /// # Errors
-    /// Returns an error for an invalid id, an active Project, or a failed removal.
-    pub fn discard_unactivated_project(&self, project_id: &str) -> io::Result<()> {
-        validate_project_id(project_id).map_err(invalid_data)?;
+    /// Returns an error for an invalid id, a missing Project, the active Project,
+    /// or a failed removal.
+    pub fn delete(&self, project_id: &str) -> io::Result<()> {
+        self.require_existing_project(project_id)?;
         let workspace = match fs::read(self.data_root.join(WORKSPACE_FILE)) {
             Ok(bytes) => {
                 Some(serde_json::from_slice::<WorkspaceState>(&bytes).map_err(invalid_data)?)
@@ -170,7 +171,7 @@ impl ProjectStore {
             Err(error) => return Err(error),
         };
         if workspace.is_some_and(|workspace| workspace.active_project_id == project_id) {
-            return Err(invalid_data("cannot discard the active project"));
+            return Err(invalid_data("cannot delete the active project"));
         }
         fs::remove_dir_all(self.projects_dir.join(project_id))
     }
@@ -443,6 +444,41 @@ mod tests {
             .unwrap();
         assert_eq!(summary.name, "Unreadable Project");
         assert!(summary.error.is_some());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn deletes_any_project_except_the_active_one() {
+        // Arrange
+        let root = root("delete");
+        let store = ProjectStore::new(&root);
+        let active = store.initialize().unwrap().project_id;
+        let broken = store.create(Some("Broken".into())).unwrap();
+        fs::write(
+            root.join(PROJECTS_DIRECTORY)
+                .join(&broken.project_id)
+                .join("session.json"),
+            b"not-json",
+        )
+        .unwrap();
+        let kept = store.create(Some("Kept".into())).unwrap();
+
+        // Act
+        let active_result = store.delete(&active);
+        store.delete(&broken.project_id).unwrap();
+        let missing_result = store.delete(&broken.project_id);
+
+        // Assert
+        assert!(active_result.is_err());
+        assert_eq!(missing_result.unwrap_err().kind(), io::ErrorKind::NotFound);
+        let remaining = store
+            .list()
+            .unwrap()
+            .into_iter()
+            .map(|summary| summary.project_id)
+            .collect::<Vec<_>>();
+        assert_eq!(remaining.len(), 2);
+        assert!(remaining.contains(&active) && remaining.contains(&kept.project_id));
         let _ = fs::remove_dir_all(root);
     }
 

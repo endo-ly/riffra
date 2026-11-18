@@ -114,6 +114,17 @@ pub(super) fn dispatch(
             state.take_pending_plugin_changes(writer)?;
             activate_project(state, writer, &params.project_id, ProjectOperation::Open)
         }
+        ProjectCommand::ProjectDelete(params) => {
+            state
+                .project_store
+                .delete(&params.project_id)
+                .map_err(|error| command_error(error.to_string()))?;
+            let project_state = project_state(state)?;
+            state
+                .events
+                .emit(crate::HostEvent::ProjectStateChanged(project_state.clone()));
+            Ok((ControlOutput::ProjectState(project_state), current.sequence))
+        }
         ProjectCommand::ProjectRename(params) => {
             let writer = writer.as_mut().expect("project mutation holds the writer");
             let committed = writer
@@ -166,10 +177,7 @@ pub(super) fn dispatch(
             );
             if result.is_ok() {
                 imported.retain();
-            } else if let Err(error) = state
-                .project_store
-                .discard_unactivated_project(&summary.project_id)
-            {
+            } else if let Err(error) = state.project_store.delete(&summary.project_id) {
                 tracing::warn!(%error, "score project cleanup failed");
             }
             result
@@ -1129,6 +1137,53 @@ instruments: {lead: {preset: LEAD/001-analog-saw-lead, voices: 8}}
                 .join("session.json")
                 .is_file()
         );
+
+        host.shutdown();
+        drop(host);
+        let _ = std::fs::remove_dir_all(data_root);
+    }
+
+    #[test]
+    fn project_deletion_removes_an_inactive_project_and_refuses_the_active_one() {
+        // Arrange
+        let (host, data_root) = open_safe_host("delete");
+        let initial_project_id = host.bootstrap().unwrap().project_state.active_project_id;
+        let created = host.dispatch_control(
+            ControlRequest::new(
+                "project-create",
+                "project.create",
+                json!({"name": "Second"}),
+                Some(0),
+            )
+            .with_expected_project_id(initial_project_id.clone()),
+        );
+        let activation: crate::api::output::ProjectActivationResult =
+            serde_json::from_value(created.result.unwrap().value).unwrap();
+        let active_project_id = activation.project_state.active_project_id;
+        let delete = |id: &str, project_id: &str| {
+            host.dispatch_control(
+                ControlRequest::new(
+                    id,
+                    "project.delete",
+                    json!({ "projectId": project_id }),
+                    Some(activation.canonical.sequence),
+                )
+                .with_expected_project_id(active_project_id.clone()),
+            )
+        };
+
+        // Act
+        let refused = delete("delete-active", &active_project_id);
+        let deleted = delete("delete-first", &initial_project_id);
+
+        // Assert
+        assert!(!refused.ok);
+        assert!(deleted.ok);
+        let listed: crate::api::output::ProjectState =
+            serde_json::from_value(deleted.result.unwrap().value).unwrap();
+        assert_eq!(listed.projects.len(), 1);
+        assert_eq!(listed.projects[0].project_id, active_project_id);
+        assert!(!data_root.join("projects").join(initial_project_id).exists());
 
         host.shutdown();
         drop(host);

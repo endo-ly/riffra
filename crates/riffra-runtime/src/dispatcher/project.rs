@@ -31,6 +31,13 @@ impl HostDispatcher<'_> {
                 let writer = writer.expect("project mutation holds the writer");
                 return self.activate_project(writer, &params.project_id);
             }
+            ProjectCommand::ProjectDelete(params) => {
+                self.project_store
+                    .as_ref()
+                    .delete(&params.project_id)
+                    .map_err(|error| error.to_string())?;
+                ControlOutput::ProjectState(self.project_state(&canonical.project_id)?)
+            }
             ProjectCommand::ProjectRename(params) => {
                 let writer = writer.expect("project mutation holds the writer");
                 let committed = writer.commit(|mut app| {
@@ -82,11 +89,7 @@ impl HostDispatcher<'_> {
                 let result = self.activate_project(writer, &summary.project_id);
                 if result.is_ok() {
                     imported.retain();
-                } else if let Err(error) = self
-                    .project_store
-                    .as_ref()
-                    .discard_unactivated_project(&summary.project_id)
-                {
+                } else if let Err(error) = self.project_store.as_ref().delete(&summary.project_id) {
                     tracing::warn!(%error, "score project cleanup failed");
                 }
                 return result;

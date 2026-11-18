@@ -131,6 +131,7 @@ export type ControlCommandResults = {
   'project.list': OutputValue<'projectState'>;
   'project.create': OutputValue<'projectActivation'>;
   'project.open': OutputValue<'projectActivation'>;
+  'project.delete': OutputValue<'projectState'>;
   'project.rename': OutputValue<'projectState'>;
   'project.import': OutputValue<'projectActivation'>;
   'project.import-score': OutputValue<'projectActivation'>;

@@ -285,6 +285,7 @@ export type { PluginStateXmlValue } from './PluginStateXmlValue';
 export type { ProjectActivationResult } from './ProjectActivationResult';
 export type { ProjectCommand } from './ProjectCommand';
 export type { ProjectCreateParams } from './ProjectCreateParams';
+export type { ProjectDeleteParams } from './ProjectDeleteParams';
 export type { ProjectExport } from './ProjectExport';
 export type { ProjectExportParams } from './ProjectExportParams';
 export type { ProjectExportScoreParams } from './ProjectExportScoreParams';

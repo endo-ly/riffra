@@ -1793,6 +1793,8 @@ pub enum ProjectCommand {
     Create(ProjectCreateArgs),
     /// Open an existing project by id and make it active.
     Open(ProjectOpenArgs),
+    /// Permanently delete a project that is not the active project.
+    Delete(ProjectDeleteArgs),
     /// Rename the active project.
     Rename(ProjectRenameArgs),
     /// Export the active project to an output path.
@@ -1856,6 +1858,12 @@ pub struct ProjectCreateArgs {
 #[derive(Debug, Args)]
 pub struct ProjectOpenArgs {
     /// Id of the project to open, as reported by `project list`.
+    pub project_id: String,
+}
+
+#[derive(Debug, Args)]
+pub struct ProjectDeleteArgs {
+    /// Id of the project to delete, as reported by `project list`.
     pub project_id: String,
 }
 
@@ -3701,6 +3709,10 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
                 project_id: args.project_id,
             })
             .into(),
+            ProjectCommand::Delete(args) => Project::ProjectDelete(ProjectDeleteParams {
+                project_id: args.project_id,
+            })
+            .into(),
             ProjectCommand::Rename(args) => {
                 Project::ProjectRename(ProjectRenameParams { name: args.name }).into()
             }
@@ -5071,7 +5083,7 @@ mod tests {
         command.clone().debug_assert();
         assert_help(&command, "riffra");
         assert_eq!(command.get_subcommands().count(), 24);
-        assert_eq!(leaves(&command), 195);
+        assert_eq!(leaves(&command), 196);
     }
 
     #[test]
