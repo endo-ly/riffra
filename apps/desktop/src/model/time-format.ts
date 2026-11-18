@@ -7,10 +7,15 @@ import {
   ticksToSeconds,
 } from '@/model/timebase';
 
+/** Pads the tick field to the width of the largest in-beat tick so the text never changes length. */
+function formatBeatTicks(ticks: number, beatTicks: number) {
+  return ticks.toString().padStart(Math.max(3, String(beatTicks - 1).length), '0');
+}
+
 /** Formats a timeline position for display as `bar.beat.tick`. */
 export function formatMusicalPosition(tick: number, timebase: ProjectTimebase) {
-  const { bar, beat, offset: subdivision } = tickToBarBeat(tick, timebase);
-  return `${bar}.${beat}.${subdivision.toString().padStart(3, '0')}`;
+  const { bar, beat, offset, beatTicks } = tickToBarBeat(tick, timebase);
+  return `${bar}.${beat}.${formatBeatTicks(offset, beatTicks)}`;
 }
 
 /** Formats a tick span for display as zero-based `bars.beats.ticks`. */
@@ -21,7 +26,7 @@ export function formatMusicalLength(ticks: number, timebase: ProjectTimebase) {
   const bars = Math.floor(safeTicks / barTicks);
   const beats = Math.floor((safeTicks % barTicks) / beatTicks);
   const remainder = safeTicks % beatTicks;
-  return `${bars}.${beats}.${remainder.toString().padStart(3, '0')}`;
+  return `${bars}.${beats}.${formatBeatTicks(remainder, beatTicks)}`;
 }
 
 /** Splits `a[.b[.c]]` into whole numbers, or null when the text is not in that form. */
