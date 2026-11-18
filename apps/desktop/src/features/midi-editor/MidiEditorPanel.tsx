@@ -97,6 +97,8 @@ export const MidiEditorPanel = memo(function MidiEditorPanel({
     pixelsPerTick,
     rowHeight,
     visibleTicks,
+    stepHorizontalZoom,
+    stepVerticalZoom,
     laneViewportRef,
     rulerContentRef,
     velocityContentRef,
@@ -310,6 +312,8 @@ export const MidiEditorPanel = memo(function MidiEditorPanel({
         onTogglePreview={() => setPreviewEnabled((enabled) => !enabled)}
         ghostsVisible={ghostsVisible}
         onToggleGhosts={() => setGhostsVisible((visible) => !visible)}
+        onTimeZoom={stepHorizontalZoom}
+        onPitchZoom={stepVerticalZoom}
       />
       <div className={styles.editorSurface}>
         <div className={styles.rulerViewport}>

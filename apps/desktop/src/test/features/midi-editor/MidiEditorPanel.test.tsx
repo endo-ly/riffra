@@ -118,6 +118,33 @@ describe('MidiEditorPanel', () => {
     expect(screen.getByLabelText('C4 velocity 96')).toBeInTheDocument();
   });
 
+  it('widens and narrows the time axis and the pitch rows from the toolbar steppers', () => {
+    // Arrange
+    const { lane } = setup(0);
+    const clipEnd = () =>
+      Number.parseFloat(lane.querySelector<HTMLElement>('[class*="clipEnd"]')!.style.left);
+    const rowHeight = () =>
+      Number.parseFloat(lane.querySelector<HTMLElement>('[data-note-id]')!.style.height);
+    const timeBefore = clipEnd();
+    const rowBefore = rowHeight();
+
+    // Act
+    fireEvent.click(screen.getByRole('button', { name: 'MIDI Editor zoom in' }));
+    fireEvent.click(screen.getByRole('button', { name: 'MIDI Editor pitch zoom in' }));
+
+    // Assert
+    expect(clipEnd()).toBeCloseTo(timeBefore * 1.25);
+    expect(rowHeight()).toBeCloseTo(rowBefore + 2);
+
+    // Act
+    fireEvent.click(screen.getByRole('button', { name: 'MIDI Editor zoom out' }));
+    fireEvent.click(screen.getByRole('button', { name: 'MIDI Editor pitch zoom out' }));
+
+    // Assert
+    expect(clipEnd()).toBeCloseTo(timeBefore);
+    expect(rowHeight()).toBeCloseTo(rowBefore);
+  });
+
   it.each([1920, 2160])(
     'aligns all grid layers to Arrangement boundaries at clip tick %i',
     (startTick) => {

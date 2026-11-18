@@ -6,6 +6,7 @@ import {
   ToolbarSegmented,
   ToolbarSelect,
   ToolbarSlider,
+  ToolbarStepper,
   ToolbarToggle,
 } from '@/shared/ui/Toolbar';
 import styles from './MidiEditorPanel.module.css';
@@ -29,6 +30,8 @@ interface MidiEditorToolbarProps {
   onTogglePreview: () => void;
   ghostsVisible: boolean;
   onToggleGhosts: () => void;
+  onTimeZoom: (direction: -1 | 1) => void;
+  onPitchZoom: (direction: -1 | 1) => void;
 }
 
 export function MidiEditorToolbar({
@@ -50,9 +53,19 @@ export function MidiEditorToolbar({
   onTogglePreview,
   ghostsVisible,
   onToggleGhosts,
+  onTimeZoom,
+  onPitchZoom,
 }: MidiEditorToolbarProps) {
   return (
-    <Toolbar label="MIDI Editor toolbar">
+    <Toolbar
+      label="MIDI Editor toolbar"
+      trailing={
+        <>
+          <ToolbarStepper label="Time" ariaLabel="MIDI Editor zoom" onStep={onTimeZoom} />
+          <ToolbarStepper label="Pitch" ariaLabel="MIDI Editor pitch zoom" onStep={onPitchZoom} />
+        </>
+      }
+    >
       <span className={styles.clipIdentity} title={clipName}>
         {clipName}
       </span>
