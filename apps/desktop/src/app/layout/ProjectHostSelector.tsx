@@ -12,6 +12,8 @@ import type {
 import type { HostConnectionBootstrap } from '@/native/api/host-connection';
 import { openHostDataRoot } from '@/native/dialog';
 import { useSession, useSessionStore } from '@/shared/session/session-context';
+import { ConfirmDialog } from '@/shared/ui/ConfirmDialog';
+import { ContextMenu } from '@/shared/ui/ContextMenu';
 import controls from '@/shared/ui/controls.module.css';
 import { Icon } from '@/shared/ui/primitives';
 import styles from './ProjectHostSelector.module.css';
@@ -43,6 +45,7 @@ interface ProjectHostSelectorProps {
   projectError?: string | null;
   onCreateProject?: (name?: string) => Promise<ProjectActivationResult | null>;
   onOpenProject?: (projectId: string) => Promise<ProjectActivationResult | null>;
+  onDeleteProject?: (projectId: string) => Promise<unknown>;
   onRenameProject?: (name: string) => Promise<unknown>;
 }
 
@@ -77,6 +80,7 @@ export function ProjectHostSelector() {
       projectError={project.error}
       onCreateProject={project.create}
       onOpenProject={project.open}
+      onDeleteProject={project.delete}
       onRenameProject={project.rename}
       onImportProject={() => void project.importPackage()}
       onImportScore={() => void project.importScore()}
@@ -91,6 +95,8 @@ export function ProjectHostSelectorView(props: ProjectHostSelectorProps) {
   const [query, setQuery] = useState('');
   const [order, setOrder] = useState<ProjectOrder>('recent');
   const [refreshing, setRefreshing] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<ProjectSummary | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number; project: ProjectSummary } | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const discardNameDraftRef = useRef(false);
@@ -195,6 +201,7 @@ export function ProjectHostSelectorView(props: ProjectHostSelectorProps) {
   useEffect(() => {
     if (!open) return;
     setQuery('');
+    setMenu(null);
     refreshSelector();
   }, [open, refreshSelector]);
 
@@ -220,6 +227,11 @@ export function ProjectHostSelectorView(props: ProjectHostSelectorProps) {
       return;
     }
     closeOnSuccess(props.onOpenProject?.(project.projectId));
+  };
+
+  const requestDelete = (project: ProjectSummary) => {
+    setPendingDelete(project);
+    close();
   };
 
   const switchHost = (target: HostTarget) => closeOnSuccess(onSwitch(target));
@@ -400,6 +412,17 @@ export function ProjectHostSelectorView(props: ProjectHostSelectorProps) {
                 aria-current={current || undefined}
                 disabled={projectActionsDisabled}
                 onClick={() => openProject(project)}
+                onContextMenu={(event) => {
+                  if (!props.onDeleteProject) return;
+                  event.preventDefault();
+                  setMenu({ x: event.clientX, y: event.clientY, project });
+                }}
+                onKeyDown={(event) => {
+                  if (event.key !== 'Delete' || !props.onDeleteProject || current) return;
+                  // The timeline deletes its selection on a window-level Delete unless it is handled.
+                  event.preventDefault();
+                  requestDelete(project);
+                }}
               >
                 <span className={styles.rowName}>{project.name}</span>
                 {project.error ? (
@@ -509,9 +532,38 @@ export function ProjectHostSelectorView(props: ProjectHostSelectorProps) {
             {(props.error || props.projectError) && (
               <p className={styles.error}>{props.projectError ?? props.error}</p>
             )}
+            {menu && (
+              <ContextMenu
+                x={menu.x}
+                y={menu.y}
+                items={[
+                  {
+                    label: 'Delete…',
+                    danger: true,
+                    disabled: menu.project.projectId === activeProjectId,
+                    onClick: () => requestDelete(menu.project),
+                  },
+                ]}
+                onClose={() => setMenu(null)}
+              />
+            )}
           </div>,
           document.body,
         )}
+      {pendingDelete && (
+        <ConfirmDialog
+          title="Delete Project permanently?"
+          message={`"${pendingDelete.name}" and its saved generations will be removed. Recordings, renders, and imported Assets in the Data Root are kept.`}
+          confirmLabel="Delete"
+          danger
+          onConfirm={() => {
+            const { projectId } = pendingDelete;
+            setPendingDelete(null);
+            void props.onDeleteProject?.(projectId);
+          }}
+          onCancel={() => setPendingDelete(null)}
+        />
+      )}
     </div>
   );
 }

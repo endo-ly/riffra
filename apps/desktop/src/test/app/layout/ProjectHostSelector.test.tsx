@@ -151,6 +151,51 @@ describe('ProjectHostSelector', () => {
     expect(listedNames()).toEqual(['Alpha', 'Beta', 'Gamma']);
   });
 
+  it('deletes a non-active Project from the context menu or the Delete key, after confirmation', async () => {
+    const onDeleteProject = vi.fn().mockResolvedValue(undefined);
+    const projectState = {
+      ...defaultProjectState(),
+      projects: [
+        ...defaultProjectState().projects,
+        { projectId: 'night', name: 'Night Circuit', updatedAtMs: 1, error: null },
+        { projectId: 'dawn', name: 'Dawn', updatedAtMs: 1, error: null },
+      ],
+    };
+    const user = userEvent.setup();
+    renderSelector(embedded, { onDeleteProject, projectState });
+    const openPanel = () =>
+      user.click(screen.getByRole('button', { name: /Project: Untitled Project/ }));
+    const row = (name: RegExp) =>
+      within(screen.getByRole('group', { name: 'Projects' })).getByRole('button', { name });
+    const confirmDelete = () =>
+      user.click(
+        within(screen.getByRole('dialog', { name: 'Delete Project permanently?' })).getByRole(
+          'button',
+          { name: 'Delete' },
+        ),
+      );
+
+    await openPanel();
+    fireEvent.contextMenu(row(/Untitled Project/));
+    const activeItemDisabled = screen
+      .getByRole('menuitem', { name: 'Delete…' })
+      .hasAttribute('disabled');
+    await user.keyboard('{Escape}');
+    await openPanel();
+    fireEvent.contextMenu(row(/Night Circuit/));
+    await user.click(screen.getByRole('menuitem', { name: 'Delete…' }));
+    const calledBeforeConfirm = onDeleteProject.mock.calls.length;
+    await confirmDelete();
+    await openPanel();
+    const deleteKeyLeftToOthers = fireEvent.keyDown(row(/Dawn/), { key: 'Delete' });
+    await confirmDelete();
+
+    expect(activeItemDisabled).toBe(true);
+    expect(calledBeforeConfirm).toBe(0);
+    expect(deleteKeyLeftToOthers).toBe(false);
+    expect(onDeleteProject.mock.calls).toEqual([['night'], ['dawn']]);
+  });
+
   it('opens the first matching Project on Enter, but not on an IME confirmation', async () => {
     const onOpenProject = vi.fn().mockResolvedValue(null);
     const projectState = {

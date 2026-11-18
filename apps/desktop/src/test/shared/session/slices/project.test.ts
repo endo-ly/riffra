@@ -53,6 +53,7 @@ function useTestProject(api: FakeNativeApi, initialBoot: BootstrapState) {
   return {
     openProject: project.open,
     createProject: project.create,
+    deleteProject: project.delete,
     importProject: project.importPackage,
     importScore: project.importScore,
     exportProject: project.exportPackage,
@@ -158,6 +159,47 @@ describe('project', () => {
       await expect(result.current.createProject()).resolves.toBeNull();
     });
     expect(result.current.projectError).toBe('Project creation failed: disk full');
+  });
+
+  it('drops a deleted Project from the list and reports a failed deletion', async () => {
+    // Arrange
+    const api = createFakeNativeApi();
+    const activeId = api.bootstrapState.projectState.activeProjectId;
+    const otherId = '01900000-0000-7000-8000-000000000002';
+    const initialBoot: BootstrapState = {
+      ...api.bootstrapState,
+      projectState: {
+        activeProjectId: activeId,
+        projects: [
+          ...api.bootstrapState.projectState.projects,
+          { projectId: otherId, name: 'Other', updatedAtMs: 1, error: null },
+        ],
+      },
+    };
+    const toastSpy = vi.spyOn(toasts, 'toast');
+    const { result } = renderHook(() => useTestProject(api, initialBoot));
+
+    // Act
+    await act(async () => {
+      await result.current.deleteProject(otherId);
+    });
+
+    // Assert
+    expect(result.current.projectState?.projects.map((project) => project.projectId)).toEqual([
+      activeId,
+    ]);
+
+    // Arrange
+    api.setFailure('deleteProject', new NativeCommandError({ message: 'locked' }));
+
+    // Act
+    await act(async () => {
+      await expect(result.current.deleteProject(activeId)).resolves.toBeNull();
+    });
+
+    // Assert
+    expect(toastSpy).toHaveBeenCalledWith('Project deletion failed: locked', { kind: 'error' });
+    expect(result.current.projectState?.projects).toHaveLength(1);
   });
 
   it('imports a package as a new active Project without replacing the existing entry', async () => {

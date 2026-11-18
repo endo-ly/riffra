@@ -585,6 +585,17 @@ class FakeNativeControls {
       case 'listProjects':
       case 'renameProject':
         return Promise.resolve(this.bootstrapState.projectState);
+      case 'deleteProject': {
+        const [projectId] = arguments_ as [string];
+        const projectState = {
+          ...this.bootstrapState.projectState,
+          projects: this.bootstrapState.projectState.projects.filter(
+            (project) => project.projectId !== projectId,
+          ),
+        };
+        this.bootstrapState = { ...this.bootstrapState, projectState };
+        return Promise.resolve(projectState);
+      }
       case 'createProject':
       case 'openProject':
       case 'importScore':

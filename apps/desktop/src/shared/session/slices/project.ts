@@ -144,6 +144,7 @@ export interface ProjectSlice extends ProjectStore {
   refreshList(): Promise<ProjectState | null>;
   create(name?: string): Promise<ProjectActivationResult | null>;
   open(projectId: string): Promise<ProjectActivationResult | null>;
+  delete(projectId: string): Promise<ProjectState | null>;
   rename(name: string): Promise<ProjectState | null>;
   exportPackage(): Promise<void>;
   importPackage(): Promise<void>;
@@ -279,6 +280,24 @@ export function createProjectSlice(
     },
     create: (name) => perform(() => api.createProject(name), 'Project creation'),
     open: (id) => perform(() => api.openProject(id), 'Project opening'),
+    async delete(projectId) {
+      const current = generation;
+      const name = get().boot?.projectState.projects.find(
+        (project) => project.projectId === projectId,
+      )?.name;
+      try {
+        const next = await api.deleteProject(projectId);
+        if (current === generation) {
+          get().replaceList(next);
+          toast(`Project deleted: ${name ?? projectId}`);
+        }
+        return next;
+      } catch (error) {
+        if (current === generation)
+          toast(`Project deletion failed: ${errorText(error)}`, { kind: 'error' });
+        return null;
+      }
+    },
     async rename(name) {
       const current = generation;
       try {
