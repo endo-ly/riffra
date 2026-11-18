@@ -160,8 +160,8 @@ impl AppCore {
         let mut candidate = candidate
             .validate_and_normalize()
             .map_err(ApplicationError::InvalidSession)?;
-        if candidate == self.snapshot.session {
-            return Ok(candidate);
+        if self.is_unchanged(&mut candidate) {
+            return Ok(self.snapshot.session.clone());
         }
         self.ensure_score_owned(&candidate)?;
         candidate.updated_at_ms =
@@ -189,8 +189,8 @@ impl AppCore {
         let mut candidate = candidate
             .validate_and_normalize()
             .map_err(ApplicationError::InvalidSession)?;
-        if candidate == self.snapshot.session {
-            return Ok(candidate);
+        if self.is_unchanged(&mut candidate) {
+            return Ok(self.snapshot.session.clone());
         }
         candidate.updated_at_ms =
             next_update_timestamp(self.snapshot.session.updated_at_ms, candidate.updated_at_ms);
@@ -200,6 +200,19 @@ impl AppCore {
         self.history.clear();
         self.exchange(candidate.clone());
         Ok(candidate)
+    }
+
+    /// Whether the candidate holds the same content as the current Session.
+    ///
+    /// The revision counts edits rather than describing content, so an edit
+    /// that changes nothing else is not a change: it is neither saved, nor
+    /// dated, nor recorded in the history.
+    fn is_unchanged(&self, candidate: &mut CreativeSession) -> bool {
+        let revision = candidate.arrangement.revision;
+        candidate.arrangement.revision = self.snapshot.session.arrangement.revision;
+        let unchanged = *candidate == self.snapshot.session;
+        candidate.arrangement.revision = revision;
+        unchanged
     }
 
     fn ensure_score_owned(&self, candidate: &CreativeSession) -> Result<(), ApplicationError> {
@@ -486,6 +499,28 @@ mod tests {
                 .to_string()
                 .contains("history is empty")
         );
+    }
+
+    #[test]
+    fn an_edit_that_only_advances_the_revision_is_not_a_change() {
+        // Arrange
+        let storage = MemoryStorage::default();
+        let mut core = AppCore::new("project:test".into(), CreativeSession::new(1), 0);
+        let before = core.canonical_state();
+
+        // Act
+        let result = core.commit(&storage, |session| {
+            session.arrangement.revision += 1;
+            Ok(())
+        });
+
+        // Assert
+        let after = core.canonical_state();
+        assert_eq!(result.unwrap(), before.session);
+        assert_eq!(after.session, before.session);
+        assert_eq!(after.sequence, before.sequence);
+        assert_eq!(after.history, HistoryState::default());
+        assert!(storage.sessions.lock().unwrap().is_empty());
     }
 
     #[test]
