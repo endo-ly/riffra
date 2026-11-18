@@ -576,8 +576,11 @@ pub enum MixdownCommand {
     /// Read the current settings.
     Get,
     /// Replace settings with a JSON object or @file.
+    ///
+    /// pluginWarmUpSeconds: wall-clock VST3 processing before rendering, excluded from the WAV
+    /// (0..=60; omitted = 2). Increase for incomplete asynchronous sample loading; 0 disables it.
     Set {
-        /// Complete Mixdown settings object, inline JSON or @file.
+        /// Complete settings object from `render settings get`, edited as inline JSON or @file.
         #[arg(long)]
         settings_json: String,
     },
@@ -2092,9 +2095,9 @@ pub struct EffectAddArgs {
 pub enum EffectCommand {
     /// Insert a VST3 effect into a Track, Bus, or Master chain.
     Add(EffectAddArgs),
-    /// Remove one effect device from a Track.
+    /// Remove one effect device from a Track, Bus, or Master chain.
     Remove(EffectRemoveArgs),
-    /// Reorder the effect devices on a Track to the supplied id order.
+    /// Reorder the effect devices on a Track, Bus, or Master chain to the supplied id order.
     Reorder(EffectReorderArgs),
 }
 
