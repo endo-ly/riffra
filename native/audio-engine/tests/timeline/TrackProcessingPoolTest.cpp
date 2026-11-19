@@ -33,11 +33,18 @@ TEST(TrackProcessingPoolTest, ProcessesEveryTrackOnceForEachWorkerCount) {
         for (auto& track : graph.tracks) track->runtime->windowProcessingCount = 0;
 
         // Act
-        for (int block = 0; block < 100; ++block) pool.run(processingTracks, job);
+        for (int block = 0; block < 100; ++block) {
+            pool.run(processingTracks, job);
+            pool.run(std::span{processingTracks}.first(2), job);
+            pool.run(std::span{processingTracks}.last(1), job);
+        }
 
         // Assert
-        for (const auto& track : graph.tracks)
-            EXPECT_EQ(track->runtime->windowProcessingCount, 100u) << workerCount;
+        for (std::size_t index = 0; index < processingTracks.size(); ++index) {
+            const auto expected = index < 2 || index == processingTracks.size() - 1 ? 200u : 100u;
+            EXPECT_EQ(processingTracks[index]->runtime->windowProcessingCount, expected)
+                << workerCount << " workers, track " << index;
+        }
     }
 }
 
