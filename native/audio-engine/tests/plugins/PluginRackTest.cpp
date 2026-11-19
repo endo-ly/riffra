@@ -181,6 +181,30 @@ TEST(PluginRackTest, RejectsParametersBeyondThePreparedChangeQueue) {
     EXPECT_FLOAT_EQ(state->parameterValues[0], 0.5f);
 }
 
+TEST(PluginRackTest, AppliesLatestQueuedValuesAcrossDirtyWordBoundary) {
+    ProcessorTrace trace;
+    auto processor = std::make_unique<TestProcessor>(trace);
+    const auto& parameters = processor->getParameters();
+    for (int index = 0; index < 66; ++index)
+        processor->addParameter(new juce::AudioParameterFloat(
+            juce::ParameterID{"queued-" + juce::String(index), 1}, "Queued Parameter",
+            juce::NormalisableRange<float>{0.0f, 1.0f}, 0.5f));
+    juce::String error;
+    auto rack = PluginRackTestPeer::install(std::move(processor), kSampleRate, kBlockSize, error);
+    ASSERT_NE(rack, nullptr) << error;
+    rack->enqueueParameterChange(63, 0.25f);
+    rack->enqueueParameterChange(64, 0.75f);
+    rack->enqueueParameterChange(63, 0.125f);
+    std::array<float, kBlockSize> left{}, right{};
+    const std::array<float*, 2> outputs{left.data(), right.data()};
+
+    rack->process(nullptr, 0, nullptr, 0, outputs.data(), 2, kBlockSize);
+
+    EXPECT_FLOAT_EQ(parameters[63]->getValue(), 0.125f);
+    EXPECT_FLOAT_EQ(parameters[64]->getValue(), 0.75f);
+    EXPECT_FLOAT_EQ(parameters[65]->getValue(), 0.5f);
+}
+
 TEST(PluginRackTest, RestoresParameterValuesWithoutGeneratingDisplayText) {
     ProcessorTrace trace;
     auto processor = std::make_unique<TestProcessor>(trace);
