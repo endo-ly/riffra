@@ -4,6 +4,7 @@
 #include <thread>
 
 #include "contract/ExecutionGraph.h"
+#include "instruments/Vst3InstrumentRuntime.h"
 #include "timeline/TimelineEngine.h"
 
 namespace {
@@ -43,6 +44,15 @@ int main(int argc, char** argv) {
     }
 
     juce::ScopedJuceInitialiser_GUI juceInitialiser;
+    {
+        juce::String error;
+        const auto instrument = riffra::Vst3InstrumentRuntime::create(
+            argv[2], 44'100.0, 64, riffra::PluginProcessingMode::realtime, {}, error);
+        if (!instrument || instrument->vst3Rack()->status().processedBlocks * 64 < 88'200) {
+            std::cerr << "realtime instrument warm-up did not complete: " << error << '\n';
+            return 1;
+        }
+    }
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();
     riffra::TimelineEngine engine(true);
