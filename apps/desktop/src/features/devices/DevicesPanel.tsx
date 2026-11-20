@@ -149,29 +149,33 @@ export function DevicesPanelView(props: DevicesPanelProps) {
         {target && (
           <div className={styles.workbench} data-midi={Boolean(track?.instrument)}>
             {device && plugin && !unavailable ? (
-              <DeviceParameterEditor
-                key={`${props.sessionId}:${JSON.stringify(target.owner)}:${device.id}:${plugin.path}`}
-                automationLanes={props.automationLanes}
-                onOpenAutomation={(parameter) => {
-                  if (parameter.parameterId)
-                    props.onOpenAutomation({
-                      kind: 'deviceParameter',
-                      deviceId: device.id,
-                      parameterId: parameter.parameterId,
-                    });
-                }}
-                owner={target.owner}
-                deviceId={device.id}
-                pluginPath={plugin.path}
-                stateData={plugin.stateData}
-                parameterValues={plugin.parameterValues}
-                arrangement={props.arrangement}
-                isInstrument={track?.instrument?.id === device.id}
-                commit={commit}
-                onOpenSidechainAutomation={(sidechainSendId) =>
-                  props.onOpenAutomation({ kind: 'sidechainSendLevel', sidechainSendId })
-                }
-              />
+              device.bypassed ? (
+                <p className={controls.placeholder}>Bypassed · unbypass to edit this device.</p>
+              ) : (
+                <DeviceParameterEditor
+                  key={`${props.sessionId}:${JSON.stringify(target.owner)}:${device.id}:${plugin.path}`}
+                  automationLanes={props.automationLanes}
+                  onOpenAutomation={(parameter) => {
+                    if (parameter.parameterId)
+                      props.onOpenAutomation({
+                        kind: 'deviceParameter',
+                        deviceId: device.id,
+                        parameterId: parameter.parameterId,
+                      });
+                  }}
+                  owner={target.owner}
+                  deviceId={device.id}
+                  pluginPath={plugin.path}
+                  stateData={plugin.stateData}
+                  parameterValues={plugin.parameterValues}
+                  arrangement={props.arrangement}
+                  isInstrument={track?.instrument?.id === device.id}
+                  commit={commit}
+                  onOpenSidechainAutomation={(sidechainSendId) =>
+                    props.onOpenAutomation({ kind: 'sidechainSendLevel', sidechainSendId })
+                  }
+                />
+              )
             ) : (
               <p className={controls.placeholder}>
                 {device && !plugin

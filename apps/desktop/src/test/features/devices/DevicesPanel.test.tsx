@@ -570,6 +570,18 @@ describe('DevicesPanel', () => {
     expect(api.calls.filter((call) => call === 'inspectDevice')).toHaveLength(0);
   });
 
+  it('shows a bypassed device placeholder without querying its plugin', () => {
+    const api = runtimeApi();
+    const bypassed: Track = {
+      ...structuredClone(track),
+      effects: [{ ...structuredClone(effect), bypassed: true }],
+    };
+    render(<Harness api={api} initialTrack={bypassed} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Test Effect' }));
+    expect(screen.getByText('Bypassed · unbypass to edit this device.')).toBeInTheDocument();
+    expect(api.calls.filter((call) => call === 'inspectDevice')).toHaveLength(0);
+  });
+
   it('edits sidechain routes for a capable device', async () => {
     const api = runtimeApi({ available: true, mono: false, stereo: true, channels: 2 });
     const currentSession = defaultSession();

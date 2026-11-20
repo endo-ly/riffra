@@ -141,7 +141,6 @@ struct Vst3InstrumentSpec final {
 
 struct InternalInstrumentSpec final {
     juce::String id;
-    bool bypassed = false;
     juce::String definitionJson;
     juce::String definitionBaseDir;
     InstrumentMidiSpec midi;
@@ -188,7 +187,7 @@ inline bool sameInstrumentRuntime(const std::optional<InstrumentSpec>& left,
     }
     const auto& leftInternal = std::get<InternalInstrumentSpec>(*left);
     const auto& rightInternal = std::get<InternalInstrumentSpec>(*right);
-    return leftInternal.id == rightInternal.id && leftInternal.bypassed == rightInternal.bypassed &&
+    return leftInternal.id == rightInternal.id &&
            leftInternal.definitionJson == rightInternal.definitionJson &&
            leftInternal.definitionBaseDir == rightInternal.definitionBaseDir;
 }

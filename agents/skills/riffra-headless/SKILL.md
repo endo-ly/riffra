@@ -255,7 +255,7 @@ Effectの候補は `plugin catalog list` で確認し、`effect add` でEffect C
 
 `--plugin-id` は現在のDataRootのCatalogにあるValidated・Role一致のPluginへ解決され、解決後のパスがProjectへ保存される。IDはインストールパスに依存するため、別PCへ持ち運べる識別子ではない。Standaloneではパスだけを登録し、実体のロードはRuntimeが行う。
 
-`device inspect`、`device parameter list/get/set`、`plugin state save/load/inspect/read/patch`、`plugin preset` は実体のPluginを扱うため Live Host 専用である。Built-in instrumentはparameter・state・preset・editorをサポートしない。
+`device inspect`、`device parameter list/get/set`、`plugin state save/load/inspect/read/patch`、`plugin preset` は実体のPluginを扱うため Live Host 専用である。Built-in instrumentはparameter・state・preset・editorをサポートしない。Bypass中のDeviceはインスタンスを持たないため、これらのコマンドの対象にならない（`plugin state import` だけは正準状態へ直接書き込み、Bypassを維持する）。解除すると次の投影でインスタンスが復帰する。
 
 JUCE製PluginのStateは、ファイルを受け渡さず構造を指定して読み書きできる。`inspect` で構造と値の種類を確認し、`read` で1つの値を取り出し、`patch` で指定箇所だけを変更する。
 

@@ -450,23 +450,21 @@ impl HostState {
         Ok((result.output, result.sequence))
     }
 
-    /// Returns the state the live plugin reports and whether the device is bypassed.
+    /// Returns the state the live plugin reports. Only devices that hold a
+    /// resident instance can be read.
     fn live_plugin_state(
         &self,
         current: &CanonicalState,
         owner: &riffra_core::EffectOwner,
         device_id: &str,
-    ) -> Result<(PluginStateSnapshot, bool), ProtocolError> {
-        let (plugin_path, bypassed) = canonical_plugin_device(current, owner, device_id)?;
+    ) -> Result<PluginStateSnapshot, ProtocolError> {
+        let plugin_path = canonical_plugin_device(current, owner, device_id)?;
         self.wait_for_device_projection(current)?;
         let state = self
             .audio
             .get_plugin_state(owner, device_id)
             .map_err(audio_error)?;
-        Ok((
-            plugin_state_snapshot(&self.data_root, &plugin_path, state)?,
-            bypassed,
-        ))
+        plugin_state_snapshot(&self.data_root, &plugin_path, state)
     }
 
     /// Applies `next` to the live plugin and persists it, restoring `previous` if persisting fails.
@@ -853,6 +851,7 @@ impl HostState {
                 )? {
                     Some(inspection) => ControlOutput::DeviceInspection(inspection),
                     None => {
+                        ensure_live_device(&current, &params.owner, &params.device_id)?;
                         self.wait_for_device_projection(&current)?;
                         ControlOutput::DeviceInspection(
                             self.audio
@@ -863,7 +862,7 @@ impl HostState {
                 }
             }
             RuntimeCommand::DeviceParameterList(params) => {
-                let _ = canonical_plugin_device(&current, &params.owner, &params.device_id)?;
+                ensure_live_device(&current, &params.owner, &params.device_id)?;
                 self.wait_for_device_projection(&current)?;
                 ControlOutput::DeviceParameters(
                     self.audio
@@ -872,7 +871,7 @@ impl HostState {
                 )
             }
             RuntimeCommand::DeviceParameterGet(params) => {
-                let _ = canonical_plugin_device(&current, &params.owner, &params.device_id)?;
+                ensure_live_device(&current, &params.owner, &params.device_id)?;
                 self.wait_for_device_projection(&current)?;
                 ControlOutput::DeviceParameter(
                     self.audio
@@ -889,7 +888,7 @@ impl HostState {
                 )
             }
             RuntimeCommand::DeviceParameterFormat(params) => {
-                let _ = canonical_plugin_device(&current, &params.owner, &params.device_id)?;
+                ensure_live_device(&current, &params.owner, &params.device_id)?;
                 self.wait_for_device_projection(&current)?;
                 let display_value = self
                     .audio
@@ -903,7 +902,7 @@ impl HostState {
                 ControlOutput::DeviceParameterText(display_value)
             }
             RuntimeCommand::PluginPresetList(params) => {
-                let _ = canonical_plugin_device(&current, &params.owner, &params.device_id)?;
+                ensure_live_device(&current, &params.owner, &params.device_id)?;
                 self.wait_for_device_projection(&current)?;
                 let presets = self
                     .audio
@@ -918,7 +917,7 @@ impl HostState {
                 ControlOutput::PluginPresets(presets)
             }
             RuntimeCommand::PluginPresetGet(params) => {
-                let _ = canonical_plugin_device(&current, &params.owner, &params.device_id)?;
+                ensure_live_device(&current, &params.owner, &params.device_id)?;
                 self.wait_for_device_projection(&current)?;
                 let programs = self
                     .audio
@@ -942,7 +941,7 @@ impl HostState {
                         "exactly one of preset or presetIndex is required",
                     ));
                 }
-                let (plugin_path, bypassed) =
+                let plugin_path =
                     canonical_plugin_device(&current, &params.owner, &params.device_id)?;
                 self.wait_for_device_projection(&current)?;
                 let programs = self
@@ -992,7 +991,7 @@ impl HostState {
                         &params.device_id,
                         state_snapshot.parameter_values.clone(),
                         state_snapshot.state_data.clone(),
-                        bypassed,
+                        false,
                     )
                 });
                 if let Err(error) = commit {
@@ -1002,12 +1001,11 @@ impl HostState {
                 return adapter_mutation(commit.map(|(mutation, _)| mutation));
             }
             RuntimeCommand::PluginStateGet(params) => {
-                let (state, _) =
-                    self.live_plugin_state(&current, &params.owner, &params.device_id)?;
+                let state = self.live_plugin_state(&current, &params.owner, &params.device_id)?;
                 ControlOutput::PluginState(state)
             }
             RuntimeCommand::PluginStateSet(params) => {
-                let (plugin_path, bypassed) =
+                let plugin_path =
                     canonical_plugin_device(&current, &params.owner, &params.device_id)?;
                 let plugin = crate::plugins::validated_entry_at_path(&self.data_root, &plugin_path)
                     .map_err(command_error)?;
@@ -1022,19 +1020,17 @@ impl HostState {
                     &mut context,
                     (&params.owner, &params.device_id),
                     previous_state,
-                    plugin_state_value(&params.state, bypassed),
+                    plugin_state_value(&params.state),
                 );
             }
             RuntimeCommand::PluginStateInspect(params) => {
-                let (state, _) =
-                    self.live_plugin_state(&current, &params.owner, &params.device_id)?;
+                let state = self.live_plugin_state(&current, &params.owner, &params.device_id)?;
                 ControlOutput::PluginStateInspection(state_document::inspect(
                     state.state_data.as_deref(),
                 )?)
             }
             RuntimeCommand::PluginStateRead(params) => {
-                let (state, _) =
-                    self.live_plugin_state(&current, &params.owner, &params.device_id)?;
+                let state = self.live_plugin_state(&current, &params.owner, &params.device_id)?;
                 ControlOutput::PluginStateRead(state_document::read(
                     state.state_data.as_deref(),
                     params.path.as_deref().unwrap_or_default(),
@@ -1042,9 +1038,9 @@ impl HostState {
                 )?)
             }
             RuntimeCommand::PluginStatePatch(params) => {
-                let (mut state, bypassed) =
+                let mut state =
                     self.live_plugin_state(&current, &params.owner, &params.device_id)?;
-                let previous_state = plugin_state_value(&state, bypassed);
+                let previous_state = plugin_state_value(&state);
                 state.parameter_values.clear();
                 state.state_data = Some(state_document::patch(
                     state.state_data.as_deref(),
@@ -1055,7 +1051,7 @@ impl HostState {
                     &mut context,
                     (&params.owner, &params.device_id),
                     previous_state,
-                    plugin_state_value(&state, bypassed),
+                    plugin_state_value(&state),
                 );
             }
 
@@ -1813,11 +1809,12 @@ pub(super) fn audio_error(error: crate::NativeAudioError) -> ProtocolError {
     error.protocol_error()
 }
 
+/// Returns the plugin path of a device that holds a resident plugin instance.
 fn canonical_plugin_device(
     canonical: &CanonicalState,
     owner: &riffra_core::EffectOwner,
     device_id: &str,
-) -> Result<(String, bool), ProtocolError> {
+) -> Result<String, ProtocolError> {
     let device = canonical
         .session
         .arrangement
@@ -1826,7 +1823,20 @@ fn canonical_plugin_device(
     let plugin = device
         .plugin()
         .ok_or_else(|| command_error("built-in instruments do not expose VST3 plugin controls"))?;
-    Ok((plugin.path.clone(), device.bypassed()))
+    if device.bypassed() {
+        return Err(command_error(BYPASSED_DEVICE_MESSAGE));
+    }
+    Ok(plugin.path.clone())
+}
+
+/// Rejects a device that cannot serve a plugin operation because it is absent
+/// from the runtime graph.
+fn ensure_live_device(
+    canonical: &CanonicalState,
+    owner: &riffra_core::EffectOwner,
+    device_id: &str,
+) -> Result<(), ProtocolError> {
+    canonical_plugin_device(canonical, owner, device_id).map(|_| ())
 }
 
 fn canonical_built_in_instrument_inspection(
@@ -1886,11 +1896,11 @@ fn plugin_state_snapshot(
     Ok(snapshot)
 }
 
-fn plugin_state_value(state: &PluginStateSnapshot, bypassed: bool) -> GraphPluginState {
+fn plugin_state_value(state: &PluginStateSnapshot) -> GraphPluginState {
     GraphPluginState {
         state_data: state.state_data.clone(),
         parameter_values: state.parameter_values.clone(),
-        bypassed,
+        bypassed: false,
     }
 }
 

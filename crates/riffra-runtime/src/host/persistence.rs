@@ -327,6 +327,11 @@ impl HostState {
                 let state = if matches!(queued.change, PendingPluginChange::State(_))
                     && change.arrangement_revision != canonical.session.arrangement.revision
                 {
+                    if !accepts_runtime_state(&canonical, &change.owner, &change.device_id) {
+                        tracing::debug!(project_id = %change.project_id, device_id = %change.device_id,
+                            "discarding plugin state captured before the device left the runtime graph");
+                        return Ok(());
+                    }
                     self.audio
                         .get_plugin_state(&change.owner, &change.device_id)
                         .map_err(|error| {
@@ -348,6 +353,11 @@ impl HostState {
                         "plugin parameter value is invalid".into(),
                     )
                     .to_string());
+                }
+                if !accepts_runtime_state(&canonical, &change.owner, &change.device_id) {
+                    tracing::debug!(device_id = %change.device_id,
+                        "discarding plugin parameter captured before the device left the runtime graph");
+                    return Ok(());
                 }
                 let state = self
                     .audio
@@ -400,6 +410,22 @@ impl HostState {
             ));
         }
     }
+}
+
+/// Whether a queued runtime event can still be stored into the canonical
+/// device. A device that left the runtime graph, or that was bypassed after
+/// the event was captured, holds no instance to read and the event describes a
+/// state that no longer exists.
+fn accepts_runtime_state(
+    canonical: &riffra_core::CanonicalState,
+    owner: &riffra_core::EffectOwner,
+    device_id: &str,
+) -> bool {
+    canonical
+        .session
+        .arrangement
+        .device(owner, device_id)
+        .is_ok_and(|device| device.plugin().is_some() && !device.bypassed())
 }
 
 fn canonical_plugin_state_matches(
@@ -817,6 +843,45 @@ mod tests {
         drop(state);
         let _ = std::fs::remove_dir_all(root);
     }
+    #[test]
+    fn a_runtime_event_captured_before_a_device_was_bypassed_is_discarded() {
+        // Arrange
+        let (root, state) = plugin_host();
+        let project_id = state.project.read().canonical.project_id.clone();
+        drop(
+            state
+                .project
+                .write()
+                .commit(|mut app| {
+                    app.set_device_bypassed(
+                        &riffra_core::EffectOwner::Track {
+                            id: "track:1".into(),
+                        },
+                        "device:1",
+                        true,
+                    )
+                })
+                .unwrap(),
+        );
+        let mut pending = HashMap::new();
+        let mut order = 0;
+        let mut stale = plugin_state_change(&project_id, 0.5);
+        stale.payload["arrangementRevision"] = serde_json::json!(0);
+        collect_plugin_change(&mut pending, stale, &mut order);
+
+        // Act
+        flush_plugin_changes(&Arc::downgrade(&state), &mut pending, true).unwrap();
+
+        // Assert
+        assert!(pending.is_empty());
+        let canonical = state.project.read().canonical.clone();
+        let device = &canonical.session.arrangement.tracks[0].effects[0];
+        assert!(device.bypassed);
+        assert_eq!(device.plugin.parameter_values, [0.0]);
+        drop(state);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     #[test]
     fn switching_applies_pending_parameters_to_the_project_being_closed() {
         let (root, state) = plugin_host();

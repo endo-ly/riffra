@@ -174,7 +174,6 @@ pub(crate) enum GraphInstrument {
     },
     Internal {
         id: String,
-        bypassed: bool,
         definition_json: String,
         definition_base_dir: String,
         midi: riffra_core::InstrumentMidiSettings,
@@ -446,7 +445,6 @@ mod tests {
             Some(16),
             Some(GraphInstrument::Internal {
                 id: "instrument-internal".into(),
-                bypassed: true,
                 definition_json: "{\"schemaVersion\":1}".into(),
                 definition_base_dir: "instruments/builtin/preset".into(),
                 midi: Default::default(),

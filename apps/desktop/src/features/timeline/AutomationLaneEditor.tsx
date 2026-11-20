@@ -51,7 +51,9 @@ export function AutomationLaneEditor(props: Props) {
     return ownerKind && ownerId !== null ? { kind: ownerKind, id: ownerId } : null;
   }, [ownerKind, ownerId]);
   const devices = owner ? automationDevices(props.session, owner) : [];
-  const deviceKey = JSON.stringify(devices.map((device) => [device.id, device.plugin]));
+  const deviceKey = JSON.stringify(
+    devices.map((device) => [device.id, device.bypassed, device.plugin]),
+  );
   const [parameters, setParameters] = useState<Record<string, DeviceParameterInfo[]>>({});
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -59,9 +61,11 @@ export function AutomationLaneEditor(props: Props) {
     setParameters({});
     setError(null);
     if (!owner) return;
+    // Bypassed devices hold no plugin instance, so their parameters cannot
+    // be listed until they are unbypassed.
     const available = (
-      JSON.parse(deviceKey) as [string, { disabledPlaceholder: boolean }][]
-    ).filter(([, plugin]) => !plugin.disabledPlaceholder);
+      JSON.parse(deviceKey) as [string, boolean, { disabledPlaceholder: boolean }][]
+    ).filter(([, bypassed, plugin]) => !bypassed && !plugin.disabledPlaceholder);
     void Promise.allSettled(
       available.map(async ([id]) => [id, await api.listDeviceParameters(owner, id)] as const),
     ).then((results) => {

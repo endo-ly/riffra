@@ -793,8 +793,7 @@ TEST(TimelineEngineTest, RoutesOneMutedSourceToParallelConsumersAndRejectsCycles
     consumer.panLaw = "unityCenterStereo";
     consumer.externalAudioSourceTrackIds = {"source"};
     consumer.instrument = InternalInstrumentSpec{
-        "instrument:a", false,
-        instrumentDirectory.getChildFile("definition.json").loadFileAsString(),
+        "instrument:a", instrumentDirectory.getChildFile("definition.json").loadFileAsString(),
         instrumentDirectory.getFullPathName()};
     consumer.midiClips = source.midiClips;
     auto second = consumer;
@@ -1926,7 +1925,7 @@ TEST(MixerRoutingTest, DisablesLowLatencyPdcBypassForDependentOrAutomatedTracks)
                                                  .getSiblingFile("sonalloy-instruments")
                                                  .getChildFile("duck");
             consumer.instrument = InternalInstrumentSpec{
-                "instrument:consumer", false,
+                "instrument:consumer",
                 instrumentDirectory.getChildFile("definition.json").loadFileAsString(),
                 instrumentDirectory.getFullPathName()};
             snapshot.graph.tracks.push_back(consumer);

@@ -116,6 +116,24 @@ std::vector<juce::String> effectDeviceIds(const std::vector<PluginDeviceSpec>& s
     return ids;
 }
 
+/// Adopts the bypass state of the projection on the instances it keeps.
+///
+/// A live bypass mutes resident instances before the projection replaces the
+/// graph, and a projection that fails to commit leaves them muted. Every
+/// projection is therefore authoritative for the bypass state of every
+/// instance it carries.
+void applyProjectedBypass(PluginChain& chain, const std::vector<PluginDeviceSpec>& specs) {
+    for (const auto& spec : specs)
+        if (auto* rack = chain.findDevice(spec.id)) rack->setBypassed(spec.state.bypassed);
+}
+
+void applyProjectedBypass(InstrumentRuntime* instrument,
+                          const std::optional<InstrumentSpec>& spec) {
+    if (instrument == nullptr || !spec.has_value()) return;
+    if (const auto* vst3 = std::get_if<Vst3InstrumentSpec>(&*spec))
+        if (auto* rack = instrument->vst3Rack()) rack->setBypassed(vst3->state.bypassed);
+}
+
 AutomationRuntime prepareAutomation(const ExecutionGraph& graph, const PreparedTimeline& prepared,
                                     AutomationTargetKind kind, const juce::String& id);
 
@@ -474,26 +492,32 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
         }
 
         // Device instances already published are shared, never prepared again:
-        // the audio thread may be processing them.
+        // the audio thread may be processing them. The effect chain and the
+        // instrument are shared independently, so dropping or restoring one
+        // never rebuilds the other.
         bool reuseInstrument = false;
-        engine.graphRegistry.access(
-            [&track, &graph, &reuseInstrument](ControlGraphRegistry::State& graphs) {
-                if (graphs.devicesNeedReprepare || graphs.latestCommitted == nullptr) return;
-                const auto* existing = graphs.latestCommitted->findTrack(track->id);
-                if (existing == nullptr || !sameEffectTopology(existing->effects, track->effects) ||
-                    !sameInstrumentTopology(existing->instrument, track->instrument) ||
-                    !existing->runtime->effects().usesSameSidechainTargets(
-                        graph.mixer.sidechainSends) ||
-                    existing->runtime->outputSampleRate != track->runtime->outputSampleRate ||
-                    existing->runtime->preparedBlockSize != track->runtime->preparedBlockSize)
-                    return;
+        engine.graphRegistry.access([&track, &graph,
+                                     &reuseInstrument](ControlGraphRegistry::State& graphs) {
+            if (graphs.devicesNeedReprepare || graphs.latestCommitted == nullptr) return;
+            const auto* existing = graphs.latestCommitted->findTrack(track->id);
+            if (existing == nullptr ||
+                existing->runtime->outputSampleRate != track->runtime->outputSampleRate ||
+                existing->runtime->preparedBlockSize != track->runtime->preparedBlockSize)
+                return;
+            if (sameEffectTopology(existing->effects, track->effects) &&
+                existing->runtime->effects().usesSameSidechainTargets(graph.mixer.sidechainSends)) {
                 track->reuseEffects = existing->effects == track->effects;
+                if (track->reuseEffects) track->runtime->shareEffectsWith(*existing->runtime);
+            }
+            if (sameInstrumentTopology(existing->instrument, track->instrument)) {
                 reuseInstrument =
                     sameInstrumentRuntime(existing->instrument, track->instrument) &&
                     existing->runtime->timelineMidiCapacity() >= track->runtime->midiEventCapacity;
-                if (track->reuseEffects) track->runtime->shareEffectsWith(*existing->runtime);
                 if (reuseInstrument) track->runtime->shareInstrumentWith(*existing->runtime);
-            });
+            }
+        });
+        if (track->reuseEffects) applyProjectedBypass(track->runtime->effects(), track->effects);
+        if (reuseInstrument) applyProjectedBypass(track->runtime->instrument(), track->instrument);
         if (!track->reuseEffects &&
             !track->runtime->effects().load(
                 track->effects, graph.mixer.sidechainSends, outputSampleRate, maximumBlockSize,
@@ -528,7 +552,6 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
                     maximumBlockSize, runtimeError, &engine.instrumentCache));
                 if (track->runtime->instrument() == nullptr)
                     return roleError("instrument", runtimeError);
-                track->runtime->instrument()->setBypassed(internal.bypassed);
                 report(track->id, track->instrumentDeviceId, {}, LoadPhase::deviceReady);
             }
         }
@@ -864,9 +887,11 @@ bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, Prepared
             !bus->effects->load(spec.effects, graph.mixer.sidechainSends, sampleRate, blockSize,
                                 mode, error, spec.id + "/bus-effect", deviceObserver(spec.id)))
             return false;
-        if (reused)
+        if (reused) {
+            applyProjectedBypass(*bus->effects, spec.effects);
             for (const auto& device : spec.effects)
                 report(spec.id, device.id, device.path, LoadPhase::deviceReady);
+        }
         prepared.summary.pluginCount += static_cast<std::uint64_t>(bus->effects->size());
         mixer.parallelChannels.push_back(bus.get());
         mixer.buses.push_back(std::move(bus));
@@ -887,9 +912,11 @@ bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, Prepared
                              mixer.masterEffectSpecs, graph.mixer.sidechainSends, sampleRate,
                              blockSize, mode, error, "master-effect", deviceObserver("master")))
         return false;
-    if (masterReused)
+    if (masterReused) {
+        applyProjectedBypass(*mixer.masterEffects, mixer.masterEffectSpecs);
         for (const auto& device : mixer.masterEffectSpecs)
             report("master", device.id, device.path, LoadPhase::deviceReady);
+    }
     prepared.summary.pluginCount += static_cast<std::uint64_t>(mixer.masterEffects->size());
     const auto hasPreparedSidechainTarget = [&](const juce::String& deviceId) {
         for (const auto& track : prepared.tracks)
