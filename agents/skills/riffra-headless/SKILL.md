@@ -413,7 +413,7 @@ ScoreにリンクしたProjectでは `measurements.scoreSections` も返る。`n
 
 ```powershell
 riffra --attach analysis measure --file measurements.json
-riffra --attach job wait --id job:analysis-measure:0 --timeout-ms 120000
+riffra --attach job wait --id job:analysis-measure:0
 ```
 
 待機には開始応答のJob IDを使い、結果の `sources` のパス・Track情報を比較対象と照合する。区間True Peakの位置はWAV先頭からの秒数である。帯域値・測定状態の読み方はRenderと共通である。
