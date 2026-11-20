@@ -8,7 +8,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { useState } from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { MixerPanelView } from '@/features/mixer/MixerPanel';
-import { ToastStack } from '@/shared/ui/ToastStack';
+import { ToastStack } from '@/shared/ui/message/ToastStack';
 
 afterEach(cleanup);
 
@@ -145,8 +145,7 @@ it('edits Group and Send routes, commits their controls, and opens Bus and Maste
   expect(await screen.findByText('send rejected')).toBeInTheDocument();
   const routingDialog = screen.getByRole('dialog', { name: 'Keys routing' });
   const errorText = screen.getByText('send rejected');
-  const notification = errorText.closest('[role="status"]');
-  expect(notification).toHaveAttribute('aria-live', 'polite');
+  const notification = errorText.closest('[role="alert"]');
   expect(notification).toContainElement(errorText);
   expect(routingDialog).not.toContainElement(errorText);
   expect(session.arrangement.mixer.sends[0].levelDb).toBe(-12);

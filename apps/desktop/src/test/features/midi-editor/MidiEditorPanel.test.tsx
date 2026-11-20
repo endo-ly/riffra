@@ -554,7 +554,7 @@ describe('MidiEditorPanel', () => {
     fireEvent.click(within(editor).getByRole('button', { name: 'Quantize' }));
 
     // Assert
-    await screen.findByText('Selected notes are already on the grid.');
+    await screen.findByText('Selected notes are already on the grid');
     expect(api.calls).not.toContain('quantizeMidiNotes');
 
     // Act: open the off-grid Clip, select the note, and hit Quantize.
@@ -571,9 +571,9 @@ describe('MidiEditorPanel', () => {
 
     // Assert
     await waitFor(() => expect(finishQuantize).toBeDefined());
-    expect(screen.queryByText('Quantized 1 note to 1/16.')).not.toBeInTheDocument();
+    expect(screen.queryByText('Quantized 1 note to 1/16')).not.toBeInTheDocument();
     finishQuantize!(api.mutationResult(session));
-    await screen.findByText('Quantized 1 note to 1/16.');
+    await screen.findByText('Quantized 1 note to 1/16');
     expect(api.calls.filter((call) => call === 'quantizeMidiNotes')).toHaveLength(1);
   });
 

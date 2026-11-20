@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type DragEvent } from 'react';
+import { useMemo, useState, type DragEvent } from 'react';
 import type { LibraryAsset, PluginEntry, RecordingAsset, Track } from '@/model/generated';
 import type { InboxController } from '@/features/library/hooks/useInbox';
 import type { CatalogSlice } from '@/shared/session/slices/catalog';
@@ -10,7 +10,6 @@ import { rowId, useBrowserTreeNavigation } from './hooks/useBrowserTreeNavigatio
 import { actionFor, placementFor } from './model/browser-item-actions';
 import { type BrowserPlacement } from '@/shared/browser-placement';
 import { writeBrowserItemDrag } from '@/shared/browser-drag';
-import { showToast } from '@/shared/toasts';
 import { ConfirmDialog } from '@/shared/ui/ConfirmDialog';
 import { ContextMenu, type ContextMenuItem } from '@/shared/ui/ContextMenu';
 import { Icon } from '@/shared/ui/primitives';
@@ -76,7 +75,6 @@ export function BrowserPanel({ onApply }: { onApply: (placement: BrowserPlacemen
   const instruments = {
     ...catalog.instruments,
     ...preview,
-    error: preview.error ?? catalog.instruments.error,
     toggleFavorite: catalog.toggleFavorite,
     setCategory: catalog.setCategory,
     setTags: catalog.setTags,
@@ -154,12 +152,6 @@ export function BrowserPanelView(props: BrowserPanelProps) {
         : null,
     [library.results, props.query, searching, sources],
   );
-  useEffect(() => {
-    showToast('instrument-library', instruments.error, { kind: 'error' });
-  }, [instruments.error]);
-  useEffect(() => {
-    showToast('inbox', inbox.error ?? inbox.message, { kind: inbox.error ? 'error' : 'info' });
-  }, [inbox.error, inbox.message]);
 
   const placementForItem = (item: BrowserItem) =>
     placementFor(item, props.selectedTrack, !!props.projectSwitching);

@@ -15,7 +15,7 @@ import {
   openScoreYaml,
   openScoreInstrumentDefinition,
 } from '@/native/dialog';
-import * as toasts from '@/shared/toasts';
+import { notify } from '@/shared/notify';
 
 const openProjectPackageMock = vi.mocked(openProjectPackage);
 const saveProjectPackageMock = vi.mocked(saveProjectPackage);
@@ -89,10 +89,10 @@ describe('project', () => {
       createdEntityIds: {},
       projection: { state: 'failed', message: 'stale projection' },
     }));
-    const toastSpy = vi.spyOn(toasts, 'toast');
+    const successSpy = vi.spyOn(notify, 'success');
     await store.getState().project.restoreRecovery('recovery');
     expect(store.getState().project.boot?.recovery).toEqual(recovery);
-    expect(toastSpy).not.toHaveBeenCalled();
+    expect(successSpy).not.toHaveBeenCalled();
   });
 
   it('accepts an activation event before the matching command response', async () => {
@@ -176,7 +176,7 @@ describe('project', () => {
         ],
       },
     };
-    const toastSpy = vi.spyOn(toasts, 'toast');
+    const errorSpy = vi.spyOn(notify, 'error');
     const { result } = renderHook(() => useTestProject(api, initialBoot));
 
     // Act
@@ -198,7 +198,9 @@ describe('project', () => {
     });
 
     // Assert
-    expect(toastSpy).toHaveBeenCalledWith('Project deletion failed: locked', { kind: 'error' });
+    expect(errorSpy).toHaveBeenCalledWith('Project deletion failed', {
+      cause: expect.objectContaining({ message: 'locked' }),
+    });
     expect(result.current.projectState?.projects).toHaveLength(1);
   });
 
@@ -284,7 +286,7 @@ describe('project', () => {
       },
     };
     const output = 'D:\\Documents\\My Song.riffra';
-    const toastSpy = vi.spyOn(toasts, 'toast');
+    const successSpy = vi.spyOn(notify, 'success');
     saveProjectPackageMock.mockResolvedValue(output);
     api.setResponse('exportProject', () => ({
       path: output,
@@ -303,6 +305,6 @@ describe('project', () => {
 
     expect(saveProjectPackageMock).toHaveBeenCalledWith('My Song');
     expect(api.calls).toContain('exportProject');
-    expect(toastSpy).toHaveBeenCalledWith(`Project exported: ${output}`);
+    expect(successSpy).toHaveBeenCalledWith('Project exported', { message: output });
   });
 });

@@ -125,7 +125,7 @@ import {
 } from '@/native/dialog';
 import { logNativeError, NativeCommandError } from '@/native/invoke';
 import { errorText } from '@/shared/errors';
-import { toast } from '@/shared/toasts';
+import { notify } from '@/shared/notify';
 import type { SessionCommit } from '../commit';
 
 export interface ProjectSlice extends ProjectStore {
@@ -289,12 +289,11 @@ export function createProjectSlice(
         const next = await api.deleteProject(projectId);
         if (current === generation) {
           get().replaceList(next);
-          toast(`Project deleted: ${name ?? projectId}`);
+          notify.success('Project deleted', { message: name ?? projectId });
         }
         return next;
       } catch (error) {
-        if (current === generation)
-          toast(`Project deletion failed: ${errorText(error)}`, { kind: 'error' });
+        if (current === generation) notify.error('Project deletion failed', { cause: error });
         return null;
       }
     },
@@ -315,15 +314,18 @@ export function createProjectSlice(
       try {
         path = await saveProjectPackage(name);
       } catch (error) {
-        logNativeError('saveProjectPackage')(error);
+        notify.error('File dialog could not open', { cause: error });
         return;
       }
       if (!path) return;
       try {
         const result = await api.exportProject(path);
-        toast(`Project exported: ${result.path}`);
+        notify.success('Project exported', { message: result.path });
       } catch (error) {
-        toast(`Export failed; the current session remains safe: ${errorText(error)}`);
+        notify.error('Export failed', {
+          message: 'The current session is unchanged.',
+          cause: error,
+        });
       }
     },
     async importPackage() {
@@ -331,22 +333,25 @@ export function createProjectSlice(
       try {
         path = await openProjectPackage();
       } catch (error) {
-        logNativeError('openProjectPackage')(error);
+        notify.error('File dialog could not open', { cause: error });
         return;
       }
       if (!path) return;
       const imported = await perform(() => api.importProject(path.trim()), 'Project import');
       if (!imported) {
-        toast('Import failed; the current Project remains safe.');
+        notify.error('Import failed', { message: 'The current Project is unchanged.' });
         return;
       }
-      toast(
-        `Imported Project: ${imported.projectState.projects.find((project) => project.projectId === imported.projectState.activeProjectId)?.name ?? imported.projectState.activeProjectId}`,
-      );
+      const { activeProjectId, projects } = imported.projectState;
+      notify.success('Project imported', {
+        message:
+          projects.find((project) => project.projectId === activeProjectId)?.name ??
+          activeProjectId,
+      });
     },
     async importScore() {
       const path = await openScoreYaml().catch((error: unknown) => {
-        logNativeError('openScoreYaml')(error);
+        notify.error('File dialog could not open', { cause: error });
         return null;
       });
       if (!path) return;
@@ -404,13 +409,15 @@ export function createProjectSlice(
         }
         if (current !== generation) return null;
         if (rebuilt.changed)
-          toast(`Score synchronized: ${rebuilt.path ?? 'linked Score'} (${rebuilt.sequence})`);
-        else if (rebuilt.yamlChanged) toast('Score text saved; playback is unchanged.');
-        else if (rebuilt.linkChanged) toast('Score link updated; playback is unchanged.');
-        else toast('Score is already synchronized.');
+          notify.success('Score synchronized', { message: rebuilt.path ?? 'Linked Score' });
+        else if (rebuilt.yamlChanged)
+          notify.success('Score saved', { message: 'Playback is unchanged.' });
+        else if (rebuilt.linkChanged)
+          notify.success('Score link updated', { message: 'Playback is unchanged.' });
+        else notify.info('Score is already synchronized');
         return rebuilt;
       } catch (error) {
-        if (current === generation) toast(`Score synchronization failed: ${errorText(error)}`);
+        if (current === generation) notify.error('Score rebuild failed', { cause: error });
         return null;
       }
     },
@@ -418,14 +425,13 @@ export function createProjectSlice(
       const restored = await commit(api.restoreRecoveryGeneration(fileName));
       if (!restored) return;
       accept(clearRecovery(get()));
-      toast(
-        `Restored stable generation: ${restored.canonical.session.projectName ?? restored.canonical.session.sessionId}`,
-        { kind: 'info' },
-      );
+      notify.success('Generation restored', {
+        message: restored.canonical.session.projectName ?? restored.canonical.session.sessionId,
+      });
     },
     keepRecovered() {
       accept(keepRecoveredSession(get()));
-      toast('Recovered session kept as the active working copy.', { kind: 'info' });
+      notify.success('Recovered session kept');
     },
     async undo() {
       if (!get().switching && get().boot?.canonical.history.canUndo)

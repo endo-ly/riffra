@@ -1,6 +1,6 @@
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import type { usePointerGesture } from '@/shared/usePointerGesture';
-import { showToast } from '@/shared/toasts';
+import { notify } from '@/shared/notify';
 import type { TrackKind } from '@/model/generated';
 import {
   buildClipMovesFromDelta,
@@ -147,12 +147,8 @@ export function bindClipMoveGesture<T extends MoveableClip>(
       trackIds,
     );
     if (targetMoves.some((move) => !trackAcceptsKind(move.trackId, kind))) {
-      showToast(
-        'timeline',
-        kind === 'audio'
-          ? 'Audio Clips can only be placed on an Audio Track.'
-          : 'MIDI Clips can only be placed on an Instrument Track.',
-        { kind: 'error' },
+      notify.info(
+        kind === 'audio' ? 'Audio clips go on audio tracks' : 'MIDI clips go on instrument tracks',
       );
       return;
     }

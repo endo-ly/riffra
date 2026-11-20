@@ -2,6 +2,7 @@ import type { MissingDependency, RecordingAsset } from '@/model/generated';
 import type { NativeApi } from '@/native/native-api';
 import { logNativeError } from '@/native/invoke';
 import type { SessionCommit } from '../commit';
+import { notify } from '@/shared/notify';
 
 export interface MissingSlice {
   items: MissingDependency[];
@@ -54,7 +55,7 @@ export function createMissingSlice(
           await get().reload();
         }
       } catch (error) {
-        logNativeError('rescanMissingPlugins')(error);
+        notify.error('Plug-in rescan failed', { cause: error });
       }
     },
     ignore(item) {

@@ -15,6 +15,7 @@ import styles from './Render.module.css';
 import { Dialog, DialogRow, DialogSection } from '@/shared/ui/Dialog';
 import { RenderHistoryPanel } from './RenderHistoryPanel';
 import { RenderMeasurements } from './RenderMeasurements';
+import { InlineMessage } from '@/shared/ui/message/InlineMessage';
 
 interface Props {
   session: CreativeSession;
@@ -235,16 +236,8 @@ export function MixdownDialog(props: Props) {
                 )}
               </>
             )}
-            {job?.state === 'failed' && (
-              <p className={styles.error} role="alert">
-                {job.message}
-              </p>
-            )}
-            {error && (
-              <p className={styles.error} role="alert">
-                {error}
-              </p>
-            )}
+            {job?.state === 'failed' && <InlineMessage tone="danger">{job.message}</InlineMessage>}
+            {error && <InlineMessage tone="danger">{error}</InlineMessage>}
           </div>
           {active ? (
             <button

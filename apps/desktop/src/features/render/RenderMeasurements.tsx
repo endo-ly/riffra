@@ -1,5 +1,6 @@
 import type { AudioMeasurements } from '@/model/generated';
 import styles from './Render.module.css';
+import { InlineMessage } from '@/shared/ui/message/InlineMessage';
 
 interface RenderMeasurementsProps {
   value: AudioMeasurements;
@@ -46,9 +47,9 @@ export function RenderMeasurements({ value, warnings = [] }: RenderMeasurementsP
         )}
       </dl>
       {warnings.map((warning) => (
-        <p key={warning} className={styles.warning} role="alert">
+        <InlineMessage key={warning} tone="warning">
           {warning}
-        </p>
+        </InlineMessage>
       ))}
     </>
   );

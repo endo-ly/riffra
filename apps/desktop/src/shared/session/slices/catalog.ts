@@ -5,9 +5,7 @@ import type {
   ScanReport,
 } from '@/model/generated';
 import type { NativeApi } from '@/native/native-api';
-import { errorText } from '@/shared/errors';
-import { logNativeError } from '@/native/invoke';
-import { showToast, toast } from '@/shared/toasts';
+import { notify } from '@/shared/notify';
 import type { JobSlice } from './jobs';
 
 export interface CatalogSlice {
@@ -17,7 +15,6 @@ export interface CatalogSlice {
     categories: string[];
     collections: InstrumentCollection[];
     loading: boolean;
-    error: string | null;
   };
   reloadInstruments(): Promise<void>;
   toggleFavorite(item: InstrumentLibraryItem): Promise<void>;
@@ -41,16 +38,12 @@ export function createCatalogSlice(
   setAudio: (status: Awaited<ReturnType<NativeApi['openPluginAudition']>>) => void,
 ): CatalogSlice {
   let generation = 0;
-  const empty = () => ({ items: [], categories: [], collections: [], loading: true, error: null });
+  const empty = () => ({ items: [], categories: [], collections: [], loading: true });
   const updateInstruments = (patch: Partial<CatalogSlice['instruments']>) =>
     update({ instruments: { ...get().instruments, ...patch } });
-  const fail = (label: string, error: unknown) => {
-    updateInstruments({ error: errorText(error) });
-    logNativeError(label)(error);
-  };
-  const mutate = async (operation: () => Promise<InstrumentLibraryItem>, label: string) => {
+  const fail = (title: string, error: unknown) => notify.error(title, { cause: error });
+  const mutate = async (operation: () => Promise<InstrumentLibraryItem>) => {
     const current = generation;
-    updateInstruments({ error: null });
     try {
       const item = await operation();
       if (current === generation)
@@ -58,7 +51,7 @@ export function createCatalogSlice(
           items: get().instruments.items.map((old) => (old.id === item.id ? item : old)),
         });
     } catch (error) {
-      if (current === generation) fail(label, error);
+      if (current === generation) fail('Instrument could not be updated', error);
     }
   };
   const reloadCollections = async () => {
@@ -67,14 +60,14 @@ export function createCatalogSlice(
       const collections = await api.listInstrumentCollections();
       if (current === generation) updateInstruments({ collections });
     } catch (error) {
-      if (current === generation) fail('listInstrumentCollections', error);
+      if (current === generation) fail('Collections could not load', error);
     }
   };
   return {
     instruments: empty(),
     async reloadInstruments() {
       const current = generation;
-      updateInstruments({ loading: true, error: null });
+      updateInstruments({ loading: true });
       try {
         const [items, categories, collections] = await Promise.all([
           api.listInstruments(),
@@ -83,25 +76,17 @@ export function createCatalogSlice(
         ]);
         if (current === generation) updateInstruments({ items, categories, collections });
       } catch (error) {
-        if (current === generation) fail('listInstrumentLibrary', error);
+        if (current === generation) fail('Instruments could not load', error);
       } finally {
         if (current === generation) updateInstruments({ loading: false });
       }
     },
-    toggleFavorite: (item) =>
-      mutate(() => api.setInstrumentFavorite(item.id, !item.favorite), 'setInstrumentFavorite'),
+    toggleFavorite: (item) => mutate(() => api.setInstrumentFavorite(item.id, !item.favorite)),
     setCategory: (item, category) =>
-      mutate(
-        () => api.setInstrumentCategoryOverride(item.id, category),
-        'setInstrumentCategoryOverride',
-      ),
-    setTags: (item, tags) =>
-      mutate(() => api.setInstrumentUserTags(item.id, tags), 'setInstrumentUserTags'),
+      mutate(() => api.setInstrumentCategoryOverride(item.id, category)),
+    setTags: (item, tags) => mutate(() => api.setInstrumentUserTags(item.id, tags)),
     setCollectionMembership: (item, id, member) =>
-      mutate(
-        () => api.setInstrumentCollectionMembership(id, item.id, member),
-        'setInstrumentCollectionMembership',
-      ),
+      mutate(() => api.setInstrumentCollectionMembership(id, item.id, member)),
     async createCollection(name) {
       const current = generation;
       try {
@@ -110,7 +95,7 @@ export function createCatalogSlice(
         await reloadCollections();
         return created;
       } catch (error) {
-        if (current === generation) fail('createInstrumentCollection', error);
+        if (current === generation) fail('Collection could not be created', error);
         return null;
       }
     },
@@ -120,7 +105,7 @@ export function createCatalogSlice(
         await api.renameInstrumentCollection(id, name);
         if (current === generation) await reloadCollections();
       } catch (error) {
-        if (current === generation) fail('renameInstrumentCollection', error);
+        if (current === generation) fail('Collection could not be renamed', error);
       }
     },
     async deleteCollection(id) {
@@ -140,7 +125,7 @@ export function createCatalogSlice(
         });
         await reloadCollections();
       } catch (error) {
-        if (current === generation) fail('deleteInstrumentCollection', error);
+        if (current === generation) fail('Collection could not be deleted', error);
       }
     },
     plugins: [],
@@ -154,14 +139,14 @@ export function createCatalogSlice(
         () => api.startScanJob(getRoot()),
         (report: ScanReport) => {
           update({ plugins: report.plugins });
-          showToast(
-            'vst3-scan',
+          notify.success(
+            `Found ${report.plugins.length} plug-in${report.plugins.length === 1 ? '' : 's'}`,
             report.issues.length
-              ? `${report.plugins.length}件 · ${report.issues.length}件の注意`
-              : `${report.plugins.length}件を検出`,
+              ? { message: `${report.issues.length} issue${report.issues.length === 1 ? '' : 's'}` }
+              : {},
           );
         },
-        (message) => showToast('vst3-scan', `VST3 scan failed: ${message}`, { kind: 'error' }),
+        (message) => notify.error('Plug-in scan failed', { cause: message }),
       ),
     async openPluginAudition(plugin) {
       const current = generation;
@@ -169,8 +154,7 @@ export function createCatalogSlice(
         const audio = await api.openPluginAudition(plugin.path);
         if (current === generation) setAudio(audio);
       } catch (error) {
-        if (current === generation)
-          toast(`Plug-in could not open: ${errorText(error)}`, { kind: 'error' });
+        if (current === generation) notify.error('Plug-in could not open', { cause: error });
       }
     },
   };

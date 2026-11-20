@@ -278,11 +278,6 @@ button.identityTile[aria-expanded='true'] {
   composes: iconButton from '../../shared/ui/controls.module.css';
 }
 
-.message {
-  margin: 0;
+.messageSlot {
   padding: var(--space-2) var(--space-3) var(--space-2-5);
-  color: var(--color-text-muted);
-  font-size: var(--font-size-micro);
-  line-height: 1.45;
-  overflow-wrap: anywhere;
 }

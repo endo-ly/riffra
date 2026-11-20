@@ -5,9 +5,10 @@
   display: grid;
   position: relative;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: var(--size-global-control-bar) minmax(0, 1fr);
+  grid-template-rows: var(--size-global-control-bar) auto minmax(0, 1fr);
   grid-template-areas:
     'global'
+    'notices'
     'body';
   background: var(--color-bg-app);
 }

@@ -22,6 +22,7 @@ import { isAudioEngineUsable } from '@/shared/audio/audio-safety';
 import { Dialog } from '@/shared/ui/Dialog';
 import surface from '@/shared/ui/Surface.module.css';
 import styles from './AudioSettingsDialog.module.css';
+import { InlineMessage } from '@/shared/ui/message/InlineMessage';
 
 interface AudioSettingsDialogProps {
   audio: AudioStatus;
@@ -306,14 +307,16 @@ export function AudioSettingsDialogView({
           </span>
         </div>
 
-        {safeMode && <p className={styles.notice}>Safe Mode blocks audio-driver changes.</p>}
+        {safeMode && (
+          <InlineMessage tone="warning">Safe mode blocks audio driver changes.</InlineMessage>
+        )}
 
         {activeDriver?.accessMode === 'driverManaged' && (
-          <p className={styles.notice}>
+          <InlineMessage tone="info">
             {activeDriver.name} manages the audio device itself. Depending on the driver and
             sample-rate settings, other applications using the same device may be paused while the
             audio engine is running.
-          </p>
+          </InlineMessage>
         )}
 
         {!hasDevices ? (
@@ -485,13 +488,8 @@ export function AudioSettingsDialogView({
             )}
           </>
         )}
+        {error && <InlineMessage tone="danger">{error}</InlineMessage>}
       </div>
-
-      {error && (
-        <p className={styles.error} role="alert">
-          {error}
-        </p>
-      )}
     </Dialog>
   );
 }

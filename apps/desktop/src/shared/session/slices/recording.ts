@@ -1,8 +1,7 @@
 import type { AudioStatus, RecordingAsset } from '@/model/generated';
 import type { NativeApi } from '@/native/native-api';
-import { errorText } from '@/shared/errors';
 import { logNativeError } from '@/native/invoke';
-import { toast } from '@/shared/toasts';
+import { notify } from '@/shared/notify';
 import type { SessionCommit } from '../commit';
 
 export interface RecordingSlice {
@@ -30,11 +29,14 @@ export function createRecordingSlice(
   let locked = false;
   let generation = 0;
   const finalizationFailure = (message: string) =>
-    toast(`Recording files were preserved in Inbox: ${message}`, { kind: 'error' });
+    notify.error('Recording could not be finalized', {
+      message: 'The recorded files were kept in the Inbox.',
+      cause: message,
+    });
   const refresh = () => {
     void get().reload().catch(logNativeError('listRecordings'));
   };
-  const run = async (command: () => Promise<void>, label: string) => {
+  const run = async (command: () => Promise<void>) => {
     if (locked) return false;
     locked = true;
     const current = generation;
@@ -43,10 +45,7 @@ export function createRecordingSlice(
       await command();
       return current === generation;
     } catch (error) {
-      if (current === generation) {
-        logNativeError(label)(error);
-        toast(`Recording failed: ${errorText(error)}`, { kind: 'error' });
-      }
+      if (current === generation) notify.error('Recording failed', { cause: error });
       return false;
     } finally {
       if (current === generation) {
@@ -77,15 +76,12 @@ export function createRecordingSlice(
     async start(recordingSessionId) {
       if (get().stopPending) return false;
       const current = generation;
-      const succeeded = await run(
-        async () => {
-          const audio = await (recordingSessionId
-            ? api.recordAnotherTake(recordingSessionId)
-            : api.startArrangeRecording());
-          if (current === generation) setAudio(audio);
-        },
-        recordingSessionId ? 'recordAnotherTake' : 'startRecording',
-      );
+      const succeeded = await run(async () => {
+        const audio = await (recordingSessionId
+          ? api.recordAnotherTake(recordingSessionId)
+          : api.startArrangeRecording());
+        if (current === generation) setAudio(audio);
+      });
       if (succeeded) refresh();
       return succeeded;
     },
@@ -105,7 +101,7 @@ export function createRecordingSlice(
         await commit(Promise.resolve(result));
         if (result.finalization.state === 'recoveryRequired')
           finalizationFailure(result.finalization.message);
-      }, 'stopRecording');
+      });
       if (succeeded) refresh();
     },
   };

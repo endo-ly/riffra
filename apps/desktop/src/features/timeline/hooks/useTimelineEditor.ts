@@ -12,7 +12,7 @@ import { usePointerGesture } from '@/shared/usePointerGesture';
 import { useClipInteractions } from './useClipInteractions';
 import { useSessionContext } from '@/shared/session/session-context';
 import type { SessionCommit } from '@/shared/session/commit';
-import { showToast } from '@/shared/toasts';
+import { notify } from '@/shared/notify';
 export type EditorCommit = SessionCommit;
 
 interface UseTimelineEditorOptions {
@@ -190,9 +190,8 @@ export function useTimelineEditor(options: UseTimelineEditorOptions) {
             .filter((clip) => selectedClipIds.includes(clip.id))
             .map((clip) => clip.id),
         };
-        showToast(
-          'timeline',
-          `${selectedClipIds.length} clip${selectedClipIds.length === 1 ? '' : 's'} copied.`,
+        notify.success(
+          `${selectedClipIds.length} clip${selectedClipIds.length === 1 ? '' : 's'} copied`,
         );
       } else if (
         event.ctrlKey &&

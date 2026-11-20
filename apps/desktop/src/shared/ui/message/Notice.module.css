@@ -1,0 +1,77 @@
+.notice {
+  background: color-mix(in srgb, var(--tone) 7%, var(--color-bg-panel));
+}
+
+.notice + .notice {
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.row {
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2-5);
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--font-size-small);
+  line-height: 1.5;
+}
+
+.title {
+  flex: none;
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+.message {
+  min-width: 0;
+  flex: 1;
+  color: var(--color-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.message code {
+  font-family: var(--font-family-mono);
+}
+
+.progress {
+  width: 160px;
+  flex: none;
+}
+
+.actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.action {
+  padding: var(--space-1) var(--space-1-5);
+  color: var(--color-accent);
+  font-size: var(--font-size-small);
+  font-weight: 600;
+  background: transparent;
+  border-radius: var(--radius-sm);
+}
+
+.action:hover:not(:disabled) {
+  background: var(--color-bg-hover);
+}
+
+.action:disabled {
+  color: var(--color-text-disabled);
+}
+
+.toggle {
+  composes: action;
+  color: var(--color-text-muted);
+  font-weight: 400;
+}
+
+.details {
+  padding: 0 var(--space-3) var(--space-2)
+    calc(var(--space-3) + var(--size-icon-md) + var(--space-2-5));
+  color: var(--color-text-secondary);
+  font: var(--font-size-small) / 1.7 var(--font-family-mono);
+  overflow-wrap: anywhere;
+}

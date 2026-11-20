@@ -176,7 +176,7 @@ it.each(['measured', 'unavailable'] as const)(
       expect(screen.getByText('ffmpeg is unavailable')).toBeInTheDocument();
       expect(screen.getByText('section log is invalid')).toBeInTheDocument();
       expect(screen.getByText('1.94 dBFS')).toBeInTheDocument();
-      expect(screen.getByRole('alert')).toHaveTextContent('sample peak exceeds 0 dbfs');
+      expect(screen.getByText(/sample peak exceeds 0 dbfs/)).toBeInTheDocument();
     }
   },
 );

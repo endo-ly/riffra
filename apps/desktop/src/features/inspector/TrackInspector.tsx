@@ -15,6 +15,7 @@ import { resolveTrackColor, TRACK_COLOR_PALETTE } from '@/model/track-color';
 import sharedStyles from './Inspector.module.css';
 import styles from './TrackInspector.module.css';
 import { MixValueField } from './MixValueField';
+import { InlineMessage } from '@/shared/ui/message/InlineMessage';
 
 interface TrackInspectorProps {
   track: Track;
@@ -256,9 +257,9 @@ export function TrackInspector(props: TrackInspectorProps) {
         </button>
       </section>
       {operationMessage && (
-        <p className={sharedStyles.message} role="status">
-          {operationMessage}
-        </p>
+        <div className={sharedStyles.messageSlot}>
+          <InlineMessage tone="danger">{operationMessage}</InlineMessage>
+        </div>
       )}
     </div>
   );

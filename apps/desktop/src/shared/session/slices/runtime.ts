@@ -63,7 +63,7 @@ export function reduceRuntimeProjectionStatus(
 }
 import type { RuntimeStartupFinished } from '@/model/generated';
 import type { NativeApi } from '@/native/native-api';
-import { showToast } from '@/shared/toasts';
+import { notify } from '@/shared/notify';
 
 export interface RuntimeSlice {
   started: boolean;
@@ -145,11 +145,9 @@ export function createRuntimeSlice(
           await startup.recover();
         } catch {
           if (current === generation)
-            showToast(
-              'vst3-scan',
-              'Audio preparation after the plugin scan failed. Check the Arrange status and retry.',
-              { kind: 'error' },
-            );
+            notify.error('Audio preparation failed', {
+              message: 'Audio could not be prepared after the plug-in scan.',
+            });
         }
       })();
     },

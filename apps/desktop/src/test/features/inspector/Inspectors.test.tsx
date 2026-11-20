@@ -147,7 +147,7 @@ describe('Arrange Inspectors', () => {
     );
 
     fireEvent.change(screen.getByLabelText('MIDI channel'), { target: { value: '1' } });
-    expect(await screen.findByRole('status')).toHaveTextContent('MIDI route failed');
+    expect(await screen.findByRole('alert')).toHaveTextContent('MIDI route failed');
   });
 
   it('edits Clip position and length for Audio and MIDI Clips', async () => {

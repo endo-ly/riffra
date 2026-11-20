@@ -57,12 +57,6 @@
   scrollbar-color: var(--color-scrollbar-thumb) transparent;
 }
 
-.error {
-  margin: 0;
-  color: var(--color-status-danger);
-  font-size: var(--font-size-micro);
-}
-
 /* Signal flow: the source, each device in order, then the slot for the next. */
 .chain {
   display: flex;
@@ -496,19 +490,6 @@
 }
 
 .midiWarnings {
-  padding: var(--space-2) var(--space-2-5);
-  color: var(--color-text-primary);
-  font-size: var(--font-size-micro);
-  background: color-mix(in srgb, var(--color-status-warning) 8%, transparent);
-  border-left: 2px solid var(--color-status-warning);
-  border-radius: var(--radius-sm);
-}
-
-.midiWarnings strong {
-  color: var(--color-status-warning);
-}
-
-.midiWarnings ul {
   display: grid;
   gap: var(--space-0-5);
   margin: var(--space-1) 0 0;

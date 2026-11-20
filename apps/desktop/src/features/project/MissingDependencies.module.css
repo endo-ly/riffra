@@ -1,29 +1,7 @@
 .missingDependencies {
-  position: fixed;
-  top: 64px;
-  left: 12px;
-  z-index: var(--z-banner);
-  width: min(360px, calc(100vw - 24px));
-  max-height: min(54vh, 420px);
   display: grid;
-  gap: var(--space-2-5);
-  overflow: auto;
-  padding: var(--space-3);
   color: var(--color-text-primary);
-  background: var(--color-bg-surface-raised);
-  border: 1px solid var(--color-border-strong);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-popover);
   font-size: var(--font-size-micro);
-}
-.missingDependencies header {
-  display: grid;
-  gap: var(--space-1-5);
-}
-.missingDependencies header p {
-  margin: 0;
-  color: var(--color-text-secondary);
-  line-height: 1.45;
 }
 .missingDependencies ul {
   display: grid;

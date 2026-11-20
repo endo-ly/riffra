@@ -18,6 +18,7 @@ import { MixerBusChannelStrip } from './MixerBusChannelStrip';
 import { MixerMasterChannelStrip } from './MixerMasterChannelStrip';
 import { MixerRouting } from './MixerRouting';
 import { MixerTrackChannelStrip } from './MixerTrackChannelStrip';
+import { InlineMessage } from '@/shared/ui/message/InlineMessage';
 
 interface MixerPanelProps {
   session: CreativeSession;
@@ -243,11 +244,7 @@ export function MixerPanelView(props: MixerPanelProps) {
         session={props.session}
         disabled={props.disabled}
       />
-      {error && (
-        <p className={styles.error} role="alert">
-          {error}
-        </p>
-      )}
+      {error && <InlineMessage tone="danger">{error}</InlineMessage>}
       {mixdownOpen && (
         <MixdownDialog
           key={props.session.sessionId}

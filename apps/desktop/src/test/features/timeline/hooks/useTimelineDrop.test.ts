@@ -18,7 +18,7 @@ import {
 } from '@/shared/browser-drag';
 import { useTimelineDrop } from '@/features/timeline/hooks/useTimelineDrop';
 import type { SessionCommit } from '@/shared/session/commit';
-import { ToastStack } from '@/shared/ui/ToastStack';
+import { ToastStack } from '@/shared/ui/message/ToastStack';
 
 afterEach(() => cleanup());
 

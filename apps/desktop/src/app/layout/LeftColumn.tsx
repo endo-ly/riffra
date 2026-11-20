@@ -8,10 +8,10 @@ import {
 import clsx from 'clsx';
 import { useSession } from '@/shared/session/session-context';
 import shellStyles from '../AppShell.module.css';
-import appStyles from '../App.module.css';
 import { ResizeHandle } from '@/shared/ui/ResizeHandle';
 import { usePointerGesture } from '@/shared/usePointerGesture';
 import styles from './LeftColumn.module.css';
+import { selectWorkspaceWaiting } from '@/shared/session/selectors';
 
 const LEFT_COLUMN_WIDTH = { default: 280, min: 220, max: 380, collapse: 48 } as const;
 
@@ -172,8 +172,7 @@ export function LeftColumn({
   const [propertiesHeight, setPropertiesHeight] = useState<number | null>(null);
   const [resizing, setResizing] = useState(false);
   const startGesture = usePointerGesture();
-  const host = useSession((state) => state.host);
-  const connected = host.connection.mode !== 'disconnected' && !host.switching;
+  const waiting = useSession(selectWorkspaceWaiting);
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
     event.preventDefault();
@@ -188,14 +187,10 @@ export function LeftColumn({
   };
   return (
     <div
-      className={clsx(
-        shellStyles.appBody,
-        !connected && appStyles.hostDisconnected,
-        resizing && shellStyles.isPanelResizing,
-      )}
+      className={clsx(shellStyles.appBody, resizing && shellStyles.isPanelResizing)}
       style={{ '--layout-left-column-width': `${width}px` } as CSSProperties}
       data-app-body
-      aria-disabled={!connected}
+      inert={waiting}
     >
       <LeftColumnView
         collapsed={width === 0}

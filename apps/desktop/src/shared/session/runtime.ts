@@ -2,7 +2,7 @@ import type { AudioStatus } from '@/model/generated';
 import type { NativeApi } from '@/native/native-api';
 import { logNativeError } from '@/native/invoke';
 import { errorText } from '@/shared/errors';
-import { toast } from '@/shared/toasts';
+import { notify } from '@/shared/notify';
 import {
   markAudioMetersUnavailable,
   publishAudioMeterSummary,
@@ -222,11 +222,14 @@ export function bindSessionRuntime(store: SessionStore, api: NativeApi): () => v
     ),
   ];
   const stops = [
-    api.onRuntimeRestarted(() => toast('Audio engine restarted.')),
+    api.onRuntimeRestarted(() => notify.info('Audio engine restarted')),
     api.onRecordingFinalized((event) => {
       void store.getState().recording.reload().catch(logNativeError('listRecordings'));
       if (!event.succeeded && event.message)
-        toast(`Recording files were preserved in Inbox: ${event.message}`, { kind: 'error' });
+        notify.error('Recording could not be finalized', {
+          message: 'The recorded files were kept in the Inbox.',
+          cause: event.message,
+        });
     }),
     api.onTransportStatus((status) => {
       transportEvent += 1;

@@ -1,7 +1,7 @@
 import type { BackgroundJobStatus, JobState } from '@/model/generated';
 import type { NativeApi } from '@/native/native-api';
 import { errorText } from '@/shared/errors';
-import { logNativeError } from '@/native/invoke';
+import { notify } from '@/shared/notify';
 
 const terminal: readonly JobState[] = ['completed', 'failed', 'cancelled'];
 
@@ -107,7 +107,7 @@ export function createJobSlice(
         const status = await api.cancelBackgroundJob(activeId);
         if (generation === currentGeneration && status) update({ active: status });
       } catch (error) {
-        logNativeError('cancelBackgroundJob')(error);
+        notify.error('Cancel failed', { cause: error });
       }
     },
   };

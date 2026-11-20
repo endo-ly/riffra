@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ProjectHostSelector } from '@/app/layout/ProjectHostSelector';
-import { ToastStack } from '@/shared/ui/ToastStack';
+import { ToastStack } from '@/shared/ui/message/ToastStack';
 import { createFakeNativeApi } from '@/test/support/fake-native-api';
 import { renderWithSession } from '@/test/support/session-provider';
 
@@ -62,6 +62,7 @@ describe('project deletion flow', () => {
       ),
     );
 
-    await waitFor(() => expect(screen.getByText('Project deleted: Other')).toBeInTheDocument());
+    const toast = (await screen.findByText('Project deleted')).closest('[role="status"]');
+    expect(toast).toHaveTextContent('Other');
   });
 });

@@ -17,6 +17,7 @@ import { ContextMenu } from '@/shared/ui/ContextMenu';
 import controls from '@/shared/ui/controls.module.css';
 import { Icon } from '@/shared/ui/primitives';
 import styles from './ProjectHostSelector.module.css';
+import { InlineMessage } from '@/shared/ui/message/InlineMessage';
 
 type ProjectOrder = 'recent' | 'name';
 
@@ -530,7 +531,7 @@ export function ProjectHostSelectorView(props: ProjectHostSelectorProps) {
             {props.projectState && projectSection}
             {hostSection}
             {(props.error || props.projectError) && (
-              <p className={styles.error}>{props.projectError ?? props.error}</p>
+              <InlineMessage tone="danger">{props.projectError ?? props.error}</InlineMessage>
             )}
             {menu && (
               <ContextMenu

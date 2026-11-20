@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { useSessionContext } from '@/shared/session/session-context';
-import { toast } from '@/shared/toasts';
+import { notify } from '@/shared/notify';
 
 /**
  * Tracks the application update published on the release endpoint. The
@@ -13,6 +13,8 @@ export function useAppUpdater() {
   const { api } = useSessionContext();
   const [availableVersion, setAvailableVersion] = useState<string | null>(null);
   const [installing, setInstalling] = useState(false);
+  // "Later" hides the offer until the next manual check or launch.
+  const [postponed, setPostponed] = useState(false);
 
   useEffect(() => {
     let disposed = false;
@@ -31,10 +33,10 @@ export function useAppUpdater() {
     try {
       const version = await api.checkForAppUpdate();
       setAvailableVersion(version);
-      toast(version ? `Riffra ${version} is available.` : 'Riffra is up to date.');
+      setPostponed(false);
+      if (!version) notify.info('Riffra is up to date');
     } catch (error) {
-      console.error('[updater] check failed:', error);
-      toast('Could not check for updates. Try again later.', { kind: 'error' });
+      notify.error('Update check failed', { message: 'Try again later.', cause: error });
     }
   }, [api]);
 
@@ -48,10 +50,11 @@ export function useAppUpdater() {
       await api.installAppUpdate();
     } catch (error) {
       setInstalling(false);
-      console.error('[updater] install failed:', error);
-      toast('The update could not be installed. Try again later.', { kind: 'error' });
+      notify.error('Update failed', { message: 'Try again later.', cause: error });
     }
   }, [api, availableVersion, installing]);
 
-  return { availableVersion, installing, checkNow, install };
+  const postpone = useCallback(() => setPostponed(true), []);
+
+  return { availableVersion, postponed, installing, checkNow, install, postpone };
 }

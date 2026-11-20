@@ -23,6 +23,7 @@ import { InstrumentMidiSettingsEditor } from './InstrumentMidiSettingsEditor';
 import type { DeviceTarget } from './device-target';
 import controls from '@/shared/ui/controls.module.css';
 import styles from './Devices.module.css';
+import { InlineMessage } from '@/shared/ui/message/InlineMessage';
 
 interface DevicesPanelProps {
   sessionId: string;
@@ -188,11 +189,7 @@ export function DevicesPanelView(props: DevicesPanelProps) {
             )}
           </div>
         )}
-        {error && (
-          <p className={styles.error} role="alert">
-            {error}
-          </p>
-        )}
+        {error && <InlineMessage tone="danger">{error}</InlineMessage>}
       </div>
     </div>
   );

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useSession } from '@/shared/session/session-context';
 import clsx from 'clsx';
 import type { MissingDependency } from '@/model/generated';
+import { Dialog } from '@/shared/ui/Dialog';
 import { Icon } from '@/shared/ui/primitives';
 import surface from '@/shared/ui/Surface.module.css';
 import styles from './MissingDependencies.module.css';
@@ -16,20 +17,28 @@ interface MissingDependenciesProps {
 
 /**
  * Surfaces the Missing List required by PRJ-004. The project has already
- * opened (it never blocks on a missing file or plugin); this panel lets the
+ * opened (it never blocks on a missing file or plugin); this dialog lets the
  * user relink, replace, ignore, or keep a missing plugin as a disabled
  * placeholder.
  */
-export function MissingDependencies() {
+export function MissingDependenciesDialog({ onClose }: { onClose: () => void }) {
   const missing = useSession((state) => state.missing);
   return (
-    <MissingDependenciesView
-      missing={missing.items}
-      onRelink={(item, path) => void missing.relink(item, path)}
-      onReplacePlugin={(id, path) => void missing.replacePlugin(id, path)}
-      onDisablePlugin={(id) => void missing.disablePlugin(id)}
-      onIgnore={missing.ignore}
-    />
+    <Dialog
+      label="Missing dependencies"
+      title="Missing dependencies"
+      subtitle="Relink, replace, or ignore each one, or keep a missing plugin as a disabled placeholder."
+      icon="link"
+      onClose={onClose}
+    >
+      <MissingDependenciesView
+        missing={missing.items}
+        onRelink={(item, path) => void missing.relink(item, path)}
+        onReplacePlugin={(id, path) => void missing.replacePlugin(id, path)}
+        onDisablePlugin={(id) => void missing.disablePlugin(id)}
+        onIgnore={missing.ignore}
+      />
+    </Dialog>
   );
 }
 
@@ -46,13 +55,6 @@ export function MissingDependenciesView({
 
   return (
     <section className={styles.missingDependencies} aria-label="Missing dependencies">
-      <header>
-        <span className={surface.eyebrow}>MISSING DEPENDENCIES · {missing.length}</span>
-        <p>
-          The project opened despite missing references. Relink, replace, or ignore each one, or
-          keep a missing plugin as a disabled placeholder.
-        </p>
-      </header>
       <ul>
         {missing.map((item) => {
           const key = `${item.kind}:${item.id}`;

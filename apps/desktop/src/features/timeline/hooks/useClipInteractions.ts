@@ -8,7 +8,7 @@ import type {
   TrackKind,
 } from '@/model/generated';
 import { useSessionContext } from '@/shared/session/session-context';
-import { showToast } from '@/shared/toasts';
+import { notify } from '@/shared/notify';
 import { ticksToFrames } from '@/model/timebase';
 import { usePointerGesture } from '@/shared/usePointerGesture';
 import { clipDurationTicks, midiClipDurationTicks } from '@/model/clip-time';
@@ -67,7 +67,7 @@ export function useClipInteractions(options: ClipInteractionOptions) {
       const target = snapTick(tick);
       const end = clip.startTick + clipDurationTicks(clip, timebase);
       if (target <= clip.startTick || target >= end) {
-        showToast('timeline', 'Click inside the selected clip to split it.');
+        notify.info('Click inside the selected clip to split it');
         return;
       }
       const next = await commit(commands.splitAudioClip(clip.id, target));
@@ -83,7 +83,7 @@ export function useClipInteractions(options: ClipInteractionOptions) {
       const target = snapTick(tick);
       const end = clip.startTick + midiClipDurationTicks(clip);
       if (target <= clip.startTick || target >= end) {
-        showToast('timeline', 'Click inside the selected MIDI clip to split it.');
+        notify.info('Click inside the selected MIDI clip to split it');
         return;
       }
       await commit(commands.splitMidiClip(clip.id, target));
@@ -266,7 +266,7 @@ export function useClipInteractions(options: ClipInteractionOptions) {
     (event: React.PointerEvent<HTMLSpanElement>, clip: AudioClip, side: 'left' | 'right') => {
       event.stopPropagation();
       if (clip.loopEnabled && side === 'left') {
-        showToast('timeline', 'Disable Clip Loop before trimming the source start.');
+        notify.info('Disable Clip Loop before trimming the source start');
         return;
       }
       const element = event.currentTarget.parentElement as HTMLButtonElement;
@@ -333,7 +333,7 @@ export function useClipInteractions(options: ClipInteractionOptions) {
               item.sourceRange.end === clip.sourceRange.start),
       );
       if (!adjacent) {
-        showToast('timeline', 'No adjacent clip to merge with.');
+        notify.info('No adjacent clip to merge with');
         return;
       }
       const target = direction === 'next' ? clip : adjacent;
@@ -355,7 +355,7 @@ export function useClipInteractions(options: ClipInteractionOptions) {
             : item.startTick + midiClipDurationTicks(item) === clip.startTick),
       );
       if (!adjacent) {
-        showToast('timeline', 'No adjacent MIDI clip to merge with.');
+        notify.info('No adjacent MIDI clip to merge with');
         return;
       }
       const target = direction === 'next' ? clip : adjacent;

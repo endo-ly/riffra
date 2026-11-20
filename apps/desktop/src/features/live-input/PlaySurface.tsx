@@ -18,6 +18,7 @@ import {
 import { DrumPadGrid } from './DrumPadGrid';
 import { MusicalTypingKeyboard } from './MusicalTypingKeyboard';
 import styles from './PlaySurface.module.css';
+import { InlineMessage } from '@/shared/ui/message/InlineMessage';
 
 interface PlaySurfaceProps {
   play: LivePlay;
@@ -147,9 +148,9 @@ export function PlaySurface({ play, trackColor, audio, onChooseInstrument }: Pla
         )}
       </div>
       {play.message && (
-        <small className={styles.message} role="status">
-          {play.message}
-        </small>
+        <div className={styles.messageSlot}>
+          <InlineMessage tone="danger">{play.message}</InlineMessage>
+        </div>
       )}
     </div>
   );

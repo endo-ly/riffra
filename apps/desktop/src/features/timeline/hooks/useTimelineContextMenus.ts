@@ -9,7 +9,7 @@ import type {
 } from '@/model/generated';
 import { useSessionContext } from '@/shared/session/session-context';
 import type { ContextMenuItem } from '@/shared/ui/ContextMenu';
-import { toast } from '@/shared/toasts';
+import { notify } from '@/shared/notify';
 import { countOffGridNotes, snapGridTicks, type SnapGrid } from '@/model/clip-grid';
 import { clipDurationTicks } from '@/model/clip-time';
 import { useState, type MutableRefObject } from 'react';
@@ -248,7 +248,7 @@ export function useTimelineContextMenus({
             closeContextMenu();
             const offGrid = countOffGridNotes(clip.notes, gridTicks, clip.startTick);
             if (offGrid === 0) {
-              toast('Notes are already on the grid.');
+              notify.info('Notes are already on the grid');
               return;
             }
             void editor
@@ -261,7 +261,9 @@ export function useTimelineContextMenus({
               )
               .then((next) => {
                 if (next)
-                  toast(`Quantized ${offGrid} note${offGrid === 1 ? '' : 's'} to the grid.`);
+                  notify.success(
+                    `Quantized ${offGrid} note${offGrid === 1 ? '' : 's'} to the grid`,
+                  );
               });
           },
         },

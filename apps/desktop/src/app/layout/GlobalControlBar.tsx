@@ -3,10 +3,12 @@ import type { AudioStatus } from '@/model/generated';
 import { useSession } from '@/shared/session/session-context';
 import { selectHostReady } from '@/shared/session/selectors';
 import { isEmergencyMuteActive } from '@/shared/audio/audio-safety';
+import { useAudioFeedbackSuspected } from '@/shared/audio/audio-meters';
 
 import { AudioMonitor } from '@/features/audio/AudioMonitor';
 import { TransportControls } from '@/features/transport/TransportControls';
 import { Icon } from '@/shared/ui/primitives';
+import { preparationLabel } from '@/app/runtime/runtime-projection';
 import { ProjectHostSelector } from './ProjectHostSelector';
 import styles from './GlobalControlBar.module.css';
 
@@ -20,6 +22,8 @@ export function GlobalControlBar(ui: GlobalControlBarProps) {
   const project = useSession((state) => state.project);
   const hostConnected = useSession(selectHostReady);
   const audio = useSession((state) => state.audio);
+  const liveFeedbackSuspected = useAudioFeedbackSuspected();
+  const preparation = useSession((state) => preparationLabel(state.runtime));
   const props = {
     ...ui,
     audio: audio.status,
@@ -35,12 +39,15 @@ export function GlobalControlBar(ui: GlobalControlBarProps) {
   const audioStateLabel = getAudioStateLabel(props.audio.state);
   const audioDetail = props.audio.feedbackSuspected
     ? props.audio.message
-    : [
-        props.audio.driver,
-        props.audio.roundTripMs !== null ? `${props.audio.roundTripMs.toFixed(1)} ms` : null,
-      ]
-        .filter(Boolean)
-        .join(' · ');
+    : liveFeedbackSuspected
+      ? 'Feedback detected'
+      : (preparation ??
+        [
+          props.audio.driver,
+          props.audio.roundTripMs !== null ? `${props.audio.roundTripMs.toFixed(1)} ms` : null,
+        ]
+          .filter(Boolean)
+          .join(' · '));
 
   return (
     <header
@@ -140,7 +147,7 @@ export function GlobalControlBar(ui: GlobalControlBarProps) {
             aria-label="Reset feedback protection"
             title="Reset feedback protection"
           >
-            RESET FEEDBACK
+            Reset feedback
           </button>
         )}
       </fieldset>

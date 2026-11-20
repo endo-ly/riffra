@@ -5,11 +5,22 @@ import { createElement, type ReactNode } from 'react';
 import { TestSessionProvider } from '@/test/support/session-provider';
 import { createSessionStore } from '@/shared/session/store';
 import type { FakeNativeApi } from '@/test/support/fake-native-api';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useInbox } from '@/features/library/hooks/useInbox';
 import { toAssetId } from '@/model/asset-id';
 import { createFakeNativeApi, fakeAudioStatus } from '@/test/support/fake-native-api';
 import type { RecordingAsset } from '@/model/generated';
+import { notify } from '@/shared/notify';
+
+function spyNotify() {
+  return {
+    success: vi.spyOn(notify, 'success').mockImplementation(() => undefined),
+    info: vi.spyOn(notify, 'info').mockImplementation(() => undefined),
+    error: vi.spyOn(notify, 'error').mockImplementation(() => undefined),
+  };
+}
+
+afterEach(() => vi.restoreAllMocks());
 
 function recording(id: string, name: string): RecordingAsset {
   return {
@@ -76,6 +87,7 @@ function renderInbox(
 
 describe('useInbox', () => {
   it('delegates preview and reloads after successful mutations', async () => {
+    const { success, error } = spyNotify();
     const first = recording('recording:take-a', 'take-a');
     const second = recording('recording:take-b', 'take-b');
     const third = recording('recording:take-c', 'take-c');
@@ -130,11 +142,12 @@ describe('useInbox', () => {
     expect(onRelocate).toHaveBeenCalledTimes(3);
     expect(onRelocate.mock.calls.map(([item]) => item.id)).toEqual([first.id, third.id, fourth.id]);
     expect(result.current.duplicateGroups).toEqual([['recording:take-a', 'recording:take-b']]);
-    expect(result.current.message).toBe('Recording promoted to the library.');
-    expect(result.current.error).toBeNull();
+    expect(success).toHaveBeenLastCalledWith('Recording added to the library');
+    expect(error).not.toHaveBeenCalled();
   });
 
   it('does not reload or report success when a native mutation fails', async () => {
+    const { success, error } = spyNotify();
     const first = recording('recording:take-a', 'take-a');
     const api = createFakeNativeApi({
       recordings: [first],
@@ -155,7 +168,8 @@ describe('useInbox', () => {
     expect(failure).toEqual(new Error('native failed'));
     expect(rename).toHaveBeenCalledWith(first.id, 'renamed');
     expect(reload).not.toHaveBeenCalled();
-    expect(result.current.error).toBe('native failed');
+    expect(error).toHaveBeenCalledWith('Rename failed', { cause: failure });
+    expect(success).not.toHaveBeenCalled();
   });
 
   it('previews canonical processed and raw Assets', async () => {
@@ -179,10 +193,10 @@ describe('useInbox', () => {
 
     expect(preview).toHaveBeenNthCalledWith(1, 'asset:processed-processed', {});
     expect(preview).toHaveBeenNthCalledWith(2, 'asset:raw-raw', {});
-    expect(result.current.message).toBe('Preview started: raw.');
   });
 
   it('reports zero duplicate results and handles preview command failures', async () => {
+    const { info, error } = spyNotify();
     const first = recording('recording:take-a', 'take-a');
     const api = createFakeNativeApi({
       recordings: [first],
@@ -193,7 +207,7 @@ describe('useInbox', () => {
     await act(async () => {
       await result.current.detectDuplicates();
     });
-    expect(result.current.message).toBe('No duplicate recordings found.');
+    expect(info).toHaveBeenCalledWith('No duplicate recordings found');
 
     vi.spyOn(api, 'previewAsset').mockRejectedValue(new Error('Audio device disconnected.'));
     let failure: unknown;
@@ -205,6 +219,6 @@ describe('useInbox', () => {
       }
     });
     expect(failure).toEqual(new Error('Audio device disconnected.'));
-    expect(result.current.error).toBe('Audio device disconnected.');
+    expect(error).toHaveBeenCalledWith('Preview failed', { cause: failure });
   });
 });

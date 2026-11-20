@@ -13,7 +13,7 @@ import { TRACK_HEADER_WIDTH } from '@/features/timeline/model/timeline-layout';
 import { placeBrowserItem } from '@/features/timeline/place-browser-item';
 import { resolvePlacementTarget, type BrowserPlacement } from '@/shared/browser-placement';
 import { useSessionContext } from '@/shared/session/session-context';
-import { showToast } from '@/shared/toasts';
+import { notify } from '@/shared/notify';
 
 type TimelineSnapTick = (raw: number, temporaryOff?: boolean) => number;
 
@@ -66,7 +66,7 @@ export function useTimelineDrop({ commit, pixelsPerTick, snapTick }: UseTimeline
     async (event: DragEvent, trackId?: string, trackKind?: TrackKind): Promise<void> => {
       const placement = readBrowserDrag(event.dataTransfer);
       if (typeof placement === 'string') {
-        showToast('timeline', placement, { kind: 'error' });
+        notify.info(placement);
         return;
       }
       const target = resolvePlacementTarget(
@@ -75,7 +75,7 @@ export function useTimelineDrop({ commit, pixelsPerTick, snapTick }: UseTimeline
         true,
       );
       if (target.kind === 'invalid') {
-        showToast('timeline', target.reason, { kind: 'error' });
+        notify.info(target.reason);
         return;
       }
       const timeline = event.currentTarget.closest('[data-arrange-timeline]');
@@ -93,9 +93,7 @@ export function useTimelineDrop({ commit, pixelsPerTick, snapTick }: UseTimeline
   const handleOsMidiDrop = useCallback(
     async (files: FileList, trackId?: string, trackKind?: TrackKind): Promise<void> => {
       if (trackKind === 'audio') {
-        showToast('timeline', 'MIDI can only be placed on an Instrument Track.', {
-          kind: 'error',
-        });
+        notify.info('MIDI clips go on instrument tracks');
         return;
       }
       for (const file of Array.from(files)) {

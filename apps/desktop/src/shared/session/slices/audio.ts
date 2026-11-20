@@ -8,8 +8,7 @@ import type { NativeApi } from '@/native/native-api';
 import { startingAudioStatus } from '@/shared/audio/audio-defaults';
 import { isAudioEngineUsable, isEmergencyMuteActive } from '@/shared/audio/audio-safety';
 import { reconcileAudioSettings } from '@/shared/audio/reconcile-settings';
-import { errorText } from '@/shared/errors';
-import { clearToast, showToast, toast } from '@/shared/toasts';
+import { notify } from '@/shared/notify';
 
 export interface AudioSlice {
   status: AudioStatus;
@@ -37,10 +36,15 @@ export function createAudioSlice(
   });
   return {
     ...initial(),
-    setStatus: (status) => update({ status }),
+    setStatus(status) {
+      if (status.feedbackSuspected && !get().status.feedbackSuspected)
+        notify.error('Feedback detected', {
+          message: 'Output was muted to protect your hearing and speakers.',
+        });
+      update({ status });
+    },
     reset: () => {
       generation += 1;
-      clearToast('app.audio-preference');
       update(initial());
     },
     async refreshDevices() {
@@ -53,7 +57,6 @@ export function createAudioSlice(
       api.probeDeviceChannels(driver, inputDevice, outputDevice),
     async recover() {
       const current = generation;
-      clearToast('app.audio-preference');
       const status = await api.recoverAudioDevice();
       if (generation === current) get().setStatus(status);
       return status;
@@ -72,7 +75,8 @@ export function createAudioSlice(
             },
             status,
           );
-          showToast('app.audio-preference', effective.message, { kind: 'info', persistent: true });
+          if (effective.message)
+            notify.info('Audio settings adjusted', { message: effective.message });
         }
       }
       return status;
@@ -88,8 +92,7 @@ export function createAudioSlice(
         const status = await api.setEmergencyMute(!isEmergencyMuteActive(get().status));
         if (generation === current) get().setStatus(status);
       } catch (error) {
-        if (generation === current)
-          toast(`Emergency mute failed: ${errorText(error)}`, { kind: 'error' });
+        if (generation === current) notify.error('Mute failed', { cause: error });
       }
     },
     async resetFeedback() {
@@ -98,8 +101,7 @@ export function createAudioSlice(
         const status = await api.resetFeedbackProtection();
         if (generation === current) get().setStatus(status);
       } catch (error) {
-        if (generation === current)
-          toast(`Feedback protection reset failed: ${errorText(error)}`, { kind: 'error' });
+        if (generation === current) notify.error('Feedback reset failed', { cause: error });
       }
     },
   };

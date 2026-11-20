@@ -1,9 +1,8 @@
 import type { ProjectTimebase, TransportStatus } from '@/model/generated';
 import type { NativeApi } from '@/native/native-api';
 import { secondsToTicks, ticksToSeconds } from '@/model/timebase';
-import { HostConnectionChangedError, logNativeError } from '@/native/invoke';
-import { errorText } from '@/shared/errors';
-import { showToast } from '@/shared/toasts';
+import { HostConnectionChangedError } from '@/native/invoke';
+import { notify } from '@/shared/notify';
 
 export interface TransportSlice {
   status: TransportStatus | null;
@@ -35,6 +34,11 @@ function meaningfullyChanged(previous: TransportStatus | null, next: TransportSt
   );
 }
 
+function reportTransportFailure(error: unknown) {
+  if (!(error instanceof HostConnectionChangedError))
+    notify.error('Transport command failed', { cause: error });
+}
+
 export function createTransportSlice(
   api: Pick<
     NativeApi,
@@ -54,7 +58,7 @@ export function createTransportSlice(
   };
   const immediate = (operation: () => Promise<void>) => {
     pendingPlay = null;
-    return Promise.resolve().then(operation).catch(logNativeError('Immediate transport operation'));
+    return Promise.resolve().then(operation).catch(reportTransportFailure);
   };
   return {
     status: null,
@@ -92,7 +96,7 @@ export function createTransportSlice(
         await api.seekTimeline(next);
       } catch (error) {
         if (!(error instanceof HostConnectionChangedError))
-          showToast('timeline', errorText(error), { kind: 'error' });
+          notify.error('Seek failed', { cause: error });
       }
     },
     advance(now, timebase) {
@@ -109,7 +113,7 @@ export function createTransportSlice(
         .then(async () => {
           if (hasSession()) await api.playTimeline();
         })
-        .catch(logNativeError('Transport operation'))
+        .catch(reportTransportFailure)
         .finally(() => {
           if (pendingPlay === operation) pendingPlay = null;
         });

@@ -1,6 +1,7 @@
 import type { RenderHistoryEntry } from '@/model/generated';
 import { chooseRenderDirectory, saveRenderWav } from '@/native/dialog';
 import { errorText } from '@/shared/errors';
+import { notify } from '@/shared/notify';
 import { useSessionContext } from '@/shared/session/session-context';
 import { ConfirmDialog } from '@/shared/ui/ConfirmDialog';
 import controls from '@/shared/ui/controls.module.css';
@@ -9,6 +10,7 @@ import { useCallback, useEffect, useState } from 'react';
 import styles from './Render.module.css';
 import { DialogSection } from '@/shared/ui/Dialog';
 import { RenderMeasurements } from './RenderMeasurements';
+import { InlineMessage } from '@/shared/ui/message/InlineMessage';
 
 interface Props {
   refreshToken: string;
@@ -60,16 +62,15 @@ export function RenderHistoryPanel({ refreshToken }: Props) {
   const [expandedRenderId, setExpandedRenderId] = useState<string | null>(null);
   const [busyRenderId, setBusyRenderId] = useState<string | null>(null);
   const [pendingDeleteRender, setPendingDeleteRender] = useState<RenderHistoryEntry | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
-    setError(null);
+    setLoadError(null);
     try {
       setRenders(await api.listRenders());
     } catch (failure) {
-      setError(errorText(failure));
+      setLoadError(errorText(failure));
     } finally {
       setLoading(false);
     }
@@ -86,15 +87,13 @@ export function RenderHistoryPanel({ refreshToken }: Props) {
         : await saveRenderWav(render.renderId);
     if (!outputPath) return;
     setBusyRenderId(render.renderId);
-    setError(null);
-    setMessage(null);
     try {
       const result = await api.exportRender(render.renderId, outputPath);
-      setMessage(
-        `Exported ${result.fileCount} file${result.fileCount === 1 ? '' : 's'} to ${result.outputPath}`,
-      );
+      notify.success(`Exported ${result.fileCount} file${result.fileCount === 1 ? '' : 's'}`, {
+        message: result.outputPath,
+      });
     } catch (failure) {
-      setError(errorText(failure));
+      notify.error('Render export failed', { cause: failure });
     } finally {
       setBusyRenderId(null);
     }
@@ -103,16 +102,14 @@ export function RenderHistoryPanel({ refreshToken }: Props) {
   const deleteRender = async (render: RenderHistoryEntry) => {
     const { renderId } = render;
     setBusyRenderId(renderId);
-    setError(null);
-    setMessage(null);
     try {
       const result = await api.cleanRender(renderId);
-      setMessage(
-        `Deleted ${result.deletedFileCount} managed file${result.deletedFileCount === 1 ? '' : 's'}.`,
-      );
+      notify.success('Render deleted', {
+        message: `${result.deletedFileCount} managed file${result.deletedFileCount === 1 ? '' : 's'} removed.`,
+      });
       await refresh();
     } catch (failure) {
-      setError(errorText(failure));
+      notify.error('Render deletion failed', { cause: failure });
     } finally {
       setBusyRenderId(null);
     }
@@ -228,9 +225,9 @@ export function RenderHistoryPanel({ refreshToken }: Props) {
                     <RenderMeasurements key={index} value={measurement} />
                   ))}
                   {render.diagnostics.map((diagnostic) => (
-                    <p className={styles.warning} role="alert" key={diagnostic}>
+                    <InlineMessage tone="warning" key={diagnostic}>
                       {diagnostic}
-                    </p>
+                    </InlineMessage>
                   ))}
                 </div>
               )}
@@ -238,16 +235,7 @@ export function RenderHistoryPanel({ refreshToken }: Props) {
           );
         })}
       </ul>
-      {message && (
-        <p className={controls.hint} role="status">
-          {message}
-        </p>
-      )}
-      {error && (
-        <p className={styles.error} role="alert">
-          {error}
-        </p>
-      )}
+      {loadError && <InlineMessage tone="danger">{loadError}</InlineMessage>}
       {pendingDeleteRender && (
         <ConfirmDialog
           title="Delete render permanently?"

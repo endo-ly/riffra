@@ -1,7 +1,7 @@
 import type { ArrangementMutationResult, CanonicalState } from '@/model/generated';
 import { HostConnectionChangedError } from '@/native/invoke';
 import { errorText } from '@/shared/errors';
-import { toast } from '@/shared/toasts';
+import { notify } from '@/shared/notify';
 import type { CanonicalAcceptance } from './slices/project';
 
 type SessionMutation = Pick<ArrangementMutationResult, 'canonical' | 'projection'>;
@@ -24,7 +24,9 @@ export type SessionCommit = <T extends SessionMutation>(
 
 export function createSessionCommit(applyCanonicalState: ApplyCanonicalState): SessionCommit {
   return async (operation, options) => {
-    const onError = options?.onError ?? ((message: string) => toast(message, { kind: 'error' }));
+    const onError =
+      options?.onError ??
+      ((message: string) => notify.error('Edit could not be applied', { cause: message }));
     let result;
     try {
       result = await operation;

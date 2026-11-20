@@ -8,6 +8,7 @@ import { resolveTrackColorById } from '@/model/track-color';
 import { ClipToggles } from './ClipToggles';
 import styles from './Inspector.module.css';
 import { MusicalTimeField } from './MusicalTimeField';
+import { InlineMessage } from '@/shared/ui/message/InlineMessage';
 
 interface MidiClipInspectorProps {
   session: CreativeSession;
@@ -214,7 +215,11 @@ export function MidiClipInspector(props: MidiClipInspectorProps) {
           </div>
         </div>
       </section>
-      {message && <p className={styles.message}>{message}</p>}
+      {message && (
+        <div className={styles.messageSlot}>
+          <InlineMessage tone="danger">{message}</InlineMessage>
+        </div>
+      )}
     </div>
   );
 }

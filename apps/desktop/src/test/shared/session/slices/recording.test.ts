@@ -6,7 +6,7 @@ import { useEffect, useState } from 'react';
 import { useStore } from 'zustand';
 import { createSessionStore } from '@/shared/session/store';
 import { bindSessionRuntime } from '@/shared/session/runtime';
-import { clearAllToasts, useToasts } from '@/shared/toasts';
+import { clearToasts, useToasts } from '@/shared/notify';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AudioStatus, CreativeSession } from '@/model/generated';
 import { canonicalState, defaultSession } from '@/native/browser-defaults';
@@ -56,7 +56,9 @@ function useRecordingHarness(
   useEffect(() => bindSessionRuntime(store, api), [store, api]);
   const state = useStore(store);
   const toasts = useToasts();
-  const lastToast = toasts.at(-1)?.text ?? null;
+  const lastToast = toasts.at(-1);
+  const causeOf = (title: string) =>
+    lastToast?.title === title ? (lastToast.cause ?? null) : null;
   return {
     toggleRecording: state.recording.toggle,
     startRecordingNow: state.recording.start,
@@ -71,17 +73,13 @@ function useRecordingHarness(
           .getState()
           .project.acceptBootstrap({ ...boot, canonical: { ...boot.canonical, session } });
     },
-    commandError: lastToast?.startsWith('Recording failed: ')
-      ? lastToast.slice('Recording failed: '.length)
-      : null,
-    error: lastToast === 'projection failed' ? lastToast : null,
-    finalizationError: lastToast?.startsWith('Recording files were preserved in Inbox: ')
-      ? lastToast.slice('Recording files were preserved in Inbox: '.length)
-      : null,
+    commandError: causeOf('Recording failed'),
+    error: causeOf('Edit could not be applied'),
+    finalizationError: causeOf('Recording could not be finalized'),
   };
 }
 
-afterEach(clearAllToasts);
+afterEach(clearToasts);
 
 describe('recording', () => {
   it('covers start success, Inbox failure, pending cleanup, and no automatic retry', async () => {
@@ -180,19 +178,14 @@ describe('recording', () => {
   it('handles Record Another Take failures inside the recording hook', async () => {
     const api = createFakeNativeApi({ recordings: [] });
     api.setFailure('recordAnotherTake', new Error('recording session unavailable'));
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const { result } = renderHook(() => useRecordingHarness(api, sessionWithTrack(true)));
 
-    try {
-      await act(async () => {
-        await expect(result.current.startRecordingNow('recording:1')).resolves.toBe(false);
-      });
+    await act(async () => {
+      await expect(result.current.startRecordingNow('recording:1')).resolves.toBe(false);
+    });
 
-      expect(result.current.recordingCommandPending).toBe(false);
-      expect(errorSpy).toHaveBeenCalledOnce();
-    } finally {
-      errorSpy.mockRestore();
-    }
+    expect(result.current.recordingCommandPending).toBe(false);
+    expect(result.current.commandError).toBe('recording session unavailable');
   });
 
   it('covers stop failure, finalization success, and Inbox refresh failure', async () => {
@@ -215,8 +208,7 @@ describe('recording', () => {
 
       expect(result.current.recordingCommandPending).toBe(false);
       expect(result.current.audio.recording.active).toBe(true);
-      expect(errorSpy).toHaveBeenCalledOnce();
-      errorSpy.mockClear();
+      expect(result.current.commandError).toBe('stop failed');
 
       api.setFailure('stopArrangeRecording', null);
       api.setFailure('listRecordings', new Error('Inbox unavailable'));

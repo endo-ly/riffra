@@ -12,6 +12,7 @@ import clsx from 'clsx';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import sharedStyles from './Inspector.module.css';
 import styles from './TakeInspector.module.css';
+import { InlineMessage } from '@/shared/ui/message/InlineMessage';
 
 type RecordingSession = CreativeSession['arrangement']['recordingSessions'][number];
 
@@ -388,9 +389,9 @@ export function TakeInspector(props: TakeInspectorProps) {
         );
       })}
       {operationMessage && (
-        <p className={sharedStyles.message} role="status">
-          {operationMessage}
-        </p>
+        <div className={sharedStyles.messageSlot}>
+          <InlineMessage tone="danger">{operationMessage}</InlineMessage>
+        </div>
       )}
     </section>
   );

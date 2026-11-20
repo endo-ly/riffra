@@ -546,7 +546,9 @@ describe('TimelineView', () => {
     api.emitRuntimeProjectionStatus(runtimeProjectionStatus);
     renderWorkspace(api, { session });
 
-    expect(await screen.findByText(/Playback skipped 1 missing source/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/Playback continues without 1 missing source/),
+    ).toBeInTheDocument();
     expect(await screen.findByText('Lost Take')).toBeInTheDocument();
     expect((await screen.findAllByText('MISSING SOURCE')).length).toBeGreaterThan(0);
     expect(document.querySelector('[data-clip-id="clip:missing"]')).toBeInTheDocument();
@@ -573,9 +575,10 @@ describe('TimelineView', () => {
       },
     });
     renderWorkspace(api);
-    expect(
-      await screen.findByText(/Still waiting.*Restoring.*SampleTank 4.*13\/26.*120s/),
-    ).toBeInTheDocument();
+    const wait = await screen.findByRole('status', { name: 'Loading instruments' });
+    expect(wait).toHaveTextContent('13 / 26');
+    expect(wait).toHaveTextContent('Restoring · SampleTank 4 · 120s');
+    expect(wait).toHaveTextContent('SampleTank 4 is taking longer than usual.');
     expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
     act(() =>
       api.emitRuntimeProjectionStatus({
@@ -585,7 +588,7 @@ describe('TimelineView', () => {
       }),
     );
     await waitFor(() =>
-      expect(screen.queryByText(/Still waiting.*SampleTank/)).not.toBeInTheDocument(),
+      expect(screen.queryByRole('status', { name: 'Loading instruments' })).not.toBeInTheDocument(),
     );
   });
 
@@ -611,11 +614,12 @@ describe('TimelineView', () => {
     // Assert
     expect(await screen.findByText(failure)).toBeInTheDocument();
 
-    // Act: Retry reports progress instead of a raw error while it is running.
+    // Act: Retry withdraws the failure while preparation runs again.
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     expect(api.calls).toContain('retryRuntimeProjection');
-    expect(await screen.findByText('Retrying audio preparation…')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument(),
+    );
 
     // Assert: the failure no longer covers the Arrangement once preparation succeeds.
     act(() =>
@@ -692,9 +696,7 @@ describe('TimelineView', () => {
     fireEvent.pointerUp(clip, { pointerId: 1, clientX: 0, clientY: 0 });
 
     await waitFor(() =>
-      expect(
-        screen.getByText('Audio Clips can only be placed on an Audio Track.'),
-      ).toBeInTheDocument(),
+      expect(screen.getByText('Audio clips go on audio tracks')).toBeInTheDocument(),
     );
     expect(api.calls).not.toContain('moveAudioClips');
   });

@@ -1,4 +1,4 @@
-import { errorText } from '@/shared/errors';
+import { notify } from '@/shared/notify';
 import { useCallback, useEffect, useState } from 'react';
 import type { LibraryAsset, RecordingAsset } from '@/model/generated';
 import { useSession, useSessionContext } from '@/shared/session/session-context';
@@ -20,29 +20,24 @@ export function useInbox() {
   const onRelocate = missing.clearRelocated;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [duplicateGroups, setDuplicateGroups] = useState<string[][]>([]);
-  const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     setSelectedId(null);
     setDuplicateGroups([]);
-    setMessage(null);
-    setError(null);
   }, [hostGeneration, projectId]);
 
   const selected = recordings.find((recording) => recording.id === selectedId) ?? null;
 
   const rename = useCallback(
     async (id: string, name: string) => {
-      setError(null);
       try {
         const recording = recordings.find((item) => item.id === id);
         const nextId = await api.renameRecording(id, name);
         if (recording) onRelocate(recording);
         await reload();
         setSelectedId(nextId);
-        setMessage(`Renamed to ${name}.`);
+        notify.success('Recording renamed', { message: name });
       } catch (cause) {
-        setError(errorText(cause));
+        notify.error('Rename failed', { cause });
         throw cause;
       }
     },
@@ -51,14 +46,13 @@ export function useInbox() {
 
   const remove = useCallback(
     async (id: string) => {
-      setError(null);
       try {
         await api.deleteRecording(id);
         setSelectedId((current) => (current === id ? null : current));
         await reload();
-        setMessage('Recording deleted.');
+        notify.success('Recording deleted');
       } catch (cause) {
-        setError(errorText(cause));
+        notify.error('Recording deletion failed', { cause });
         throw cause;
       }
     },
@@ -67,16 +61,15 @@ export function useInbox() {
 
   const archive = useCallback(
     async (id: string) => {
-      setError(null);
       try {
         const recording = recordings.find((item) => item.id === id);
         await api.archiveRecording(id);
         if (recording) onRelocate(recording);
         setSelectedId((current) => (current === id ? null : current));
         await reload();
-        setMessage('Recording archived.');
+        notify.success('Recording archived');
       } catch (cause) {
-        setError(errorText(cause));
+        notify.error('Archive failed', { cause });
         throw cause;
       }
     },
@@ -85,16 +78,15 @@ export function useInbox() {
 
   const promote = useCallback(
     async (id: string) => {
-      setError(null);
       try {
         const recording = recordings.find((item) => item.id === id);
         await api.promoteRecording(id);
         if (recording) onRelocate(recording);
         setSelectedId((current) => (current === id ? null : current));
         await reload();
-        setMessage('Recording promoted to the library.');
+        notify.success('Recording added to the library');
       } catch (cause) {
-        setError(errorText(cause));
+        notify.error('Adding to the library failed', { cause });
         throw cause;
       }
     },
@@ -103,14 +95,13 @@ export function useInbox() {
 
   const tag = useCallback(
     async (id: string, tag: string | null, note: string | null): Promise<LibraryAsset> => {
-      setError(null);
       try {
         const updated = await api.tagRecording(id, tag, note);
         await reload();
-        setMessage('Recording tag saved.');
+        notify.success('Recording tag saved');
         return updated;
       } catch (cause) {
-        setError(errorText(cause));
+        notify.error('Tag could not be saved', { cause });
         throw cause;
       }
     },
@@ -119,14 +110,12 @@ export function useInbox() {
 
   const preview = useCallback(
     async (recording: RecordingAsset) => {
-      setError(null);
       try {
         const assetId = recording.processedAssetId ?? recording.rawAssetId;
         if (!assetId) throw new Error('Recording has no canonical audio Asset ID.');
         await api.previewAsset(assetId, {});
-        setMessage(`Preview started: ${recording.name}.`);
       } catch (cause) {
-        setError(errorText(cause));
+        notify.error('Preview failed', { cause });
         throw cause;
       }
     },
@@ -134,18 +123,17 @@ export function useInbox() {
   );
 
   const detectDuplicates = useCallback(async () => {
-    setError(null);
     try {
       const groups = await api.detectDuplicateRecordings();
       setDuplicateGroups(groups);
       const count = new Set(groups.flat()).size;
-      setMessage(
-        groups.length === 0
-          ? 'No duplicate recordings found.'
-          : `${groups.length} duplicate group${groups.length === 1 ? '' : 's'} found (${count} recordings).`,
-      );
+      if (groups.length === 0) notify.info('No duplicate recordings found');
+      else
+        notify.info(`${groups.length} duplicate group${groups.length === 1 ? '' : 's'} found`, {
+          message: `${count} recordings`,
+        });
     } catch (cause) {
-      setError(errorText(cause));
+      notify.error('Duplicate detection failed', { cause });
       throw cause;
     }
   }, [api]);
@@ -157,8 +145,6 @@ export function useInbox() {
     selected,
     duplicateGroups,
     duplicateIds,
-    message,
-    error,
     rename,
     remove,
     archive,

@@ -537,12 +537,6 @@
   justify-content: center;
 }
 
-.error {
-  grid-column: 1 / -1;
-  color: var(--color-status-danger);
-  margin: var(--space-2);
-}
-
 .busChannel {
   grid-template-rows: auto auto auto minmax(64px, 1fr) auto;
 }

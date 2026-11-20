@@ -1,0 +1,8 @@
+.workspaceWait {
+  grid-area: body;
+  z-index: var(--z-workspace-wait);
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--color-bg-app) 55%, transparent);
+  cursor: wait;
+}

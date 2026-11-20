@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { InstrumentLibraryItem } from '@/model/generated';
 import { logNativeError } from '@/native/invoke';
-import { errorText } from '@/shared/errors';
+import { notify } from '@/shared/notify';
 import { useSession, useSessionContext, useSessionStore } from '@/shared/session/session-context';
 
 export function useInstrumentPreview() {
@@ -11,7 +11,6 @@ export function useInstrumentPreview() {
   const safeMode = useSession((state) => state.project.boot?.safeMode ?? false);
   const [previewingId, setPreviewingId] = useState<string | null>(null);
   const [previewPendingId, setPreviewPendingId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const nativePreviewing = useRef(false);
   const pending = useRef<string | null>(null);
   const request = useRef(0);
@@ -22,7 +21,6 @@ export function useInstrumentPreview() {
     nativePreviewing.current = false;
     setPreviewingId(null);
     setPreviewPendingId(null);
-    setError(null);
   }, [hostGeneration]);
   useEffect(() => {
     if (instrumentPreviewing) {
@@ -50,11 +48,12 @@ export function useInstrumentPreview() {
         store.getState().audio.setStatus(status);
       } catch (cause) {
         if (request.current !== id) return;
-        if (!stopping) {
+        if (stopping) {
+          logNativeError('stopInstrumentPreview')(cause);
+        } else {
           if (!nativePreviewing.current) setPreviewingId(null);
-          setError(errorText(cause));
+          notify.error('Preview failed', { cause });
         }
-        logNativeError(stopping ? 'stopInstrumentPreview' : 'previewInstrument')(cause);
       } finally {
         if (request.current === id) {
           pending.current = null;
@@ -64,5 +63,5 @@ export function useInstrumentPreview() {
     },
     [api, previewingId, safeMode, store],
   );
-  return { previewingId, previewPendingId, preview, error };
+  return { previewingId, previewPendingId, preview };
 }

@@ -15,6 +15,7 @@ import { DeviceSidechainEditor } from './DeviceSidechainEditor';
 import { automationValueAt } from '@/model/automation';
 import { useAutomationValueDisplay } from '@/shared/useAutomationValueDisplay';
 import styles from './Devices.module.css';
+import { InlineMessage } from '@/shared/ui/message/InlineMessage';
 
 interface DeviceParameterEditorProps {
   owner: EffectOwner;
@@ -227,13 +228,11 @@ export function DeviceParameterEditor(props: DeviceParameterEditorProps) {
         </p>
       )}
       {automationReadActive && (
-        <p className={styles.notice}>Automation Read · stop playback to edit device state.</p>
+        <InlineMessage tone="info">
+          Automation Read is active. Stop playback to edit device state.
+        </InlineMessage>
       )}
-      {error && (
-        <p className={styles.error} role="alert">
-          {error}
-        </p>
-      )}
+      {error && <InlineMessage tone="danger">{error}</InlineMessage>}
       {details && (
         <>
           <header className={styles.detailsHeader}>

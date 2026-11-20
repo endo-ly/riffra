@@ -1,0 +1,10 @@
+.diagnostics {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.diagnostics code {
+  color: var(--color-text-primary);
+}

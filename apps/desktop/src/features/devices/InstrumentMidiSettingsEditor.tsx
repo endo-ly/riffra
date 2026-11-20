@@ -9,6 +9,7 @@ import { midiNoteName } from '@/shared/midi';
 import { Icon } from '@/shared/ui/primitives';
 import controls from '@/shared/ui/controls.module.css';
 import styles from './Devices.module.css';
+import { InlineMessage } from '@/shared/ui/message/InlineMessage';
 
 interface Props {
   settings: InstrumentMidiSettings;
@@ -233,17 +234,13 @@ export function InstrumentMidiSettingsEditor({
           Apply MIDI settings
         </button>
       </form>
-      {error && (
-        <p className={styles.error} role="alert">
-          {error}
-        </p>
-      )}
+      {error && <InlineMessage tone="danger">{error}</InlineMessage>}
       {warnings.length > 0 && (
-        <div className={styles.midiWarnings} role="status" aria-label="MIDI playability warnings">
+        <InlineMessage tone="warning">
           <strong>
             {warnings.length} note{warnings.length === 1 ? '' : 's'} need attention
           </strong>
-          <ul>
+          <ul className={styles.midiWarnings} aria-label="MIDI playability warnings">
             {warnings.map((warning) => (
               <li key={warning.noteId}>
                 {midiNoteName(warning.sourceNote)} →{' '}
@@ -258,7 +255,7 @@ export function InstrumentMidiSettingsEditor({
               </li>
             ))}
           </ul>
-        </div>
+        </InlineMessage>
       )}
     </section>
   );

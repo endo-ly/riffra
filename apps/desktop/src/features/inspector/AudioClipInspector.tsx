@@ -16,6 +16,7 @@ import { ClipToggles } from './ClipToggles';
 import styles from './Inspector.module.css';
 import { MixValueField } from './MixValueField';
 import { MusicalTimeField } from './MusicalTimeField';
+import { InlineMessage } from '@/shared/ui/message/InlineMessage';
 
 interface AudioClipInspectorProps {
   session: CreativeSession;
@@ -261,7 +262,11 @@ export function AudioClipInspector(props: AudioClipInspectorProps) {
         </div>
       </section>
 
-      {message && <p className={styles.message}>{message}</p>}
+      {message && (
+        <div className={styles.messageSlot}>
+          <InlineMessage tone="danger">{message}</InlineMessage>
+        </div>
+      )}
     </div>
   );
 }

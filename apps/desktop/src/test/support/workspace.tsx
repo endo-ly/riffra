@@ -3,20 +3,16 @@ import type { ReactNode } from 'react';
 import type { CreativeSession } from '@/model/generated';
 import { defaultSession } from '@/native/browser-defaults';
 import { useSessionRuntime } from '@/app/runtime/useSessionRuntime';
-import { useRuntimeProjectionToast } from '@/app/runtime/useRuntimeProjectionToast';
 import { EditorWorkspace } from '@/app/workspace/EditorWorkspace';
-import { ToastStack } from '@/shared/ui/ToastStack';
+import { WorkspaceWait } from '@/app/layout/WorkspaceWait';
+import { PlaybackNotice } from '@/app/notices/PlaybackNotice';
+import { ToastStack } from '@/shared/ui/message/ToastStack';
 import { toAssetId } from '@/model/asset-id';
 import type { FakeNativeApi } from '@/test/support/fake-native-api';
 import { renderWithSession } from '@/test/support/session-provider';
 
 function RuntimeBinding() {
   useSessionRuntime();
-  return null;
-}
-
-function ProjectionToast() {
-  useRuntimeProjectionToast();
   return null;
 }
 
@@ -31,7 +27,8 @@ export function renderWorkspace(api: FakeNativeApi, options: WorkspaceRenderOpti
     (
       <>
         <RuntimeBinding />
-        <ProjectionToast />
+        <WorkspaceWait />
+        <PlaybackNotice />
         <ProjectBoundRegion>
           <EditorWorkspace />
         </ProjectBoundRegion>

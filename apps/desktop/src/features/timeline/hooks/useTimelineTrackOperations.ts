@@ -3,9 +3,8 @@ import { useMemo, useState } from 'react';
 import type { TrackKind } from '@/model/generated';
 import { ticksPerBar } from '@/model/timebase';
 import { useSession, useSessionContext, useSessionStore } from '@/shared/session/session-context';
-import { errorText } from '@/shared/errors';
 import { HostConnectionChangedError } from '@/native/invoke';
-import { showToast } from '@/shared/toasts';
+import { notify } from '@/shared/notify';
 import { reorderTargetIndex } from '@/features/timeline/model/timeline-layout';
 
 /** Track edit that needs the user's confirmation before it runs. */
@@ -80,7 +79,7 @@ export function useTimelineTrackOperations(options: TrackOperationOptions) {
         await api.panicMidiTrack(trackId);
       } catch (error) {
         if (error instanceof HostConnectionChangedError) return;
-        showToast('timeline', errorText(error), { kind: 'error' });
+        notify.error('MIDI panic failed', { cause: error });
       }
     }
     if (store.getState().scope !== origin) return;

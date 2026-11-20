@@ -1,0 +1,17 @@
+.icon {
+  width: var(--size-icon-md);
+  height: var(--size-icon-md);
+  color: var(--tone);
+}
+
+.glyph {
+  fill: var(--color-bg-panel);
+}
+
+.stroke {
+  fill: none;
+  stroke: var(--color-bg-panel);
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}

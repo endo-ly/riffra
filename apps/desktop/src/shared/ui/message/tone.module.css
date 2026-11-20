@@ -1,0 +1,16 @@
+/* The accent of each tone, read by the message components as `var(--tone)`. */
+.info {
+  --tone: var(--color-accent);
+}
+
+.success {
+  --tone: var(--color-status-success);
+}
+
+.warning {
+  --tone: var(--color-status-warning);
+}
+
+.danger {
+  --tone: var(--color-status-danger);
+}
