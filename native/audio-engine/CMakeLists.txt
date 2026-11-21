@@ -514,6 +514,7 @@ if(BUILD_TESTING)
   target_sources(riffra-audio-tests PRIVATE
     tests/app/AudioCommandDispatcherTest.cpp
     tests/app/AudioStatusBuilderTest.cpp
+    tests/app/RuntimeLifecycleExecutorTest.cpp
     tests/automation/AutomationRuntimeTest.cpp
     tests/concurrency/BoundedMpmcQueueTest.cpp
     tests/concurrency/RealtimeCommandQueueTest.cpp
@@ -531,7 +532,6 @@ if(BUILD_TESTING)
     tests/plugins/PluginChainTest.cpp
     tests/plugins/PluginEditorHostTest.cpp
     tests/plugins/PluginRackTest.cpp
-    tests/plugins/RuntimeLifecycleExecutorTest.cpp
     tests/preview/InstrumentPreviewSessionTest.cpp
     tests/preview/PluginAuditionTest.cpp
     tests/preview/PreviewEngineTest.cpp

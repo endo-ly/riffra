@@ -109,22 +109,22 @@ native/audio-engine/
 
 製品構成に対応する GTest 群（`riffra-audio-tests`）と、実プラグイン経路の検証手段を持つ。テストファイルは `tests/<ディレクトリ>/<対象>Test.cpp` とする。
 
-| ディレクトリ         | 内容                                                                                                                                                      |
-| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `tests/app/`         | 命令振り分けと状態投影                                                                                                                                    |
-| `tests/automation/`  | オートメーションの評価                                                                                                                                    |
-| `tests/concurrency/` | 有界キューとフレーム交換                                                                                                                                  |
-| `tests/contract/`    | 契約の decode / encode とフィクスチャ                                                                                                                     |
-| `tests/device/`      | デバイス制御、デバイス探索、物理 MIDI 入力                                                                                                                |
-| `tests/instruments/` | 内蔵楽器ランタイム（ベンチマーク含む）                                                                                                                    |
-| `tests/pipeline/`    | 描画パイプラインと安全 DSP、計測                                                                                                                          |
-| `tests/plugins/`     | ラック・チェイン・エディタ・ライフサイクル実行器。実 VST テスト（`RealVstRuntimeTest`）はテスト用 VST3 と `riffra-plugin-scan --validate-load` を併用する |
-| `tests/preview/`     | サンプル試聴、内蔵楽器プレビュー、プラグイン試奏                                                                                                          |
-| `tests/protocol/`    | プロトコル出力キューと要求応答                                                                                                                            |
-| `tests/recording/`   | 録音セッション                                                                                                                                            |
-| `tests/render/`      | オフライン書き出し                                                                                                                                        |
-| `tests/support/`     | 複数のディレクトリが使うテスト支援と、テスト用 VST3 のソース                                                                                              |
-| `tests/timeline/`    | グラフ・自動化・スナップショット・再生・録音・デバイス・MIDI・ミックス                                                                                    |
+| ディレクトリ         | 内容                                                                                                                                |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `tests/app/`         | 命令振り分け、状態投影、サードパーティ呼び出しの直列実行                                                                            |
+| `tests/automation/`  | オートメーションの評価                                                                                                              |
+| `tests/concurrency/` | 有界キューとフレーム交換                                                                                                            |
+| `tests/contract/`    | 契約の decode / encode とフィクスチャ                                                                                               |
+| `tests/device/`      | デバイス制御、デバイス探索、物理 MIDI 入力                                                                                          |
+| `tests/instruments/` | 内蔵楽器ランタイム（ベンチマーク含む）                                                                                              |
+| `tests/pipeline/`    | 描画パイプラインと安全 DSP、計測                                                                                                    |
+| `tests/plugins/`     | ラック・チェイン・エディタ。実 VST テスト（`RealVstRuntimeTest`）はテスト用 VST3 と `riffra-plugin-scan --validate-load` を併用する |
+| `tests/preview/`     | サンプル試聴、内蔵楽器プレビュー、プラグイン試奏                                                                                    |
+| `tests/protocol/`    | プロトコル出力キューと要求応答                                                                                                      |
+| `tests/recording/`   | 録音セッション                                                                                                                      |
+| `tests/render/`      | オフライン書き出し                                                                                                                  |
+| `tests/support/`     | 複数のディレクトリが使うテスト支援と、テスト用 VST3 のソース                                                                        |
+| `tests/timeline/`    | グラフ・自動化・スナップショット・再生・録音・デバイス・MIDI・ミックス                                                              |
 
 ## 通信契約
 
