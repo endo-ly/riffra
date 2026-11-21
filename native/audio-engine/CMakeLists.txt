@@ -148,7 +148,8 @@ target_sources(riffra-engine-core PRIVATE
   src/timeline/TimelineEngine.h
   src/timeline/TimelineEngineDevices.cpp
   src/timeline/TimelineEngineRecording.cpp
-  src/timeline/TimelineEngineRender.cpp
+  src/timeline/TimelineEngineMidi.cpp
+  src/timeline/TimelineEngineMix.cpp
   src/timeline/TimelineReadAheadSource.h
   src/timeline/TimelineSnapshotBuilder.cpp
   src/timeline/TimelineSnapshotBuilder.h

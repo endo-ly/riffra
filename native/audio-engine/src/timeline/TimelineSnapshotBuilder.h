@@ -52,7 +52,7 @@ inline bool sameInstrumentRuntime(const std::optional<InstrumentSpec>& left,
            leftInternal.definitionBaseDir == rightInternal.definitionBaseDir;
 }
 
-/// Builds a runtime timeline graph from a JSON snapshot without publishing it.
+/// Builds a prepared timeline graph from a decoded snapshot without publishing it.
 class TimelineSnapshotBuilder final {
 public:
     /// Creates a builder bound to the engine state used for runtime reuse.
