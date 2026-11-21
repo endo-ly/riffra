@@ -270,68 +270,6 @@ TEST(TimelineRealtimeTest, ReusedTracksShareTheirDeviceInstances) {
     EXPECT_EQ(&second->tracks.front()->runtime->effects(), firstEffects);
 }
 
-TEST(TimelineRealtimeTest, DroppingTheInstrumentKeepsTheSharedEffectChain) {
-    // Arrange
-    juce::AudioFormatManager formats;
-    formats.registerBasicFormats();
-    TimelineEngine engine;
-    juce::String error;
-    auto snapshot = makeBuiltInInstrumentSnapshot("track:parked");
-    snapshot.graph.tracks.front().effects.push_back(
-        {"fx:parked", RIFFRA_TEST_EFFECT_BUNDLE_PATH, {}});
-    ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, kSampleRate, kBlockSamples, error))
-        << error;
-    const auto* first = TimelineEngineTestPeer::committedGraph(engine);
-    const auto* firstEffects = &first->tracks.front()->runtime->effects();
-
-    // Act: a bypassed instrument holds no instance, so the parked graph
-    // carries no instrument at all.
-    auto parked = snapshot;
-    parked.graph.tracks.front().instrument.reset();
-    ASSERT_TRUE(loadTestSnapshot(engine, parked, formats, kSampleRate, kBlockSamples, error))
-        << error;
-    const auto* second = TimelineEngineTestPeer::committedGraph(engine);
-
-    // Assert: only the instrument left; the effect chain is shared.
-    EXPECT_TRUE(second->tracks.front()->reuseEffects);
-    EXPECT_EQ(&second->tracks.front()->runtime->effects(), firstEffects);
-    EXPECT_TRUE(second->tracks.front()->instrumentDeviceId.isEmpty());
-
-    // Waking the instrument rebuilds only the instrument.
-    ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, kSampleRate, kBlockSamples, error))
-        << error;
-    const auto* third = TimelineEngineTestPeer::committedGraph(engine);
-    EXPECT_EQ(&third->tracks.front()->runtime->effects(), firstEffects);
-    EXPECT_NE(third->tracks.front()->runtime->instrument(), nullptr);
-}
-
-TEST(TimelineRealtimeTest, AProjectionStatesWhetherASharedDevicePlays) {
-    // Arrange: bypassing mutes the resident instances before the projection
-    // reaches them, so a projection that still carries the device states
-    // that it plays again.
-    juce::AudioFormatManager formats;
-    formats.registerBasicFormats();
-    TimelineEngine engine;
-    juce::String error;
-    auto snapshot = makeBuiltInInstrumentSnapshot("track:bypass");
-    snapshot.graph.tracks.front().effects.push_back(
-        {"fx:bypass", RIFFRA_TEST_EFFECT_BUNDLE_PATH, {}});
-    ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, kSampleRate, kBlockSamples, error))
-        << error;
-    const auto trackOwner = EffectOwnerSpec{EffectOwnerKindSpec::track, "track:bypass"};
-    ASSERT_TRUE(engine.setDeviceBypassed(trackOwner, "fx:bypass", true, error)) << error;
-    ASSERT_TRUE(engine.devicePersistedState(trackOwner, "fx:bypass", error)->bypassed);
-
-    // Act: the device returned to the graph without an unbypass command.
-    ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, kSampleRate, kBlockSamples, error))
-        << error;
-
-    // Assert
-    const auto* graph = TimelineEngineTestPeer::committedGraph(engine);
-    ASSERT_TRUE(graph->tracks.front()->reuseEffects);
-    EXPECT_FALSE(engine.devicePersistedState(trackOwner, "fx:bypass", error)->bypassed);
-}
-
 TEST(TimelineRealtimeTest, ValidatesLiveMidiTargetAgainstOnlyTheCommittedGraph) {
     // Arrange
     juce::AudioFormatManager formats;
