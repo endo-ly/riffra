@@ -13,8 +13,8 @@
 namespace riffra {
 namespace {
 
-/// RIFFRA_FAULT_MODE=stdoutFlood writes one oversized control line per process
-/// so the host can verify that plugin output never reaches protocol stdout.
+/// RIFFRA_FAULT_MODE=stdoutFlood writes one oversized line to the protocol
+/// channel before the first control output of the process.
 void stdoutFlood() {
     if (juce::SystemStats::getEnvironmentVariable("RIFFRA_FAULT_MODE", {}) != "stdoutFlood") return;
     static std::atomic<bool> emitted{false};
