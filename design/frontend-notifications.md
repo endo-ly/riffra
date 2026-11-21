@@ -133,15 +133,13 @@ src/
 │        ├─ WaitCard.tsx / .module.css     待機表示のカード
 │        └─ ToastStack.tsx / .module.css
 ├─ app/
-│  ├─ layout/
-│  │  ├─ NoticeBar.tsx / .module.css     通知バーの枠と、通知の並び順
-│  │  └─ WorkspaceWait.tsx / .module.css 作業領域を覆う幕と待機表示のカード
-│  ├─ runtime/
-│  │  ├─ runtime-projection.ts           再生用オーディオの状態を、読み込み・準備中・問題に読み替える純粋関数
-│  │  └─ useWorkspaceWait.ts             作業を止める状態を1つ選ぶ
-│  └─ notices/                           アプリ自体の状態の通知
+│  └─ status/                            アプリ全体の状態と、その表示
+│     ├─ NoticeBar.tsx / .module.css     通知バーの枠と、通知の並び順
+│     ├─ WorkspaceWait.tsx / .module.css 作業領域を覆う幕と待機表示のカード
+│     ├─ hooks/useWorkspaceWait.ts       作業を止める状態を1つ選ぶ
+│     ├─ model/runtime-status.ts         再生用オーディオの状態を、読み込み・準備中・問題に読み替える純粋関数
 │     ├─ SafeModeNotice.tsx
-│     ├─ BrowserPreviewNotice.tsx
+│     ├─ PreviewModeNotice.tsx
 │     ├─ UpdateNotice.tsx
 │     ├─ PlaybackNotice.tsx
 │     └─ BackgroundJobNotice.tsx
@@ -155,8 +153,8 @@ src/
 **置き場所の規則**
 
 - 見た目の部品は `shared/ui/message/` にだけ置く。機能のディレクトリに、通知・エラー・待ち用の CSS クラス（`.error`、`.warning`、`.notice`、操作を止める膜など）を作らない。
-- 表示先ごとの「枠と並び」は `app/layout/` に1つずつ置く（`NoticeBar`、`WorkspaceWait`、`ToastStack` は `AppShell` に1つ）。
-- 通知バーに出す通知は、`XxxNotice.tsx` という1つのコンポーネントにし、**その状態を持っている機能のディレクトリ**に置く。アプリ自体（起動の状態、アップデート、再生用オーディオ、バックグラウンドの処理）の状態は `app/notices/` に置く。
+- 表示先ごとの「枠と並び」は `app/status/` に1つずつ置く（`NoticeBar`、`WorkspaceWait`、`ToastStack` は `AppShell` に1つ）。
+- 通知バーに出す通知は、`XxxNotice.tsx` という1つのコンポーネントにし、**その状態を持っている機能のディレクトリ**に置く。アプリ自体（起動の状態、アップデート、再生用オーディオ、バックグラウンドの処理、preview での動作）の状態は `app/status/` に置く。
 - 並び順を決めるのは `NoticeBar` と `useWorkspaceWait` だけ。通知を足すときは NoticeBar に1行、待ちを足すときは `useWorkspaceWait` に1つ条件を足す。
 
 ### 4.2 各モジュール
@@ -267,7 +265,7 @@ export function dismissToast(id: number): void;
 - `useToasts()` を描く。各項目が自分の表示時間を管理し、ポインターが重なっているあいだは止める。
 - アンマウントで表示中のトーストを空にする。
 
-#### `app/runtime/runtime-projection.ts`
+#### `app/status/model/runtime-status.ts`
 
 再生用オーディオの状態から、次の3つを作る純粋関数を置く。
 
