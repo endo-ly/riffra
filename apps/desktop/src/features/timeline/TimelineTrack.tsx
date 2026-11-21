@@ -1,7 +1,11 @@
-import type { EditorCommit } from './hooks/useTimelineEditor';
+import type { EditorCommit } from '@/features/timeline/hooks/useTimelineEditor';
 import type { CSSProperties } from 'react';
 import type { AudioAnalysis, AudioClip, MidiClip, ProjectTimebase, Track } from '@/model/generated';
-import { trackLaneHeight, type TrackTimeline, type TrackSize } from './model/timeline-layout';
+import {
+  trackLaneHeight,
+  type TrackTimeline,
+  type TrackSize,
+} from '@/features/timeline/model/timeline-layout';
 import { resolveTrackColor } from '@/model/track-color';
 import { TrackHeader } from './TrackHeader';
 import { TrackLane } from './TrackLane';

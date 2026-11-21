@@ -1,5 +1,6 @@
 #include "Vst3InstrumentRuntime.h"
 
+#include <cmath>
 #include <utility>
 
 namespace riffra {
@@ -21,8 +22,22 @@ std::unique_ptr<Vst3InstrumentRuntime> Vst3InstrumentRuntime::create(
         return nullptr;
     }
     if (!rack->applyPersistedState(persistedState, error, observer)) return nullptr;
+    auto runtime =
+        std::unique_ptr<Vst3InstrumentRuntime>(new Vst3InstrumentRuntime(std::move(rack)));
+    if (mode == PluginProcessingMode::realtime) {
+        if (observer) observer(LoadPhase::preparing);
+        constexpr double warmUpSeconds = 2.0;
+        const auto blockCount =
+            static_cast<std::int64_t>(std::ceil(sampleRate / blockSize * warmUpSeconds));
+        juce::AudioBuffer<float> scratch(2, blockSize);
+        InstrumentProcessContext stopped;
+        stopped.transport.sampleRate = sampleRate;
+        juce::ScopedNoDenormals noDenormals;
+        for (std::int64_t block = 0; block < blockCount; ++block)
+            runtime->process(scratch.getArrayOfWritePointers(), 2, blockSize, nullptr, stopped);
+    }
     if (observer) observer(LoadPhase::deviceReady);
-    return std::unique_ptr<Vst3InstrumentRuntime>(new Vst3InstrumentRuntime(std::move(rack)));
+    return runtime;
 }
 
 std::unique_ptr<Vst3InstrumentRuntime> Vst3InstrumentRuntime::fromRack(

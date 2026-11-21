@@ -4,17 +4,18 @@ import type {
   CreativeSession,
   Track,
 } from '@/model/generated';
-import { formatGainDb, formatPan } from '@/shared/audio/mix-format';
-import { useSessionContext } from '@/shared/session/session-context';
-import { MIX_GAIN_DB, MIX_PAN } from '@/model/mix-range';
-import { useChannelMixValue } from '@/shared/session/useChannelMixValue';
-import { Icon } from '@/shared/ui/primitives';
+import { formatGainDb, formatPan } from '@/model/mix';
+import { useSessionContext } from '@/session/session-context';
+import { MIX_GAIN_DB, MIX_PAN } from '@/model/mix';
+import { useChannelMixValue } from '@/session/hooks/useChannelMixValue';
+import { Icon } from '@/shared/ui/Icon';
 import clsx from 'clsx';
 import { useCallback, useEffect, useState, type CSSProperties } from 'react';
-import { resolveTrackColor, TRACK_COLOR_PALETTE } from '@/model/track-color';
+import { resolveTrackColorById, TRACK_COLOR_PALETTE } from '@/model/track-color';
 import sharedStyles from './Inspector.module.css';
 import styles from './TrackInspector.module.css';
 import { MixValueField } from './MixValueField';
+import { InlineMessage } from '@/shared/ui/message/InlineMessage';
 
 interface TrackInspectorProps {
   track: Track;
@@ -44,8 +45,7 @@ export function TrackInspector(props: TrackInspectorProps) {
     },
     [sessionCommit],
   );
-  const trackIndex = props.session.arrangement.tracks.findIndex((t) => t.id === props.track.id);
-  const displayColor = resolveTrackColor(props.track, trackIndex);
+  const displayColor = resolveTrackColorById(props.session.arrangement.tracks, props.track.id);
   const instrumentTrack = props.track.kind === 'instrument';
   const effectCount = props.track.effects.length;
   const effectSummary =
@@ -256,9 +256,9 @@ export function TrackInspector(props: TrackInspectorProps) {
         </button>
       </section>
       {operationMessage && (
-        <p className={sharedStyles.message} role="status">
-          {operationMessage}
-        </p>
+        <div className={sharedStyles.messageSlot}>
+          <InlineMessage tone="danger">{operationMessage}</InlineMessage>
+        </div>
       )}
     </div>
   );

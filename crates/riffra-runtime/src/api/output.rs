@@ -71,6 +71,7 @@ pub enum ControlOutput {
     ProjectActivation(ProjectActivationResult),
     ProjectExport(ProjectExport),
     ScoreRebuild(ScoreRebuild),
+    ScoreExport(ScoreExport),
     ScoreValidation(ScoreValidation),
     ScoreInspection(ScoreInspection),
     MidiExport(MidiExport),

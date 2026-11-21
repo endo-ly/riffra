@@ -1,0 +1,22 @@
+.message {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-1-5) var(--space-2);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-small);
+  line-height: 1.5;
+  background: color-mix(in srgb, var(--tone) 8%, transparent);
+  border-radius: var(--radius-sm);
+}
+
+.message > svg {
+  margin-top: var(--space-0-5);
+}
+
+.body {
+  min-width: 0;
+  flex: 1;
+  overflow-wrap: anywhere;
+}

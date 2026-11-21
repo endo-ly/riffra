@@ -141,7 +141,6 @@ struct Vst3InstrumentSpec final {
 
 struct InternalInstrumentSpec final {
     juce::String id;
-    bool bypassed = false;
     juce::String definitionJson;
     juce::String definitionBaseDir;
     InstrumentMidiSpec midi;
@@ -149,49 +148,6 @@ struct InternalInstrumentSpec final {
 };
 
 using InstrumentSpec = std::variant<Vst3InstrumentSpec, InternalInstrumentSpec>;
-
-inline bool sameEffectTopology(const std::vector<PluginDeviceSpec>& left,
-                               const std::vector<PluginDeviceSpec>& right) noexcept {
-    if (left.size() != right.size()) return false;
-    for (std::size_t index = 0; index < left.size(); ++index) {
-        if (left[index].id != right[index].id || left[index].path != right[index].path)
-            return false;
-    }
-    return true;
-}
-
-inline bool sameInstrumentTopology(const std::optional<InstrumentSpec>& left,
-                                   const std::optional<InstrumentSpec>& right) noexcept {
-    if (left.has_value() != right.has_value()) return false;
-    if (!left.has_value()) return true;
-    if (left->index() != right->index()) return false;
-    if (const auto* leftVst3 = std::get_if<Vst3InstrumentSpec>(&*left)) {
-        const auto& rightVst3 = std::get<Vst3InstrumentSpec>(*right);
-        return leftVst3->id == rightVst3.id && leftVst3->path == rightVst3.path;
-    }
-    const auto& leftInternal = std::get<InternalInstrumentSpec>(*left);
-    const auto& rightInternal = std::get<InternalInstrumentSpec>(*right);
-    return leftInternal.id == rightInternal.id &&
-           leftInternal.definitionJson == rightInternal.definitionJson &&
-           leftInternal.definitionBaseDir == rightInternal.definitionBaseDir;
-}
-
-inline bool sameInstrumentRuntime(const std::optional<InstrumentSpec>& left,
-                                  const std::optional<InstrumentSpec>& right) {
-    if (left.has_value() != right.has_value()) return false;
-    if (!left.has_value()) return true;
-    if (left->index() != right->index()) return false;
-    if (const auto* leftVst3 = std::get_if<Vst3InstrumentSpec>(&*left)) {
-        const auto& rightVst3 = std::get<Vst3InstrumentSpec>(*right);
-        return leftVst3->id == rightVst3.id && leftVst3->path == rightVst3.path &&
-               leftVst3->state == rightVst3.state;
-    }
-    const auto& leftInternal = std::get<InternalInstrumentSpec>(*left);
-    const auto& rightInternal = std::get<InternalInstrumentSpec>(*right);
-    return leftInternal.id == rightInternal.id && leftInternal.bypassed == rightInternal.bypassed &&
-           leftInternal.definitionJson == rightInternal.definitionJson &&
-           leftInternal.definitionBaseDir == rightInternal.definitionBaseDir;
-}
 
 struct AudioClipSpec final {
     juce::String id;

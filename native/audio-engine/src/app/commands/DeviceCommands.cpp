@@ -1,4 +1,4 @@
-#include "../AudioCommandDispatcher.h"
+#include "app/AudioCommandDispatcher.h"
 #include "device/AudioDeviceController.h"
 
 namespace riffra {

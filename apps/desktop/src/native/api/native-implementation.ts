@@ -1,4 +1,4 @@
-import type { NativeApi } from '../native-api';
+import type { NativeApi } from '@/native/native-api';
 import { analysisApi } from './analysis';
 import { audioApi } from './audio';
 import { automationApi } from './automation';

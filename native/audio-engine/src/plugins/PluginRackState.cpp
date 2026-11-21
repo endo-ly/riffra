@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <limits>
 #include <map>
@@ -30,7 +31,8 @@ void PluginRack::queueParameterValue(const int index, const float value) noexcep
     staticStateDirty.store(true, std::memory_order_release);
     const auto normalized = juce::jlimit(0.0f, 1.0f, value);
     queue->values[offset].store(normalized, std::memory_order_release);
-    queue->dirty[offset].store(true, std::memory_order_release);
+    queue->dirtyWords[offset / ParameterQueue::kBitsPerWord].fetch_or(
+        ParameterQueue::dirtyBit(offset), std::memory_order_release);
 }
 
 void PluginRack::enqueueParameterChange(const int index, const float value) noexcept {
@@ -53,17 +55,21 @@ bool PluginRack::canQueueParameterValue(const int index, juce::String& error) co
 bool PluginRack::hasQueuedParameterChanges() const noexcept {
     auto* queue = parameterQueue.get();
     if (queue == nullptr) return false;
-    for (std::size_t index = 0; index < queue->capacity; ++index)
-        if (queue->dirty[index].load(std::memory_order_acquire)) return true;
+    for (std::size_t word = 0; word < queue->dirtyWordCount; ++word)
+        if (queue->dirtyWords[word].load(std::memory_order_acquire) != 0) return true;
     return false;
 }
 
 float PluginRack::latestParameterValue(const std::size_t offset,
                                        const juce::AudioProcessorParameter& parameter) const {
-    return parameterQueue != nullptr && offset < parameterQueue->capacity &&
-                   parameterQueue->dirty[offset].load(std::memory_order_acquire)
-               ? parameterQueue->values[offset].load(std::memory_order_acquire)
-               : parameter.getValue();
+    const auto* queue = parameterQueue.get();
+    if (queue != nullptr && offset < queue->capacity) {
+        const auto dirty = queue->dirtyWords[offset / ParameterQueue::kBitsPerWord].load(
+            std::memory_order_acquire);
+        if ((dirty & ParameterQueue::dirtyBit(offset)) != 0)
+            return queue->values[offset].load(std::memory_order_acquire);
+    }
+    return parameter.getValue();
 }
 
 bool PluginRack::hasPrograms() const noexcept {
@@ -85,19 +91,17 @@ bool PluginRack::allocateParameterQueue(const std::size_t count, juce::String& e
         }
         candidate->values =
             std::unique_ptr<std::atomic<float>[]>(new (std::nothrow) std::atomic<float>[count]);
-        candidate->dirty =
-            std::unique_ptr<std::atomic<bool>[]>(new (std::nothrow) std::atomic<bool>[count]);
+        candidate->dirtyWords = std::unique_ptr<std::atomic<ParameterQueue::DirtyWord>[]>(new (
+            std::nothrow) std::atomic<ParameterQueue::DirtyWord>[candidate->dirtyWordCount] {});
         candidate->automationPreview = std::unique_ptr<AutomationPreviewValue[]>(
             new (std::nothrow) AutomationPreviewValue[count]);
-        if (candidate->values == nullptr || candidate->dirty == nullptr ||
+        if (candidate->values == nullptr || candidate->dirtyWords == nullptr ||
             candidate->automationPreview == nullptr) {
             error = "The plugin parameter change queue could not be allocated.";
             return false;
         }
-        for (std::size_t index = 0; index < count; ++index) {
+        for (std::size_t index = 0; index < count; ++index)
             candidate->values[index].store(0.0f, std::memory_order_relaxed);
-            candidate->dirty[index].store(false, std::memory_order_relaxed);
-        }
     }
     parameterQueue = std::move(candidate);
     return true;
@@ -190,8 +194,8 @@ bool PluginRack::applyStateData(const juce::String& base64, juce::String& error)
     output.flush();
     // Restoring opaque state supersedes edits queued for the previous state.
     if (parameterQueue != nullptr) {
-        for (std::size_t index = 0; index < parameterQueue->capacity; ++index)
-            parameterQueue->dirty[index].store(false, std::memory_order_release);
+        for (std::size_t word = 0; word < parameterQueue->dirtyWordCount; ++word)
+            parameterQueue->dirtyWords[word].store(0, std::memory_order_release);
     }
     staticStateDirty.store(true, std::memory_order_release);
     plugin->setStateInformation(state.getData(), static_cast<int>(state.getSize()));
@@ -375,14 +379,21 @@ void PluginRack::applyQueuedParameterChanges() noexcept {
     auto* queue = parameterQueue.get();
     if (processor == nullptr || queue == nullptr) return;
     const auto& parameters = processor->getParameters();
-    const auto count = std::min(parameters.size(), static_cast<int>(queue->capacity));
-    for (int index = 0; index < count; ++index) {
-        if (!queue->dirty[static_cast<std::size_t>(index)].exchange(false,
-                                                                    std::memory_order_acq_rel))
-            continue;
-        if (auto* parameter = parameters[index])
-            parameter->setValueNotifyingHost(
-                queue->values[static_cast<std::size_t>(index)].load(std::memory_order_acquire));
+    const auto count = std::min(static_cast<std::size_t>(parameters.size()), queue->capacity);
+    for (std::size_t base = 0; base < count; base += ParameterQueue::kBitsPerWord) {
+        auto& dirtyWord = queue->dirtyWords[base / ParameterQueue::kBitsPerWord];
+        auto dirty = dirtyWord.load(std::memory_order_acquire);
+        while (dirty != 0) {
+            const auto index = base + static_cast<std::size_t>(std::countr_zero(dirty));
+            if (index >= count) break;
+            const auto bit = ParameterQueue::dirtyBit(index);
+            dirty &= ~bit;
+            if ((dirtyWord.fetch_and(~bit, std::memory_order_acq_rel) & bit) != 0) {
+                if (auto* parameter = parameters[static_cast<int>(index)])
+                    parameter->setValueNotifyingHost(
+                        queue->values[index].load(std::memory_order_acquire));
+            }
+        }
     }
 }
 

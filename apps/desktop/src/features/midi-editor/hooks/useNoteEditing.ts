@@ -8,12 +8,11 @@ import type {
 } from '@/model/generated';
 import { countOffGridNotes, snapClipTick, type SnapGrid } from '@/model/clip-grid';
 import { snapToBar } from '@/model/timebase';
-import { errorText } from '@/shared/errors';
 import { isEditableTypingTarget } from '@/shared/input';
-import { useSession, useSessionContext } from '@/shared/session/session-context';
-import { toast } from '@/shared/toasts';
+import { useSession, useSessionContext } from '@/session/session-context';
+import { notify } from '@/shared/notify';
 import type { ContextMenuItem } from '@/shared/ui/ContextMenu';
-import { PITCH_HIGH, PITCH_LOW, pitchFromClientY } from '../model/pitch-grid';
+import { PITCH_HIGH, PITCH_LOW, pitchFromClientY } from '@/features/midi-editor/model/pitch-grid';
 
 /** A note edit: the canonical the Host accepted, or null when it did not run. */
 export type NoteEdit = Promise<ArrangementMutationResult | null>;
@@ -241,10 +240,10 @@ export function useNoteEditing(options: NoteEditingOptions) {
     if (!clip) return;
     const offGrid = countOffGridNotes(targets, snapTicks, clip.startTick);
     if (offGrid === 0) {
-      toast(
+      notify.info(
         selectedNotes.length
-          ? 'Selected notes are already on the grid.'
-          : 'Notes are already on the grid.',
+          ? 'Selected notes are already on the grid'
+          : 'Notes are already on the grid',
       );
       return;
     }
@@ -259,13 +258,10 @@ export function useNoteEditing(options: NoteEditingOptions) {
     ).then(
       (next) => {
         if (next) {
-          toast(`Quantized ${offGrid} note${offGrid === 1 ? '' : 's'} to ${snap}.`);
+          notify.success(`Quantized ${offGrid} note${offGrid === 1 ? '' : 's'} to ${snap}`);
         }
       },
-      (error: unknown) => {
-        const detail = errorText(error);
-        toast(`Quantize failed: ${detail}`, { kind: 'error' });
-      },
+      (error: unknown) => notify.error('Quantize failed', { cause: error }),
     );
   };
 

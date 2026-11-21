@@ -1,5 +1,5 @@
-#include "../AudioCommandDispatcher.h"
-#include "midi/MidiInputService.h"
+#include "app/AudioCommandDispatcher.h"
+#include "device/MidiInputService.h"
 #include "timeline/TimelineEngine.h"
 
 namespace riffra {

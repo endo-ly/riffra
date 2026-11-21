@@ -1,5 +1,6 @@
+import type { DragEvent } from 'react';
 import type { AssetId, PluginRole } from '@/model/generated';
-import type { BrowserPlacement } from './browser-placement';
+import type { BrowserPlacement } from '@/model/placement';
 
 export const RIFFRA_ASSET_MIME = 'application/x-riffra-asset';
 export const RIFFRA_INSTRUMENT_MIME = 'application/x-riffra-instrument';
@@ -147,4 +148,38 @@ export function writeBrowserItemDrag(
         kind: placement.kind === 'audioAsset' ? 'audio' : 'midi',
       });
   }
+}
+
+/** Whether a drag carries something the Browser can place in the Arrangement. */
+export function isBrowserItemDrag(event: DragEvent): boolean {
+  const { types } = event.dataTransfer;
+  return [RIFFRA_ASSET_MIME, RIFFRA_INSTRUMENT_MIME, RIFFRA_PLUGIN_MIME].some((mime) =>
+    types.includes(mime),
+  );
+}
+
+/** Reads the Browser item carried by a drag, or explains why it cannot be placed. */
+export function readBrowserDrag(dataTransfer: DataTransfer): BrowserPlacement | string {
+  if (dataTransfer.types.includes(RIFFRA_INSTRUMENT_MIME)) {
+    const instrument = readInstrumentDrag(dataTransfer);
+    return instrument
+      ? { kind: 'instrument', instrumentId: instrument.instrumentId, name: instrument.name }
+      : 'The dragged Instrument is not valid.';
+  }
+  if (dataTransfer.types.includes(RIFFRA_PLUGIN_MIME)) {
+    const plugin = readPluginDrag(dataTransfer);
+    if (!plugin) return 'The dragged Plugin is not valid.';
+    return {
+      kind: plugin.role === 'instrument' ? 'instrumentPlugin' : 'effectPlugin',
+      pluginPath: plugin.pluginPath,
+      name: plugin.name,
+    };
+  }
+  const asset = readAssetDrag(dataTransfer);
+  if (!asset) return 'The dragged Library item is not a valid Audio or MIDI Asset.';
+  return {
+    kind: asset.kind === 'audio' ? 'audioAsset' : 'midiAsset',
+    assetId: asset.assetId,
+    name: asset.name,
+  };
 }

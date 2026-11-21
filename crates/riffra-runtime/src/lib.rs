@@ -26,7 +26,7 @@ mod recording;
 mod render;
 mod runtime;
 mod score;
-mod score_yaml_import;
+mod score_yaml;
 mod session;
 mod startup;
 #[cfg(test)]
@@ -45,10 +45,11 @@ pub use api::output::{
     ProjectSummary, ProjectionDiagnostics, RecordingFinalizationOutcome, RecordingStatus,
     RecordingStopResult, RecoveryCandidate, RuntimeProjectionState, RuntimeProjectionStatus,
     ScoreAudioClipInspection, ScoreBusInspection, ScoreChordInspection, ScoreDiagnostic,
-    ScoreDiagnosticSeverity, ScoreInspection, ScoreInstrumentInspection, ScoreInstrumentKind,
-    ScoreLaneInspection, ScoreRebuild, ScoreSectionInspection, ScoreSendInspection,
-    ScoreSidechainInspection, ScoreSummary, ScoreSyncState, ScoreSyncStatus, ScoreValidation,
-    TrackEffectSummary, TrackInstrumentSummary, TrackInstrumentSummarySource, TrackSummary,
+    ScoreDiagnosticSeverity, ScoreExport, ScoreExportOmission, ScoreInspection,
+    ScoreInstrumentInspection, ScoreInstrumentKind, ScoreLaneInspection, ScoreRebuild,
+    ScoreSectionInspection, ScoreSendInspection, ScoreSidechainInspection, ScoreSummary,
+    ScoreSyncState, ScoreSyncStatus, ScoreValidation, TrackEffectSummary, TrackInstrumentSummary,
+    TrackInstrumentSummarySource, TrackSummary,
 };
 pub use api::params::AudioDriverConfig;
 pub use audio::{

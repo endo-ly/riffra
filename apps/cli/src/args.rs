@@ -576,8 +576,11 @@ pub enum MixdownCommand {
     /// Read the current settings.
     Get,
     /// Replace settings with a JSON object or @file.
+    ///
+    /// pluginWarmUpSeconds: wall-clock VST3 processing before rendering, excluded from the WAV
+    /// (0..=60; omitted = 2). Increase for incomplete asynchronous sample loading; 0 disables it.
     Set {
-        /// Complete Mixdown settings object, inline JSON or @file.
+        /// Complete settings object from `render settings get`, edited as inline JSON or @file.
         #[arg(long)]
         settings_json: String,
     },
@@ -1793,10 +1796,14 @@ pub enum ProjectCommand {
     Create(ProjectCreateArgs),
     /// Open an existing project by id and make it active.
     Open(ProjectOpenArgs),
+    /// Permanently delete a project that is not the active project.
+    Delete(ProjectDeleteArgs),
     /// Rename the active project.
     Rename(ProjectRenameArgs),
     /// Export the active project to an output path.
     Export(ProjectExportArgs),
+    /// Write the active project as a Score YAML song folder.
+    ExportScore(ProjectExportScoreArgs),
     /// Import a project file from disk and make it active.
     Import(ProjectImportArgs),
     /// Create and activate an editable project from Score YAML.
@@ -1858,6 +1865,12 @@ pub struct ProjectOpenArgs {
 }
 
 #[derive(Debug, Args)]
+pub struct ProjectDeleteArgs {
+    /// Id of the project to delete, as reported by `project list`.
+    pub project_id: String,
+}
+
+#[derive(Debug, Args)]
 pub struct ProjectRenameArgs {
     /// New display name for the active project.
     pub name: String,
@@ -1891,6 +1904,15 @@ pub struct ProjectExportArgs {
     /// Output path for the exported project file.
     #[arg(long)]
     pub output: PathBuf,
+}
+
+#[derive(Debug, Args)]
+pub struct ProjectExportScoreArgs {
+    /// Song folder to create; it must not exist.
+    pub path: PathBuf,
+    /// Link the project to the exported Score so the YAML becomes its source of truth.
+    #[arg(long)]
+    pub link: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -2073,9 +2095,9 @@ pub struct EffectAddArgs {
 pub enum EffectCommand {
     /// Insert a VST3 effect into a Track, Bus, or Master chain.
     Add(EffectAddArgs),
-    /// Remove one effect device from a Track.
+    /// Remove one effect device from a Track, Bus, or Master chain.
     Remove(EffectRemoveArgs),
-    /// Reorder the effect devices on a Track to the supplied id order.
+    /// Reorder the effect devices on a Track, Bus, or Master chain to the supplied id order.
     Reorder(EffectReorderArgs),
 }
 
@@ -3690,6 +3712,10 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
                 project_id: args.project_id,
             })
             .into(),
+            ProjectCommand::Delete(args) => Project::ProjectDelete(ProjectDeleteParams {
+                project_id: args.project_id,
+            })
+            .into(),
             ProjectCommand::Rename(args) => {
                 Project::ProjectRename(ProjectRenameParams { name: args.name }).into()
             }
@@ -3697,6 +3723,13 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
                 output: args.output,
             })
             .into(),
+            ProjectCommand::ExportScore(args) => {
+                Project::ProjectExportScore(ProjectExportScoreParams {
+                    path: args.path,
+                    link: args.link,
+                })
+                .into()
+            }
             ProjectCommand::ImportScore(args) => {
                 let mut bindings = std::collections::BTreeMap::new();
                 for (id, path) in args.bindings {
@@ -5053,7 +5086,7 @@ mod tests {
         command.clone().debug_assert();
         assert_help(&command, "riffra");
         assert_eq!(command.get_subcommands().count(), 24);
-        assert_eq!(leaves(&command), 194);
+        assert_eq!(leaves(&command), 196);
     }
 
     #[test]

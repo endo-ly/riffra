@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef } from 'react';
 import type { ProjectTimebase } from '@/model/generated';
 import { ticksToSeconds } from '@/model/timebase';
-import { encodeNoteOff, encodeNoteOn } from '@/shared/midi';
-import { PITCH_HIGH, PITCH_LOW } from '../model/pitch-grid';
+import { encodeNoteOff, encodeNoteOn } from '@/model/midi';
+import { PITCH_HIGH, PITCH_LOW } from '@/features/midi-editor/model/pitch-grid';
 
 interface Options {
   clipId: string | undefined;

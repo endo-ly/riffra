@@ -2,6 +2,11 @@
 
 use super::*;
 
+/// Rejects operations that need a resident plugin instance for a device that
+/// is bypassed. Bypassed devices hold no instance in the audio engine.
+pub(crate) const BYPASSED_DEVICE_MESSAGE: &str =
+    "the device is bypassed, so no plugin instance is loaded; unbypass the device first";
+
 fn plugin_device_role(
     session: &riffra_core::CreativeSession,
     device_id: &str,
@@ -242,16 +247,25 @@ pub fn set_device_bypassed(
         .device(owner, device_id)
         .map_err(|error| AdapterError::command(error.to_string()))?
         .bypassed();
-    context
-        .audio
-        .set_device_bypassed(owner, device_id, bypassed)?;
+    // Turning bypass on silences the resident instance immediately through
+    // the live command; the projection then drops the device and releases its
+    // instance. Turning bypass off wakes the device through the projection
+    // alone, because a bypassed device holds no instance to unmute.
+    let native_applied = bypassed && !previous;
+    if native_applied {
+        context
+            .audio
+            .set_device_bypassed(owner, device_id, bypassed)?;
+    }
     let committed = context.commit(|mut app| app.set_device_bypassed(owner, device_id, bypassed));
     match committed {
         Ok((mutation, _)) => Ok(mutation),
         Err(error) => {
-            let _ = context
-                .audio
-                .set_device_bypassed(owner, device_id, previous);
+            if native_applied {
+                let _ = context
+                    .audio
+                    .set_device_bypassed(owner, device_id, previous);
+            }
             Err(error)
         }
     }
@@ -304,6 +318,9 @@ pub fn set_device_parameter(
             return Err(AdapterError::command(
                 "built-in instruments do not expose parameters",
             ));
+        }
+        if device.bypassed() {
+            return Err(AdapterError::command(BYPASSED_DEVICE_MESSAGE));
         }
     }
     // The device write only commits after the native graph accepted the
@@ -408,6 +425,9 @@ pub fn open_plugin_editor(
         .map_err(|error| AdapterError::command(error.to_string()))?;
     if device.plugin().is_none() {
         return Err("built-in instruments do not provide a plugin editor".into());
+    }
+    if device.bypassed() {
+        return Err(AdapterError::command(BYPASSED_DEVICE_MESSAGE));
     }
     drop(session);
     let project_id = context
@@ -642,12 +662,12 @@ mod tests {
         })
     }
 
-    fn candidate_context<'a>(
+    fn candidate_context<'a, D: RuntimeDriver>(
         root: &'a Path,
-        runtime: &'a crate::RuntimeReconciler<CandidateRuntimeDriver>,
+        runtime: &'a crate::RuntimeReconciler<D>,
         audio: &'a crate::AudioSupervisor,
         project: &'a crate::host::open_project::ProjectCell,
-    ) -> SessionContext<'a, CandidateRuntimeDriver> {
+    ) -> SessionContext<'a, D> {
         let snapshot = project.read().canonical.clone();
         let storage = project.write().project().storage.clone();
         SessionContext {
@@ -928,6 +948,50 @@ mod tests {
             assert_eq!(device.plugin.state_data.as_deref(), Some("opaque-state"));
             assert!(device.bypassed);
         }
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn bypass_on_pre_mutes_the_live_device_and_bypass_off_skips_the_live_command() {
+        // Arrange
+        let root = std::env::temp_dir().join(format!(
+            "riffra-device-bypass-adapter-{}",
+            riffra_host::now_ms()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let mut session = CreativeSession::new(1);
+        let mut track = Track::audio("track:guitar".into(), "Guitar".into());
+        let mut device = EffectDevice::new(
+            "device:amp".into(),
+            "Amp".into(),
+            r"C:\plugins\Amp.vst3".into(),
+        )
+        .unwrap();
+        device.bypassed = true;
+        track.effects.push(device);
+        session.arrangement.tracks.push(track);
+        // The offline supervisor has no live sidecar, so any live command
+        // fails; only commands that skip the live path can succeed.
+        let audio = crate::AudioSupervisor::offline("test");
+        let runtime = crate::RuntimeReconciler::new(Arc::new(audio.clone())).unwrap();
+        let core = project(&root, session);
+        let owner = riffra_core::EffectOwner::Track {
+            id: "track:guitar".to_owned(),
+        };
+
+        // Act / Assert: waking the bypassed device needs no live command.
+        let mut context = candidate_context(&root, &runtime, &audio, &core);
+        let mutation = set_device_bypassed(&mut context, &owner, "device:amp", false).unwrap();
+        assert!(!mutation.canonical.session.arrangement.tracks[0].effects[0].bypassed);
+        drop(context);
+
+        // Turning bypass on keeps the live pre-mute, which the offline
+        // supervisor cannot deliver; the canonical state stays untouched.
+        let mut context = candidate_context(&root, &runtime, &audio, &core);
+        let error = set_device_bypassed(&mut context, &owner, "device:amp", true).unwrap_err();
+        assert!(matches!(error, AdapterError::Native(_)));
+        assert!(!core.read().canonical.clone().session.arrangement.tracks[0].effects[0].bypassed);
+        drop(context);
         let _ = std::fs::remove_dir_all(root);
     }
 }

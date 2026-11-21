@@ -3,19 +3,14 @@
 #include <JuceHeader.h>
 
 #include <atomic>
-#include <chrono>
-#include <condition_variable>
 #include <istream>
 #include <memory>
-#include <mutex>
-#include <optional>
-#include <thread>
 
 #include "AudioStatusBuilder.h"
-#include "audio/AudioRenderPipeline.h"
+#include "RuntimeLifecycleExecutor.h"
 #include "contract/SidecarCommands.h"
 #include "device/AudioDeviceController.h"
-#include "plugins/RuntimeLifecycleExecutor.h"
+#include "pipeline/AudioRenderPipeline.h"
 #include "protocol/CommandResponder.h"
 #include "timeline/RealtimeCommand.h"
 
@@ -35,13 +30,6 @@ public:
         AudioDeviceController& deviceController;
         MidiInputService& midiInputs;
         RuntimeLifecycleExecutor& runtimeLifecycle;
-        std::shared_ptr<PluginEditorHost>& trackPluginEditor;
-        EffectOwnerSpec& pluginEditorOwner;
-        juce::String& trackPluginEditorDeviceId;
-        std::shared_ptr<PluginEditorHost>& auditionEditor;
-        juce::AudioBuffer<float>& comparisonRaw;
-        juce::AudioBuffer<float>& comparisonProcessed;
-        std::atomic<bool>& timelineOperationRunning;
     };
 
     explicit AudioCommandDispatcher(Context context);
@@ -53,10 +41,9 @@ public:
     /// Reads and dispatches command lines until standard input closes.
     void run(std::istream& input);
     void dispatch(const SidecarRequestSpec& request, CommandResponder responder);
-    [[nodiscard]] bool waitForBackgroundWork(std::chrono::milliseconds timeout);
-    /// Closes the auditioned plug-in's editor and destroys the plug-in.
-    /// Lifecycle thread only.
-    void closePluginAudition();
+    /// Closes the editors owned by commands and clears the timeline operation
+    /// flag. Lifecycle thread only.
+    void closeRuntimeEditors();
 
 private:
     /// Status reported by commands whose response is the full audio status.
@@ -78,10 +65,9 @@ private:
                                                  const juce::String& operation);
     [[nodiscard]] bool ensureSafeUnmute(MuteReason reason, CommandResponder& responder,
                                         const juce::String& operation);
-    [[nodiscard]] bool reserveRecordingStop(CommandResponder& responder);
-    void releaseRecordingStopReservation();
-    void queueRecordingStop(const PendingRecordingStop& pending);
-    void recordingStopWorkerLoop();
+    /// Closes the auditioned plug-in's editor and destroys the plug-in.
+    /// Lifecycle thread only.
+    void closePluginAudition();
 
     void handle(const StatusCommand&, CommandResponder responder);
     void handle(const SetEmergencyMuteCommand& command, CommandResponder responder);
@@ -123,13 +109,15 @@ private:
     void handle(const StopArrangeRecordingCommand&, CommandResponder responder);
 
     Context context;
-    std::mutex recordingStopMutex;
-    std::condition_variable recordingStopWake;
-    std::condition_variable recordingStopFinished;
-    std::optional<PendingRecordingStop> pendingRecordingStop;
-    bool recordingStopScheduled = false;
-    bool recordingStopWorkerStopping = false;
-    std::thread recordingStopWorker;
+    std::shared_ptr<PluginEditorHost> trackPluginEditor;
+    EffectOwnerSpec pluginEditorOwner;
+    juce::String trackPluginEditorDeviceId;
+    std::shared_ptr<PluginEditorHost> auditionEditor;
+    juce::AudioBuffer<float> comparisonRaw;
+    juce::AudioBuffer<float> comparisonProcessed;
+    std::atomic<bool> timelineOperationRunning{false};
+
+    friend class AudioCommandDispatcherTestPeer;
 };
 
 }  // namespace riffra

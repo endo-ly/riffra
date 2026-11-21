@@ -1,13 +1,14 @@
-import { useSession } from '@/shared/session/session-context';
-import { resolveTrackColor } from '@/model/track-color';
-import { selectTrack } from '@/shared/session/selectors';
+import { useSession } from '@/session/session-context';
+import { resolveTrackColorById } from '@/model/track-color';
 import type { CSSProperties } from 'react';
-import type { AudioStatus } from '@/model/generated';
-import { drumPadByNote } from './drum-map';
-import { MUSICAL_TYPING_MAX_OCTAVE, MUSICAL_TYPING_MIN_OCTAVE } from './musical-typing';
-import { midiNoteName } from '@/shared/midi';
-import type { LivePlay } from './useLivePlay';
-import { LIVE_PLAY_BLOCKED_REASON } from './useLivePlay';
+import { drumPadByNote } from '@/features/live-input/model/drum-map';
+import {
+  MUSICAL_TYPING_MAX_OCTAVE,
+  MUSICAL_TYPING_MIN_OCTAVE,
+} from '@/features/live-input/model/musical-typing';
+import { midiNoteName } from '@/model/midi';
+import type { LivePlay } from '@/features/live-input/hooks/useLivePlay';
+import { LIVE_PLAY_BLOCKED_REASON } from '@/features/live-input/hooks/useLivePlay';
 import {
   Toolbar,
   ToolbarButton,
@@ -18,17 +19,21 @@ import {
 import { DrumPadGrid } from './DrumPadGrid';
 import { MusicalTypingKeyboard } from './MusicalTypingKeyboard';
 import styles from './PlaySurface.module.css';
-
-interface PlaySurfaceProps {
-  play: LivePlay;
-  trackColor: string | null;
-  audio: AudioStatus;
-  onChooseInstrument: () => void;
-}
+import { InlineMessage } from '@/shared/ui/message/InlineMessage';
 
 /** The on-screen keyboard and drum pads for the Focused Instrument Track. */
-export function PlaySurface({ play, trackColor, audio, onChooseInstrument }: PlaySurfaceProps) {
+export function PlaySurface({ play }: { play: LivePlay }) {
+  const tracks = useSession((state) => state.project.boot!.canonical.session.arrangement.tracks);
+  const audio = useSession((state) => state.audio.status);
+  const setSelection = useSession((state) => state.workspace.setSelection);
+  const openDevices = useSession((state) => state.workspace.openDevices);
   const { track, settings } = play;
+  const trackColor = track ? resolveTrackColorById(tracks, track.id) : null;
+  const onChooseInstrument = () => {
+    if (!track) return;
+    setSelection({ kind: 'track', trackId: track.id });
+    openDevices();
+  };
   if (!track || play.availability === 'noTrack') {
     return <div className={styles.state}>Select an Instrument Track to play it here.</div>;
   }
@@ -147,31 +152,10 @@ export function PlaySurface({ play, trackColor, audio, onChooseInstrument }: Pla
         )}
       </div>
       {play.message && (
-        <small className={styles.message} role="status">
-          {play.message}
-        </small>
+        <div className={styles.messageSlot}>
+          <InlineMessage tone="danger">{play.message}</InlineMessage>
+        </div>
       )}
     </div>
-  );
-}
-
-export function WorkspacePlaySurface({ play }: { play: LivePlay }) {
-  const track = useSession((state) => selectTrack(state, state.workspace.focusedTrackId));
-  const tracks = useSession((state) => state.project.boot!.canonical.session.arrangement.tracks);
-  const audio = useSession((state) => state.audio.status);
-  const setSelection = useSession((state) => state.workspace.setSelection);
-  const openDevices = useSession((state) => state.workspace.openDevices);
-  return (
-    <PlaySurface
-      play={play}
-      audio={audio}
-      trackColor={track ? resolveTrackColor(track, tracks.indexOf(track)) : null}
-      onChooseInstrument={() => {
-        if (track) {
-          setSelection({ kind: 'track', trackId: track.id });
-          openDevices();
-        }
-      }}
-    />
   );
 }

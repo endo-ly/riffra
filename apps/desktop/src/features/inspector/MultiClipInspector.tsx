@@ -1,11 +1,12 @@
 import { timelineObjectEndTick } from '@/model/clip-time';
 import type { ArrangementMutationResult, CreativeSession } from '@/model/generated';
-import { useSessionContext } from '@/shared/session/session-context';
-import { Icon } from '@/shared/ui/primitives';
+import { useSessionContext } from '@/session/session-context';
+import { Icon } from '@/shared/ui/Icon';
 import clsx from 'clsx';
 import { useMemo, useState } from 'react';
 import sharedStyles from './Inspector.module.css';
 import styles from './MultiClipInspector.module.css';
+import { InlineMessage } from '@/shared/ui/message/InlineMessage';
 
 interface MultiClipInspectorProps {
   session: CreativeSession;
@@ -93,7 +94,11 @@ export function MultiClipInspector(props: MultiClipInspectorProps) {
           </button>
         </div>
       </section>
-      {message && <p className={sharedStyles.message}>{message}</p>}
+      {message && (
+        <div className={sharedStyles.messageSlot}>
+          <InlineMessage tone="danger">{message}</InlineMessage>
+        </div>
+      )}
     </div>
   );
 }

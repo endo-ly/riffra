@@ -1,6 +1,6 @@
 import type { ArrangementMutationResult, MidiInputRoute, TrackKind } from '@/model/generated';
 import type { TrackUpdateParams } from '@/model/generated';
-import { dispatchControl, dispatchLatestControl } from '../invoke';
+import { dispatchControl, dispatchLatestControl } from '@/native/invoke';
 
 export interface TrackApi {
   addTrack(name: string, kind: TrackKind): Promise<ArrangementMutationResult>;

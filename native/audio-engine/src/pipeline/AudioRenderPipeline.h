@@ -1,0 +1,145 @@
+#pragma once
+
+#include <JuceHeader.h>
+
+#include <array>
+#include <atomic>
+#include <cstdint>
+
+#include "AudioMetrics.h"
+#include "AudioSafetyDsp.h"
+#include "RecordingController.h"
+#include "preview/PluginAudition.h"
+#include "preview/PreviewEngine.h"
+
+namespace riffra {
+
+class TimelineEngine;
+
+enum class MuteReason : std::uint32_t {
+    UserEmergency = 1u << 0,
+    EngineTransition = 1u << 1,
+    DeviceFault = 1u << 2,
+    FeedbackProtection = 1u << 3,
+};
+
+/// Owns the ordered realtime render and safety processing path.
+class AudioRenderPipeline final {
+public:
+    explicit AudioRenderPipeline(TimelineEngine& timeline);
+    ~AudioRenderPipeline();
+
+    AudioRenderPipeline(const AudioRenderPipeline&) = delete;
+    AudioRenderPipeline& operator=(const AudioRenderPipeline&) = delete;
+
+    // Control-side setters update atomic state consumed by processBlock(). Muting panics an
+    // auditioned instrument. Callers that need timeline instruments silenced must request
+    // TimelineEngine::panicAllInstrumentTracks().
+    void setUserEmergencyMute(bool shouldMute) noexcept;
+    void setEngineTransitionMute(bool active) noexcept;
+    // Control side; the realtime detector applies protection on the audio owner.
+    void setFeedbackProtection(bool active) noexcept;
+    [[nodiscard]] std::uint32_t getMuteReasons() const noexcept;
+    [[nodiscard]] bool isMuted() const noexcept;
+    [[nodiscard]] bool hasMuteReason(MuteReason reason) const noexcept;
+    void setDeviceFaulted(bool faulted) noexcept;
+    [[nodiscard]] bool isDeviceFaulted() const noexcept;
+    /// Any thread. processBlock() applies the gain of each published graph.
+    void setMasterGainDb(float gainDb) noexcept;
+    void setInputChannel(int channel) noexcept;
+    [[nodiscard]] int getInputChannel() const noexcept;
+    [[nodiscard]] float getMasterGainDb() const noexcept;
+    [[nodiscard]] AudioMetrics::TransientMeterSnapshot consumeTransientMeters(
+        std::uint64_t projectEpoch) const noexcept {
+        return audioMetrics.consumeTransientMeters(projectEpoch);
+    }
+    [[nodiscard]] AudioMetrics::TransientMeterSnapshot peekTransientMeters(
+        std::uint64_t projectEpoch) const noexcept {
+        return audioMetrics.peekTransientMeters(projectEpoch);
+    }
+    [[nodiscard]] std::uint64_t projectMeterEpoch() const noexcept {
+        return audioMetrics.requestedProjectEpoch();
+    }
+    [[nodiscard]] std::uint64_t getInvalidSampleCount() const noexcept {
+        return audioMetrics.invalidSampleCount();
+    }
+    [[nodiscard]] std::uint64_t getCallbackCount() const noexcept {
+        return audioMetrics.callbackCount();
+    }
+    [[nodiscard]] CallbackWindow getCallbackWindow() const noexcept {
+        return audioMetrics.callbackWindow();
+    }
+    [[nodiscard]] std::uint64_t getCallbackOverruns() const noexcept {
+        return audioMetrics.callbackOverruns();
+    }
+    [[nodiscard]] std::uint64_t getHardClipSamples() const noexcept {
+        return audioMetrics.hardClipSamples();
+    }
+    [[nodiscard]] bool isFeedbackSuspected() const noexcept {
+        return feedbackSuspected.load(std::memory_order_acquire);
+    }
+    [[nodiscard]] bool isPreviewing() const noexcept;
+    [[nodiscard]] RecordingStatusSpec recordingStatus() const {
+        return recordingController.status();
+    }
+    [[nodiscard]] double getSampleRate() const noexcept;
+    [[nodiscard]] int getBlockSize() const noexcept;
+
+    [[nodiscard]] AudioMetrics& metrics() noexcept { return audioMetrics; }
+    [[nodiscard]] const AudioMetrics& metrics() const noexcept { return audioMetrics; }
+    [[nodiscard]] PreviewEngine& preview() noexcept { return previewEngine; }
+    [[nodiscard]] PluginAudition& audition() noexcept { return pluginAudition; }
+    [[nodiscard]] RecordingController& recording() noexcept { return recordingController; }
+
+    bool startInstrumentPreview(const juce::String& definitionJson,
+                                const juce::String& definitionBaseDir, InstrumentPreviewSpec spec,
+                                juce::String& error);
+    [[nodiscard]] bool isInstrumentPreviewing() const noexcept {
+        return previewEngine.isInstrumentPreviewing();
+    }
+
+    // Audio thread only. The processing order is the contract of the engine.
+    void processBlock(const float* const* inputChannelData, int numInputChannels,
+                      float* const* outputChannelData, int numOutputChannels, int numSamples,
+                      const juce::AudioIODeviceCallbackContext& context) noexcept;
+
+    // Device lifecycle/control side only; these methods are separate from the
+    // audio callback. They hand the timeline's realtime state to the audio
+    // thread and back.
+    void prepare(juce::AudioIODevice* device);
+    void deviceStopped();
+
+private:
+    static constexpr float kMinimumGainDb = -90.0f;
+    static constexpr float kMaximumGainDb = 0.0f;
+    static constexpr float kLimiterCeiling = 0.98f;
+    static constexpr double kFadeInSeconds = 0.05;
+
+    static std::uint32_t muteReasonBit(MuteReason reason) noexcept;
+    void setMuteReason(MuteReason reason, bool active) noexcept;
+    void silenceAndCommit(float* const* outputChannelData, int numOutputChannels, int numSamples,
+                          float rawInputPeak, std::uint64_t projectEpoch) noexcept;
+
+    TimelineEngine& timelineEngine;
+    AudioMetrics audioMetrics;
+    PreviewEngine previewEngine;
+    PluginAudition pluginAudition;
+    RecordingController recordingController;
+
+    std::atomic<std::uint32_t> muteReasons{0};
+    std::atomic<float> masterGainDb{0.0f};
+    std::atomic<int> inputChannel{0};
+    std::atomic<bool> resetGainOnNextCallback{true};
+    std::atomic<bool> feedbackSuspected{false};
+    std::atomic<double> activeSampleRate{0.0};
+    std::atomic<int> activeBlockSize{0};
+    float currentGainLinear = 0.0f;
+    float fadeStep = 0.0f;
+    DCBlocker dcBlocker;
+    FeedbackDetector feedbackDetector;
+    juce::dsp::Limiter<float> limiter;
+    std::array<float*, 64> limiterChannels{};
+    bool limiterPrepared = false;
+};
+
+}  // namespace riffra

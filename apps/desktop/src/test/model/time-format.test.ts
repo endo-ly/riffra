@@ -36,6 +36,19 @@ describe('musical time format', () => {
     expect(parseMusicalLength(length, timebase)).toBe(tick);
   });
 
+  it('keeps the tick field the same width across a beat', () => {
+    // Arrange
+    const fine: ProjectTimebase = { ...timebase, ppq: 3_840 };
+
+    // Act
+    const texts = [0, 49, 999, 1_000, 3_839].map((tick) => formatMusicalPosition(tick, fine));
+    const lengths = [49, 1_000].map((tick) => formatMusicalLength(tick, fine));
+
+    // Assert
+    expect(texts).toEqual(['1.1.0000', '1.1.0049', '1.1.0999', '1.1.1000', '1.1.3839']);
+    expect(lengths).toEqual(['0.0.0049', '0.0.1000']);
+  });
+
   it('fills omitted musical fields and rejects values outside the meter', () => {
     expect(parseMusicalPosition('5', timebase)).toBe(4 * 3_840);
     expect(parseMusicalLength('1.2', timebase)).toBe(3_840 + 2 * 960);

@@ -1,30 +1,28 @@
-import { useSession } from '@/shared/session/session-context';
-import { selectHostReady } from '@/shared/session/selectors';
+import { useSession, useSessionContext } from '@/session/session-context';
+import { selectHostReady } from '@/session/selectors';
 import { useEffect, useState } from 'react';
-import { useAppShortcuts } from '@/app/useAppShortcuts';
-import { useSessionRuntime } from '@/app/runtime/useSessionRuntime';
-import { useRuntimeProjectionToast } from '@/app/runtime/useRuntimeProjectionToast';
-import { useBrowserPlacement } from '@/app/workspace/useBrowserPlacement';
+import { useAppShortcuts } from '@/app/hooks/useAppShortcuts';
+import { useSessionRuntime } from '@/session/hooks/useSessionRuntime';
+import { usePlaceBrowserItem } from '@/features/timeline/hooks/usePlaceBrowserItem';
 import { EditorWorkspace } from '@/app/workspace/EditorWorkspace';
 import { PropertiesPanel } from '@/features/inspector/PropertiesPanel';
 import { BrowserPanel } from '@/features/library/BrowserPanel';
-import { MissingDependencies } from '@/features/project/MissingDependencies';
 import { AudioSettingsDialog } from '@/features/audio/AudioSettingsDialog';
-import { ToastStack } from '@/shared/ui/ToastStack';
-import { BootScreen } from './layout/BootScreen';
-import { GlobalControlBar } from './layout/GlobalControlBar';
-import { ProjectHostSelector } from './layout/ProjectHostSelector';
-import { ProjectBoundRegion } from './layout/ProjectBoundRegion';
-import { ShellNotices } from './layout/ShellNotices';
-import { LeftColumn } from './layout/LeftColumn';
-import { CommandPalette } from './layout/CommandPalette';
-import { useAppUpdater } from '@/app/runtime/useAppUpdater';
-import styles from './App.module.css';
+import { ToastStack } from '@/shared/ui/message/ToastStack';
+import { BootScreen } from '@/app/layout/BootScreen';
+import { GlobalControlBar } from '@/app/layout/GlobalControlBar';
+import { ProjectHostSelector } from '@/features/project/ProjectHostSelector';
+import { ProjectBoundRegion } from '@/app/layout/ProjectBoundRegion';
+import { NoticeBar } from '@/app/status/NoticeBar';
+import { WorkspaceWait } from '@/app/status/WorkspaceWait';
+import { LeftColumn } from '@/app/layout/LeftColumn';
+import { CommandPalette } from '@/app/layout/CommandPalette';
+import { useAppUpdater } from '@/app/hooks/useAppUpdater';
 import shellStyles from './AppShell.module.css';
 
 export function AppShell() {
   useSessionRuntime();
-  useRuntimeProjectionToast();
+  const { commit } = useSessionContext();
   const [audioSettingsOpen, setAudioSettingsOpen] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
   useAppShortcuts(setCommandOpen);
@@ -34,10 +32,9 @@ export function AppShell() {
   const retryBootstrap = useSession((state) => state.project.bootstrap);
   const exportProject = useSession((state) => state.project.exportPackage);
   const importProject = useSession((state) => state.project.importPackage);
-  const missingCount = useSession((state) => state.missing.items.length);
   const hostReason = useSession((state) => state.host.connection.reason);
   const hostConnected = useSession(selectHostReady);
-  const applyBrowserItem = useBrowserPlacement();
+  const { placeAtPlayhead } = usePlaceBrowserItem(commit);
   const appUpdater = useAppUpdater();
 
   useEffect(() => {
@@ -99,16 +96,10 @@ export function AppShell() {
         <AudioSettingsDialog onClose={() => setAudioSettingsOpen(false)} />
       )}
 
-      <ShellNotices appUpdater={appUpdater} />
-
-      {missingCount > 0 && (
-        <div className={!hostConnected ? styles.hostDisconnected : undefined}>
-          <MissingDependencies />
-        </div>
-      )}
+      <NoticeBar appUpdater={appUpdater} />
 
       <LeftColumn
-        browser={<BrowserPanel onApply={(placement) => void applyBrowserItem(placement)} />}
+        browser={<BrowserPanel onApply={(placement) => void placeAtPlayhead(placement)} />}
         properties={
           <ProjectBoundRegion>
             <PropertiesPanel />
@@ -121,6 +112,8 @@ export function AppShell() {
           </ProjectBoundRegion>
         </section>
       </LeftColumn>
+
+      <WorkspaceWait />
 
       {commandOpen && hostConnected && (
         <CommandPalette items={commandItems} onClose={() => setCommandOpen(false)} />

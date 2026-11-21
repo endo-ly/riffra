@@ -1,6 +1,6 @@
 import type { ArrangementMutationResult, CreativeSession } from '@/model/generated';
-import { useSessionContext } from '@/shared/session/session-context';
-import { Icon } from '@/shared/ui/primitives';
+import { useSessionContext } from '@/session/session-context';
+import { Icon } from '@/shared/ui/Icon';
 import { MenuButton } from '@/shared/ui/MenuButton';
 import { useEffect, useState, type CSSProperties } from 'react';
 import type { MidiClipPatch } from '@/model/generated';
@@ -8,6 +8,7 @@ import { resolveTrackColorById } from '@/model/track-color';
 import { ClipToggles } from './ClipToggles';
 import styles from './Inspector.module.css';
 import { MusicalTimeField } from './MusicalTimeField';
+import { InlineMessage } from '@/shared/ui/message/InlineMessage';
 
 interface MidiClipInspectorProps {
   session: CreativeSession;
@@ -214,7 +215,11 @@ export function MidiClipInspector(props: MidiClipInspectorProps) {
           </div>
         </div>
       </section>
-      {message && <p className={styles.message}>{message}</p>}
+      {message && (
+        <div className={styles.messageSlot}>
+          <InlineMessage tone="danger">{message}</InlineMessage>
+        </div>
+      )}
     </div>
   );
 }

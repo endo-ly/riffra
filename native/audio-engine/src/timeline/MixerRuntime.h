@@ -8,9 +8,9 @@
 #include <memory>
 #include <vector>
 
-#include "MixAutomation.h"
 #include "MixRouteDelay.h"
 #include "TrackRuntime.h"
+#include "automation/MixAutomation.h"
 #include "contract/ExecutionGraph.h"
 #include "plugins/PluginChain.h"
 

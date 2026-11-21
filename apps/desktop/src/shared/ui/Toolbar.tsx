@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Icon } from './primitives';
+import { Icon } from './Icon';
 import styles from './Toolbar.module.css';
 
 export function Toolbar(props: { label: string; children: ReactNode; trailing?: ReactNode }) {

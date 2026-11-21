@@ -9,7 +9,7 @@ import {
   describePlacementAction,
   resolvePlacementTarget,
   type BrowserPlacement,
-} from '@/shared/browser-placement';
+} from '@/model/placement';
 import { browserItemPlacement, type BrowserItem } from './browser-tree';
 
 export interface BrowserItemAction {

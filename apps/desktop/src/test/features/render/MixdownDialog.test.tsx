@@ -1,7 +1,7 @@
 import { createTestSessionStore, TestSessionProvider } from '@/test/support/session-provider';
 // @vitest-environment jsdom
 import type { RenderResult } from '@/model/generated';
-import { canonicalState, defaultSession } from '@/native/browser-defaults';
+import { canonicalState, defaultSession } from '@/native/preview/fixtures';
 import { toAssetId } from '@/model/asset-id';
 import { createFakeNativeApi } from '@/test/support/fake-native-api';
 import '@testing-library/jest-dom/vitest';
@@ -176,7 +176,7 @@ it.each(['measured', 'unavailable'] as const)(
       expect(screen.getByText('ffmpeg is unavailable')).toBeInTheDocument();
       expect(screen.getByText('section log is invalid')).toBeInTheDocument();
       expect(screen.getByText('1.94 dBFS')).toBeInTheDocument();
-      expect(screen.getByRole('alert')).toHaveTextContent('sample peak exceeds 0 dbfs');
+      expect(screen.getByText(/sample peak exceeds 0 dbfs/)).toBeInTheDocument();
     }
   },
 );

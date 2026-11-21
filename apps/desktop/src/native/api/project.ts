@@ -6,7 +6,7 @@ import type {
   ScoreRebuild,
 } from '@/model/generated';
 import type { SessionSettingsPatch } from '@/model/generated';
-import { dispatchControl } from '../invoke';
+import { dispatchControl } from '@/native/invoke';
 
 export interface ProjectApi {
   undoSession(): Promise<ArrangementMutationResult>;
@@ -16,6 +16,7 @@ export interface ProjectApi {
   listProjects(): Promise<ProjectState>;
   createProject(name?: string): Promise<ProjectActivationResult>;
   openProject(projectId: string): Promise<ProjectActivationResult>;
+  deleteProject(projectId: string): Promise<ProjectState>;
   renameProject(name: string): Promise<ProjectState>;
   importProject(path: string): Promise<ProjectActivationResult>;
   updateSessionSettings(patch: SessionSettingsPatch): Promise<ArrangementMutationResult>;
@@ -49,6 +50,10 @@ async function createProject(name?: string): Promise<ProjectActivationResult> {
 
 async function openProject(projectId: string): Promise<ProjectActivationResult> {
   return dispatchControl({ command: 'project.open', params: { projectId } });
+}
+
+async function deleteProject(projectId: string): Promise<ProjectState> {
+  return dispatchControl({ command: 'project.delete', params: { projectId } });
 }
 
 async function renameProject(name: string): Promise<ProjectState> {
@@ -87,6 +92,7 @@ export const projectApi: ProjectApi = {
   listProjects,
   createProject,
   openProject,
+  deleteProject,
   renameProject,
   importProject,
   updateSessionSettings,

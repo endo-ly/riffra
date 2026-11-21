@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
-import shellStyles from '../AppShell.module.css';
+import shellStyles from '@/app/AppShell.module.css';
 import styles from './BootScreen.module.css';
+import { InlineMessage } from '@/shared/ui/message/InlineMessage';
 
 interface BootScreenProps {
   selector: ReactNode;
@@ -27,7 +28,7 @@ export function BootScreen({
       {connected && error ? (
         <>
           <small>Could not load the connected Host</small>
-          <p role="alert">{error}</p>
+          <InlineMessage tone="danger">{error}</InlineMessage>
           <button type="button" disabled={loading} onClick={() => void onRetry()}>
             Retry
           </button>

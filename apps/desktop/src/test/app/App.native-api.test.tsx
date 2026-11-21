@@ -1,21 +1,21 @@
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import App from '@/app/App';
-import { createSessionStore } from '@/shared/session/store';
-import { bindSessionRuntime } from '@/shared/session/runtime';
-import { useAppUpdater } from '@/app/runtime/useAppUpdater';
+import { createSessionStore } from '@/session/store';
+import { bindSessionRuntime } from '@/session/runtime';
+import { useAppUpdater } from '@/app/hooks/useAppUpdater';
 import { TestSessionProvider } from '@/test/support/session-provider';
 import {
   createFakeNativeApi,
   type FakeNativeApi,
   fakeAudioStatus,
 } from '@/test/support/fake-native-api';
-import { defaultSession } from '@/native/browser-defaults';
-import { ToastStack } from '@/shared/ui/ToastStack';
+import { defaultSession } from '@/native/preview/fixtures';
+import { ToastStack } from '@/shared/ui/message/ToastStack';
 
 afterEach(() => {
   cleanup();
@@ -43,6 +43,55 @@ describe('App native boundary', () => {
     await waitFor(() => expect(api.emergencyMuteRequests).toEqual([true]));
     expect(api.calls.filter((call) => call === 'bootstrap')).toHaveLength(1);
     expect(screen.getByRole('button', { name: /UNMUTE/ })).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('pauses only the work area while instruments load', async () => {
+    // Arrange
+    const api = createFakeNativeApi();
+    await renderApp(api);
+    const workArea = document.querySelector('[data-app-body]');
+
+    // Act
+    act(() =>
+      api.emitRuntimeProjectionStatus({
+        ...api.runtimeProjection,
+        state: 'preparing',
+        loadProgress: {
+          operationId: 1,
+          stage: {
+            phase: 'creating',
+            ownerId: '',
+            deviceId: 'instrument-1',
+            pluginPath: 'C:\\Plugins\\Keys.vst3',
+            completedDevices: 1,
+            totalDevices: 4,
+          },
+          elapsedMs: 2000,
+          phaseElapsedMs: 1000,
+          stalled: false,
+        },
+      }),
+    );
+
+    // Assert
+    expect(await screen.findByRole('status', { name: 'Loading instruments' })).toHaveTextContent(
+      '1 / 4',
+    );
+    expect(workArea).toHaveAttribute('inert');
+    expect(screen.getByRole('button', { name: /^MUTE$/ })).toBeEnabled();
+
+    // Act
+    act(() =>
+      api.emitRuntimeProjectionStatus({
+        ...api.runtimeProjection,
+        state: 'active',
+        loadProgress: undefined,
+      }),
+    );
+
+    // Assert
+    await waitFor(() => expect(workArea).not.toHaveAttribute('inert'));
+    expect(screen.queryByRole('status', { name: 'Loading instruments' })).not.toBeInTheDocument();
   });
 
   it('shows a Bootstrap failure and returns to the app after Retry', async () => {
@@ -106,7 +155,7 @@ describe('App native boundary', () => {
 
     api.emitRuntimeRestarted(2);
 
-    await waitFor(() => expect(screen.getByText('Audio engine restarted.')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('Audio engine restarted')).toBeInTheDocument());
     expect(api.calls.filter((call) => call === 'retryRuntimeProjection')).toHaveLength(0);
     expect(api.calls.slice(0, callsBeforeRestart.length)).toEqual(callsBeforeRestart);
     stop();
@@ -236,13 +285,19 @@ describe('App native boundary', () => {
     expect(screen.getByRole('button', { name: /UNMUTE/ })).toBeInTheDocument();
   });
 
-  it('offers the checked application update and installs it on demand', async () => {
+  it('offers the checked application update again after Later and installs it on demand', async () => {
     const api = createFakeNativeApi({ responses: { checkForAppUpdate: '9.9.9' } });
 
     await renderApp(api);
 
     expect(screen.getByText(/Riffra 9\.9\.9 can be installed/)).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Update & Restart' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Later' }));
+    expect(screen.queryByText(/Riffra 9\.9\.9 can be installed/)).not.toBeInTheDocument();
+
+    await userEvent.keyboard('{Control>}k{/Control}');
+    await userEvent.click(await screen.findByText('Check for Updates'));
+    expect(await screen.findByText(/Riffra 9\.9\.9 can be installed/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Update & restart' }));
 
     await waitFor(() => expect(api.calls).toContain('installAppUpdate'));
   });
@@ -267,12 +322,10 @@ describe('App native boundary', () => {
     );
 
     await waitFor(() => expect(api.calls).toContain('checkForAppUpdate'));
-    expect(screen.queryByText(/check for updates/i)).not.toBeInTheDocument();
+    expect(screen.queryByText('Update check failed')).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: 'Check now' }));
 
-    await waitFor(() =>
-      expect(screen.getByText(/Could not check for updates/)).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByText('Update check failed')).toBeInTheDocument());
   });
 });

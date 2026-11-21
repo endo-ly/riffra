@@ -1,0 +1,78 @@
+.stack {
+  position: fixed;
+  z-index: var(--z-toast);
+  right: var(--space-3);
+  bottom: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: min(300px, calc(100vw - 2 * var(--space-3)));
+  pointer-events: none;
+}
+
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2-5);
+  padding: var(--space-2-5) var(--space-2-5) var(--space-2-5) var(--space-3);
+  font-size: var(--font-size-emphasis);
+  line-height: 1.45;
+  background: var(--color-bg-surface-raised);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-toast);
+  pointer-events: auto;
+  animation: toast-in var(--duration-slow) ease-out;
+}
+
+.toast > svg {
+  margin-top: var(--space-0-5);
+}
+
+.body {
+  min-width: 0;
+  flex: 1;
+  display: grid;
+  overflow-wrap: anywhere;
+}
+
+.title {
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+.message {
+  color: var(--color-text-secondary);
+}
+
+.cause {
+  margin-top: var(--space-0-5);
+  color: var(--color-text-muted);
+  font: var(--font-size-small) / 1.5 var(--font-family-mono);
+}
+
+.dismiss {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-title);
+  line-height: 1;
+  background: transparent;
+  border-radius: var(--radius-sm);
+}
+
+.dismiss:hover {
+  color: var(--color-text-primary);
+  background: var(--color-bg-hover);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes toast-in {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+  }
+}

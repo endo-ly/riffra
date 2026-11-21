@@ -7,14 +7,15 @@ import type {
   EffectOwner,
   ProjectTimebase,
 } from '@/model/generated';
-import { Icon } from '@/shared/ui/primitives';
+import { Icon } from '@/shared/ui/Icon';
 import controls from '@/shared/ui/controls.module.css';
-import { useSession, useSessionContext } from '@/shared/session/session-context';
-import { useDeviceDetails } from './useDeviceDetails';
+import { useSession, useSessionContext } from '@/session/session-context';
+import { useDeviceDetails } from '@/features/devices/hooks/useDeviceDetails';
 import { DeviceSidechainEditor } from './DeviceSidechainEditor';
 import { automationValueAt } from '@/model/automation';
-import { useAutomationValueDisplay } from '@/shared/useAutomationValueDisplay';
+import { useAutomationValueDisplay } from '@/shared/hooks/useAutomationValueDisplay';
 import styles from './Devices.module.css';
+import { InlineMessage } from '@/shared/ui/message/InlineMessage';
 
 interface DeviceParameterEditorProps {
   owner: EffectOwner;
@@ -227,13 +228,11 @@ export function DeviceParameterEditor(props: DeviceParameterEditorProps) {
         </p>
       )}
       {automationReadActive && (
-        <p className={styles.notice}>Automation Read · stop playback to edit device state.</p>
+        <InlineMessage tone="info">
+          Automation Read is active. Stop playback to edit device state.
+        </InlineMessage>
       )}
-      {error && (
-        <p className={styles.error} role="alert">
-          {error}
-        </p>
-      )}
+      {error && <InlineMessage tone="danger">{error}</InlineMessage>}
       {details && (
         <>
           <header className={styles.detailsHeader}>

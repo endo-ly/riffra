@@ -13,25 +13,45 @@ public:
     explicit Worker(TrackProcessingPool& pool) : Thread("Riffra track processing"), owner(pool) {}
 
     void run() override {
-        std::uint64_t lastGeneration = 0;
         for (;;) {
-            owner.wake.acquire();
-            if (owner.stopping.load(std::memory_order_acquire)) return;
-            const auto current = owner.generation.load(std::memory_order_acquire);
-            if (current != lastGeneration) {
-                juce::ScopedNoDenormals noDenormals;
+            state.wait(State::idle, std::memory_order_relaxed);
+            auto expected = State::ready;
+            if (state.compare_exchange_strong(expected, State::running,
+                                              std::memory_order_acquire)) {
                 owner.processAvailableTracks();
-                lastGeneration = current;
+                state.store(State::idle, std::memory_order_release);
+            } else if (expected == State::stopping) {
+                return;
             }
-            // Each wake token is acknowledged, even if this worker already
-            // consumed another token for the same generation. No job state is
-            // accessed after acknowledgement.
-            owner.pendingWorkers.fetch_sub(1, std::memory_order_acq_rel);
         }
     }
 
+    void offerWork() noexcept {
+        state.store(State::ready, std::memory_order_release);
+        state.notify_one();
+    }
+
+    void retractOffer() noexcept {
+        auto expected = State::ready;
+        state.compare_exchange_strong(expected, State::idle, std::memory_order_relaxed);
+    }
+
+    void finishStage() noexcept {
+        std::size_t spins = 0;
+        while (state.load(std::memory_order_acquire) == State::running) {
+            if (++spins % 64 == 0) std::this_thread::yield();
+        }
+    }
+
+    void requestStop() noexcept {
+        state.store(State::stopping, std::memory_order_release);
+        state.notify_one();
+    }
+
 private:
+    enum class State { idle, ready, running, stopping };
     TrackProcessingPool& owner;
+    std::atomic<State> state{State::idle};
 };
 
 TrackProcessingPool::TrackProcessingPool(const int workerCount) {
@@ -44,36 +64,35 @@ TrackProcessingPool::TrackProcessingPool(const int workerCount) {
             workers.push_back(std::move(worker));
         }
     } catch (...) {
-        stopping.store(true, std::memory_order_release);
-        wake.release(static_cast<int>(workers.size()));
+        for (auto& worker : workers) worker->requestStop();
         for (auto& worker : workers) worker->waitForThreadToExit(-1);
         throw;
     }
 }
 
 TrackProcessingPool::~TrackProcessingPool() {
-    stopping.store(true, std::memory_order_release);
-    wake.release(static_cast<int>(workers.size()));
+    for (auto& worker : workers) worker->requestStop();
     for (auto& worker : workers) worker->waitForThreadToExit(-1);
 }
 
 void TrackProcessingPool::processAvailableTracks() noexcept {
+    juce::ScopedNoDenormals noDenormals;
     const auto currentTracks = tracks;
+    const auto currentChannels = channels;
     const auto currentJob = job;
+    const auto count = currentChannels.empty() ? currentTracks.size() : currentChannels.size();
     for (;;) {
         const auto index = nextTrack.fetch_add(1, std::memory_order_relaxed);
-        const auto count = channels.empty() ? currentTracks.size() : channels.size();
         if (index >= count) return;
-        if (channels.empty())
+        if (currentChannels.empty())
             processTrackStage(*currentTracks[index], currentJob);
         else {
-            auto& channel = *channels[index];
+            auto& channel = *currentChannels[index];
             const auto position = currentJob.graph->transportAt(
                 currentJob.rangeStart - channel.inputLatency, currentJob.playing);
             channel.process(currentJob.sampleCount, currentJob.rangeStart, currentJob.playing,
                             &position);
         }
-        completedTracks.fetch_add(1, std::memory_order_acq_rel);
     }
 }
 
@@ -100,20 +119,13 @@ void TrackProcessingPool::runMixer(const std::span<MixerChannel* const> currentC
 }
 
 void TrackProcessingPool::execute(const std::size_t count) noexcept {
+    const auto workerCount = std::min(workers.size(), count - 1);
     nextTrack.store(0, std::memory_order_relaxed);
-    completedTracks.store(0, std::memory_order_relaxed);
-    pendingWorkers.store(static_cast<int>(workers.size()), std::memory_order_relaxed);
-    generation.fetch_add(1, std::memory_order_release);
-    wake.release(static_cast<int>(workers.size()));
-    {
-        juce::ScopedNoDenormals noDenormals;
-        processAvailableTracks();
-    }
-    std::size_t spins = 0;
-    while (completedTracks.load(std::memory_order_acquire) != count ||
-           pendingWorkers.load(std::memory_order_acquire) != 0) {
-        if (++spins % 64 == 0) std::this_thread::yield();
-    }
+    for (std::size_t index = 0; index < workerCount; ++index) workers[index]->offerWork();
+    processAvailableTracks();
+    // The queue is drained. Only workers that claimed an offer may still access the stage.
+    for (std::size_t index = 0; index < workerCount; ++index) workers[index]->retractOffer();
+    for (std::size_t index = 0; index < workerCount; ++index) workers[index]->finishStage();
 }
 
 void processTrackStage(Track& track, const TrackStageJob& job) noexcept {

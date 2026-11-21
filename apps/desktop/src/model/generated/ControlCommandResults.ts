@@ -131,12 +131,14 @@ export type ControlCommandResults = {
   'project.list': OutputValue<'projectState'>;
   'project.create': OutputValue<'projectActivation'>;
   'project.open': OutputValue<'projectActivation'>;
+  'project.delete': OutputValue<'projectState'>;
   'project.rename': OutputValue<'projectState'>;
   'project.import': OutputValue<'projectActivation'>;
   'project.import-score': OutputValue<'projectActivation'>;
   'project.rebuild-score': OutputValue<'scoreRebuild'>;
   'music.export-midi': OutputValue<'midiExport'>;
   'project.export': OutputValue<'projectExport'>;
+  'project.export-score': OutputValue<'scoreExport'>;
   'host.status': OutputValue<'hostStatus'>;
   'host.info': OutputValue<'hostInfo'>;
   'host.bootstrap': OutputValue<'hostBootstrap'>;

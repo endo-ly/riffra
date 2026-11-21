@@ -1,7 +1,7 @@
 #pragma once
 #include <JuceHeader.h>
 
-#include "AutomationRuntime.h"
+#include "automation/AutomationRuntime.h"
 namespace riffra {
 /// Prepared stereo delay used on every edge entering a mixing junction.
 class MixRouteDelay final {

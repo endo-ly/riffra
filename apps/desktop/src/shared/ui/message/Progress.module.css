@@ -1,0 +1,28 @@
+.progress {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.track {
+  min-width: 40px;
+  height: 3px;
+  flex: 1;
+  overflow: hidden;
+  background: var(--color-border-default);
+  border-radius: var(--radius-pill);
+}
+
+.track i {
+  display: block;
+  height: 100%;
+  background: var(--color-accent);
+  transition: width var(--duration-slow) ease-out;
+}
+
+.count {
+  flex: none;
+  color: var(--color-text-secondary);
+  font: var(--font-size-small) var(--font-family-mono);
+}

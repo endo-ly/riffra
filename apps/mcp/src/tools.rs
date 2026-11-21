@@ -101,7 +101,7 @@ pub(crate) const TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "project",
-        description: "List, create, open, rename, or export Riffra Projects, or import a `.riffra` package or a Score YAML file as a new Project. Open switches the Host's active Project; rebuild_score reapplies the active Project's linked Score file and its library, state, and audio dependencies to the same Project.",
+        description: "List, create, open, rename, or export Riffra Projects, or import a `.riffra` package or a Score YAML file as a new Project. Open switches the Host's active Project; rebuild_score reapplies the active Project's linked Score file and its library, state, and audio dependencies to the same Project; export_score writes the active Project as a Score YAML song folder and can link the Project to it.",
         actions: &[
             action("list", "project.list"),
             action("create", "project.create"),
@@ -111,6 +111,7 @@ pub(crate) const TOOLS: &[ToolDef] = &[
             action("import_score", "project.import-score"),
             action("rebuild_score", "project.rebuild-score"),
             action("export", "project.export"),
+            action("export_score", "project.export-score"),
         ],
         read_only: false,
         destructive: false,
@@ -119,6 +120,13 @@ pub(crate) const TOOLS: &[ToolDef] = &[
         name: "project_restore",
         description: "Restore one saved generation of the active Project.",
         actions: &[direct("project.restore-generation")],
+        read_only: false,
+        destructive: true,
+    },
+    ToolDef {
+        name: "project_delete",
+        description: "Permanently delete a Project that is not the active Project, including its saved generations. Recordings, renders, and imported Assets in the DataRoot are kept.",
+        actions: &[direct("project.delete")],
         read_only: false,
         destructive: true,
     },
@@ -606,7 +614,7 @@ pub(crate) const TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "render_settings",
-        description: "Read or update the active Project's render settings.",
+        description: "Read or replace the active Project's render settings. set takes the complete MixdownSettings object from get.",
         actions: &[
             action("get", "render.settings.get"),
             action("set", "render.settings.set"),
@@ -1113,6 +1121,7 @@ mod tests {
             "host_shutdown",
             "project",
             "project_restore",
+            "project_delete",
             "score",
             "session_read",
             "session_edit",
@@ -1166,11 +1175,11 @@ mod tests {
         // Assert
         assert_eq!(names, expected);
         let actions: Vec<_> = TOOLS.iter().flat_map(|tool| tool.actions.iter()).collect();
-        assert_eq!(actions.len(), 224);
+        assert_eq!(actions.len(), 226);
         let commands: std::collections::HashSet<_> =
             actions.iter().map(|action| action.command).collect();
-        assert_eq!(commands.len(), 223);
-        assert_eq!(command_names().len(), 227);
+        assert_eq!(commands.len(), 225);
+        assert_eq!(command_names().len(), 229);
         let public_commands: std::collections::HashSet<_> =
             command_names().iter().copied().collect();
         let mut unused = public_commands
@@ -1213,6 +1222,7 @@ mod tests {
         let expected = [
             "host_shutdown",
             "project_restore",
+            "project_delete",
             "session_edit",
             "history",
             "track",

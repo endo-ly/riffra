@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { defaultSession } from '@/native/browser-defaults';
+import { defaultSession } from '@/native/preview/fixtures';
 import '@testing-library/jest-dom/vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useState } from 'react';

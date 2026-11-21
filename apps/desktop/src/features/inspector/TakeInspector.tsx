@@ -6,14 +6,19 @@ import type {
   RecordingTakeRecord,
 } from '@/model/generated';
 import { errorText } from '@/shared/errors';
-import { useSession, useSessionContext, useSessionStore } from '@/shared/session/session-context';
-import { Icon } from '@/shared/ui/primitives';
+import { useSession, useSessionContext, useSessionStore } from '@/session/session-context';
+import { Icon } from '@/shared/ui/Icon';
 import clsx from 'clsx';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import sharedStyles from './Inspector.module.css';
 import styles from './TakeInspector.module.css';
-
-type RecordingSession = CreativeSession['arrangement']['recordingSessions'][number];
+import { InlineMessage } from '@/shared/ui/message/InlineMessage';
+import {
+  compareRecordingSessions,
+  compareTakes,
+  defaultVariantForTake,
+  sourceForVariant,
+} from '@/features/inspector/model/takes';
 
 interface AuditionState {
   takeId: string;
@@ -26,59 +31,6 @@ interface TakeInspectorProps {
   recordingActive: boolean;
   recordingCommandPending: boolean;
   onRecordAnotherTake: (recordingSessionId: string) => void | Promise<void>;
-}
-
-function passOrdinal(session: RecordingSession, arrangement: CreativeSession['arrangement']) {
-  return session.passIds.reduce((latest, passId) => {
-    const pass = arrangement.recordingPasses.find((item) => item.id === passId);
-    return Math.max(latest, pass?.ordinal ?? -1);
-  }, -1);
-}
-
-function compareRecordingSessions(
-  first: RecordingSession,
-  second: RecordingSession,
-  arrangement: CreativeSession['arrangement'],
-) {
-  return (
-    passOrdinal(first, arrangement) - passOrdinal(second, arrangement) ||
-    first.startTick - second.startTick ||
-    first.id.localeCompare(second.id)
-  );
-}
-
-function compareTakes(
-  first: RecordingTakeRecord,
-  second: RecordingTakeRecord,
-  arrangement: CreativeSession['arrangement'],
-) {
-  const firstPass = arrangement.recordingPasses.find((pass) => pass.id === first.passId);
-  const secondPass = arrangement.recordingPasses.find((pass) => pass.id === second.passId);
-  return (
-    (firstPass?.ordinal ?? -1) - (secondPass?.ordinal ?? -1) ||
-    first.startTick - second.startTick ||
-    first.id.localeCompare(second.id)
-  );
-}
-
-function sourceForVariant(take: RecordingTakeRecord, variant: AudioTakeVariant) {
-  return variant === 'raw'
-    ? (take.rawAudio ?? take.processedAudio)
-    : (take.processedAudio ?? take.rawAudio);
-}
-
-function defaultVariantForTake(
-  arrangement: CreativeSession['arrangement'],
-  take: RecordingTakeRecord,
-  selectedClipIds: string[],
-): AudioTakeVariant {
-  const selectedClip = arrangement.audioClips.find(
-    (clip) => selectedClipIds.includes(clip.id) && clip.recordingTakeId === take.id,
-  );
-  const relatedClip =
-    selectedClip ?? arrangement.audioClips.find((clip) => clip.recordingTakeId === take.id);
-  if (relatedClip) return relatedClip.takeVariant;
-  return take.processedAudio ? 'processed' : 'raw';
 }
 
 export function TakeInspector(props: TakeInspectorProps) {
@@ -388,9 +340,9 @@ export function TakeInspector(props: TakeInspectorProps) {
         );
       })}
       {operationMessage && (
-        <p className={sharedStyles.message} role="status">
-          {operationMessage}
-        </p>
+        <div className={sharedStyles.messageSlot}>
+          <InlineMessage tone="danger">{operationMessage}</InlineMessage>
+        </div>
       )}
     </section>
   );

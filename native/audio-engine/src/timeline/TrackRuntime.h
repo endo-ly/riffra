@@ -10,10 +10,10 @@
 #include <utility>
 #include <vector>
 
-#include "AutomationRuntime.h"
 #include "MidiNoteTransform.h"
 #include "MidiScheduler.h"
 #include "MixRouteDelay.h"
+#include "automation/AutomationRuntime.h"
 #include "instruments/InstrumentRuntime.h"
 #include "plugins/PluginChain.h"
 #include "recording/RecordingCaptureRuntime.h"

@@ -1,19 +1,12 @@
 import type { EditorCommit } from './useTimelineEditor';
 import { useCallback, type DragEvent } from 'react';
 import type { TrackKind } from '@/model/generated';
-import {
-  RIFFRA_ASSET_MIME,
-  RIFFRA_INSTRUMENT_MIME,
-  RIFFRA_PLUGIN_MIME,
-  readAssetDrag,
-  readInstrumentDrag,
-  readPluginDrag,
-} from '@/shared/browser-drag';
+import { readBrowserDrag } from '@/shared/browser-drag';
 import { TRACK_HEADER_WIDTH } from '@/features/timeline/model/timeline-layout';
-import { placeBrowserItem } from '@/features/timeline/place-browser-item';
-import { resolvePlacementTarget, type BrowserPlacement } from '@/shared/browser-placement';
-import { useSessionContext } from '@/shared/session/session-context';
-import { showToast } from '@/shared/toasts';
+import { resolvePlacementTarget } from '@/model/placement';
+import { usePlaceBrowserItem } from './usePlaceBrowserItem';
+import { useSessionContext } from '@/session/session-context';
+import { notify } from '@/shared/notify';
 
 type TimelineSnapTick = (raw: number, temporaryOff?: boolean) => number;
 
@@ -25,48 +18,15 @@ interface UseTimelineDropOptions {
 
 const isOsFileDrag = (event: DragEvent) => event.dataTransfer.types.includes('Files');
 
-/** Whether a drag carries something the Browser can place in the Arrangement. */
-export function isBrowserItemDrag(event: DragEvent): boolean {
-  const { types } = event.dataTransfer;
-  return [RIFFRA_ASSET_MIME, RIFFRA_INSTRUMENT_MIME, RIFFRA_PLUGIN_MIME].some((mime) =>
-    types.includes(mime),
-  );
-}
-
-/** Reads the Browser item carried by a drag, or explains why it cannot be placed. */
-function readBrowserDrag(dataTransfer: DataTransfer): BrowserPlacement | string {
-  if (dataTransfer.types.includes(RIFFRA_INSTRUMENT_MIME)) {
-    const instrument = readInstrumentDrag(dataTransfer);
-    return instrument
-      ? { kind: 'instrument', instrumentId: instrument.instrumentId, name: instrument.name }
-      : 'The dragged Instrument is not valid.';
-  }
-  if (dataTransfer.types.includes(RIFFRA_PLUGIN_MIME)) {
-    const plugin = readPluginDrag(dataTransfer);
-    if (!plugin) return 'The dragged Plugin is not valid.';
-    return {
-      kind: plugin.role === 'instrument' ? 'instrumentPlugin' : 'effectPlugin',
-      pluginPath: plugin.pluginPath,
-      name: plugin.name,
-    };
-  }
-  const asset = readAssetDrag(dataTransfer);
-  if (!asset) return 'The dragged Library item is not a valid Audio or MIDI Asset.';
-  return {
-    kind: asset.kind === 'audio' ? 'audioAsset' : 'midiAsset',
-    assetId: asset.assetId,
-    name: asset.name,
-  };
-}
-
 /** Coordinates Browser item and OS MIDI-file drops in the Arrange workspace. */
 export function useTimelineDrop({ commit, pixelsPerTick, snapTick }: UseTimelineDropOptions) {
   const { api } = useSessionContext();
+  const { place } = usePlaceBrowserItem(commit);
   const handleBrowserDrop = useCallback(
     async (event: DragEvent, trackId?: string, trackKind?: TrackKind): Promise<void> => {
       const placement = readBrowserDrag(event.dataTransfer);
       if (typeof placement === 'string') {
-        showToast('timeline', placement, { kind: 'error' });
+        notify.info(placement);
         return;
       }
       const target = resolvePlacementTarget(
@@ -75,7 +35,7 @@ export function useTimelineDrop({ commit, pixelsPerTick, snapTick }: UseTimeline
         true,
       );
       if (target.kind === 'invalid') {
-        showToast('timeline', target.reason, { kind: 'error' });
+        notify.info(target.reason);
         return;
       }
       const timeline = event.currentTarget.closest('[data-arrange-timeline]');
@@ -85,17 +45,15 @@ export function useTimelineDrop({ commit, pixelsPerTick, snapTick }: UseTimeline
         (event.clientX - bounds.left - TRACK_HEADER_WIDTH) / pixelsPerTick,
         event.altKey,
       );
-      await placeBrowserItem(api, commit, placement, target, tick);
+      await place(placement, target, tick);
     },
-    [api, commit, pixelsPerTick, snapTick],
+    [place, pixelsPerTick, snapTick],
   );
 
   const handleOsMidiDrop = useCallback(
     async (files: FileList, trackId?: string, trackKind?: TrackKind): Promise<void> => {
       if (trackKind === 'audio') {
-        showToast('timeline', 'MIDI can only be placed on an Instrument Track.', {
-          kind: 'error',
-        });
+        notify.info('MIDI clips go on instrument tracks');
         return;
       }
       for (const file of Array.from(files)) {

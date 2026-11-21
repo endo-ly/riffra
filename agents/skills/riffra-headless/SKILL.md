@@ -175,10 +175,13 @@ paramsキーはCLIフラグ名と対応する(`--notes-json` → `notes`、`--fi
 
 ### Score YAML を正本にする
 
+Score にリンクしていない Project の中身を読むときは、まず `project export-score` で曲フォルダへ書き出す。そのまま YAML で作業を続けるなら `--link` を付けて、書き出した YAML を正本にする。
+
 Score YAML から Project を作ると、Project はそのファイルへリンクされ、YAML が曲の編集正本になる。YAML を直したら `project rebuild-score` で同じ Project を更新する。Live Host では保存を検知して自動で更新される。
 
 - `project import-score <path>`: YAML を新しい Project として読み込み、リンクする。`--bind ID=DEFINITION` で外部楽器の Definition を結び付ける
 - `project rebuild-score [--path PATH] [--bind ID=DEFINITION]`: アクティブな Project をリンク先の YAML で更新する。`--path` を省略するとリンク先を読む
+- `project export-score <path> [--link]`: アクティブな Project を Score の曲フォルダとして書き出す。`--link` を付けると書き出した YAML を Project の正本にする。リンク済みの Project と、表現できない内容が1件でもある Project はリンクしない。表現できない内容は書き出さずに `omissions` として返す
 - `score validate <path>`: Project を作らずに文法・参照・音源・ミックス・オートメーション・音声を診断する。`--bind` を受け取る
 - `score inspect <path>`: Project を作らずに展開結果(トラック・キット・エフェクト・ルーティング・オートメーション・音声クリップ)を来源位置つきで確認する。`--bind` を受け取る
 
@@ -186,7 +189,7 @@ Score は内蔵音源だけでなく、VST3 の `source`、キット、エフェ
 
 リンクされた Project では、YAML が所有する部分(時間軸・Score 由来の構成・演奏・和声・ミックス構造など)は編集対象外で、作業状態(ループ・パンチ・ミュート・ソロ・armed・monitoring など)だけを変更できる。YAML に未実装の拡張を書いた場合は、項目パスと行・列を持つ `notImplemented` 診断で拒否される。書式と未実装の一覧は [docs/score-yaml.md](../../../docs/score-yaml.md) を参照する。
 
-`.riffra` へ書き出すとリンクは無効になり、持ち出し先では `project rebuild-score --path ... --bind ...` で結び直す。失敗した同期は直前の状態を維持する。
+`.riffra` へ書き出すとリンクは無効になり、持ち出し先では `project rebuild-score --path ... --bind ...` で結び直す。失敗した同期は直前の状態を維持する。Score にリンクしていない Project は `project export-score` で曲フォルダへ書き出せる。
 
 ### Track・Clip・Region
 
@@ -252,7 +255,7 @@ Effectの候補は `plugin catalog list` で確認し、`effect add` でEffect C
 
 `--plugin-id` は現在のDataRootのCatalogにあるValidated・Role一致のPluginへ解決され、解決後のパスがProjectへ保存される。IDはインストールパスに依存するため、別PCへ持ち運べる識別子ではない。Standaloneではパスだけを登録し、実体のロードはRuntimeが行う。
 
-`device inspect`、`device parameter list/get/set`、`plugin state save/load/inspect/read/patch`、`plugin preset` は実体のPluginを扱うため Live Host 専用である。Built-in instrumentはparameter・state・preset・editorをサポートしない。
+`device inspect`、`device parameter list/get/set`、`plugin state save/load/inspect/read/patch`、`plugin preset` は実体のPluginを扱うため Live Host 専用である。Built-in instrumentはparameter・state・preset・editorをサポートしない。Bypass中のDeviceはインスタンスを持たないため、これらのコマンドの対象にならない（`plugin state import` だけは正準状態へ直接書き込み、Bypassを維持する）。解除すると次の投影でインスタンスが復帰する。
 
 JUCE製PluginのStateは、ファイルを受け渡さず構造を指定して読み書きできる。`inspect` で構造と値の種類を確認し、`read` で1つの値を取り出し、`patch` で指定箇所だけを変更する。
 
@@ -410,7 +413,7 @@ ScoreにリンクしたProjectでは `measurements.scoreSections` も返る。`n
 
 ```powershell
 riffra --attach analysis measure --file measurements.json
-riffra --attach job wait --id job:analysis-measure:0 --timeout-ms 120000
+riffra --attach job wait --id job:analysis-measure:0
 ```
 
 待機には開始応答のJob IDを使い、結果の `sources` のパス・Track情報を比較対象と照合する。区間True Peakの位置はWAV先頭からの秒数である。帯域値・測定状態の読み方はRenderと共通である。

@@ -2,6 +2,8 @@ import { useEffect } from 'react';
 import type { Arrangement, ProjectTimebase } from '@/model/generated';
 import { clipExtentTicks } from '@/features/timeline/model/timeline-layout';
 import { isEditableTypingTarget } from '@/shared/input';
+import { useSessionStore } from '@/session/session-context';
+import { selectWorkspaceWaiting } from '@/session/selectors';
 
 interface TimelineShortcutOptions {
   /** Ruler keys: range and marker handling. */
@@ -19,9 +21,11 @@ export function useTimelineShortcuts(options: TimelineShortcutOptions) {
   const { handleRulerKeyboard, handleEditorKeyboard, timeSelection, arrangement, timebase } =
     options;
   const { zoomToRange } = options;
+  const store = useSessionStore();
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (selectWorkspaceWaiting(store.getState())) return;
       if (handleRulerKeyboard(event) || event.defaultPrevented) return;
       if (handleEditorKeyboard(event) || event.defaultPrevented) return;
       if (event.key.toLowerCase() === 'z' && !event.ctrlKey && !event.altKey && !event.metaKey) {
@@ -44,6 +48,7 @@ export function useTimelineShortcuts(options: TimelineShortcutOptions) {
     arrangement,
     handleEditorKeyboard,
     handleRulerKeyboard,
+    store,
     timebase,
     timeSelection,
     zoomToRange,

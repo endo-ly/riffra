@@ -6,11 +6,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ArrangementMutationResult, CreativeSession } from '@/model/generated';
 import { TRACK_COLOR_PALETTE } from '@/model/track-color';
 import type { MidiClip } from '@/model/generated';
-import { canonicalState, defaultSession } from '@/native/browser-defaults';
+import { canonicalState, defaultSession } from '@/native/preview/fixtures';
 import { MidiEditorPanel } from '@/features/midi-editor/MidiEditorPanel';
 import type { NoteLane } from '@/features/midi-editor/NoteLane';
 import { createFakeNativeApi, type FakeNativeApi } from '@/test/support/fake-native-api';
-import { renderWithSession } from '@/test/support/session-provider';
+import { createTestSessionStore, renderWithSession } from '@/test/support/session-provider';
 import { renderWorkspace } from '@/test/support/workspace';
 
 const noteLaneRenders = vi.hoisted(() => ({ count: 0 }));
@@ -26,10 +26,10 @@ vi.mock('@/features/midi-editor/NoteLane', async (importOriginal) => {
 
 afterEach(cleanup);
 
-function setup(startTick: number, lyric?: string) {
-  const clip: MidiClip = {
+function midiClip(id: string, startTick: number, lyric?: string): MidiClip {
+  return {
     instrumentControlEvents: [],
-    id: 'clip:1',
+    id,
     name: 'Clip',
     trackId: 'track:1',
     startTick,
@@ -49,6 +49,10 @@ function setup(startTick: number, lyric?: string) {
     muted: false,
     loopEnabled: false,
   };
+}
+
+function setup(startTick: number, lyric?: string, additionalClipIds: string[] = []) {
+  const clip = midiClip('clip:1', startTick, lyric);
   const session = defaultSession();
   session.arrangement.tracks.push({
     id: 'track:1',
@@ -65,7 +69,7 @@ function setup(startTick: number, lyric?: string) {
     midiInput: {},
     effects: [],
   });
-  session.arrangement.midiClips = [clip];
+  session.arrangement.midiClips = [clip, ...additionalClipIds.map((id) => midiClip(id, startTick))];
   const api = createFakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
   api.setResponse('getInstrumentMidiSettings', null);
   const addMidiNote = vi.fn(api.addMidiNote);
@@ -76,16 +80,16 @@ function setup(startTick: number, lyric?: string) {
   api.updateMidiNote = updateMidiNote;
   api.updateMidiNotes = updateMidiNotes;
   api.insertMidiNotes = insertMidiNotes;
-  const { store, rerender } = renderWithSession(<MidiEditorPanel clip={clip} trackColor={null} />, {
-    api,
-  });
+  const store = createTestSessionStore(api, { session });
+  store.getState().workspace.openMidiEditor(clip.id);
+  renderWithSession(<MidiEditorPanel />, { api, store });
   const lane = document.querySelector<HTMLElement>('[data-midi-lane]')!;
   Object.defineProperty(lane, 'getBoundingClientRect', {
     value: () => ({ left: 0, top: 0, width: 691.2, height: 1536 }),
   });
   return {
     clip,
-    rerender,
+    store,
     lane,
     addMidiNote,
     updateMidiNote,
@@ -103,19 +107,46 @@ function positions(root: Element, selector: string) {
 
 describe('MidiEditorPanel', () => {
   it('cancels a velocity drag when the edited clip changes', async () => {
-    const { clip, rerender, updateMidiNotes } = setup(0);
+    const { store, updateMidiNotes } = setup(0, undefined, ['clip:other']);
     const velocityLane = document.querySelector<HTMLElement>('[data-velocity-lane]')!;
     vi.spyOn(velocityLane, 'getBoundingClientRect').mockReturnValue({ height: 88 } as DOMRect);
     const bar = velocityLane.querySelector<HTMLElement>('[data-velocity-note-id]')!;
     fireEvent.pointerDown(bar, { pointerId: 1, clientY: 40 });
     fireEvent.pointerMove(window, { pointerId: 1, clientY: 32 });
 
-    rerender(<MidiEditorPanel clip={{ ...clip, id: 'clip:other' }} trackColor={null} />);
+    act(() => store.getState().workspace.openMidiEditor('clip:other'));
     fireEvent.pointerUp(window, { pointerId: 1, clientY: 32 });
     await act(async () => undefined);
 
     expect(updateMidiNotes).not.toHaveBeenCalled();
     expect(screen.getByLabelText('C4 velocity 96')).toBeInTheDocument();
+  });
+
+  it('widens and narrows the time axis and the pitch rows from the toolbar steppers', () => {
+    // Arrange
+    const { lane } = setup(0);
+    const clipEnd = () =>
+      Number.parseFloat(lane.querySelector<HTMLElement>('[class*="clipEnd"]')!.style.left);
+    const rowHeight = () =>
+      Number.parseFloat(lane.querySelector<HTMLElement>('[data-note-id]')!.style.height);
+    const timeBefore = clipEnd();
+    const rowBefore = rowHeight();
+
+    // Act
+    fireEvent.click(screen.getByRole('button', { name: 'MIDI Editor zoom in' }));
+    fireEvent.click(screen.getByRole('button', { name: 'MIDI Editor pitch zoom in' }));
+
+    // Assert
+    expect(clipEnd()).toBeCloseTo(timeBefore * 1.25);
+    expect(rowHeight()).toBeCloseTo(rowBefore + 2);
+
+    // Act
+    fireEvent.click(screen.getByRole('button', { name: 'MIDI Editor zoom out' }));
+    fireEvent.click(screen.getByRole('button', { name: 'MIDI Editor pitch zoom out' }));
+
+    // Assert
+    expect(clipEnd()).toBeCloseTo(timeBefore);
+    expect(rowHeight()).toBeCloseTo(rowBefore);
   });
 
   it.each([1920, 2160])(
@@ -292,7 +323,9 @@ describe('MidiEditorPanel', () => {
     api.setResponse('getInstrumentMidiSettings', null);
     const sendMidi = vi.spyOn(api, 'sendMidiToTrack');
     const panicMidi = vi.spyOn(api, 'panicMidiTrack');
-    const { store } = renderWithSession(<MidiEditorPanel clip={clip} trackColor={null} />, { api });
+    const store = createTestSessionStore(api, { session });
+    store.getState().workspace.openMidiEditor(clip.id);
+    renderWithSession(<MidiEditorPanel />, { api, store });
     const key = screen.getByRole('button', { name: 'Preview C4' });
 
     // Act: hold the key, then move the playhead so the panel renders again.
@@ -527,7 +560,7 @@ describe('MidiEditorPanel', () => {
     fireEvent.click(within(editor).getByRole('button', { name: 'Quantize' }));
 
     // Assert
-    await screen.findByText('Selected notes are already on the grid.');
+    await screen.findByText('Selected notes are already on the grid');
     expect(api.calls).not.toContain('quantizeMidiNotes');
 
     // Act: open the off-grid Clip, select the note, and hit Quantize.
@@ -544,9 +577,9 @@ describe('MidiEditorPanel', () => {
 
     // Assert
     await waitFor(() => expect(finishQuantize).toBeDefined());
-    expect(screen.queryByText('Quantized 1 note to 1/16.')).not.toBeInTheDocument();
+    expect(screen.queryByText('Quantized 1 note to 1/16')).not.toBeInTheDocument();
     finishQuantize!(api.mutationResult(session));
-    await screen.findByText('Quantized 1 note to 1/16.');
+    await screen.findByText('Quantized 1 note to 1/16');
     expect(api.calls.filter((call) => call === 'quantizeMidiNotes')).toHaveLength(1);
   });
 

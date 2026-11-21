@@ -1,6 +1,6 @@
 import type { ArrangementMutationResult, CanonicalState, SidechainSend } from '@/model/generated';
-import { useSessionContext } from '@/shared/session/session-context';
-import { usePreviewedValue } from '@/shared/session/usePreviewedValue';
+import { useSessionContext } from '@/session/session-context';
+import { usePreviewedValue } from '@/session/hooks/usePreviewedValue';
 import { useCallback } from 'react';
 import { SendRow } from './SendRow';
 

@@ -17,8 +17,8 @@ import {
   RIFFRA_PLUGIN_MIME,
 } from '@/shared/browser-drag';
 import { useTimelineDrop } from '@/features/timeline/hooks/useTimelineDrop';
-import type { SessionCommit } from '@/shared/session/commit';
-import { ToastStack } from '@/shared/ui/ToastStack';
+import type { SessionCommit } from '@/session/commit';
+import { ToastStack } from '@/shared/ui/message/ToastStack';
 
 afterEach(() => cleanup());
 

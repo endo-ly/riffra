@@ -99,18 +99,20 @@ flowchart TD
 
 | 領域       | 責務                                                                                                                                                 |
 | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `app`      | 起動処理、画面構成、Workspaceの画面の組み立てとショートカット                                                                                        |
-| `features` | 機能の UI と、機能の中だけで使う状態と操作(audio、devices、inspector、library、live-input、midi-editor、mixer、project、render、timeline、transport) |
-| `model`    | Rustから生成した型と、選択状態・音源検索・クリップ時間・スナップ・色・オートメーション・AssetIdなどの純粋な関数                                      |
-| `shared`   | 共通UI、MIDI基礎処理、ブラウザ項目の受け渡し契約、セッションストア(アプリ全体で共有する状態とその操作、Nativeイベントの購読)、汎用hook               |
-| `native`   | ReactとTauriの境界。Native APIと命令の窓口                                                                                                           |
-| `test`     | FakeNativeApi、Provider、機能をまたぐ結合テスト。フロントエンドのテストは `src/test/` 以下で所有領域別に整理する                                     |
+| `app`      | 起動処理、画面構成、Workspace の組み立てとショートカット、アプリ全体の状態表示                                                                       |
+| `features` | 機能の画面と、機能の中だけで使う状態と操作(audio、devices、inspector、library、live-input、midi-editor、mixer、project、render、timeline、transport) |
+| `session`  | 画面をまたいで共有する状態とその操作、Native イベントの接続、機能をまたいだ hook                                                                     |
+| `model`    | Rust から生成した型と、選択状態・音源検索・クリップ時間・スナップ・色・オートメーション・音声設定・MIDI・配置・ミックスの純粋な関数                  |
+| `native`   | React と Tauri の境界。Native API、命令の窓口、ダイアログ、preview の代替実装                                                                        |
+| `shared`   | ドメインを知らない共通部品。UI、メッセージ表示、汎用 hook、通知、エラー文字列、ライブラリ項目のドラッグ契約                                          |
+| `styles`   | 全体のスタイルとデザイントークン                                                                                                                     |
+| `test`     | 実装と同じ階層のテストと、FakeNativeApi・Provider などのテスト支援                                                                                   |
 
-`app/workspace/` はTimeline、MIDI Editor、Devices、Mixer、Live Inputを画面として組み合わせ、Workspaceのショートカットを持つ。タイムラインの描画と操作は `features/timeline` にあり、Workspaceはそれらを配置する。TimelineやInspectorなど個々の機能はWorkspaceを参照せず、共有する選択・時間・スナップの計算は `model/` を使う。
+`app/workspace/` は Timeline、MIDI Editor、Devices、Mixer、Live Input を画面として組み合わせ、Workspace のショートカットと下部エリアの寸法を持つ。タイムラインの描画と操作は `features/timeline` にあり、Workspace はそれらを配置する。演奏入力はパネルの表示から独立した Workspace の寿命を持ち、live-input がツールバーへ渡す切り替えと表示を作る。Timeline や Inspector など個々の機能は Workspace を参照せず、共有する選択・時間・スナップの計算は `model/` を使う。
 
-依存は `app` から `features` へ向ける。`features` は `app` に依存せず、機能間の依存は `devices → mixer` と `mixer → audio / render` に限る。`model` はReact、Native、Shared、Feature、Appに依存せず、`shared` は個別FeatureやAppに依存しない。
+依存は `app` → `features` → `session` → `native` → `model` の向きに置き、`shared` は `model` にだけ依存する。`features` は `app` に依存せず、機能間の依存は `devices → mixer` と `mixer → render` に限る。`session` は `native`、`shared`(UI を除く)、`model` を使い、`shared/ui` はストアに依存しない。`model` は React、Native、Shared、Feature、App に依存しない。
 
-画面をまたいで共有する状態と、それを変える操作は `shared/session/` のセッションストアが持つ。共有するのは接続・Project・Runtime・音声・Transport・ジョブ・録音・見つからない素材・カタログ・Workspaceの選択と下部エリアである。ドラッグ中のプレビュー、開いているメニュー、ツールやスナップやズーム、ライブラリの検索語、toastのように、その部品の中だけで意味を持つ状態は部品が持ち、ストアへ入れない。
+画面をまたいで共有する状態と、それを変える操作は `session/` のセッションストアが持つ。共有するのは接続・Project・Runtime・音声・Transport・ジョブ・録音・見つからない素材・カタログ・Workspaceの選択と下部エリアである。ドラッグ中のプレビュー、開いているメニュー、ツールやスナップやズーム、ライブラリの検索語、toastのように、その部品の中だけで意味を持つ状態は部品が持ち、ストアへ入れない。
 
 正準スナップショットは共通の受け入れ処理で順序を検証し、同じProjectとセッション内では未変更のデータの参照を保つ。ID検索やトラック別クリップ一覧は、受け入れたセッションから作る読み取り専用の索引を共有する。索引は正準状態と同じ更新で交換し、画面が独自に変更する状態を持たない。Projectやセッションが変わると、索引とWorkspaceの選択を初期化する。
 

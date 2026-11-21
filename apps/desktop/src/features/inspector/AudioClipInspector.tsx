@@ -1,12 +1,17 @@
 import { clipDurationTicks } from '@/model/clip-time';
 import { formatMusicalLength } from '@/model/time-format';
 import type { ArrangementMutationResult, AudioClip, CreativeSession } from '@/model/generated';
-import type { CanonicalState } from '@/model/generated';
-import { MIX_GAIN_DB, MIX_PAN } from '@/model/mix-range';
-import { formatGainDb, formatPan } from '@/shared/audio/mix-format';
-import { useSessionContext } from '@/shared/session/session-context';
-import { usePreviewedValue } from '@/shared/session/usePreviewedValue';
-import { Icon } from '@/shared/ui/primitives';
+import { MIX_GAIN_DB, MIX_PAN } from '@/model/mix';
+import { formatGainDb, formatPan } from '@/model/mix';
+import { useSessionContext } from '@/session/session-context';
+import { useClipMixValue } from '@/features/inspector/hooks/useClipMixValue';
+import {
+  createAudioClipDrafts,
+  fadeFramesFromMilliseconds,
+  isFadeMilliseconds,
+  type AudioClipDrafts,
+} from '@/features/inspector/model/clip-drafts';
+import { Icon } from '@/shared/ui/Icon';
 import type { ContextMenuItem } from '@/shared/ui/ContextMenu';
 import { MenuButton } from '@/shared/ui/MenuButton';
 import clsx from 'clsx';
@@ -16,6 +21,7 @@ import { ClipToggles } from './ClipToggles';
 import styles from './Inspector.module.css';
 import { MixValueField } from './MixValueField';
 import { MusicalTimeField } from './MusicalTimeField';
+import { InlineMessage } from '@/shared/ui/message/InlineMessage';
 
 interface AudioClipInspectorProps {
   session: CreativeSession;
@@ -24,29 +30,15 @@ interface AudioClipInspectorProps {
   onSetLoopToClip?: (clip: AudioClip) => Promise<ArrangementMutationResult>;
 }
 
-interface Drafts {
-  name: string;
-  fadeInMs: string;
-  fadeOutMs: string;
-}
-
-function buildDrafts(clip: AudioClip): Drafts {
-  const fadeInMs = (clip.fadeIn.frames * 1000) / clip.sourceSampleRate;
-  const fadeOutMs = (clip.fadeOut.frames * 1000) / clip.sourceSampleRate;
-  return {
-    name: clip.name,
-    fadeInMs: String(Math.round(fadeInMs)),
-    fadeOutMs: String(Math.round(fadeOutMs)),
-  };
-}
-
 export function AudioClipInspector(props: AudioClipInspectorProps) {
   const { api, commit: sessionCommit } = useSessionContext();
   const selected = props.session.arrangement.audioClips.filter((clip) =>
     props.selectedClipIds.includes(clip.id),
   );
   const clip = selected.length === 1 ? selected[0] : null;
-  const [drafts, setDrafts] = useState<Drafts | null>(clip ? buildDrafts(clip) : null);
+  const [drafts, setDrafts] = useState<AudioClipDrafts | null>(
+    clip ? createAudioClipDrafts(clip) : null,
+  );
   const [message, setMessage] = useState<string | null>(null);
 
   // Re-seed drafts when the selected clip identity changes. We do NOT reseed
@@ -54,7 +46,7 @@ export function AudioClipInspector(props: AudioClipInspectorProps) {
   // even if the canonical session updates from another source.
   useEffect(() => {
     setMessage(null);
-    if (clip) setDrafts(buildDrafts(clip));
+    if (clip) setDrafts(createAudioClipDrafts(clip));
     else setDrafts(null);
   }, [clip?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -214,9 +206,8 @@ export function AudioClipInspector(props: AudioClipInspectorProps) {
               value={drafts.fadeInMs}
               onChange={(event) => setDrafts({ ...drafts, fadeInMs: event.currentTarget.value })}
               onBlur={() => {
-                const ms = Number(drafts.fadeInMs);
-                if (!Number.isFinite(ms) || ms < 0) return;
-                const frames = Math.round((ms * clip.sourceSampleRate) / 1000);
+                if (!isFadeMilliseconds(drafts.fadeInMs)) return;
+                const frames = fadeFramesFromMilliseconds(drafts.fadeInMs, clip.sourceSampleRate);
                 if (frames !== clip.fadeIn.frames)
                   patch({ fadeIn: { frames, sampleRate: clip.sourceSampleRate } });
               }}
@@ -233,9 +224,8 @@ export function AudioClipInspector(props: AudioClipInspectorProps) {
               value={drafts.fadeOutMs}
               onChange={(event) => setDrafts({ ...drafts, fadeOutMs: event.currentTarget.value })}
               onBlur={() => {
-                const ms = Number(drafts.fadeOutMs);
-                if (!Number.isFinite(ms) || ms < 0) return;
-                const frames = Math.round((ms * clip.sourceSampleRate) / 1000);
+                if (!isFadeMilliseconds(drafts.fadeOutMs)) return;
+                const frames = fadeFramesFromMilliseconds(drafts.fadeOutMs, clip.sourceSampleRate);
                 if (frames !== clip.fadeOut.frames)
                   patch({ fadeOut: { frames, sampleRate: clip.sourceSampleRate } });
               }}
@@ -261,7 +251,11 @@ export function AudioClipInspector(props: AudioClipInspectorProps) {
         </div>
       </section>
 
-      {message && <p className={styles.message}>{message}</p>}
+      {message && (
+        <div className={styles.messageSlot}>
+          <InlineMessage tone="danger">{message}</InlineMessage>
+        </div>
+      )}
     </div>
   );
 }
@@ -275,9 +269,8 @@ function AudioClipMixFields({
   sessionId: string;
   onError: (message: string) => void;
 }) {
-  const { api } = useSessionContext();
-  const gain = useClipMixValue(clip, sessionId, 'gainDb', onError, api.updateAudioClip.bind(api));
-  const pan = useClipMixValue(clip, sessionId, 'pan', onError, api.updateAudioClip.bind(api));
+  const gain = useClipMixValue(clip, sessionId, 'gainDb', onError);
+  const pan = useClipMixValue(clip, sessionId, 'pan', onError);
 
   return (
     <>
@@ -299,23 +292,4 @@ function AudioClipMixFields({
       />
     </>
   );
-}
-
-function useClipMixValue(
-  clip: AudioClip,
-  sessionId: string,
-  parameter: 'gainDb' | 'pan',
-  onError: (message: string) => void,
-  updateAudioClip: ReturnType<typeof useSessionContext>['api']['updateAudioClip'],
-) {
-  const read = (canonical: CanonicalState) =>
-    canonical.session.arrangement.audioClips.find((item) => item.id === clip.id)?.[parameter];
-  return usePreviewedValue({
-    value: clip[parameter],
-    sessionId,
-    target: `audioClip:${clip.id}:${parameter}`,
-    read,
-    submit: (value) => updateAudioClip(clip.id, { [parameter]: value }),
-    onError,
-  });
 }

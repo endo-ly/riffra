@@ -1,9 +1,9 @@
 import type { ReactNode } from 'react';
 import type { SendPosition } from '@/model/generated';
-import { MIX_GAIN_DB } from '@/model/mix-range';
-import { formatGainDb } from '@/shared/audio/mix-format';
-import type { PreviewedValue } from '@/shared/session/usePreviewedValue';
-import { Icon } from '@/shared/ui/primitives';
+import { MIX_GAIN_DB } from '@/model/mix';
+import { formatGainDb } from '@/model/mix';
+import type { PreviewedValue } from '@/session/hooks/usePreviewedValue';
+import { Icon } from '@/shared/ui/Icon';
 import { ValueSlider } from '@/shared/ui/ValueSlider';
 import controls from '@/shared/ui/controls.module.css';
 import styles from './SendRow.module.css';

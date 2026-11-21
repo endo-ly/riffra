@@ -22,7 +22,7 @@ import type {
   ScoreSyncStatus,
   TransportStatus,
 } from '@/model/generated';
-import { defaultSession } from '@/native/browser-defaults';
+import { defaultSession } from '@/native/preview/fixtures';
 import type { NativeApi } from '@/native/native-api';
 import { nativeApiMethodNames } from '@/native/api/native-implementation';
 import type { HostConnectionBootstrap } from '@/native/api/host-connection';
@@ -585,6 +585,17 @@ class FakeNativeControls {
       case 'listProjects':
       case 'renameProject':
         return Promise.resolve(this.bootstrapState.projectState);
+      case 'deleteProject': {
+        const [projectId] = arguments_ as [string];
+        const projectState = {
+          ...this.bootstrapState.projectState,
+          projects: this.bootstrapState.projectState.projects.filter(
+            (project) => project.projectId !== projectId,
+          ),
+        };
+        this.bootstrapState = { ...this.bootstrapState, projectState };
+        return Promise.resolve(projectState);
+      }
       case 'createProject':
       case 'openProject':
       case 'importScore':

@@ -4,7 +4,7 @@ import '@testing-library/jest-dom/vitest';
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import type { CreativeSession } from '@/model/generated';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { canonicalState, defaultSession } from '@/native/browser-defaults';
+import { canonicalState, defaultSession } from '@/native/preview/fixtures';
 import { toAssetId } from '@/model/asset-id';
 import { createFakeNativeApi, type FakeNativeApi } from '@/test/support/fake-native-api';
 import { renderWorkspace } from '@/test/support/workspace';

@@ -1,5 +1,5 @@
 import { Fragment, useState } from 'react';
-import { Icon } from '@/shared/ui/primitives';
+import { Icon } from '@/shared/ui/Icon';
 import { Modal } from '@/shared/ui/Modal';
 import surface from '@/shared/ui/Surface.module.css';
 import styles from './CommandPalette.module.css';

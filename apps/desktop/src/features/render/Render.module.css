@@ -55,7 +55,7 @@
 
 /* A number and its unit inside one well. */
 .numberWell {
-  composes: well from '../../shared/ui/controls.module.css';
+  composes: well from '@/shared/ui/controls.module.css';
   height: 28px;
   display: flex;
   align-items: center;
@@ -126,24 +126,6 @@
   background: var(--color-accent);
   border-radius: inherit;
   transition: width var(--duration-slow) ease-out;
-}
-
-.error,
-.warning {
-  margin: 0;
-  font-size: var(--font-size-micro);
-  line-height: 1.5;
-}
-
-.error {
-  color: var(--color-status-danger);
-}
-
-.warning {
-  padding: var(--space-1-5) var(--space-2);
-  color: var(--color-status-warning);
-  background: color-mix(in srgb, var(--color-status-warning) 8%, transparent);
-  border-radius: var(--radius-sm);
 }
 
 .result {

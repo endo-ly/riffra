@@ -8,7 +8,7 @@ import type {
   RenderOptions,
   RenderStemsParams,
 } from '@/model/generated';
-import { dispatchControl } from '../invoke';
+import { dispatchControl } from '@/native/invoke';
 
 export interface RenderApi {
   listRenders(): Promise<RenderHistoryEntry[]>;

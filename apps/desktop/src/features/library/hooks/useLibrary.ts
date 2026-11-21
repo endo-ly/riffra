@@ -1,11 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { LibraryAsset } from '@/model/generated';
 import { toAssetId } from '@/model/asset-id';
-import { useSession, useSessionContext, useSessionStore } from '@/shared/session/session-context';
+import { useSession, useSessionContext, useSessionStore } from '@/session/session-context';
 import { openMidiFile } from '@/native/dialog';
-import { logNativeError } from '@/native/invoke';
-import { errorText } from '@/shared/errors';
-import { toast } from '@/shared/toasts';
+import { notify } from '@/shared/notify';
 
 interface UseLibraryOptions {
   query: string;
@@ -34,7 +32,7 @@ export function useLibrary({ query: requestedQuery, onSearchRequested }: UseLibr
           current.map((asset) => (asset.id === updated.id ? updated : asset)),
         );
       } catch (error) {
-        logNativeError('updateLibraryAsset')(error);
+        notify.error('Asset could not be updated', { cause: error });
       }
     },
     [updateAssetMetadata],
@@ -51,7 +49,7 @@ export function useLibrary({ query: requestedQuery, onSearchRequested }: UseLibr
         const next = await previewAsset(toAssetId(asset.id), {});
         setAudio(next);
       } catch (error) {
-        toast(`Preview failed: ${errorText(error)}`, { kind: 'error' });
+        notify.error('Preview failed', { cause: error });
       }
     },
     [previewAsset, setAudio],
@@ -64,7 +62,7 @@ export function useLibrary({ query: requestedQuery, onSearchRequested }: UseLibr
     try {
       selected = await openMidiFile();
     } catch (error) {
-      logNativeError('importMidiFile')(error);
+      notify.error('File dialog could not open', { cause: error });
       return;
     }
     if (!selected) return;
@@ -77,7 +75,7 @@ export function useLibrary({ query: requestedQuery, onSearchRequested }: UseLibr
       await api.importMidiFile(selected);
       onSearchRequested(stem);
     } catch (error) {
-      logNativeError('importMidiFile')(error);
+      notify.error('MIDI import failed', { cause: error });
     }
   }, [api, onSearchRequested]);
   useEffect(() => {
@@ -92,7 +90,7 @@ export function useLibrary({ query: requestedQuery, onSearchRequested }: UseLibr
       .then((results) => {
         if (active) setLibraryResults(results);
       })
-      .catch(logNativeError('searchLibrary'));
+      .catch((error: unknown) => notify.error('Search failed', { cause: error }));
     return () => {
       active = false;
     };

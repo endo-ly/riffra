@@ -1,13 +1,13 @@
 import { sidechainTargetName } from '@/model/automation';
-import { resolveTrackColor } from '@/model/track-color';
+import { resolveTrackColorById } from '@/model/track-color';
 import type {
   Arrangement,
   ArrangementMutationResult,
   AutomationTarget,
   Track,
 } from '@/model/generated';
-import { useSessionContext } from '@/shared/session/session-context';
-import { toast } from '@/shared/toasts';
+import { useSessionContext } from '@/session/session-context';
+import { notify } from '@/shared/notify';
 import controls from '@/shared/ui/controls.module.css';
 import { Dialog, DialogRow, DialogSection } from '@/shared/ui/Dialog';
 import { ReturnSendControls } from './ReturnSendControls';
@@ -23,7 +23,7 @@ interface Props {
 
 export function MixerRouting({ sessionId, arrangement, track, onClose, onOpenAutomation }: Props) {
   const { api, commit: sessionCommit } = useSessionContext();
-  const onError = (message: string) => toast(message, { kind: 'error' });
+  const onError = (message: string) => notify.error('Routing failed', { cause: message });
   const commit = (operation: Promise<ArrangementMutationResult>) => {
     void sessionCommit(operation, { onError });
   };
@@ -39,7 +39,7 @@ export function MixerRouting({ sessionId, arrangement, track, onClose, onOpenAut
       title={track.name}
       subtitle="Routing"
       icon="route"
-      color={resolveTrackColor(track, arrangement.tracks.indexOf(track))}
+      color={resolveTrackColorById(arrangement.tracks, track.id)}
       closeOnBackdrop
       onClose={onClose}
     >

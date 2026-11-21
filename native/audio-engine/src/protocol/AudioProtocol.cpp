@@ -1,5 +1,6 @@
 #include "AudioProtocol.h"
 
+#include <atomic>
 #include <condition_variable>
 #include <mutex>
 #include <string>
@@ -7,11 +8,19 @@
 #include <utility>
 
 #include "OutputQueue.h"
-#include "plugins/FaultInjection.h"
-#include "protocol/ProtocolChannel.h"
+#include "ProtocolChannel.h"
 
 namespace riffra {
 namespace {
+
+/// RIFFRA_FAULT_MODE=stdoutFlood writes one oversized line to the protocol
+/// channel before the first control output of the process.
+void stdoutFlood() {
+    if (juce::SystemStats::getEnvironmentVariable("RIFFRA_FAULT_MODE", {}) != "stdoutFlood") return;
+    static std::atomic<bool> emitted{false};
+    if (emitted.exchange(true, std::memory_order_acq_rel)) return;
+    writeProtocolLine(std::string(256 * 1024, 'x'));
+}
 
 enum class OutputKind { control, telemetry };
 
@@ -22,7 +31,7 @@ public:
     ~OutputWriter() { stop(); }
 
     void enqueue(std::string line, const OutputKind kind) {
-        if (kind == OutputKind::control) FaultInjection::stdoutFlood();
+        if (kind == OutputKind::control) stdoutFlood();
         {
             const std::lock_guard lock(mutex);
             ensureStarted();

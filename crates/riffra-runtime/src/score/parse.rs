@@ -6,18 +6,25 @@ use super::{Error, Result, Source};
 
 pub(super) fn parse(text: &str, source: &mut Source) -> Result<Value> {
     text.clone_into(&mut source.text);
-    let char_to_byte = text
-        .char_indices()
-        .map(|(byte_index, _)| byte_index)
-        .chain(std::iter::once(text.len()))
-        .collect::<Vec<_>>();
+    let mut line_offsets = Vec::new();
+    let mut columns = Vec::new();
+    for (index, character) in text.char_indices() {
+        columns.push(index);
+        if character == '\n'
+            || (character == '\r' && text.as_bytes().get(index + 1) != Some(&b'\n'))
+        {
+            line_offsets.push(std::mem::take(&mut columns));
+        }
+    }
+    columns.push(text.len());
+    line_offsets.push(columns);
     let mut parser = Parser::new_from_str(text);
     next(&mut parser)?;
     let (start, _) = next(&mut parser)?;
     if start != Event::DocumentStart {
         return Err(Error::new("", "expected one YAML document"));
     }
-    let value = node(&mut parser, source, &char_to_byte, "", 0)?;
+    let value = node(&mut parser, source, &line_offsets, "", 0)?;
     if next(&mut parser)?.0 != Event::DocumentEnd || next(&mut parser)?.0 != Event::StreamEnd {
         return Err(Error::new("", "expected exactly one YAML document"));
     }
@@ -37,7 +44,7 @@ fn next(parser: &mut Parser<std::str::Chars<'_>>) -> Result<(Event, Marker)> {
 fn node(
     parser: &mut Parser<std::str::Chars<'_>>,
     source: &mut Source,
-    char_to_byte: &[usize],
+    line_offsets: &[Vec<usize>],
     path: &str,
     depth: usize,
 ) -> Result<Value> {
@@ -48,15 +55,20 @@ fn node(
     source
         .positions
         .insert(path.into(), (mark.line(), mark.col() + 1));
-    source
-        .indices
-        .insert(path.into(), char_to_byte[mark.index()]);
     let fail = |message: &str| {
         let mut error = Error::new(path, message);
         error.line = mark.line();
         error.column = mark.col() + 1;
         error
     };
+    let byte_index = mark
+        .line()
+        .checked_sub(1)
+        .and_then(|line| line_offsets.get(line))
+        .and_then(|columns| columns.get(mark.col()))
+        .copied()
+        .ok_or_else(|| fail("YAML parser returned an invalid source position"))?;
+    source.indices.insert(path.into(), byte_index);
     let value = match event {
         Event::Scalar(text, style, anchor, tag) => {
             let rational_field = matches!(
@@ -96,7 +108,7 @@ fn node(
                 values.push(node(
                     parser,
                     source,
-                    char_to_byte,
+                    line_offsets,
                     &format!("{path}[{}]", values.len()),
                     depth + 1,
                 )?);
@@ -141,7 +153,7 @@ fn node(
                     e.column = key_mark.col() + 1;
                     return Err(e);
                 }
-                let value = node(parser, source, char_to_byte, &child, depth + 1)?;
+                let value = node(parser, source, line_offsets, &child, depth + 1)?;
                 map.insert(key, value);
             }
             next(parser)?;
@@ -154,4 +166,37 @@ fn node(
         source.values.insert(path.into(), value.clone());
     }
     Ok(value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn block_scalars_preserve_unicode_and_following_source_positions() {
+        for style in [">", ">-", "|", "|-"] {
+            for newline in ["\n", "\r\n", "\r"] {
+                let content = "日本語と音楽🎵".repeat(32);
+                let text = format!(
+                    "notes: {style}{newline}  {content}{newline}  続き{newline}next: invalid"
+                );
+                let mut source = Source::default();
+
+                let value = parse(&text, &mut source).expect("Unicode block scalar");
+
+                let separator = if style.starts_with('>') { " " } else { "\n" };
+                let ending = if style.ends_with('-') { "" } else { "\n" };
+                assert_eq!(value["notes"], format!("{content}{separator}続き{ending}"));
+                assert_eq!(source.positions["notes"], (2, 3));
+                assert_eq!(source.indices["notes"], text.find(&content).unwrap());
+                assert_eq!(source.positions["next"], (4, 7));
+                assert_eq!(source.indices["next"], text.find("invalid").unwrap());
+
+                let malformed = text.replace("next: invalid", "next: \"unfinished");
+                let error = parse(&malformed, &mut Source::default())
+                    .expect_err("unterminated quote after a Unicode block scalar");
+                assert_eq!((error.line, error.column), (4, 7));
+            }
+        }
+    }
 }

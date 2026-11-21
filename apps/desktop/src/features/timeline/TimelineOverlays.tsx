@@ -1,6 +1,6 @@
 import { ContextMenu, type ContextMenuItem } from '@/shared/ui/ContextMenu';
 import { ConfirmDialog } from '@/shared/ui/ConfirmDialog';
-import type { WorkspaceConfirmRequest } from './hooks/useTimelineTrackOperations';
+import type { WorkspaceConfirmRequest } from '@/features/timeline/hooks/useTimelineTrackOperations';
 import overlayStyles from './TimelineOverlays.module.css';
 
 interface WorkspaceMarkerRenameController {

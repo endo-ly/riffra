@@ -1,13 +1,10 @@
 #include "FaultInjection.h"
 
-#include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <stdexcept>
 #include <string>
 #include <thread>
-
-#include "protocol/ProtocolChannel.h"
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -90,14 +87,6 @@ void FaultInjection::before(const FaultStage stage) {
     }
     if (modeMatches("delay", stage))
         std::this_thread::sleep_for(std::chrono::milliseconds(delayMilliseconds()));
-}
-
-void FaultInjection::stdoutFlood() {
-    if (environmentValue("RIFFRA_FAULT_MODE") != "stdoutFlood") return;
-    static std::atomic<bool> emitted{false};
-    if (emitted.exchange(true, std::memory_order_acq_rel)) return;
-    std::string flood(256 * 1024, 'x');
-    writeProtocolLine(flood);
 }
 
 }  // namespace riffra

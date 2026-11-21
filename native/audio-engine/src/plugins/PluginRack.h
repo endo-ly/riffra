@@ -10,10 +10,10 @@
 #include <vector>
 
 #include "PluginTransportPosition.h"
+#include "automation/AutomationRuntime.h"
 #include "concurrency/BoundedMpmcQueue.h"
 #include "contract/ExecutionGraph.h"
 #include "contract/LoadProgress.h"
-#include "timeline/AutomationRuntime.h"
 
 namespace riffra {
 
@@ -202,16 +202,27 @@ private:
     static constexpr std::size_t kMidiEventOverhead = sizeof(std::int32_t) + sizeof(std::uint16_t);
 
     struct ParameterQueue final {
-        explicit ParameterQueue(std::size_t parameterCount) : capacity(parameterCount) {}
+        using DirtyWord = std::uint64_t;
+        static constexpr std::size_t kBitsPerWord = 64;
+
+        explicit ParameterQueue(std::size_t parameterCount)
+            : capacity(parameterCount),
+              dirtyWordCount(parameterCount / kBitsPerWord + (parameterCount % kBitsPerWord != 0)) {
+        }
+
+        static constexpr DirtyWord dirtyBit(std::size_t index) noexcept {
+            return DirtyWord{1} << (index % kBitsPerWord);
+        }
 
         struct Restore final {
             juce::AudioProcessorParameter* parameter = nullptr;
             float value = 0.0f;
         };
         const std::size_t capacity;
+        const std::size_t dirtyWordCount;
         std::unique_ptr<Restore[]> automationRestore;
         std::unique_ptr<std::atomic<float>[]> values;
-        std::unique_ptr<std::atomic<bool>[]> dirty;
+        std::unique_ptr<std::atomic<DirtyWord>[]> dirtyWords;
         std::unique_ptr<AutomationPreviewValue[]> automationPreview;
     };
 

@@ -1,6 +1,6 @@
 .editor {
-  composes: scope from '../../shared/ui/TimelineTokens.module.css';
-  composes: scope from '../../shared/ui/PianoKeyTokens.module.css';
+  composes: scope from '@/styles/TimelineTokens.module.css';
+  composes: scope from '@/styles/PianoKeyTokens.module.css';
   isolation: isolate;
   height: 100%;
   min-width: 0;

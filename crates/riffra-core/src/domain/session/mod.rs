@@ -215,6 +215,9 @@ pub struct MixdownSettings {
     pub musical_end_tick: u64,
     pub tail_seconds: f64,
     pub fade_out_seconds: f64,
+    /// Wall-clock seconds to process VST3 plugins before rendering, excluded from the WAV.
+    /// Defaults to 2 when omitted; range 0..=60. Increase if asynchronous sample loading
+    /// leaves the start silent or incomplete; 0 disables warm-up.
     #[serde(default = "default_plugin_warm_up_seconds")]
     pub plugin_warm_up_seconds: f64,
     pub mastering: Option<LoudnessMastering>,

@@ -7,8 +7,8 @@ import type {
   DeviceParameterInfo,
   EffectOwner,
   ProjectTimebase,
-} from '@/model/generated';
-import { ticksToSeconds } from '@/model/timebase';
+} from './generated';
+import { ticksToSeconds } from './timebase';
 
 export interface AutomationOption {
   target: AutomationTarget;
@@ -90,12 +90,14 @@ export function automationDevices(session: CreativeSession, owner: EffectOwner) 
   const devices = effects.map((effect) => ({
     id: effect.id,
     name: effect.name,
+    bypassed: effect.bypassed,
     plugin: effect.plugin,
   }));
   if (track?.instrument?.source.type === 'vst3')
     devices.unshift({
       id: track.instrument.id,
       name: track.instrument.name,
+      bypassed: track.instrument.bypassed,
       plugin: track.instrument.source,
     });
   return devices;

@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react';
 import type { MidiClip } from '@/model/generated';
-import { PITCH_HIGH } from '../model/pitch-grid';
+import { LANE_LABEL_WIDTH, PITCH_HIGH } from '@/features/midi-editor/model/pitch-grid';
 
 const ZOOM_STEP = 1.25;
-export const LANE_LABEL_WIDTH = 48;
 
 export function useMidiEditorViewport(
   clip: MidiClip | null,
@@ -75,6 +74,16 @@ export function useMidiEditorViewport(
     [rowHeight],
   );
 
+  const stepHorizontalZoom = useCallback(
+    (direction: -1 | 1, clientX?: number) =>
+      applyHorizontalZoom(pixelsPerTick * (direction > 0 ? ZOOM_STEP : 1 / ZOOM_STEP), clientX),
+    [applyHorizontalZoom, pixelsPerTick],
+  );
+  const stepVerticalZoom = useCallback(
+    (direction: -1 | 1) => applyVerticalZoom(rowHeight + direction * 2),
+    [applyVerticalZoom, rowHeight],
+  );
+
   const playheadTickInClip = playheadTick === null ? null : playheadTick - clipStartTick;
 
   // The ruler and velocity lane sit outside the scrolling viewport, so their
@@ -135,18 +144,18 @@ export function useMidiEditorViewport(
     const viewport = laneViewportRef.current;
     if (!viewport) return;
     const onWheel = (event: WheelEvent) => {
-      const zoomIn = event.deltaY < 0;
+      const direction = event.deltaY < 0 ? 1 : -1;
       if (event.ctrlKey || event.metaKey) {
         event.preventDefault();
-        applyHorizontalZoom(pixelsPerTick * (zoomIn ? ZOOM_STEP : 1 / ZOOM_STEP), event.clientX);
+        stepHorizontalZoom(direction, event.clientX);
       } else if (event.altKey) {
         event.preventDefault();
-        applyVerticalZoom(rowHeight + (zoomIn ? 2 : -2));
+        stepVerticalZoom(direction);
       }
     };
     viewport.addEventListener('wheel', onWheel, { passive: false });
     return () => viewport.removeEventListener('wheel', onWheel);
-  }, [applyHorizontalZoom, applyVerticalZoom, hasClip, pixelsPerTick, rowHeight]);
+  }, [hasClip, stepHorizontalZoom, stepVerticalZoom]);
 
   // Follow the playhead during playback: once the playhead crosses the follow
   // line the view scrolls continuously to keep it there. A manual scroll pauses
@@ -234,6 +243,8 @@ export function useMidiEditorViewport(
     pixelsPerTick,
     rowHeight,
     visibleTicks,
+    stepHorizontalZoom,
+    stepVerticalZoom,
     laneViewportRef,
     rulerContentRef,
     velocityContentRef,

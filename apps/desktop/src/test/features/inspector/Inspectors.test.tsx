@@ -1,12 +1,12 @@
 import { createTestSessionStore, TestSessionProvider } from '@/test/support/session-provider';
-import { createSessionStore } from '@/shared/session/store';
-import { bindSessionRuntime } from '@/shared/session/runtime';
+import { createSessionStore } from '@/session/store';
+import { bindSessionRuntime } from '@/session/runtime';
 import type { ReactElement, ReactNode } from 'react';
 // @vitest-environment jsdom
 
 import type { EditorSelection } from '@/model/editor-selection';
 import type { CreativeSession } from '@/model/generated';
-import { canonicalState, defaultSession } from '@/native/browser-defaults';
+import { canonicalState, defaultSession } from '@/native/preview/fixtures';
 import { toAssetId } from '@/model/asset-id';
 import {
   createFakeNativeApi,
@@ -147,7 +147,7 @@ describe('Arrange Inspectors', () => {
     );
 
     fireEvent.change(screen.getByLabelText('MIDI channel'), { target: { value: '1' } });
-    expect(await screen.findByRole('status')).toHaveTextContent('MIDI route failed');
+    expect(await screen.findByRole('alert')).toHaveTextContent('MIDI route failed');
   });
 
   it('edits Clip position and length for Audio and MIDI Clips', async () => {

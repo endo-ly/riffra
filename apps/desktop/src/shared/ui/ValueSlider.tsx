@@ -1,10 +1,18 @@
 import { useMemo, type CSSProperties, type KeyboardEvent, type PointerEvent } from 'react';
-import type { MixRange } from '@/model/mix-range';
-import type { PreviewedValue } from '@/shared/session/usePreviewedValue';
+import type { MixRange } from '@/model/mix';
 import controls from './controls.module.css';
 
+/** The edit lifecycle a slider drives: a value, its preview and one commit. */
+interface ValueControl {
+  value: number;
+  begin(): void;
+  change(value: number): void;
+  commit(value: number): Promise<void>;
+  cancel(): void;
+}
+
 interface ValueSliderProps {
-  control: PreviewedValue;
+  control: ValueControl;
   range: MixRange;
   ariaLabel: string;
   disabled?: boolean;

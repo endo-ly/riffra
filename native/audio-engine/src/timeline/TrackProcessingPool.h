@@ -5,7 +5,6 @@
 #include <atomic>
 #include <cstdint>
 #include <memory>
-#include <semaphore>
 #include <span>
 #include <vector>
 
@@ -45,12 +44,7 @@ private:
     void execute(std::size_t count) noexcept;
 
     std::vector<std::unique_ptr<Worker>> workers;
-    std::counting_semaphore<7> wake{0};
-    std::atomic<bool> stopping{false};
-    std::atomic<std::uint64_t> generation{0};
     std::atomic<std::size_t> nextTrack{0};
-    std::atomic<std::size_t> completedTracks{0};
-    std::atomic<int> pendingWorkers{0};
     std::span<Track* const> tracks;
     std::span<MixerChannel* const> channels;
     TrackStageJob job{};

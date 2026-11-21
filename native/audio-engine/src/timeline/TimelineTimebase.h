@@ -4,7 +4,7 @@
 #include <cmath>
 #include <cstdint>
 
-#include "../contract/ExecutionGraph.h"
+#include "contract/ExecutionGraph.h"
 
 namespace riffra {
 

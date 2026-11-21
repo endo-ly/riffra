@@ -4,12 +4,13 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { createElement, useEffect, type ReactNode } from 'react';
 import { TestSessionProvider } from '@/test/support/session-provider';
-import { useSessionStore } from '@/shared/session/session-context';
+import { useSessionStore } from '@/session/session-context';
 import { useStore } from 'zustand';
-import { createSessionStore } from '@/shared/session/store';
-import { bindSessionRuntime } from '@/shared/session/runtime';
+import { createSessionStore } from '@/session/store';
+import { bindSessionRuntime } from '@/session/runtime';
 import type { AudioStatus } from '@/model/generated';
 import { createFakeNativeApi, type FakeNativeApi } from '@/test/support/fake-native-api';
+import { notify } from '@/shared/notify';
 import { useInstrumentPreview } from '@/features/library/hooks/useInstrumentPreview';
 
 function useLibraryHarness(api: FakeNativeApi, hostGeneration = 1, safeMode = false) {
@@ -23,7 +24,7 @@ function useLibraryHarness(api: FakeNativeApi, hostGeneration = 1, safeMode = fa
   }, [store, api, hostGeneration, safeMode]);
   const catalog = useStore(store, (state) => state.catalog);
   const preview = useInstrumentPreview();
-  return { ...catalog.instruments, ...preview, error: preview.error ?? catalog.instruments.error };
+  return { ...catalog.instruments, ...preview };
 }
 
 function wrapperFor(api: FakeNativeApi) {
@@ -159,7 +160,7 @@ describe('useInstrumentPreview', () => {
       await result.current.preview(first);
     });
     api.setFailure('previewInstrument', new Error('replacement preview failed'));
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const notifyError = vi.spyOn(notify, 'error').mockImplementation(() => undefined);
 
     await act(async () => {
       await result.current.preview(second);
@@ -167,8 +168,9 @@ describe('useInstrumentPreview', () => {
 
     expect(result.current.previewingId).toBe(first.id);
     expect(result.current.previewPendingId).toBeNull();
-    expect(result.current.error).toContain('replacement preview failed');
-    expect(errorSpy).toHaveBeenCalledOnce();
-    errorSpy.mockRestore();
+    expect(notifyError).toHaveBeenCalledWith('Preview failed', {
+      cause: new Error('replacement preview failed'),
+    });
+    notifyError.mockRestore();
   });
 });
