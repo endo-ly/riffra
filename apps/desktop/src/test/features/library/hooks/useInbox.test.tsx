@@ -3,7 +3,7 @@
 import { act, renderHook } from '@testing-library/react';
 import { createElement, type ReactNode } from 'react';
 import { TestSessionProvider } from '@/test/support/session-provider';
-import { createSessionStore } from '@/shared/session/store';
+import { createSessionStore } from '@/session/store';
 import type { FakeNativeApi } from '@/test/support/fake-native-api';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useInbox } from '@/features/library/hooks/useInbox';

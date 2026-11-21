@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react';
-import { DRUM_PADS, DRUM_PAD_DEFAULT_VELOCITY, drumPadByKey } from '@/features/live-input/drum-map';
+import { DRUM_PADS, DRUM_PAD_DEFAULT_VELOCITY, drumPadByKey } from './drum-map';
 import { GM_DRUM_CHANNEL } from './drum-map';
 import { isEditableTypingTarget } from '@/shared/input';
 import { useHeldMidiNotes } from './useHeldMidiNotes';

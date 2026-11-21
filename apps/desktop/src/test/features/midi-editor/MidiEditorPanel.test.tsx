@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ArrangementMutationResult, CreativeSession } from '@/model/generated';
 import { TRACK_COLOR_PALETTE } from '@/model/track-color';
 import type { MidiClip } from '@/model/generated';
-import { canonicalState, defaultSession } from '@/native/browser-defaults';
+import { canonicalState, defaultSession } from '@/native/preview/fixtures';
 import { MidiEditorPanel } from '@/features/midi-editor/MidiEditorPanel';
 import type { NoteLane } from '@/features/midi-editor/NoteLane';
 import { createFakeNativeApi, type FakeNativeApi } from '@/test/support/fake-native-api';

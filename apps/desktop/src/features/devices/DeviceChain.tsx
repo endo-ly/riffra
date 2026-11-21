@@ -4,9 +4,9 @@ import type {
   InstrumentLibraryItem,
   PluginEntry,
 } from '@/model/generated';
-import { Icon } from '@/shared/ui/primitives';
+import { Icon } from '@/shared/ui/Icon';
 import controls from '@/shared/ui/controls.module.css';
-import { useSessionContext } from '@/shared/session/session-context';
+import { useSessionContext } from '@/session/session-context';
 import { PluginPicker } from './PluginPicker';
 import type { DeviceTarget } from './device-target';
 import styles from './Devices.module.css';

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { LibraryAsset } from '@/model/generated';
 import { toAssetId } from '@/model/asset-id';
-import { useSession, useSessionContext, useSessionStore } from '@/shared/session/session-context';
+import { useSession, useSessionContext, useSessionStore } from '@/session/session-context';
 import { openMidiFile } from '@/native/dialog';
 import { notify } from '@/shared/notify';
 

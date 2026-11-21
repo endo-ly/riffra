@@ -2,7 +2,7 @@ import { TestSessionProvider } from '@/test/support/session-provider';
 // @vitest-environment jsdom
 
 import type { AudioClip, MidiClip } from '@/model/generated';
-import { canonicalState, defaultSession } from '@/native/browser-defaults';
+import { canonicalState, defaultSession } from '@/native/preview/fixtures';
 import { toAssetId } from '@/model/asset-id';
 import { createFakeNativeApi, fakeAudioStatus } from '@/test/support/fake-native-api';
 import '@testing-library/jest-dom/vitest';

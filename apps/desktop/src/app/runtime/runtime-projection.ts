@@ -1,5 +1,6 @@
 import type { RuntimeProjectionStatus, Track } from '@/model/generated';
-import type { RuntimeSlice } from '@/shared/session/slices/runtime';
+import type { RuntimeSlice } from '@/session/slices/runtime';
+import { fileName } from '@/shared/path';
 
 type ProjectionState = Pick<
   RuntimeSlice,
@@ -58,10 +59,7 @@ export function instrumentLoading(
   if (!preparation) return null;
   const { stage } = preparation;
   const ownerName = tracks.find((track) => track.id === stage.ownerId)?.name;
-  const pluginName = stage.pluginPath
-    .split(/[\\/]/)
-    .pop()
-    ?.replace(/\.vst3$/i, '');
+  const pluginName = fileName(stage.pluginPath)?.replace(/\.vst3$/i, '');
   return {
     completed: stage.completedDevices,
     total: stage.totalDevices || null,

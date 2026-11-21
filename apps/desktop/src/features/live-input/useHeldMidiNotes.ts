@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { encodeNoteOff, encodeNoteOn } from '@/shared/midi';
+import { encodeNoteOff, encodeNoteOn } from '@/model/midi';
 
 interface UseHeldMidiNotesOptions {
   enabled: boolean;

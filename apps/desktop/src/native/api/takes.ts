@@ -1,5 +1,5 @@
 import type { ArrangementMutationResult, AudioStatus, AudioTakeVariant } from '@/model/generated';
-import { dispatchControl } from '../invoke';
+import { dispatchControl } from '@/native/invoke';
 
 export interface TakeApi {
   setAudioClipTakeVariant(

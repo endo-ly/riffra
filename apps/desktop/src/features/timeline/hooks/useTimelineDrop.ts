@@ -11,8 +11,8 @@ import {
 } from '@/shared/browser-drag';
 import { TRACK_HEADER_WIDTH } from '@/features/timeline/model/timeline-layout';
 import { placeBrowserItem } from '@/features/timeline/place-browser-item';
-import { resolvePlacementTarget, type BrowserPlacement } from '@/shared/browser-placement';
-import { useSessionContext } from '@/shared/session/session-context';
+import { resolvePlacementTarget, type BrowserPlacement } from '@/model/placement';
+import { useSessionContext } from '@/session/session-context';
 import { notify } from '@/shared/notify';
 
 type TimelineSnapTick = (raw: number, temporaryOff?: boolean) => number;

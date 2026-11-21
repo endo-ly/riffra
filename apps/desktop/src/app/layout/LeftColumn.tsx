@@ -6,12 +6,12 @@ import {
   type ReactNode,
 } from 'react';
 import clsx from 'clsx';
-import { useSession } from '@/shared/session/session-context';
-import shellStyles from '../AppShell.module.css';
+import { useSession } from '@/session/session-context';
+import shellStyles from '@/app/AppShell.module.css';
 import { ResizeHandle } from '@/shared/ui/ResizeHandle';
-import { usePointerGesture } from '@/shared/usePointerGesture';
+import { usePointerGesture } from '@/shared/hooks/usePointerGesture';
 import styles from './LeftColumn.module.css';
-import { selectWorkspaceWaiting } from '@/shared/session/selectors';
+import { selectWorkspaceWaiting } from '@/session/selectors';
 
 const LEFT_COLUMN_WIDTH = { default: 280, min: 220, max: 380, collapse: 48 } as const;
 

@@ -1,6 +1,6 @@
 import type { Track, TransportStatus } from '@/model/generated';
-import { useSession } from '@/shared/session/session-context';
-import { TRACK_HEADER_WIDTH } from './model/timeline-layout';
+import { useSession } from '@/session/session-context';
+import { TRACK_HEADER_WIDTH } from '@/features/timeline/model/timeline-layout';
 import styles from './TimelineView.module.css';
 
 interface RecordingPreviewProps {

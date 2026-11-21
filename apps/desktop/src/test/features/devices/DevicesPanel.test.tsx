@@ -22,7 +22,7 @@ import type {
   InstrumentLibraryItem,
   Track,
 } from '@/model/generated';
-import { defaultSession } from '@/native/browser-defaults';
+import { defaultSession } from '@/native/preview/fixtures';
 import { createFakeNativeApi, type FakeNativeApi } from '@/test/support/fake-native-api';
 import { resolveDeviceTarget } from '@/features/devices/device-target';
 import { DevicesPanel, DevicesPanelView } from '@/features/devices/DevicesPanel';

@@ -3,7 +3,7 @@ import type { CreativeSession, MetronomeSound, SessionSettingsPatch } from '@/mo
 import clsx from 'clsx';
 import { formatClock, formatMusicalPosition, tickToMusicalPosition } from '@/model/time-format';
 import { TransportIcon } from './TransportIcon';
-import { useSession, useSessionContext } from '@/shared/session/session-context';
+import { useSession, useSessionContext } from '@/session/session-context';
 import { ContextMenu } from '@/shared/ui/ContextMenu';
 import styles from './TransportControls.module.css';
 

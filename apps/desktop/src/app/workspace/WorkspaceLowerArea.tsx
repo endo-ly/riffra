@@ -1,6 +1,6 @@
 import { Activity, type CSSProperties, type ReactNode } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { useSession } from '@/shared/session/session-context';
+import { useSession } from '@/session/session-context';
 import type { useLivePlay } from '@/features/live-input/useLivePlay';
 import { WorkspacePlaySurface } from '@/features/live-input/PlaySurface';
 import { WorkspaceMidiEditor } from '@/features/midi-editor/MidiEditorPanel';
@@ -8,9 +8,9 @@ import { DevicesPanel } from '@/features/devices/DevicesPanel';
 import { MixerPanel } from '@/features/mixer/MixerPanel';
 import { ToolbarButton } from '@/shared/ui/Toolbar';
 import { ResizeHandle } from '@/shared/ui/ResizeHandle';
-import { usePointerGesture } from '@/shared/usePointerGesture';
+import { usePointerGesture } from '@/shared/hooks/usePointerGesture';
 import styles from './WorkspaceLowerArea.module.css';
-import type { WorkspaceLowerView } from '@/shared/session/slices/workspace';
+import type { WorkspaceLowerView } from '@/session/slices/workspace';
 
 const COLLAPSED_HEIGHT = 48;
 

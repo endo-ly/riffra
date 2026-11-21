@@ -1,6 +1,6 @@
 import type { BackgroundJobStatus } from '@/model/generated';
-import { useSession } from '@/shared/session/session-context';
-import { selectHostReady } from '@/shared/session/selectors';
+import { useSession } from '@/session/session-context';
+import { selectHostReady } from '@/session/selectors';
 import { Notice } from '@/shared/ui/message/Notice';
 
 const JOB_TITLES: Record<BackgroundJobStatus['kind'], string> = {

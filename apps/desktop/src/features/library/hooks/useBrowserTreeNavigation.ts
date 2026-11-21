@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
-import type { BrowserFolder, BrowserItem, BrowserNode } from '../model/browser-tree';
-import type { BrowserRow } from '../BrowserRows';
+import type {
+  BrowserFolder,
+  BrowserItem,
+  BrowserNode,
+} from '@/features/library/model/browser-tree';
+import type { BrowserRow } from '@/features/library/BrowserRows';
 
 export function rowId(index: number): string {
   return `browser-row-${index}`;

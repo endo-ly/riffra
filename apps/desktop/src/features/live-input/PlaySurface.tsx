@@ -1,11 +1,11 @@
-import { useSession } from '@/shared/session/session-context';
-import { resolveTrackColor } from '@/model/track-color';
-import { selectTrack } from '@/shared/session/selectors';
+import { useSession } from '@/session/session-context';
+import { resolveTrackColorById } from '@/model/track-color';
+import { selectTrack } from '@/session/selectors';
 import type { CSSProperties } from 'react';
 import type { AudioStatus } from '@/model/generated';
 import { drumPadByNote } from './drum-map';
 import { MUSICAL_TYPING_MAX_OCTAVE, MUSICAL_TYPING_MIN_OCTAVE } from './musical-typing';
-import { midiNoteName } from '@/shared/midi';
+import { midiNoteName } from '@/model/midi';
 import type { LivePlay } from './useLivePlay';
 import { LIVE_PLAY_BLOCKED_REASON } from './useLivePlay';
 import {
@@ -166,7 +166,7 @@ export function WorkspacePlaySurface({ play }: { play: LivePlay }) {
     <PlaySurface
       play={play}
       audio={audio}
-      trackColor={track ? resolveTrackColor(track, tracks.indexOf(track)) : null}
+      trackColor={track ? resolveTrackColorById(tracks, track.id) : null}
       onChooseInstrument={() => {
         if (track) {
           setSelection({ kind: 'track', trackId: track.id });

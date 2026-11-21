@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
-import { useSessionContext, useSessionStore } from '@/shared/session/session-context';
-import { resolvePlacementTarget, type BrowserPlacement } from '@/shared/browser-placement';
+import { useSessionContext, useSessionStore } from '@/session/session-context';
+import { resolvePlacementTarget, type BrowserPlacement } from '@/model/placement';
 import { HostConnectionChangedError } from '@/native/invoke';
 import { notify } from '@/shared/notify';
 import { placeBrowserItem } from '@/features/timeline/place-browser-item';

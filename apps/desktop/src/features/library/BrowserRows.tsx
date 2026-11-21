@@ -1,7 +1,10 @@
 import clsx from 'clsx';
 import type { DragEvent, MouseEvent, ReactNode } from 'react';
-import type { BrowserItemAction, BrowserItemPlacementAction } from './model/browser-item-actions';
-import { Icon } from '@/shared/ui/primitives';
+import type {
+  BrowserItemAction,
+  BrowserItemPlacementAction,
+} from '@/features/library/model/browser-item-actions';
+import { Icon } from '@/shared/ui/Icon';
 import { InlineEdit } from './BrowserItemEditor';
 import {
   browserItemDetail,
@@ -9,7 +12,7 @@ import {
   type BrowserFolder,
   type BrowserItem,
   type BrowserNode,
-} from './model/browser-tree';
+} from '@/features/library/model/browser-tree';
 import styles from './BrowserPanel.module.css';
 
 export interface BrowserRow {

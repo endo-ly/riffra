@@ -1,7 +1,7 @@
 import type { ArrangementMutationResult } from '@/model/generated';
 import type { NativeApi } from '@/native/native-api';
-import type { resolvePlacementTarget } from '@/shared/browser-placement';
-import { type BrowserPlacement } from '@/shared/browser-placement';
+import type { resolvePlacementTarget } from '@/model/placement';
+import { type BrowserPlacement } from '@/model/placement';
 
 type PlacementApi = Pick<
   NativeApi,

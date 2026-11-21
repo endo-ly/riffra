@@ -5,8 +5,8 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import App from '@/app/App';
-import { createSessionStore } from '@/shared/session/store';
-import { bindSessionRuntime } from '@/shared/session/runtime';
+import { createSessionStore } from '@/session/store';
+import { bindSessionRuntime } from '@/session/runtime';
 import { useAppUpdater } from '@/app/runtime/useAppUpdater';
 import { TestSessionProvider } from '@/test/support/session-provider';
 import {
@@ -14,7 +14,7 @@ import {
   type FakeNativeApi,
   fakeAudioStatus,
 } from '@/test/support/fake-native-api';
-import { defaultSession } from '@/native/browser-defaults';
+import { defaultSession } from '@/native/preview/fixtures';
 import { ToastStack } from '@/shared/ui/message/ToastStack';
 
 afterEach(() => {

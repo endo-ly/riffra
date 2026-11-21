@@ -1,13 +1,13 @@
 import clsx from 'clsx';
 import type { AudioStatus } from '@/model/generated';
-import { useSession } from '@/shared/session/session-context';
-import { selectHostReady } from '@/shared/session/selectors';
-import { isEmergencyMuteActive } from '@/shared/audio/audio-safety';
-import { useAudioFeedbackSuspected } from '@/shared/audio/audio-meters';
+import { useSession } from '@/session/session-context';
+import { selectHostReady } from '@/session/selectors';
+import { isEmergencyMuteActive } from '@/model/audio-status';
+import { useAudioFeedbackSuspected } from '@/session/audio-meters';
 
 import { AudioMonitor } from '@/features/audio/AudioMonitor';
 import { TransportControls } from '@/features/transport/TransportControls';
-import { Icon } from '@/shared/ui/primitives';
+import { Icon } from '@/shared/ui/Icon';
 import { preparationLabel } from '@/app/runtime/runtime-projection';
 import { ProjectHostSelector } from './ProjectHostSelector';
 import styles from './GlobalControlBar.module.css';

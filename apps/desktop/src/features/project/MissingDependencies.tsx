@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import { useSession } from '@/shared/session/session-context';
+import { useSession } from '@/session/session-context';
 import clsx from 'clsx';
 import type { MissingDependency } from '@/model/generated';
 import { Dialog } from '@/shared/ui/Dialog';
-import { Icon } from '@/shared/ui/primitives';
+import { Icon } from '@/shared/ui/Icon';
 import surface from '@/shared/ui/Surface.module.css';
 import styles from './MissingDependencies.module.css';
 

@@ -158,12 +158,12 @@ button.identityTile[aria-expanded='true'] {
 }
 
 .control {
-  composes: control from '../../shared/ui/controls.module.css';
+  composes: control from '@/shared/ui/controls.module.css';
 }
 
 .inlineField,
 .splitControl {
-  composes: well from '../../shared/ui/controls.module.css';
+  composes: well from '@/shared/ui/controls.module.css';
 }
 
 .inlineField:focus-within,
@@ -259,7 +259,7 @@ button.identityTile[aria-expanded='true'] {
 
 /* Options in one well; the chosen one rises out of it. Also groups step actions. */
 .segmented {
-  composes: segmented from '../../shared/ui/controls.module.css';
+  composes: segmented from '@/shared/ui/controls.module.css';
 }
 
 .segmentedGap {
@@ -267,15 +267,15 @@ button.identityTile[aria-expanded='true'] {
 }
 
 .smallButton {
-  composes: smallButton from '../../shared/ui/controls.module.css';
+  composes: smallButton from '@/shared/ui/controls.module.css';
 }
 
 .accent {
-  composes: accent from '../../shared/ui/controls.module.css';
+  composes: accent from '@/shared/ui/controls.module.css';
 }
 
 .iconButton {
-  composes: iconButton from '../../shared/ui/controls.module.css';
+  composes: iconButton from '@/shared/ui/controls.module.css';
 }
 
 .messageSlot {

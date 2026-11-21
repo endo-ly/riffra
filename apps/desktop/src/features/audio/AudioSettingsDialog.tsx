@@ -1,5 +1,5 @@
 import { errorText } from '@/shared/errors';
-import { useSession } from '@/shared/session/session-context';
+import { useSession } from '@/session/session-context';
 import { useEffect, useRef, useState } from 'react';
 import type {
   AudioDeviceProbe,
@@ -17,8 +17,8 @@ import {
   mergeDeviceChannels,
   normalizeAudioSettingsDraft,
   selectDriverForDraft,
-} from '@/features/audio/audio-settings';
-import { isAudioEngineUsable } from '@/shared/audio/audio-safety';
+} from './audio-settings';
+import { isAudioEngineUsable } from '@/model/audio-status';
 import { Dialog } from '@/shared/ui/Dialog';
 import surface from '@/shared/ui/Surface.module.css';
 import styles from './AudioSettingsDialog.module.css';

@@ -1,10 +1,10 @@
 import { useState, type ReactNode } from 'react';
 import { render, type RenderOptions, type RenderResult } from '@testing-library/react';
 import type { CanonicalState, CreativeSession } from '@/model/generated';
-import { canonicalState } from '@/native/browser-defaults';
-import { SessionProvider } from '@/shared/session/session-context';
-import { createSessionStore, type SessionStore } from '@/shared/session/store';
-import { createFakeNativeApi, type FakeNativeApi } from '@/test/support/fake-native-api';
+import { canonicalState } from '@/native/preview/fixtures';
+import { SessionProvider } from '@/session/session-context';
+import { createSessionStore, type SessionStore } from '@/session/store';
+import { createFakeNativeApi, type FakeNativeApi } from './fake-native-api';
 
 /** State a test starts from once the app has accepted its bootstrap. */
 export interface TestSessionSeed {

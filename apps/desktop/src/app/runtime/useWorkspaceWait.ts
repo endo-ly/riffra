@@ -1,5 +1,5 @@
 import type { Track } from '@/model/generated';
-import { useSession } from '@/shared/session/session-context';
+import { useSession } from '@/session/session-context';
 import type { WaitCardProps } from '@/shared/ui/message/WaitCard';
 import { instrumentLoading, type InstrumentLoading } from './runtime-projection';
 

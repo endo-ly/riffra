@@ -1,6 +1,6 @@
 import { playbackProblem } from '@/app/runtime/runtime-projection';
-import { useSession } from '@/shared/session/session-context';
-import { selectHostReady } from '@/shared/session/selectors';
+import { useSession } from '@/session/session-context';
+import { selectHostReady } from '@/session/selectors';
 import { Notice } from '@/shared/ui/message/Notice';
 
 function plural(count: number, noun: string) {

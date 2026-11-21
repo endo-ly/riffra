@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { Track } from '@/model/generated';
-import { useSessionContext } from '@/shared/session/session-context';
+import { useSessionContext } from '@/session/session-context';
 import { HostConnectionChangedError, logNativeError } from '@/native/invoke';
 import { errorText } from '@/shared/errors';
 import {

@@ -1,7 +1,7 @@
 import { timelineObjectEndTick } from '@/model/clip-time';
 import type { ArrangementMutationResult, CreativeSession } from '@/model/generated';
-import { useSessionContext } from '@/shared/session/session-context';
-import { Icon } from '@/shared/ui/primitives';
+import { useSessionContext } from '@/session/session-context';
+import { Icon } from '@/shared/ui/Icon';
 import clsx from 'clsx';
 import { useMemo, useState } from 'react';
 import sharedStyles from './Inspector.module.css';

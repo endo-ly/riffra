@@ -8,7 +8,7 @@ import {
   MUSICAL_TYPING_OCTAVE_DOWN_KEY,
   MUSICAL_TYPING_OCTAVE_UP_KEY,
   baseNoteForOctave,
-} from '@/features/live-input/musical-typing';
+} from './musical-typing';
 import { isEditableTypingTarget } from '@/shared/input';
 import { useHeldMidiNotes } from './useHeldMidiNotes';
 

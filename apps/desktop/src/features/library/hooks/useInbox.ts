@@ -1,7 +1,7 @@
 import { notify } from '@/shared/notify';
 import { useCallback, useEffect, useState } from 'react';
 import type { LibraryAsset, RecordingAsset } from '@/model/generated';
-import { useSession, useSessionContext } from '@/shared/session/session-context';
+import { useSession, useSessionContext } from '@/session/session-context';
 
 /**
  * Drives the Inbox preservation zone (LIB-003): every unorganized take can be

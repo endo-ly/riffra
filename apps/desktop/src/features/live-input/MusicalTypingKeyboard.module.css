@@ -1,5 +1,5 @@
 .keyboard {
-  composes: scope from '../../shared/ui/PianoKeyTokens.module.css';
+  composes: scope from '@/styles/PianoKeyTokens.module.css';
   position: relative;
   width: min(100%, 960px);
   padding: var(--space-3) 0 0;

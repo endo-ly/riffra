@@ -9,10 +9,10 @@ import type {
 import { countOffGridNotes, snapClipTick, type SnapGrid } from '@/model/clip-grid';
 import { snapToBar } from '@/model/timebase';
 import { isEditableTypingTarget } from '@/shared/input';
-import { useSession, useSessionContext } from '@/shared/session/session-context';
+import { useSession, useSessionContext } from '@/session/session-context';
 import { notify } from '@/shared/notify';
 import type { ContextMenuItem } from '@/shared/ui/ContextMenu';
-import { PITCH_HIGH, PITCH_LOW, pitchFromClientY } from '../model/pitch-grid';
+import { PITCH_HIGH, PITCH_LOW, pitchFromClientY } from '@/features/midi-editor/model/pitch-grid';
 
 /** A note edit: the canonical the Host accepted, or null when it did not run. */
 export type NoteEdit = Promise<ArrangementMutationResult | null>;

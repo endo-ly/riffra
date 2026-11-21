@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import type { AutomationTarget } from '@/model/generated';
-import { useSession, useSessionContext } from '@/shared/session/session-context';
-import { TimelineRuler } from '@/features/timeline/TimelineRuler';
-import { TimelineToolbar } from '@/features/timeline/TimelineToolbar';
-import { TimelineTrackList } from '@/features/timeline/TimelineTrackList';
+import { useSession, useSessionContext } from '@/session/session-context';
+import { TimelineRuler } from './TimelineRuler';
+import { TimelineToolbar } from './TimelineToolbar';
+import { TimelineTrackList } from './TimelineTrackList';
 import { TimelineOverlays } from './TimelineOverlays';
 import { RecordingPreview } from './RecordingPreview';
-import { TimelinePlayhead } from '@/features/timeline/TimelinePlayhead';
+import { TimelinePlayhead } from './TimelinePlayhead';
 import { formatMusicalPosition } from '@/model/time-format';
 import {
   timelineGridBackground,

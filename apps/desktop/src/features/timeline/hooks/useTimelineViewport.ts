@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react';
 import type { ProjectTimebase } from '@/model/generated';
 import type { TransportStatus } from '@/model/generated';
-import { TRACK_HEADER_WIDTH, BASE_PIXELS_PER_QUARTER } from '../model/timeline-layout';
+import {
+  TRACK_HEADER_WIDTH,
+  BASE_PIXELS_PER_QUARTER,
+} from '@/features/timeline/model/timeline-layout';
 
 interface UseTimelineViewportOptions {
   timebase: ProjectTimebase;

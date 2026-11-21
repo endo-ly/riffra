@@ -1,8 +1,8 @@
 import { useEffect } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import { isEditableTypingTarget } from '@/shared/input';
-import { useSessionStore } from '@/shared/session/session-context';
-import { selectHostReady, selectWorkspaceWaiting } from '@/shared/session/selectors';
+import { useSessionStore } from '@/session/session-context';
+import { selectHostReady, selectWorkspaceWaiting } from '@/session/selectors';
 
 export function useAppShortcuts(setCommandOpen: Dispatch<SetStateAction<boolean>>) {
   const store = useSessionStore();

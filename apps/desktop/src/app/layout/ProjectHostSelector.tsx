@@ -11,13 +11,14 @@ import type {
 
 import type { HostConnectionBootstrap } from '@/native/api/host-connection';
 import { openHostDataRoot } from '@/native/dialog';
-import { useSession, useSessionStore } from '@/shared/session/session-context';
+import { useSession, useSessionStore } from '@/session/session-context';
 import { ConfirmDialog } from '@/shared/ui/ConfirmDialog';
 import { ContextMenu } from '@/shared/ui/ContextMenu';
 import controls from '@/shared/ui/controls.module.css';
-import { Icon } from '@/shared/ui/primitives';
+import { Icon } from '@/shared/ui/Icon';
 import styles from './ProjectHostSelector.module.css';
 import { InlineMessage } from '@/shared/ui/message/InlineMessage';
+import { fileName } from '@/shared/path';
 
 type ProjectOrder = 'recent' | 'name';
 
@@ -307,7 +308,7 @@ export function ProjectHostSelectorView(props: ProjectHostSelectorProps) {
             >
               <i className={styles.hostDot} data-mode="attached" />
               <span className={styles.rowName}>
-                {host.projectName ?? basename(host.dataRoot) ?? host.instanceId}
+                {host.projectName ?? fileName(host.dataRoot) ?? host.instanceId}
               </span>
               <small className={styles.rowDetail}>
                 PID {host.pid} · {host.safeMode ? 'Safe Mode' : host.status}
@@ -592,13 +593,7 @@ function getHostLabel(state: HostConnectionState, hosts: LocalHostInfo[]): strin
   if (state.mode === 'disconnected') return 'Disconnected';
   return (
     hosts.find((host) => host.instanceId === state.instanceId)?.projectName ??
-    basename(state.dataRoot) ??
+    fileName(state.dataRoot) ??
     'Attached Host'
   );
-}
-
-function basename(path: string | null): string | null {
-  if (!path) return null;
-  const parts = path.split(/[\\/]/).filter(Boolean);
-  return parts.at(-1) ?? null;
 }

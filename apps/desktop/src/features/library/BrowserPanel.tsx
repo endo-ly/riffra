@@ -1,18 +1,18 @@
 import { useMemo, useState, type DragEvent } from 'react';
 import type { LibraryAsset, PluginEntry, RecordingAsset, Track } from '@/model/generated';
 import type { InboxController } from '@/features/library/hooks/useInbox';
-import type { CatalogSlice } from '@/shared/session/slices/catalog';
-import { useSession } from '@/shared/session/session-context';
-import { useInstrumentPreview } from './hooks/useInstrumentPreview';
-import { useLibrary } from './hooks/useLibrary';
-import { useInbox } from './hooks/useInbox';
-import { rowId, useBrowserTreeNavigation } from './hooks/useBrowserTreeNavigation';
-import { actionFor, placementFor } from './model/browser-item-actions';
-import { type BrowserPlacement } from '@/shared/browser-placement';
+import type { CatalogSlice } from '@/session/slices/catalog';
+import { useSession } from '@/session/session-context';
+import { useInstrumentPreview } from '@/features/library/hooks/useInstrumentPreview';
+import { useLibrary } from '@/features/library/hooks/useLibrary';
+import { useInbox } from '@/features/library/hooks/useInbox';
+import { rowId, useBrowserTreeNavigation } from '@/features/library/hooks/useBrowserTreeNavigation';
+import { actionFor, placementFor } from '@/features/library/model/browser-item-actions';
+import { type BrowserPlacement } from '@/model/placement';
 import { writeBrowserItemDrag } from '@/shared/browser-drag';
 import { ConfirmDialog } from '@/shared/ui/ConfirmDialog';
 import { ContextMenu, type ContextMenuItem } from '@/shared/ui/ContextMenu';
-import { Icon } from '@/shared/ui/primitives';
+import { Icon } from '@/shared/ui/Icon';
 import { BrowserItemEditor, type BrowserItemEdit } from './BrowserItemEditor';
 import {
   browserItemPlacement,
@@ -20,7 +20,7 @@ import {
   buildBrowserTree,
   searchBrowserItems,
   type BrowserItem,
-} from './model/browser-tree';
+} from '@/features/library/model/browser-tree';
 import { FolderRow, ItemRow, type BrowserRow } from './BrowserRows';
 import styles from './BrowserPanel.module.css';
 

@@ -1,7 +1,7 @@
 import { createTestSessionStore, TestSessionProvider } from '@/test/support/session-provider';
 // @vitest-environment jsdom
 import type { RenderResult } from '@/model/generated';
-import { canonicalState, defaultSession } from '@/native/browser-defaults';
+import { canonicalState, defaultSession } from '@/native/preview/fixtures';
 import { toAssetId } from '@/model/asset-id';
 import { createFakeNativeApi } from '@/test/support/fake-native-api';
 import '@testing-library/jest-dom/vitest';

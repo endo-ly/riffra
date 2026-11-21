@@ -1,11 +1,16 @@
 import type { CSSProperties, Dispatch, SetStateAction, RefObject } from 'react';
 import type { MidiClip, MidiNote } from '@/model/generated';
 import { idsInClientRect } from '@/shared/rect-selection';
-import { isBlackKey, midiNoteName } from '@/shared/midi';
-import type { usePointerGesture } from '@/shared/usePointerGesture';
-import { pitchFromClientY, pitchRowTop, PITCH_HIGH, PITCH_LOW } from './model/pitch-grid';
-import type { MidiGhostNote } from './model/ghost-notes';
-import type { useNoteDrag } from './hooks/useNoteDrag';
+import { isBlackKey, midiNoteName } from '@/model/midi';
+import type { usePointerGesture } from '@/shared/hooks/usePointerGesture';
+import {
+  pitchFromClientY,
+  pitchRowTop,
+  PITCH_HIGH,
+  PITCH_LOW,
+} from '@/features/midi-editor/model/pitch-grid';
+import type { MidiGhostNote } from '@/features/midi-editor/model/ghost-notes';
+import type { useNoteDrag } from '@/features/midi-editor/hooks/useNoteDrag';
 import styles from './NoteLane.module.css';
 import sharedStyles from './MidiEditorPanel.module.css';
 

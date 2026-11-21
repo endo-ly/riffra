@@ -1,4 +1,4 @@
-import { useAudioChannelMeter } from '@/shared/audio/audio-meters';
+import { useAudioChannelMeter } from '@/session/audio-meters';
 import type { EffectOwner } from '@/model/generated';
 import styles from './Mixer.module.css';
 

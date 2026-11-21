@@ -8,7 +8,7 @@ import type {
 import { timelineGridDensity, TRACK_HEADER_WIDTH } from '@/features/timeline/model/timeline-layout';
 import { formatClock } from '@/model/time-format';
 import { meterSegment } from '@/model/timebase';
-import { usePointerGesture } from '@/shared/usePointerGesture';
+import { usePointerGesture } from '@/shared/hooks/usePointerGesture';
 import styles from './TimelineRuler.module.css';
 
 type TimelineRange = 'loop' | 'punch';

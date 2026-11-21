@@ -1,5 +1,5 @@
 import type { AssetId, PluginRole } from '@/model/generated';
-import type { BrowserPlacement } from './browser-placement';
+import type { BrowserPlacement } from '@/model/placement';
 
 export const RIFFRA_ASSET_MIME = 'application/x-riffra-asset';
 export const RIFFRA_INSTRUMENT_MIME = 'application/x-riffra-instrument';

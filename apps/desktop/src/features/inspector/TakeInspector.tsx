@@ -6,8 +6,8 @@ import type {
   RecordingTakeRecord,
 } from '@/model/generated';
 import { errorText } from '@/shared/errors';
-import { useSession, useSessionContext, useSessionStore } from '@/shared/session/session-context';
-import { Icon } from '@/shared/ui/primitives';
+import { useSession, useSessionContext, useSessionStore } from '@/session/session-context';
+import { Icon } from '@/shared/ui/Icon';
 import clsx from 'clsx';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import sharedStyles from './Inspector.module.css';

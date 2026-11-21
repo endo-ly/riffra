@@ -1,7 +1,7 @@
 import { createTestSessionStore, TestSessionProvider } from '@/test/support/session-provider';
 // @vitest-environment jsdom
 import type { CreativeSession, EffectOwner, MixBus } from '@/model/generated';
-import { defaultSession } from '@/native/browser-defaults';
+import { defaultSession } from '@/native/preview/fixtures';
 import { createFakeNativeApi } from '@/test/support/fake-native-api';
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';

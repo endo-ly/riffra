@@ -7,12 +7,13 @@ import type {
 } from '@/model/generated';
 import { chooseRenderDirectory, saveRenderWav } from '@/native/dialog';
 import { errorText } from '@/shared/errors';
-import { useSessionContext } from '@/shared/session/session-context';
+import { useSessionContext } from '@/session/session-context';
 import controls from '@/shared/ui/controls.module.css';
-import { Icon } from '@/shared/ui/primitives';
+import { Icon } from '@/shared/ui/Icon';
 import { useEffect, useId, useRef, useState } from 'react';
 import styles from './Render.module.css';
 import { Dialog, DialogRow, DialogSection } from '@/shared/ui/Dialog';
+import { fileName } from '@/shared/path';
 import { RenderHistoryPanel } from './RenderHistoryPanel';
 import { RenderMeasurements } from './RenderMeasurements';
 import { InlineMessage } from '@/shared/ui/message/InlineMessage';
@@ -85,10 +86,6 @@ const OUTPUTS: readonly [boolean, string][] = [
   [false, 'Stereo mix'],
   [true, 'Aligned Track stems'],
 ];
-
-function fileName(path: string) {
-  return path.split(/[\\/]/).at(-1) || path;
-}
 
 export function MixdownDialog(props: Props) {
   const { api, commit: sessionCommit } = useSessionContext();

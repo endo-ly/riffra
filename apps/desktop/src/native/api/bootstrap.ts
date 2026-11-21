@@ -1,6 +1,6 @@
 import type { BootstrapState, RuntimeStartupFinished } from '@/model/generated';
 import { listen } from '@tauri-apps/api/event';
-import { adoptHostConnection, invokeHost } from '../invoke';
+import { adoptHostConnection, invokeHost } from '@/native/invoke';
 
 export interface BootstrapApi {
   bootstrap(): Promise<BootstrapState>;

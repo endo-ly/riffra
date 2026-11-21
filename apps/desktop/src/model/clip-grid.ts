@@ -1,5 +1,5 @@
-import type { ProjectTimebase } from '@/model/generated';
-import { ticksPerBar } from '@/model/timebase';
+import type { ProjectTimebase } from './generated';
+import { ticksPerBar } from './timebase';
 
 export type SnapGrid =
   | 'bar'

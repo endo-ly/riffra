@@ -1,4 +1,4 @@
-import { useSessionCommand } from '@/shared/session/useSessionCommand';
+import { useSessionCommand } from '@/session/hooks/useSessionCommand';
 import { errorText } from '@/shared/errors';
 import { useEffect, useState, type CSSProperties } from 'react';
 import type {
@@ -9,14 +9,14 @@ import type {
   InstrumentLibraryItem,
   PluginEntry,
 } from '@/model/generated';
-import { useSession, useSessionContext } from '@/shared/session/session-context';
+import { useSession, useSessionContext } from '@/session/session-context';
 import { useShallow } from 'zustand/react/shallow';
-import { selectMissingDeviceIds } from '@/shared/session/selectors';
+import { selectMissingDeviceIds } from '@/session/selectors';
 import { selectionOwner } from '@/model/editor-selection';
 import { resolveDeviceTarget } from './device-target';
-import { useInstrumentMidiInspection } from '@/shared/session/useInstrumentMidiInspection';
+import { useInstrumentMidiInspection } from '@/session/hooks/useInstrumentMidiInspection';
 import { Toolbar } from '@/shared/ui/Toolbar';
-import { resolveTrackColor } from '@/model/track-color';
+import { resolveTrackColorById } from '@/model/track-color';
 import { DeviceParameterEditor } from './DeviceParameterEditor';
 import { DeviceChain } from './DeviceChain';
 import { InstrumentMidiSettingsEditor } from './InstrumentMidiSettingsEditor';
@@ -114,7 +114,7 @@ export function DevicesPanelView(props: DevicesPanelProps) {
     setError(null);
     void sessionCommit(operation, { onError: setError });
   };
-  const color = track ? resolveTrackColor(track, props.arrangement.tracks.indexOf(track)) : null;
+  const color = track ? resolveTrackColorById(props.arrangement.tracks, track.id) : null;
   const effectCount = target?.effects.length ?? 0;
   const deviceSummary = target
     ? [track?.instrument?.name, `${effectCount} effect${effectCount === 1 ? '' : 's'}`]

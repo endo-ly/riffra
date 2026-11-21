@@ -55,7 +55,7 @@
 
 /* A number and its unit inside one well. */
 .numberWell {
-  composes: well from '../../shared/ui/controls.module.css';
+  composes: well from '@/shared/ui/controls.module.css';
   height: 28px;
   display: flex;
   align-items: center;

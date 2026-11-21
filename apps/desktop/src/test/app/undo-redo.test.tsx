@@ -6,7 +6,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createFakeNativeApi, type FakeNativeApi } from '@/test/support/fake-native-api';
 import App from '@/app/App';
-import { canonicalState, defaultSession } from '@/native/browser-defaults';
+import { canonicalState, defaultSession } from '@/native/preview/fixtures';
 import type { CreativeSession, ProjectState } from '@/model/generated';
 
 beforeEach(() => {

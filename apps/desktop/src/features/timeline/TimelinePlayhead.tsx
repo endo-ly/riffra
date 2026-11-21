@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react';
-import { selectStoppedPlayheadTick } from '@/shared/session/selectors';
-import { useSession } from '@/shared/session/session-context';
-import { TRACK_HEADER_WIDTH } from './model/timeline-layout';
+import { selectStoppedPlayheadTick } from '@/session/selectors';
+import { useSession } from '@/session/session-context';
+import { TRACK_HEADER_WIDTH } from '@/features/timeline/model/timeline-layout';
 import styles from './TimelineView.module.css';
 
 export function TimelinePlayhead({ pixelsPerTick }: { pixelsPerTick: number }) {

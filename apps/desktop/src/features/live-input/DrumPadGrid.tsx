@@ -1,5 +1,5 @@
 import { useRef, type CSSProperties } from 'react';
-import { DRUM_PADS, type DrumCategory } from '@/features/live-input/drum-map';
+import { DRUM_PADS, type DrumCategory } from './drum-map';
 import { TRACK_COLOR_PALETTE } from '@/model/track-color';
 import styles from './DrumPadGrid.module.css';
 

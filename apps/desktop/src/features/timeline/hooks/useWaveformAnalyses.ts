@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { AudioAnalysis, AudioClip, AssetId } from '@/model/generated';
-import { useSession, useSessionContext } from '@/shared/session/session-context';
+import { useSession, useSessionContext } from '@/session/session-context';
 
 export function useWaveformAnalyses(clips: AudioClip[]) {
   const { api } = useSessionContext();

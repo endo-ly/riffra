@@ -1,6 +1,6 @@
-import { useSessionCommand } from '@/shared/session/useSessionCommand';
+import { useSessionCommand } from '@/session/hooks/useSessionCommand';
 import { errorText } from '@/shared/errors';
-import { useSessionRead } from '@/shared/session/useSessionRead';
+import { useSessionRead } from '@/session/hooks/useSessionRead';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type {
   ArrangementMutationResult,
@@ -10,7 +10,7 @@ import type {
   PluginPresetInfo,
 } from '@/model/generated';
 import { HostConnectionChangedError } from '@/native/invoke';
-import { useSession, useSessionContext } from '@/shared/session/session-context';
+import { useSession, useSessionContext } from '@/session/session-context';
 
 interface DeviceDetails {
   inspection: DeviceInspection;

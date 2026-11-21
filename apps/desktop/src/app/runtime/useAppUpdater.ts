@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 
-import { useSessionContext } from '@/shared/session/session-context';
+import { useSessionContext } from '@/session/session-context';
 import { notify } from '@/shared/notify';
 
 /**

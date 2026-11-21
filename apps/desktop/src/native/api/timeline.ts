@@ -4,7 +4,7 @@ import type {
   ProjectTimebase,
 } from '@/model/generated';
 import type { MarkerUpdateParams } from '@/model/generated';
-import { dispatchControl } from '../invoke';
+import { dispatchControl } from '@/native/invoke';
 
 export interface TimelineApi {
   addMarker(position: MusicalPosition, name: string): Promise<ArrangementMutationResult>;

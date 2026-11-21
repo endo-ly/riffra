@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { HostConnectionState, LocalHostInfo } from '@/model/generated';
 
 import type { HostConnectionBootstrap } from '@/native/api/host-connection';
-import { defaultProjectState } from '@/native/browser-defaults';
+import { defaultProjectState } from '@/native/preview/fixtures';
 import { openHostDataRoot } from '@/native/dialog';
 import { ProjectHostSelectorView } from '@/app/layout/ProjectHostSelector';
 

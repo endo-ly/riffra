@@ -1,4 +1,4 @@
-import { useSessionCommand } from '@/shared/session/useSessionCommand';
+import { useSessionCommand } from '@/session/hooks/useSessionCommand';
 import type {
   ArrangementMutationResult,
   AutomationTarget,
@@ -6,9 +6,9 @@ import type {
   EffectOwner,
   MixBusKind,
 } from '@/model/generated';
-import { useSession, useSessionContext } from '@/shared/session/session-context';
+import { useSession, useSessionContext } from '@/session/session-context';
 import { useShallow } from 'zustand/react/shallow';
-import { selectMissingDeviceIds } from '@/shared/session/selectors';
+import { selectMissingDeviceIds } from '@/session/selectors';
 import { ownerSelection, selectionOwner } from '@/model/editor-selection';
 import controls from '@/shared/ui/controls.module.css';
 import { useState } from 'react';

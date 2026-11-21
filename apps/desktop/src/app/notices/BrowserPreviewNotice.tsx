@@ -1,4 +1,4 @@
-import { useSession } from '@/shared/session/session-context';
+import { useSession } from '@/session/session-context';
 import { Notice } from '@/shared/ui/message/Notice';
 
 export function BrowserPreviewNotice() {

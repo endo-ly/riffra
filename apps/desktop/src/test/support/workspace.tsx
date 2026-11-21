@@ -1,15 +1,15 @@
 import { ProjectBoundRegion } from '@/app/layout/ProjectBoundRegion';
 import type { ReactNode } from 'react';
 import type { CreativeSession } from '@/model/generated';
-import { defaultSession } from '@/native/browser-defaults';
-import { useSessionRuntime } from '@/app/runtime/useSessionRuntime';
+import { defaultSession } from '@/native/preview/fixtures';
+import { useSessionRuntime } from '@/session/hooks/useSessionRuntime';
 import { EditorWorkspace } from '@/app/workspace/EditorWorkspace';
 import { WorkspaceWait } from '@/app/layout/WorkspaceWait';
 import { PlaybackNotice } from '@/app/notices/PlaybackNotice';
 import { ToastStack } from '@/shared/ui/message/ToastStack';
 import { toAssetId } from '@/model/asset-id';
-import type { FakeNativeApi } from '@/test/support/fake-native-api';
-import { renderWithSession } from '@/test/support/session-provider';
+import type { FakeNativeApi } from './fake-native-api';
+import { renderWithSession } from './session-provider';
 
 function RuntimeBinding() {
   useSessionRuntime();

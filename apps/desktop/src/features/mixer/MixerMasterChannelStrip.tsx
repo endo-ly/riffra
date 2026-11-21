@@ -1,10 +1,10 @@
-import { useMasterGainValue } from '@/features/audio/hooks/useMasterGainValue';
-import { MASTER_GAIN_DB } from '@/model/mix-range';
+import { useMasterGainValue } from '@/session/hooks/useMasterGainValue';
+import { MASTER_GAIN_DB } from '@/model/mix';
 import type { CreativeSession } from '@/model/generated';
-import { useAudioMeters } from '@/shared/audio/audio-meters';
-import { formatGainDb } from '@/shared/audio/mix-format';
+import { useAudioMeters } from '@/session/audio-meters';
+import { formatGainDb } from '@/model/mix';
 import { ValueSlider } from '@/shared/ui/ValueSlider';
-import { Icon } from '@/shared/ui/primitives';
+import { Icon } from '@/shared/ui/Icon';
 import { useEffect, useRef, useState } from 'react';
 import styles from './Mixer.module.css';
 import { MixerMeter } from './MixerMeter';

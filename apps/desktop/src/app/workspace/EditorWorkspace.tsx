@@ -1,13 +1,13 @@
 import { useEffect, type CSSProperties } from 'react';
-import { useSession } from '@/shared/session/session-context';
+import { useSession } from '@/session/session-context';
 import {
   selectHostReady,
   selectRuntimeReady,
   selectTrackInstrumentPlayable,
   selectTrack,
-} from '@/shared/session/selectors';
+} from '@/session/selectors';
 import { isEditableTypingTarget } from '@/shared/input';
-import { midiNoteName } from '@/shared/midi';
+import { midiNoteName } from '@/model/midi';
 import { useLivePlay } from '@/features/live-input/useLivePlay';
 import { TimelineView } from '@/features/timeline/TimelineView';
 import { TRACK_HEADER_WIDTH } from '@/features/timeline/model/timeline-layout';

@@ -9,5 +9,5 @@
 }
 
 .danger {
-  composes: danger from '../../shared/ui/controls.module.css';
+  composes: danger from '@/shared/ui/controls.module.css';
 }

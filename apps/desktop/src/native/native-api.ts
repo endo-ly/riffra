@@ -1,25 +1,25 @@
-import type { AudioApi } from './api/audio';
-import type { AnalysisApi } from './api/analysis';
-import type { AutomationApi } from './api/automation';
-import type { BootstrapApi } from './api/bootstrap';
-import type { ClipApi } from './api/clips';
-import type { DeviceApi } from './api/devices';
-import type { NativeEventApi } from './api/events';
-import type { HostConnectionApi } from './api/host-connection';
-import type { InstrumentLibraryApi } from './api/instruments';
-import type { JobApi } from './api/jobs';
-import type { LibraryApi } from './api/library';
-import type { MidiNoteApi } from './api/midi-notes';
-import type { MissingDependencyApi } from './api/missing';
-import type { MixerApi } from './api/mixer';
-import type { ProjectApi as NativeProjectApi } from './api/project';
-import type { RecordingApi } from './api/recording';
-import type { RenderApi } from './api/render';
-import type { TakeApi } from './api/takes';
-import type { TimelineApi } from './api/timeline';
-import type { TrackApi } from './api/tracks';
-import type { TransportApi } from './api/transport';
-import type { UpdaterApi } from './api/updater';
+import type { AudioApi } from '@/native/api/audio';
+import type { AnalysisApi } from '@/native/api/analysis';
+import type { AutomationApi } from '@/native/api/automation';
+import type { BootstrapApi } from '@/native/api/bootstrap';
+import type { ClipApi } from '@/native/api/clips';
+import type { DeviceApi } from '@/native/api/devices';
+import type { NativeEventApi } from '@/native/api/events';
+import type { HostConnectionApi } from '@/native/api/host-connection';
+import type { InstrumentLibraryApi } from '@/native/api/instruments';
+import type { JobApi } from '@/native/api/jobs';
+import type { LibraryApi } from '@/native/api/library';
+import type { MidiNoteApi } from '@/native/api/midi-notes';
+import type { MissingDependencyApi } from '@/native/api/missing';
+import type { MixerApi } from '@/native/api/mixer';
+import type { ProjectApi as NativeProjectApi } from '@/native/api/project';
+import type { RecordingApi } from '@/native/api/recording';
+import type { RenderApi } from '@/native/api/render';
+import type { TakeApi } from '@/native/api/takes';
+import type { TimelineApi } from '@/native/api/timeline';
+import type { TrackApi } from '@/native/api/tracks';
+import type { TransportApi } from '@/native/api/transport';
+import type { UpdaterApi } from '@/native/api/updater';
 
 export interface NativeApi
   extends
