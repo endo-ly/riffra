@@ -12,14 +12,14 @@
 
 3 つの音声サイドカー、Sonalloy CLI、2 つの静的ライブラリから構成される。
 
-| 成果物               | 種別           | 役割                                                                                                               |
-| -------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `riffra-audio`       | サイドカー     | リアルタイム音声の本体。デバイスを開き、タイムライングラフを再生し、録音・プレビュー・MIDI を扱う                  |
-| `riffra-plugin-scan` | サイドカー     | VST3 の列挙と読み込み検証。スキャン結果を型タグ付き JSON Lines で返す                                              |
-| `riffra-render`      | サイドカー     | オフライン書き出し専用ワーカー。stdin の 1 行要求から WAV を生成する                                               |
-| `sonalloy`           | CLI            | Instrument の作成・検証・Inspect・Render・Auditionを提供する同梱コマンド                                           |
-| `riffra-render-core` | 静的ライブラリ | デバイス非依存の再生基盤（タイムライン、プラグイン、録音、レンダー）。`riffra-audio` と `riffra-render` で共有する |
-| `riffra-audio-core`  | 静的ライブラリ | デバイス接続側の基盤（命令配送、デバイス制御、パイプライン）。`riffra-render-core` の上に積む                      |
+| 成果物               | 種別           | 役割                                                                                                                                               |
+| -------------------- | -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `riffra-audio`       | サイドカー     | リアルタイム音声の本体。デバイスを開き、タイムライングラフを再生し、録音・プレビュー・MIDI を扱う                                                  |
+| `riffra-plugin-scan` | サイドカー     | VST3 の列挙と読み込み検証。スキャン結果を型タグ付き JSON Lines で返す                                                                              |
+| `riffra-render`      | サイドカー     | オフライン書き出し専用ワーカー。stdin の 1 行要求から WAV を生成する                                                                               |
+| `sonalloy`           | CLI            | Instrument の作成・検証・Inspect・Render・Auditionを提供する同梱コマンド                                                                           |
+| `riffra-engine-core` | 静的ライブラリ | デバイス非依存の再生基盤（タイムライン、プラグイン、楽器、録音、プレビュー、レンダー）。`riffra-render` と `riffra-serve-core`、テストで共有する   |
+| `riffra-serve-core`  | 静的ライブラリ | デバイス接続側の基盤（パイプライン、デバイス制御、命令配送、ライフサイクル実行器）。`riffra-engine-core` の上に積み、`riffra-audio` とテストが使う |
 
 `riffra-audio` の起動モードは 3 つある。
 
@@ -51,64 +51,80 @@ stdin (JSON Lines)
 
 所有の考え方は「状態遷移はその状態の所有者だけが行い、呼び出し側は所有者をまたいで内部状態に触らない」である。
 
-| 所有者                  | 責務                                                                                                                                                    |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `AudioEngine`           | `--serve` 全体の寿命管理。命令配送、状態・メーターの定期配信、親プロセス監視、長寿命オブジェクトの保持                                                  |
-| `AudioDeviceController` | 稼働中の JUCE デバイスの開閉・復旧・切替と遷移状態。探索だけなら `AudioDeviceService` が担当する                                                        |
-| `AudioRenderPipeline`   | デバイスコールバック内の描画順序と安全チェーン（メーター、プレビュー、録音制御、ミュート理由、ゲイン、リミッター）                                      |
-| `TimelineEngine`        | 準備済みアレンジグラフ、トランスポート時計、録音窓、グラフ公開。計時と発音の中核                                                                        |
-| 録音クラス群            | `RecordingController` がパイプライン境界の録音制御を持ち、各セッションが断片・manifest・オフライン確定を持つ                                            |
-| プラグインクラス群      | `PluginRack` / `PluginChain` が処理と状態を持ち、`RuntimeLifecycleExecutor` / `PluginEditorHost` がサードパーティのライフサイクルとエディタを直列化する |
-| MIDI クラス群           | `MidiInputService` が物理 MIDI 入力の開閉を持ち、`MidiScheduler` がタイムラインイベントをコールバック内のサンプル位置へ展開する                         |
+| 所有者                   | 責務                                                                                                                                                                   |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AudioEngine`            | `--serve` 全体の寿命管理。長寿命オブジェクトの保持、状態・メーターの定期配信、親プロセス監視                                                                           |
+| `AudioCommandDispatcher` | stdin の命令読み取りと振り分け、命令をまたぐ編集状態（トラックのエディタ、試奏、テイク比較、タイムライン操作の進行）の所有                                             |
+| `AudioDeviceController`  | 稼働中の JUCE デバイスの開閉・復旧・切替と遷移状態。探索だけなら `AudioDeviceService` が担当する                                                                       |
+| `AudioRenderPipeline`    | デバイスコールバック内の描画順序と安全チェーン（メーター、プレビュー、録音制御、ミュート理由、ゲイン、リミッター）                                                     |
+| `TimelineEngine`         | 準備済みアレンジグラフ、トランスポート時計、録音窓、グラフ公開。計時と発音の中核                                                                                       |
+| 録音クラス群             | `RecordingController` が `pipeline/` で停止ワーカーとパイプライン境界の録音制御を持ち、`recording/` の各セッションが断片・manifest・オフライン確定を持つ               |
+| プラグインクラス群       | `PluginRack` / `PluginChain` が処理と状態を持ち、`PluginEditorHost` がエディタと状態送出を持つ。サードパーティ呼び出しの直列化は `app/RuntimeLifecycleExecutor` が担う |
+| MIDI クラス群            | `MidiInputService` が物理 MIDI 入力の開閉を持ち、`MidiScheduler` がタイムラインイベントをコールバック内のサンプル位置へ展開する                                        |
 
 ## ディレクトリ構成
 
 ```text
 native/audio-engine/
-├── CMakeLists.txt      # JUCE / Sonalloy / GTest の取得、5 ターゲットの定義、sidecar の install 規則
-├── build.ps1 / build.sh # configure → build → CTest → install の一括実行ラッパー
-├── src/                # 製品コード（下表）
-├── tools/              # plugin-scan / render のエントリーポイント
-└── tests/              # GTest 群とテスト用 VST プラグイン（製品構成に対応）
+├── CMakeLists.txt
+├── build.ps1 / build.sh
+├── .clang-format / .clang-tidy / tsan.supp
+├── README.md
+├── src/          製品コード（下表）
+├── sidecars/     3つのサイドカーの main
+└── tests/        GTest と、実プラグイン経路の検証
 ```
 
 ### `src/`
 
-| ディレクトリ       | 責務                                                                       | 主な構成要素                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| ------------------ | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/app/`         | `--serve` の制御側。命令の受付・振り分けと、状態投影・録音制御の取りまとめ | `AudioEngine`（寿命管理）、`AudioCommandDispatcher` + `commands/`（機能別コマンド群: デバイス / タイムライン / トラックデバイス / 録音 / プレビュー / MIDI）、`CommandRouting`（コマンド名→分類）、`AudioStatusBuilder`（状態・メーター投影）、`RecordingController`（アレンジ録音の開始・停止・確定受け渡し）                                                                                                                                                                                                                        |
-| `src/protocol/`    | JSON Lines 入出力の共通部品                                                | `ProtocolChannel`（プロトコル用 stdout の予約と切り離し）、`writeJson`（制御・状態・テレメトリの出力）、`makeError`（構造化エラー）、`parseMidiBytes`、要求 ID とドロップ計数                                                                                                                                                                                                                                                                                                                                                         |
-| `src/device/`      | オーディオデバイスの境界                                                   | `AudioDeviceController`（開閉・復旧・切替・遷移）、`AudioDeviceService`（探索と設定値の組み立て）、`AudioDeviceCallback`（JUCE コールバックからパイプラインへの薄い適配）、`AudioConfiguration`（起動・切替設定）                                                                                                                                                                                                                                                                                                                     |
-| `src/audio/`       | コールバック内の描画と安全処理                                             | `AudioRenderPipeline`（描画順序の正本）、`AudioSafetyDsp`（DC ブロッカーとフィードバック検知器）、`PreviewEngine` / `InstrumentPreviewSession`（試聴ボイス・内蔵楽器プレビュー・簡易シンセ）、`AudioMetrics`（ピーク・リミッター診断・コールバック計測）                                                                                                                                                                                                                                                                              |
-| `src/timeline/`    | アレンジ再生の中核                                                         | `TimelineEngine`（スナップショットの二重化公開・トランスポート・録音窓・`mix`、機能別に `TimelineEngine{Devices,Recording,Render}.cpp` へ分割）、`TimelineSnapshotBuilder`（適用前の検証と事前構築）、`ArrangementGraph`（入出力経路・MIDI 経路・補償遅延・取り込み範囲の純粋計算）、`MidiScheduler`（MIDI の事前展開とブロック内配置）、`TrackRuntime`（トラック単位の DSP 状態・遅延補償・自動化・取り込み）、`AutomationRuntime`（自動化レーンと前方専用カーソル）、`TimelineTimebase`（tick⇔sample 換算）、`instruments/`（下記） |
-| `src/instruments/` | 楽器の実行時抽象                                                           | `InstrumentRuntime`（VST3 / 内蔵共通の再生 IF）、`Vst3InstrumentRuntime`（`PluginRack` 背負いの VST3 楽器）、`SonalloyInstrumentRuntime`（Sonalloy C API 駆動の内蔵楽器）                                                                                                                                                                                                                                                                                                                                                             |
-| `src/plugins/`     | エフェクトと VST ライフサイクル                                            | `PluginRack`（単体プラグインの読み込み・処理・状態・MIDI 受付）、`PluginChain`（トラック内エフェクト列）、`RuntimeLifecycleExecutor`（サードパーティ呼び出しの直列実行と番犬）、`PluginEditorHost`（エディタ表示と状態・パラメータ変化の送出）、`FaultInjection`（環境変数によるテスト用障害挿入）                                                                                                                                                                                                                                    |
-| `src/midi/`        | 物理 MIDI 入力の境界                                                       | `MidiInputService`（デバイス開閉・再開・集合変化検知）、`MidiMonitor`（JUCE MIDI スレッドからプレビューとタイムラインへの非阻止転送）                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `src/recording/`   | 録音データの書き出しと確定                                                 | `RecordingSession`（raw / processed の二重書きと manifest）、`ArrangeRecordingSession`（アレンジ録音の確定単位）、`RecordingCaptureRuntime`（リアルタイム取り込み）、`ArrangementCaptureSink`（取り込み先 IF）                                                                                                                                                                                                                                                                                                                        |
-| `src/render/`      | オフライン書き出し                                                         | `OfflineRenderer`（スナップショットと tick 範囲から WAV を生成する `riffra-render` の中核。メッセージスレッドでの準備と別スレッドでの書き出しに分かれる）                                                                                                                                                                                                                                                                                                                                                                             |
-| `src/concurrency/` | 実時間スレッド間の受け渡し                                                 | `BoundedMpmcQueue`（確保なし・待機なしの固定容量 MPMC キュー。MIDI などの有界転送の土台）                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+下から順に並べる。下の層が上の層を include しない。同じディレクトリのヘッダは名前だけで、別のディレクトリのヘッダは `src/` からのパスで include する。
 
-### `tools/`
+| 層  | ディレクトリ   | 責務                                                                                               | 主な構成要素                                                                                                                                                                                                                                                                                                                                                                                           |
+| --- | -------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 0   | `concurrency/` | 実時間スレッド間の受け渡し部品。ドメインを知らない                                                 | `BoundedMpmcQueue`、`RealtimeCommandQueue`、`RetireQueue`、`SeqLockFrame`                                                                                                                                                                                                                                                                                                                              |
+| 0   | `contract/`    | サイドカー境界の型・定数と、JSON との相互変換・検証。他のディレクトリに依存しない                  | `ContractReader`、`ExecutionGraph`、`ExecutionGraphDecoder`、`LoadProgress`、`InstrumentPreview`、`SidecarCommands`、`SidecarMessages`                                                                                                                                                                                                                                                                 |
+| 1   | `protocol/`    | JSON Lines の入出力（stdout の予約、出力レーン、要求への応答）                                     | `AudioProtocol`（制御・状態・テレメトリの出力）、`CommandResponder`、`OutputQueue`、`ProtocolChannel`（プロトコル用 stdout の予約と切り離し）                                                                                                                                                                                                                                                          |
+| 1   | `automation/`  | 準備済みオートメーションレーンと、その実時間評価                                                   | `AutomationRuntime`（レーンと前方専用カーソル）、`MixAutomation`（ゲインとパンのサンプル精度評価）                                                                                                                                                                                                                                                                                                     |
+| 2   | `plugins/`     | VST3 の読み込み・処理・状態・パラメータ・エディタ、エフェクト列                                    | `PluginRack`、`PluginChain`、`PluginEditorHost`、`PluginTransportPosition`、`FaultInjection`                                                                                                                                                                                                                                                                                                           |
+| 3   | `instruments/` | 楽器の実行時抽象（VST3 / Sonalloy）                                                                | `InstrumentRuntime`、`Vst3InstrumentRuntime`、`SonalloyInstrumentRuntime`                                                                                                                                                                                                                                                                                                                              |
+| 3   | `recording/`   | 録音の取り込みと、録音データの書き出し・確定                                                       | `RecordingSession`（raw / processed の二重書きと manifest）、`ArrangeRecordingSession`、`RecordingCaptureRuntime`、`ArrangementCaptureSink`                                                                                                                                                                                                                                                            |
+| 4   | `timeline/`    | 準備済みアレンジグラフの構築・公開・再生・ミックス                                                 | `TimelineEngine`（機能別に `TimelineEngine{Devices,Midi,Mix,Recording}.cpp` へ分割）、`TimelineSnapshotBuilder`、`PreparedTimeline`、`ArrangementGraph`、`ControlGraphRegistry`、`MixerRuntime` / `MixRouteDelay`、`TrackRuntime`、`TrackProcessingPool`、`MidiScheduler`、`MidiSourceRegistry`、`MetronomeClicks`、`TimelineReadAheadSource`、`TimelineTimebase`、`RealtimeCommand` / `RealtimeFrame` |
+| 5   | `render/`      | オフライン書き出し                                                                                 | `OfflineRenderer`                                                                                                                                                                                                                                                                                                                                                                                      |
+| 5   | `preview/`     | Project の外で鳴らす音（サンプル試聴、テイク比較、内蔵楽器プレビュー、プラグイン試奏、簡易シンセ） | `PreviewEngine`、`InstrumentPreviewSession`、`PluginAudition`                                                                                                                                                                                                                                                                                                                                          |
+| 6   | `pipeline/`    | オーディオコールバック内の描画順序と安全チェーン、計測、アレンジ録音の制御                         | `AudioRenderPipeline`（描画順序の正本）、`AudioSafetyDsp`（DC ブロッカーとフィードバック検知器）、`AudioMetrics`（ピーク・リミッター診断・コールバック計測）、`RecordingController`（停止ワーカーと録音の確定受け渡し）                                                                                                                                                                                |
+| 7   | `device/`      | 物理 I/O の境界（オーディオデバイスと MIDI 入力の探索・開閉・切替、MIDI の振り分け）               | `AudioDeviceController`、`AudioDeviceService`、`AudioDeviceCallback`、`AudioConfiguration`、`MidiInputService` / `MidiMonitor`                                                                                                                                                                                                                                                                         |
+| 8   | `app/`         | `--serve` の制御層（寿命管理、命令の受付と処理、状態投影、ライフサイクル実行器）                   | `AudioEngine`（寿命管理）、`AudioCommandDispatcher` + `commands/`（機能別の命令処理）、`AudioStatusBuilder`（状態・メーター投影）、`RuntimeLifecycleExecutor`（サードパーティ呼び出しの直列実行と番犬）                                                                                                                                                                                                |
 
-| ディレクトリ            | 責務                                                                                                                         |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `tools/plugin-scanner/` | `riffra-plugin-scan` の本体。VST3 バンドルの記述列挙と、`PluginRack` と同じ読み込み経路による検証（`--validate-load`）を行う |
-| `tools/render/`         | `riffra-render` の本体。stdin の 1 行要求を `OfflineRenderer` に渡し、結果か構造化エラーを 1 行で返す                        |
+依存の向きは層の順に限る。`concurrency/` と `contract/` は他のディレクトリに依存しない。`protocol/` は `contract/`、`plugins/` は `concurrency/` / `contract/` / `automation/`、`instruments/` は `plugins/` までを使う。`timeline/` は `automation/` / `plugins/` / `instruments/` / `recording/` を、`render/` は `contract/` / `timeline/` を、`preview/` は `plugins/` / `instruments/` を使う。`pipeline/` は `timeline/` / `preview/` / `recording/`、`device/` は `pipeline/` / `timeline/` / `preview/` を使い、`app/` と `sidecars/` はすべてを使える。`contract/` と `protocol/` は実行側のヘッダに依存せず、`plugins/` は `timeline/` に依存しない。
+
+### `sidecars/`
+
+| パス                                      | 実行ファイル         | 責務                                                                                      |
+| ----------------------------------------- | -------------------- | ----------------------------------------------------------------------------------------- |
+| `sidecars/audio/AudioMain.cpp`            | `riffra-audio`       | 起動引数（`--probe` / `--probe-channels` / `--serve`）の解釈と、`app/AudioEngine` の起動  |
+| `sidecars/render/RenderMain.cpp`          | `riffra-render`      | stdin の 1 行要求を `OfflineRenderer` に渡し、結果か構造化エラーを 1 行で返す             |
+| `sidecars/plugin-scan/PluginScanMain.cpp` | `riffra-plugin-scan` | VST3 バンドルの記述列挙と、`PluginRack` と同じ読み込み経路による検証（`--validate-load`） |
 
 ### `tests/`
 
-製品構成に対応する GTest 群（`riffra-audio-tests`）と、実プラグイン経路の検証手段を持つ。
+製品構成に対応する GTest 群（`riffra-audio-tests`）と、実プラグイン経路の検証手段を持つ。テストファイルは `tests/<ディレクトリ>/<対象>Test.cpp` とする。
 
-| ディレクトリ         | 内容                                                                                                                                                                                      |
-| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `tests/app/`         | 命令振り分けの回帰                                                                                                                                                                        |
-| `tests/protocol/`    | プロトコル部品                                                                                                                                                                            |
-| `tests/device/`      | デバイス制御                                                                                                                                                                              |
-| `tests/audio/`       | 描画パイプラインと安全 DSP                                                                                                                                                                |
-| `tests/timeline/`    | グラフ・自動化・スナップショット・再生・録音・デバイス・MIDI・内蔵楽器（ベンチマーク含む）                                                                                                |
-| `tests/recording/`   | 録音セッション                                                                                                                                                                            |
-| `tests/plugins/`     | ラック・チェイン・ライフサイクル実行器。実 VST テスト（`RealVstRuntimeTest`）はテスト用 VST3（`tests/support/` の effect / instrument）と `riffra-plugin-scan --validate-load` を併用する |
-| `tests/concurrency/` | 有界キュー                                                                                                                                                                                |
+| ディレクトリ         | 内容                                                                                                                                                      |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tests/app/`         | 命令振り分けと状態投影                                                                                                                                    |
+| `tests/automation/`  | オートメーションの評価                                                                                                                                    |
+| `tests/concurrency/` | 有界キューとフレーム交換                                                                                                                                  |
+| `tests/contract/`    | 契約の decode / encode とフィクスチャ                                                                                                                     |
+| `tests/device/`      | デバイス制御、デバイス探索、物理 MIDI 入力                                                                                                                |
+| `tests/instruments/` | 内蔵楽器ランタイム（ベンチマーク含む）                                                                                                                    |
+| `tests/pipeline/`    | 描画パイプラインと安全 DSP、計測                                                                                                                          |
+| `tests/plugins/`     | ラック・チェイン・エディタ・ライフサイクル実行器。実 VST テスト（`RealVstRuntimeTest`）はテスト用 VST3 と `riffra-plugin-scan --validate-load` を併用する |
+| `tests/preview/`     | サンプル試聴、内蔵楽器プレビュー、プラグイン試奏                                                                                                          |
+| `tests/protocol/`    | プロトコル出力キューと要求応答                                                                                                                            |
+| `tests/recording/`   | 録音セッション                                                                                                                                            |
+| `tests/render/`      | オフライン書き出し                                                                                                                                        |
+| `tests/support/`     | 複数のディレクトリが使うテスト支援と、テスト用 VST3 のソース                                                                                              |
+| `tests/timeline/`    | グラフ・自動化・スナップショット・再生・録音・デバイス・MIDI・ミックス                                                                                    |
 
 ## 通信契約
 
