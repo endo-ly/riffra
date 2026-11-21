@@ -3,7 +3,7 @@
 #include <utility>
 
 #include "AudioDeviceService.h"
-#include "audio/AudioRenderPipeline.h"
+#include "pipeline/AudioRenderPipeline.h"
 
 namespace riffra {
 
@@ -154,8 +154,6 @@ void AudioDeviceController::changeListenerCallback(juce::ChangeBroadcaster*) {
     if (!requiresFaultForState(currentDevice() != nullptr, isTransitionActive())) return;
     if (renderPipeline.isDeviceFaulted()) return;
     renderPipeline.setDeviceFaulted(true);
-    juce::String ignored;
-    (void)renderPipeline.recording().stop(ignored);
     if (deviceLossHandler != nullptr) deviceLossHandler();
 }
 

@@ -2,7 +2,7 @@
 #include <memory>
 #include <string>
 
-#include "../AudioCommandDispatcher.h"
+#include "app/AudioCommandDispatcher.h"
 #include "plugins/PluginEditorHost.h"
 #include "protocol/AudioProtocol.h"
 #include "timeline/TimelineEngine.h"
@@ -198,19 +198,19 @@ void AudioCommandDispatcher::handle(const OpenPluginEditorCommand& command,
                 return;
             }
             const auto sourcePluginPath = device->status().path;
-            if (context.trackPluginEditor != nullptr) {
-                context.trackPluginEditor->close();
-                if (!context.trackPluginEditor->waitForClosingState(0)) {
+            if (trackPluginEditor != nullptr) {
+                trackPluginEditor->close();
+                if (!trackPluginEditor->waitForClosingState(0)) {
                     pending->fail("trackDevice",
                                   "Stop automation read before opening another plugin editor.",
                                   "track.pluginEditor.open");
                     return;
                 }
-                context.trackPluginEditor.reset();
+                trackPluginEditor.reset();
             }
-            context.pluginEditorOwner = command.owner;
-            context.trackPluginEditorDeviceId = command.deviceId;
-            context.trackPluginEditor = std::make_shared<PluginEditorHost>(
+            pluginEditorOwner = command.owner;
+            trackPluginEditorDeviceId = command.deviceId;
+            trackPluginEditor = std::make_shared<PluginEditorHost>(
                 *device,
                 [this, command, device] {
                     const auto stateKey =
@@ -273,7 +273,7 @@ void AudioCommandDispatcher::handle(const OpenPluginEditorCommand& command,
             juce::String editorError;
             bool opened = false;
             try {
-                opened = context.trackPluginEditor->open(editorError);
+                opened = trackPluginEditor->open(editorError);
             } catch (const std::exception& exception) {
                 editorError = "Track VST3 editor opening raised an exception: " +
                               juce::String(exception.what());
@@ -282,9 +282,9 @@ void AudioCommandDispatcher::handle(const OpenPluginEditorCommand& command,
             }
 
             if (!opened) {
-                context.trackPluginEditor.reset();
-                context.pluginEditorOwner = {};
-                context.trackPluginEditorDeviceId.clear();
+                trackPluginEditor.reset();
+                pluginEditorOwner = {};
+                trackPluginEditorDeviceId.clear();
                 pending->fail("pluginEditor", editorError, "track.pluginEditor.open");
                 return;
             }

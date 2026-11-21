@@ -9,11 +9,10 @@
 #include <thread>
 
 #include "AudioCommandDispatcher.h"
-#include "audio/AudioRenderPipeline.h"
+#include "RuntimeLifecycleExecutor.h"
 #include "device/AudioDeviceController.h"
-#include "midi/MidiInputService.h"
-#include "plugins/PluginEditorHost.h"
-#include "plugins/RuntimeLifecycleExecutor.h"
+#include "device/MidiInputService.h"
+#include "pipeline/AudioRenderPipeline.h"
 #include "timeline/TimelineEngine.h"
 
 namespace riffra {
@@ -36,13 +35,6 @@ private:
     AudioRenderPipeline pipeline;
     AudioDeviceController deviceController;
     MidiInputService midiInputs;
-    std::shared_ptr<PluginEditorHost> trackPluginEditor;
-    EffectOwnerSpec pluginEditorOwner;
-    juce::String trackPluginEditorDeviceId;
-    std::shared_ptr<PluginEditorHost> auditionEditor;
-    juce::AudioBuffer<float> comparisonRaw;
-    juce::AudioBuffer<float> comparisonProcessed;
-    std::atomic<bool> timelineOperationRunning{false};
     RuntimeLifecycleExecutor runtimeLifecycle;
     std::unique_ptr<AudioCommandDispatcher> commandDispatcher;
     std::atomic<bool> watchdogRunning{false};

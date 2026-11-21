@@ -3,8 +3,8 @@
 #include <array>
 #include <vector>
 
+#include "automation/AutomationRuntime.h"
 #include "timeline/ArrangementGraph.h"
-#include "timeline/AutomationRuntime.h"
 #include "timeline/MidiSourceRegistry.h"
 
 namespace riffra {

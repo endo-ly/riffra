@@ -10,7 +10,6 @@
 #include "ArrangementGraph.h"
 #include "MidiScheduler.h"
 #include "TrackRuntime.h"
-#include "contract/MixerGraphValidation.h"
 #include "instruments/SonalloyInstrumentRuntime.h"
 #include "instruments/Vst3InstrumentRuntime.h"
 
@@ -341,7 +340,6 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
     for (const auto& bus : graph.mixer.buses)
         progress.totalDevices += static_cast<std::uint32_t>(bus.effects.size());
     report({}, {}, {}, LoadPhase::queued);
-    if (!validateMixerGraph(graph, error)) return false;
     const auto sendsByTargetDevice = collectSidechainTargets(graph.mixer.sidechainSends);
     const auto processingMode =
         engine.offlineMode ? PluginProcessingMode::offline : PluginProcessingMode::realtime;

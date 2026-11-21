@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 
-#include "TimelineTestSupport.h"
+#include "support/TimelineTestSupport.h"
 #include "timeline/TrackProcessingPool.h"
 
 namespace riffra {

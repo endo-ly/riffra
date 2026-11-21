@@ -2,8 +2,8 @@
 
 #include <array>
 
-#include "../support/TestSupport.h"
 #include "recording/ArrangeRecordingSession.h"
+#include "support/TestSupport.h"
 
 namespace riffra {
 namespace {

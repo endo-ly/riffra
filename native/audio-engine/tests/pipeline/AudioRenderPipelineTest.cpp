@@ -1,0 +1,596 @@
+#include <gtest/gtest.h>
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <limits>
+#include <memory>
+#include <thread>
+#include <utility>
+
+#include "pipeline/AudioRenderPipeline.h"
+#include "preview/PreviewEngine.h"
+#include "recording/ArrangeRecordingSession.h"
+#include "support/TestAudioProcessor.h"
+#include "support/TimelineTestSupport.h"
+#include "timeline/TimelineEngine.h"
+
+namespace riffra {
+namespace {
+
+constexpr int kBlockSize = 32;
+
+TimelineSnapshotSpec makeMonitoringSnapshot(const int channelIndex = 0, const bool armed = false) {
+    auto snapshot = makeTestSnapshot();
+    auto track = makeAudioTrack("track:monitoring");
+    track.armed = armed;
+    track.monitorInput = true;
+    track.audioInput = AudioInputSpec{static_cast<std::uint32_t>(channelIndex)};
+    snapshot.graph.tracks.push_back(std::move(track));
+    return snapshot;
+}
+
+void fillPreviewBuffer(juce::AudioBuffer<float>& buffer, const float value) {
+    for (int sample = 0; sample < buffer.getNumSamples(); ++sample)
+        buffer.setSample(0, sample, value);
+}
+
+float mixPreviewSamples(PreviewEngine& preview, const int sampleCount) {
+    std::array<float, 64> output{};
+    const std::array<float*, 1> outputs{output.data()};
+    float last = 0.0f;
+    int remaining = sampleCount;
+    while (remaining > 0) {
+        const auto block = std::min<int>(remaining, static_cast<int>(output.size()));
+        output.fill(0.0f);
+        EXPECT_TRUE(preview.tryMix(outputs.data(), 1, block, 48'000.0));
+        last = output[static_cast<std::size_t>(block - 1)];
+        remaining -= block;
+    }
+    return last;
+}
+
+}  // namespace
+
+TEST(AudioRenderPipelineTest, HoldsInputTransientUntilStatusCollection) {
+    TimelineEngine timeline;
+    AudioRenderPipeline callback(timeline);
+    std::array<float, kBlockSize> input{};
+    std::array<float, kBlockSize> silence{};
+    std::array<float, kBlockSize> output{};
+    input.fill(0.5f);
+    const std::array<const float*, 1> signalInput{input.data()};
+    const std::array<const float*, 1> silentInput{silence.data()};
+    const std::array<float*, 1> outputs{output.data()};
+    const juce::AudioIODeviceCallbackContext context{};
+
+    callback.processBlock(signalInput.data(), 1, outputs.data(), 1, kBlockSize, context);
+    callback.processBlock(silentInput.data(), 1, outputs.data(), 1, kBlockSize, context);
+
+    EXPECT_GE(
+        callback.peekTransientMeters(timeline.activeProjectMeterIdentity().meterEpoch).inputPeak,
+        0.5f);
+}
+
+TEST(AudioRenderPipelineTest, SilencesOutputWhenEmergencyMuted) {
+    TimelineEngine timeline;
+    AudioRenderPipeline callback(timeline);
+    std::array<float, kBlockSize> input{};
+    std::array<float, kBlockSize> output{};
+    input.fill(0.5f);
+    output.fill(1.0f);
+    const std::array<const float*, 1> inputs{input.data()};
+    const std::array<float*, 1> outputs{output.data()};
+    const juce::AudioIODeviceCallbackContext context{};
+
+    callback.processBlock(inputs.data(), 1, outputs.data(), 1, kBlockSize, context);
+
+    for (const auto sample : output) EXPECT_FLOAT_EQ(sample, 0.0f);
+}
+
+TEST(AudioRenderPipelineTest, EmergencyMutePanicsAuditionedInstrumentBeforeUnmuting) {
+    // Arrange
+    TimelineEngine timeline;
+    InstrumentTrace trace;
+    AudioRenderPipeline callback(timeline);
+    juce::String error;
+    auto rack = PluginRackTestPeer::installInstrument(
+        std::make_unique<TestInstrumentProcessor>(trace), 48'000.0, kBlockSize, error);
+    ASSERT_NE(rack, nullptr) << error;
+    callback.audition().install(std::move(rack), 48'000.0, kBlockSize);
+    ASSERT_TRUE(callback.audition().enqueueMidi(juce::MidiMessage::noteOn(1, 60, 0.8f)));
+    std::array<float, kBlockSize> left{};
+    std::array<float, kBlockSize> right{};
+    const std::array<float*, 2> outputs{left.data(), right.data()};
+    callback.audition().mix(nullptr, outputs.data(), 2, kBlockSize, 48'000.0);
+    ASSERT_TRUE(trace.noteHeld);
+
+    // Act
+    callback.setUserEmergencyMute(true);
+    callback.setUserEmergencyMute(false);
+    left.fill(0.0f);
+    right.fill(0.0f);
+    callback.audition().mix(nullptr, outputs.data(), 2, kBlockSize, 48'000.0);
+
+    // Assert
+    EXPECT_FALSE(trace.noteHeld);
+    EXPECT_TRUE(
+        std::any_of(trace.midiMessages.begin(), trace.midiMessages.end(),
+                    [](const juce::MidiMessage& message) { return message.isAllNotesOff(); }));
+}
+
+TEST(AudioRenderPipelineTest, ReportsInvalidAudioSamples) {
+    TimelineEngine timeline;
+    AudioRenderPipeline callback(timeline);
+    callback.setUserEmergencyMute(false);
+    std::array<float, kBlockSize> input{};
+    std::array<float, kBlockSize> output{};
+    input.fill(std::numeric_limits<float>::quiet_NaN());
+    const std::array<const float*, 1> inputs{input.data()};
+    const std::array<float*, 1> outputs{output.data()};
+    const juce::AudioIODeviceCallbackContext context{};
+
+    callback.processBlock(inputs.data(), 1, outputs.data(), 1, kBlockSize, context);
+
+    EXPECT_GT(callback.getInvalidSampleCount(), 0u);
+    EXPECT_TRUE(std::isfinite(output.front()));
+}
+
+TEST(AudioRenderPipelineTest, DoesNotMuteForAHotInputWhenMonitoringIsOff) {
+    TimelineEngine timeline;
+    AudioRenderPipeline callback(timeline);
+    callback.setUserEmergencyMute(false);
+    std::array<float, kBlockSize> input{};
+    std::array<float, kBlockSize> output{};
+    input.fill(0.99f);
+    const std::array<const float*, 1> inputs{input.data()};
+    const std::array<float*, 1> outputs{output.data()};
+    const juce::AudioIODeviceCallbackContext context{};
+
+    for (int block = 0; block < 400; ++block)
+        callback.processBlock(inputs.data(), 1, outputs.data(), 1, kBlockSize, context);
+
+    EXPECT_FALSE(callback.isMuted());
+    EXPECT_FALSE(callback.isFeedbackSuspected());
+}
+
+TEST(AudioRenderPipelineTest, ReleasingFeedbackProtectionClearsItsMuteReason) {
+    // Arrange
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine timeline;
+    juce::String error;
+    ASSERT_TRUE(
+        loadTestSnapshot(timeline, makeMonitoringSnapshot(), formats, 48'000.0, kBlockSize, error));
+    AudioRenderPipeline callback(timeline);
+    callback.setUserEmergencyMute(false);
+    std::array<float, kBlockSize> input{};
+    std::array<float, kBlockSize> output{};
+    input.fill(0.99f);
+    const std::array<const float*, 1> inputs{input.data()};
+    const std::array<float*, 1> outputs{output.data()};
+    const juce::AudioIODeviceCallbackContext context{};
+
+    for (int block = 0; block < 400; ++block)
+        callback.processBlock(inputs.data(), 1, outputs.data(), 1, kBlockSize, context);
+
+    ASSERT_TRUE(callback.hasMuteReason(MuteReason::FeedbackProtection));
+    ASSERT_TRUE(callback.isFeedbackSuspected());
+
+    callback.setUserEmergencyMute(false);
+    EXPECT_TRUE(callback.isMuted());
+    callback.setFeedbackProtection(false);
+
+    EXPECT_FALSE(callback.isMuted());
+    EXPECT_FALSE(callback.isFeedbackSuspected());
+}
+
+TEST(AudioRenderPipelineTest, DetectsFeedbackOnEveryMonitoredInputChannel) {
+    // Arrange
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine timeline;
+    juce::String error;
+    ASSERT_TRUE(loadTestSnapshot(timeline, makeMonitoringSnapshot(1), formats, 48'000.0, kBlockSize,
+                                 error));
+    AudioRenderPipeline callback(timeline);
+    callback.setInputChannel(0);
+    callback.setUserEmergencyMute(false);
+    std::array<float, kBlockSize> selectedInput{};
+    std::array<float, kBlockSize> monitoredInput{};
+    std::array<float, kBlockSize> output{};
+    monitoredInput.fill(0.99f);
+    const std::array<const float*, 2> inputs{selectedInput.data(), monitoredInput.data()};
+    const std::array<float*, 1> outputs{output.data()};
+    const juce::AudioIODeviceCallbackContext context{};
+
+    // Act
+    for (int block = 0; block < 400; ++block)
+        callback.processBlock(inputs.data(), 2, outputs.data(), 1, kBlockSize, context);
+
+    // Assert
+    EXPECT_TRUE(callback.hasMuteReason(MuteReason::FeedbackProtection));
+    EXPECT_TRUE(callback.isFeedbackSuspected());
+}
+
+TEST(AudioRenderPipelineTest, DetachesRecordingBeforeFinalizationCompletes) {
+    // Arrange
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine timeline;
+    juce::String error;
+    ASSERT_TRUE(loadTestSnapshot(timeline, makeMonitoringSnapshot(0, true), formats, 48'000.0,
+                                 kBlockSize, error));
+    AudioRenderPipeline callback(timeline);
+    std::shared_ptr<ArrangeRecordingSession> detached;
+    callback.recording().setFinalizationDispatcher(
+        [&detached](std::unique_ptr<ArrangeRecordingSession> session, const juce::String&) {
+            detached = std::shared_ptr<ArrangeRecordingSession>(std::move(session));
+        });
+    const auto directory = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                               .getChildFile("riffra-safety-recording-detach-test")
+                               .getChildFile(juce::Uuid().toString());
+
+    // Act
+    ASSERT_EQ(callback.recording().start(directory, 0, error), RealtimeRequest::accepted);
+    ASSERT_EQ(callback.recording().stop(error), RealtimeRequest::accepted);
+
+    // Assert
+    ASSERT_NE(detached, nullptr);
+    const auto processingStatus = callback.recording().status();
+    EXPECT_FALSE(processingStatus.active);
+    EXPECT_TRUE(processingStatus.processing);
+
+    callback.recording().completeProcessing(detached->summary(), {});
+    EXPECT_FALSE(callback.recording().status().processing);
+    detached.reset();
+    directory.deleteRecursively();
+}
+
+TEST(AudioRenderPipelineTest, DeviceFaultRemainsAfterUserMuteRelease) {
+    TimelineEngine timeline;
+    AudioRenderPipeline callback(timeline);
+    callback.setUserEmergencyMute(false);
+    ASSERT_FALSE(callback.isMuted());
+
+    callback.setDeviceFaulted(true);
+    callback.setUserEmergencyMute(true);
+
+    callback.setUserEmergencyMute(false);
+
+    EXPECT_TRUE(callback.isMuted());
+
+    callback.setDeviceFaulted(false);
+    callback.setUserEmergencyMute(false);
+
+    EXPECT_FALSE(callback.isMuted());
+}
+
+TEST(AudioRenderPipelineTest, MuteReasonsAreReleasedIndependently) {
+    TimelineEngine timeline;
+    AudioRenderPipeline callback(timeline);
+
+    callback.setUserEmergencyMute(true);
+    callback.setEngineTransitionMute(true);
+    callback.setDeviceFaulted(true);
+    callback.setFeedbackProtection(true);
+
+    callback.setUserEmergencyMute(false);
+
+    EXPECT_FALSE(callback.hasMuteReason(MuteReason::UserEmergency));
+    EXPECT_TRUE(callback.hasMuteReason(MuteReason::EngineTransition));
+    EXPECT_TRUE(callback.hasMuteReason(MuteReason::DeviceFault));
+    EXPECT_TRUE(callback.hasMuteReason(MuteReason::FeedbackProtection));
+
+    callback.setFeedbackProtection(false);
+    callback.setDeviceFaulted(false);
+    callback.setEngineTransitionMute(false);
+
+    EXPECT_FALSE(callback.hasMuteReason(MuteReason::EngineTransition));
+    EXPECT_FALSE(callback.hasMuteReason(MuteReason::DeviceFault));
+    EXPECT_FALSE(callback.hasMuteReason(MuteReason::FeedbackProtection));
+}
+
+TEST(AudioRenderPipelineTest, MasterGainClampsToMinus90AndZero) {
+    TimelineEngine timeline;
+    AudioRenderPipeline callback(timeline);
+
+    callback.setMasterGainDb(-120.0f);
+    EXPECT_FLOAT_EQ(callback.getMasterGainDb(), -90.0f);
+
+    callback.setMasterGainDb(12.0f);
+    EXPECT_FLOAT_EQ(callback.getMasterGainDb(), 0.0f);
+}
+
+TEST(AudioRenderPipelineTest, ReusesOneVoicePerKeyAndFillsFreeVoices) {
+    PreviewEngine preview;
+    juce::String error;
+
+    // The same key replaces the voice content instead of adding a voice.
+    juce::AudioBuffer<float> first(1, 16);
+    juce::AudioBuffer<float> replacement(1, 16);
+    fillPreviewBuffer(first, 1.0f);
+    fillPreviewBuffer(replacement, 2.0f);
+    ASSERT_TRUE(preview.startPreview(first, 0, first.getNumSamples(), 1.0f, true, error, 7));
+    EXPECT_NEAR(mixPreviewSamples(preview, 256), 1.0f, 0.01f);
+    ASSERT_TRUE(
+        preview.startPreview(replacement, 0, replacement.getNumSamples(), 1.0f, true, error, 7));
+    EXPECT_NEAR(mixPreviewSamples(preview, 512), 2.0f, 0.01f);
+
+    // Distinct keys fill the remaining free voices.
+    for (int key = 0; key < 7; ++key) {
+        juce::AudioBuffer<float> source(1, 1);
+        fillPreviewBuffer(source, static_cast<float>(key + 1));
+        ASSERT_TRUE(
+            preview.startPreview(source, 0, source.getNumSamples(), 1.0f, true, error, key));
+    }
+
+    EXPECT_NEAR(mixPreviewSamples(preview, 512), 30.0f, 0.1f);
+}
+
+TEST(AudioRenderPipelineTest, StealsTheOldestVoiceAtCapacityAndKeepsOtherKeysAudible) {
+    PreviewEngine preview;
+    juce::String error;
+
+    for (int key = 0; key < 8; ++key) {
+        juce::AudioBuffer<float> source(1, 1);
+        fillPreviewBuffer(source, static_cast<float>(key + 1));
+        ASSERT_TRUE(
+            preview.startPreview(source, 0, source.getNumSamples(), 1.0f, true, error, key));
+    }
+
+    juce::AudioBuffer<float> replacement(1, 1);
+    fillPreviewBuffer(replacement, 9.0f);
+    ASSERT_TRUE(
+        preview.startPreview(replacement, 0, replacement.getNumSamples(), 1.0f, true, error, 8));
+
+    // The oldest voice is replaced, and only that key goes silent.
+    EXPECT_NEAR(mixPreviewSamples(preview, 512), 44.0f, 0.1f);
+    preview.stopPreviewForKey(8);
+    EXPECT_NEAR(mixPreviewSamples(preview, 512), 35.0f, 0.1f);
+}
+
+TEST(AudioRenderPipelineTest, PreviewStartAndStopUseBoundaryDeclick) {
+    PreviewEngine preview;
+    juce::AudioBuffer<float> source(1, 512);
+    fillPreviewBuffer(source, 1.0f);
+    juce::String error;
+    ASSERT_TRUE(preview.startPreview(source, 32, source.getNumSamples(), 1.0f, true, error, 3));
+
+    std::array<float, 256> output{};
+    const std::array<float*, 1> outputs{output.data()};
+    ASSERT_TRUE(preview.tryMix(outputs.data(), 1, 1, 48'000.0));
+    EXPECT_FLOAT_EQ(output.front(), 0.0f);
+    output.fill(0.0f);
+    ASSERT_TRUE(preview.tryMix(outputs.data(), 1, static_cast<int>(output.size()), 48'000.0));
+    EXPECT_GT(output.back(), 0.9f);
+
+    preview.stopPreviewForKey(3);
+    output.fill(0.0f);
+    ASSERT_TRUE(preview.tryMix(outputs.data(), 1, static_cast<int>(output.size()), 48'000.0));
+    EXPECT_GT(output.front(), 0.9f);
+    EXPECT_LT(output.back(), 0.01f);
+    for (int sample = 0; sample < static_cast<int>(output.size()) - 1; ++sample)
+        EXPECT_LT(std::abs(output[static_cast<std::size_t>(sample + 1)] -
+                           output[static_cast<std::size_t>(sample)]),
+                  0.02f);
+}
+
+TEST(AudioRenderPipelineTest, PreviewSwitchPreservesRelativeCursor) {
+    // Arrange
+    PreviewEngine preview;
+    juce::AudioBuffer<float> first(1, 512);
+    juce::AudioBuffer<float> replacement(1, 512);
+    for (int sample = 0; sample < first.getNumSamples(); ++sample) {
+        first.setSample(0, sample, static_cast<float>(sample) / 1'000'000.0f);
+        replacement.setSample(0, sample, static_cast<float>(sample) / 1'000.0f);
+    }
+    constexpr int kRelativeCursor = 8;
+    constexpr int kFadeFrames = 240;
+    replacement.setSample(0, kRelativeCursor + kFadeFrames, 1.0f);
+    juce::String error;
+    ASSERT_TRUE(preview.startPreview(first, 3, first.getNumSamples(), 1.0f, false, error, 17))
+        << error;
+    EXPECT_GT(mixPreviewSamples(preview, 8), 0.0f);
+
+    // Act
+    ASSERT_TRUE(preview.switchPreviewBuffer(17, replacement, error)) << error;
+    std::array<float, 512> output{};
+    const std::array<float*, 1> outputs{output.data()};
+    ASSERT_TRUE(preview.tryMix(outputs.data(), 1, static_cast<int>(output.size()), 48'000.0));
+
+    // Assert: the isolated replacement sample arrives after the old voice fades
+    // and the replacement advances from relative cursor 8 through its fade-in.
+    auto firstReplacementSample = -1;
+    for (int sample = 0; sample < static_cast<int>(output.size()); ++sample) {
+        if (output[static_cast<std::size_t>(sample)] > 0.5f) {
+            firstReplacementSample = sample;
+            break;
+        }
+    }
+    EXPECT_GE(firstReplacementSample, 2 * kFadeFrames);
+    EXPECT_LE(firstReplacementSample, 2 * kFadeFrames + 1);
+}
+
+TEST(AudioRenderPipelineTest, PreviewControlUpdateKeepsAudioCallbackAvailable) {
+    PreviewEngine preview;
+    juce::AudioBuffer<float> source(1, 4096);
+    fillPreviewBuffer(source, 0.5f);
+    juce::String error;
+    ASSERT_TRUE(preview.startPreview(source, 0, source.getNumSamples(), 1.0f, true, error, 4));
+    EXPECT_GT(mixPreviewSamples(preview, 256), 0.4f);
+
+    std::atomic<bool> controlStarted{false};
+    std::atomic<bool> stopControl{false};
+    std::atomic<bool> controlSucceeded{true};
+    std::atomic<int> updateCount{0};
+    std::thread control([&] {
+        controlStarted.store(true, std::memory_order_release);
+        int update = 0;
+        while (!stopControl.load(std::memory_order_acquire)) {
+            juce::String controlError;
+            if (!preview.startPreview(source, update % 16, source.getNumSamples(), 1.0f, true,
+                                      controlError, 4))
+                controlSucceeded.store(false, std::memory_order_release);
+            ++update;
+            updateCount.fetch_add(1, std::memory_order_relaxed);
+        }
+    });
+
+    std::array<float, 64> output{};
+    const std::array<float*, 1> outputs{output.data()};
+    while (!controlStarted.load(std::memory_order_acquire)) std::this_thread::yield();
+    while (updateCount.load(std::memory_order_acquire) == 0) std::this_thread::yield();
+    int audioCallbackCount = 0;
+    for (; audioCallbackCount < 32; ++audioCallbackCount) {
+        output.fill(0.0f);
+        EXPECT_TRUE(preview.tryMix(outputs.data(), 1, static_cast<int>(output.size()), 48'000.0));
+        EXPECT_GT(*std::max_element(output.begin(), output.end()), 0.0f);
+    }
+    stopControl.store(true, std::memory_order_release);
+    control.join();
+    EXPECT_GT(audioCallbackCount, 0);
+    EXPECT_GT(updateCount.load(std::memory_order_acquire), 0);
+    EXPECT_TRUE(controlSucceeded.load(std::memory_order_acquire));
+}
+
+TEST(AudioRenderPipelineTest, PanicReleasesSynthVoices) {
+    PreviewEngine preview;
+    preview.startSynthNote(60, 1.0f);
+
+    std::array<float, 256> attack{};
+    const std::array<float*, 1> attackOutputs{attack.data()};
+    ASSERT_TRUE(preview.tryMix(attackOutputs.data(), 1, static_cast<int>(attack.size()), 48'000.0));
+    EXPECT_GT(*std::max_element(attack.begin(), attack.end()), 0.0f);
+
+    preview.requestPanic();
+
+    std::array<float, 2048> release{};
+    const std::array<float*, 1> releaseOutputs{release.data()};
+    ASSERT_TRUE(
+        preview.tryMix(releaseOutputs.data(), 1, static_cast<int>(release.size()), 48'000.0));
+    EXPECT_TRUE(std::all_of(release.end() - 256, release.end(),
+                            [](const float sample) { return sample == 0.0f; }));
+    EXPECT_FALSE(preview.isPreviewing());
+}
+
+TEST(AudioRenderPipelineTest, ReusesFinishedSynthVoiceSlots) {
+    PreviewEngine preview;
+    std::array<float, 256> output{};
+    const std::array<float*, 1> outputs{output.data()};
+
+    for (int note = 48; note < 64; ++note) preview.startSynthNote(note, 1.0f);
+    ASSERT_TRUE(preview.tryMix(outputs.data(), 1, static_cast<int>(output.size()), 48'000.0));
+    preview.requestPanic();
+    for (int block = 0; block < 8; ++block)
+        ASSERT_TRUE(preview.tryMix(outputs.data(), 1, static_cast<int>(output.size()), 48'000.0));
+    ASSERT_FALSE(preview.isPreviewing());
+
+    for (int note = 48; note < 64; ++note) preview.startSynthNote(note, 1.0f);
+    output.fill(0.0f);
+    ASSERT_TRUE(preview.tryMix(outputs.data(), 1, static_cast<int>(output.size()), 48'000.0));
+
+    const auto peak = *std::max_element(
+        output.begin(), output.end(),
+        [](const float left, const float right) { return std::abs(left) < std::abs(right); });
+    EXPECT_GT(std::abs(peak), 0.25f);
+}
+
+TEST(AudioRenderPipelineTest, SecondRecordingIsRejectedWhileProcessing) {
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine timeline;
+    juce::String error;
+    ASSERT_TRUE(loadTestSnapshot(timeline, makeMonitoringSnapshot(0, true), formats, 48'000.0,
+                                 kBlockSize, error));
+    AudioRenderPipeline callback(timeline);
+    callback.recording().setFinalizationDispatcher(
+        [](std::unique_ptr<ArrangeRecordingSession>, const juce::String&) {});
+    const auto firstDirectory = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                                    .getChildFile("riffra-recording-busy-test")
+                                    .getChildFile(juce::Uuid().toString());
+    const auto secondDirectory = firstDirectory.getSiblingFile(juce::Uuid().toString());
+
+    ASSERT_EQ(callback.recording().start(firstDirectory, 0, error), RealtimeRequest::accepted);
+    ASSERT_EQ(callback.recording().stop(error), RealtimeRequest::accepted);
+    EXPECT_EQ(callback.recording().start(secondDirectory, 0, error), RealtimeRequest::rejected);
+
+    callback.recording().completeProcessing({}, {});
+    firstDirectory.deleteRecursively();
+    secondDirectory.deleteRecursively();
+}
+
+TEST(AudioRenderPipelineTest, CancelClearsRecordingSink) {
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine timeline;
+    juce::String error;
+    ASSERT_TRUE(loadTestSnapshot(timeline, makeMonitoringSnapshot(0, true), formats, 48'000.0,
+                                 kBlockSize, error));
+    AudioRenderPipeline callback(timeline);
+    const auto directory = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                               .getChildFile("riffra-recording-cancel-test")
+                               .getChildFile(juce::Uuid().toString());
+
+    ASSERT_EQ(callback.recording().start(directory, 1, error), RealtimeRequest::accepted);
+    ASSERT_EQ(callback.recording().stop(error), RealtimeRequest::accepted);
+    EXPECT_TRUE(callback.recording().status().cancelled);
+
+    directory.deleteRecursively();
+}
+
+TEST(AudioRenderPipelineTest, FinalizationFailurePreservesStatus) {
+    TimelineEngine timeline;
+    AudioRenderPipeline callback(timeline);
+    ArrangeRecordingSummary summary;
+    summary.directory = "recording";
+    summary.active = true;
+
+    callback.recording().completeProcessing(summary, "finalization failed");
+    const auto result = callback.recording().status();
+
+    EXPECT_FALSE(result.processing);
+    EXPECT_EQ(result.error, std::optional<juce::String>("finalization failed"));
+}
+
+TEST(AudioRenderPipelineTest, DeviceFaultEngagesDeviceFault) {
+    TimelineEngine timeline;
+    AudioRenderPipeline callback(timeline);
+    callback.setDeviceFaulted(true);
+
+    EXPECT_TRUE(callback.isMuted());
+    EXPECT_TRUE(callback.isDeviceFaulted());
+}
+
+TEST(AudioRenderPipelineTest, ConsumesPreviewCommandsUnderEverySafetyMute) {
+    const std::array setters{
+        &AudioRenderPipeline::setUserEmergencyMute, &AudioRenderPipeline::setEngineTransitionMute,
+        &AudioRenderPipeline::setDeviceFaulted, &AudioRenderPipeline::setFeedbackProtection};
+    for (const auto setter : setters) {
+        // Arrange
+        TimelineEngine timeline;
+        AudioRenderPipeline pipeline(timeline);
+        (pipeline.*setter)(true);
+        juce::AudioBuffer<float> source(1, 512);
+        source.clear();
+        std::array<float, 32> output{};
+        std::array<float*, 1> channels{output.data()};
+        juce::String error;
+
+        // Act
+        for (int block = 0; block < 300; ++block) {
+            ASSERT_TRUE(pipeline.preview().startPreview(source, 0, 512, 1.0f, true, error))
+                << error;
+            ASSERT_TRUE(pipeline.preview().startSynthNote(60, 0.1f));
+            ASSERT_TRUE(pipeline.preview().stopSynthNote(60));
+            ASSERT_TRUE(pipeline.preview().stopPreview(&error)) << error;
+            pipeline.processBlock(nullptr, 0, channels.data(), 1, 32, {});
+
+            // Assert
+            for (const auto sample : output) EXPECT_FLOAT_EQ(sample, 0.0f);
+        }
+        ASSERT_TRUE(pipeline.preview().startSynthNote(60, 0.1f));
+    }
+}
+
+}  // namespace riffra

@@ -4,11 +4,11 @@
 #include <memory>
 #include <thread>
 
-#include "../timeline/TimelineTestSupport.h"
-#include "audio/AudioRenderPipeline.h"
 #include "device/AudioDeviceCallback.h"
 #include "device/AudioDeviceController.h"
+#include "pipeline/AudioRenderPipeline.h"
 #include "recording/ArrangeRecordingSession.h"
+#include "support/TimelineTestSupport.h"
 #include "timeline/TimelineEngine.h"
 
 namespace riffra {

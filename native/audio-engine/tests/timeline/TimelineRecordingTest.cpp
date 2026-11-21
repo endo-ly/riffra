@@ -4,14 +4,38 @@
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
+#include <memory>
 #include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
 
-#include "TimelineTestSupport.h"
+#include "support/TimelineTestSupport.h"
 
 namespace riffra {
+namespace {
+
+/// Captures the session that RecordingController hands to the lifecycle dispatcher.
+class RecordingFinalizationCapture final {
+public:
+    explicit RecordingFinalizationCapture(RecordingController& recordingIn)
+        : recording(recordingIn) {
+        recording.setFinalizationDispatcher(
+            [this](std::unique_ptr<ArrangeRecordingSession> session, const juce::String&) {
+                finalized = std::move(session);
+            });
+    }
+
+    ~RecordingFinalizationCapture() { recording.setFinalizationDispatcher({}); }
+
+    [[nodiscard]] std::unique_ptr<ArrangeRecordingSession> take() { return std::move(finalized); }
+
+private:
+    RecordingController& recording;
+    std::unique_ptr<ArrangeRecordingSession> finalized;
+};
+
+}  // namespace
 
 TEST(TimelineEngineTest, UsesTempoAndMeterAtTheRecordingPositionForCountIn) {
     // Arrange
@@ -202,8 +226,9 @@ TEST(TimelineRecordingTest, RecordingStartQueueFullLeavesNoSessionOrSinkAndCanRe
     EXPECT_EQ(pipeline.recording().start(directory.get(), 0, error), RealtimeRequest::accepted);
     EXPECT_TRUE(pipeline.recordingStatus().active);
     EXPECT_TRUE(TimelineEngineTestPeer::hasRecordingSink(engine));
+    RecordingFinalizationCapture capture(pipeline.recording());
     ASSERT_EQ(pipeline.recording().stop(error), RealtimeRequest::accepted);
-    auto cancelled = pipeline.recording().takePendingFinalization();
+    auto cancelled = capture.take();
     ASSERT_NE(cancelled, nullptr);
     EXPECT_TRUE(cancelled->cancel(error));
 }
@@ -235,12 +260,13 @@ TEST(TimelineRecordingTest, RecordingStopQueueFullLeavesCaptureActiveAndCanRetry
     EXPECT_EQ(engine.status().frame.recordingPhase, RecordingPhase::recording);
 
     engine.setRealtimeOwner(RealtimeOwner::control);
+    RecordingFinalizationCapture capture(pipeline.recording());
     EXPECT_EQ(pipeline.recording().stop(error), RealtimeRequest::accepted);
     EXPECT_FALSE(pipeline.recordingStatus().active);
     EXPECT_EQ(engine.status().frame.recordingPhase, RecordingPhase::idle);
     EXPECT_EQ(engine.status().frame.transportState, TransportState::stopped);
     EXPECT_FALSE(TimelineEngineTestPeer::hasRecordingSink(engine));
-    auto finalized = pipeline.recording().takePendingFinalization();
+    auto finalized = capture.take();
     ASSERT_NE(finalized, nullptr);
     EXPECT_TRUE(finalized->cancel(error));
 }
@@ -491,8 +517,9 @@ TEST(TimelineEngineTest, CompletesAProductionThreadedWriterRecording) {
     }
     const auto beforeStop = callback.recording().status();
     juce::String stopError;
+    RecordingFinalizationCapture capture(callback.recording());
     ASSERT_EQ(callback.recording().stop(stopError), RealtimeRequest::accepted) << stopError;
-    auto detached = callback.recording().takePendingFinalization();
+    auto detached = capture.take();
     const auto processed =
         detached != nullptr && engine.processFinalizedRecording(detached.get(), stopError);
     juce::String finishError;
@@ -557,8 +584,9 @@ TEST(TimelineEngineTest, ReplaysCapturedSidechainForProcessedTakesAndKeepsRawWhe
             auxiliary.fill(position < 1200 ? 0.2f : 0.4f);
             engine.mix(inputs.data(), 2, outputs.data(), 2, std::min(64, 2537 - position));
         }
+        RecordingFinalizationCapture finalization(pipeline.recording());
         ASSERT_EQ(pipeline.recording().stop(error), RealtimeRequest::accepted) << error;
-        auto capture = pipeline.recording().takePendingFinalization();
+        auto capture = finalization.take();
         ASSERT_NE(capture, nullptr);
         if (!replayable) {
             const auto auxiliaryFile = capture->prepareSidechainForReading("target", "fx:target");
@@ -640,8 +668,9 @@ TEST(TimelineEngineTest, ProductionWriterKeepsPartialLoopSegmentsAlignedInManife
         engine.mix(inputs.data(), 1, outputs.data(), 2, block);
         mixed += block;
     }
+    RecordingFinalizationCapture capture(callback.recording());
     ASSERT_EQ(callback.recording().stop(error), RealtimeRequest::accepted) << error;
-    auto detached = callback.recording().takePendingFinalization();
+    auto detached = capture.take();
     ASSERT_NE(detached, nullptr);
     const auto processed = engine.processFinalizedRecording(detached.get(), error);
     juce::String finishError;

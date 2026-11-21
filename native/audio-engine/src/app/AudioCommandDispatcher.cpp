@@ -1,11 +1,13 @@
 #include "AudioCommandDispatcher.h"
 
 #include <chrono>
+#include <optional>
 #include <string>
 #include <utility>
 #include <variant>
 
-#include "midi/MidiInputService.h"
+#include "device/MidiInputService.h"
+#include "plugins/PluginEditorHost.h"
 #include "protocol/AudioProtocol.h"
 #include "timeline/TimelineEngine.h"
 
@@ -17,76 +19,27 @@ constexpr auto kSafetyMutePanicApplyTimeout = std::chrono::milliseconds(500);
 }  // namespace
 
 AudioCommandDispatcher::AudioCommandDispatcher(Context context) : context(context) {
-    recordingStopWorker = std::thread([this] { recordingStopWorkerLoop(); });
+    context.pipeline.recording().setStopCompletion(
+        [this](const bool completed, const juce::String& error) {
+            if (!completed) writeEvent(FaultSpec{{"recording", error, "recording.stop", {}}});
+            // The stop response reported the state at acceptance; this reports the applied stop.
+            writeEvent(currentStatus());
+        });
 }
 
 AudioCommandDispatcher::~AudioCommandDispatcher() {
-    {
-        const std::lock_guard lock(recordingStopMutex);
-        recordingStopWorkerStopping = true;
-    }
-    recordingStopWake.notify_all();
-    if (recordingStopWorker.joinable()) recordingStopWorker.join();
+    context.pipeline.recording().setStopCompletion({});
 }
 
-bool AudioCommandDispatcher::waitForBackgroundWork(const std::chrono::milliseconds timeout) {
-    std::unique_lock lock(recordingStopMutex);
-    return recordingStopFinished.wait_for(lock, timeout,
-                                          [this] { return !recordingStopScheduled; });
-}
-
-bool AudioCommandDispatcher::reserveRecordingStop(CommandResponder& responder) {
-    const std::lock_guard lock(recordingStopMutex);
-    if (!recordingStopScheduled && !recordingStopWorkerStopping) {
-        recordingStopScheduled = true;
-        return true;
+void AudioCommandDispatcher::closeRuntimeEditors() {
+    if (trackPluginEditor != nullptr) {
+        trackPluginEditor->close();
+        trackPluginEditor.reset();
+        pluginEditorOwner = {};
+        trackPluginEditorDeviceId.clear();
     }
-    responder.fail("recordingBusy", "A recording stop is already pending.", "recording.stop");
-    return false;
-}
-
-void AudioCommandDispatcher::releaseRecordingStopReservation() {
-    {
-        const std::lock_guard lock(recordingStopMutex);
-        recordingStopScheduled = false;
-    }
-    recordingStopFinished.notify_all();
-}
-
-void AudioCommandDispatcher::queueRecordingStop(const PendingRecordingStop& pending) {
-    {
-        const std::lock_guard lock(recordingStopMutex);
-        pendingRecordingStop = pending;
-    }
-    recordingStopWake.notify_one();
-}
-
-void AudioCommandDispatcher::recordingStopWorkerLoop() {
-    for (;;) {
-        PendingRecordingStop pending;
-        {
-            std::unique_lock lock(recordingStopMutex);
-            recordingStopWake.wait(lock, [this] {
-                return recordingStopWorkerStopping || pendingRecordingStop.has_value();
-            });
-            if (recordingStopWorkerStopping && !pendingRecordingStop.has_value()) return;
-            pending = *pendingRecordingStop;
-            pendingRecordingStop.reset();
-        }
-
-        juce::String error;
-        const auto completed = context.pipeline.recording().completeStop(pending, error);
-        if (completed != RealtimeRequest::accepted)
-            writeEvent(FaultSpec{{"recording", error, "recording.stop", {}}});
-        // The stop response reported the state at acceptance; this reports the applied stop.
-        writeEvent(currentStatus());
-
-        {
-            const std::lock_guard lock(recordingStopMutex);
-            recordingStopScheduled = false;
-        }
-        recordingStopFinished.notify_all();
-    }
+    closePluginAudition();
+    timelineOperationRunning.store(false, std::memory_order_release);
 }
 
 void AudioCommandDispatcher::run(std::istream& input) {
@@ -120,7 +73,7 @@ AudioStatusSpec AudioCommandDispatcher::currentStatus() const {
 
 bool AudioCommandDispatcher::rejectWhileTimelineBusy(CommandResponder& responder,
                                                      const juce::String& message) {
-    if (!context.timelineOperationRunning.load(std::memory_order_acquire)) return false;
+    if (!timelineOperationRunning.load(std::memory_order_acquire)) return false;
     responder.fail("timelineBusy", message, "runtime.timeline");
     return true;
 }

@@ -10,10 +10,10 @@
 #include <vector>
 
 #include "PluginTransportPosition.h"
+#include "automation/AutomationRuntime.h"
 #include "concurrency/BoundedMpmcQueue.h"
 #include "contract/ExecutionGraph.h"
 #include "contract/LoadProgress.h"
-#include "timeline/AutomationRuntime.h"
 
 namespace riffra {
 

@@ -7,7 +7,7 @@
 
 #include "ContractReader.h"
 #include "ExecutionGraphDecoder.h"
-#include "audio/InstrumentPreviewContract.h"
+#include "InstrumentPreview.h"
 
 namespace riffra {
 namespace {
