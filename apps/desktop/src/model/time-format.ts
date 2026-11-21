@@ -1,11 +1,11 @@
-import type { MusicalPosition, ProjectTimebase } from './generated';
+import type { MusicalPosition, ProjectTimebase } from '@/model/generated';
 import {
   barBeatToTick,
   tickToBarBeat,
   ticksPerBar,
   ticksPerBeat,
   ticksToSeconds,
-} from './timebase';
+} from '@/model/timebase';
 
 /** Pads the tick field to the width of the largest in-beat tick so the text never changes length. */
 function formatBeatTicks(ticks: number, beatTicks: number) {

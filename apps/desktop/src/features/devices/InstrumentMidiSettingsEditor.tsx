@@ -8,7 +8,7 @@ import type {
 import { midiNoteName } from '@/model/midi';
 import { Icon } from '@/shared/ui/Icon';
 import controls from '@/shared/ui/controls.module.css';
-import styles from './Devices.module.css';
+import styles from '@/features/devices/Devices.module.css';
 import { InlineMessage } from '@/shared/ui/message/InlineMessage';
 
 interface Props {

@@ -7,9 +7,9 @@ import {
   type TrackSize,
 } from '@/features/timeline/model/timeline-layout';
 import { resolveTrackColor } from '@/model/track-color';
-import { TrackHeader } from './TrackHeader';
-import { TrackLane } from './TrackLane';
-import styles from './TimelineView.module.css';
+import { TrackHeader } from '@/features/timeline/TrackHeader';
+import { TrackLane } from '@/features/timeline/TrackLane';
+import styles from '@/features/timeline/TimelineView.module.css';
 
 export interface TimelineTrackProps {
   sessionId: string;

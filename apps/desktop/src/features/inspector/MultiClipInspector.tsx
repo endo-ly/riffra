@@ -4,8 +4,8 @@ import { useSessionContext } from '@/session/session-context';
 import { Icon } from '@/shared/ui/Icon';
 import clsx from 'clsx';
 import { useMemo, useState } from 'react';
-import sharedStyles from './Inspector.module.css';
-import styles from './MultiClipInspector.module.css';
+import sharedStyles from '@/features/inspector/Inspector.module.css';
+import styles from '@/features/inspector/MultiClipInspector.module.css';
 import { InlineMessage } from '@/shared/ui/message/InlineMessage';
 
 interface MultiClipInspectorProps {

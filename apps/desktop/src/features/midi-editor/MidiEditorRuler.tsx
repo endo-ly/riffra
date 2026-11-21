@@ -2,7 +2,7 @@ import { musicalGridTicks, tickToBarBeat } from '@/model/timebase';
 import type { Ref } from 'react';
 import type { ProjectTimebase } from '@/model/generated';
 import { formatMusicalPosition } from '@/model/time-format';
-import styles from './MidiEditorPanel.module.css';
+import styles from '@/features/midi-editor/MidiEditorPanel.module.css';
 
 interface MidiEditorRulerProps {
   timebase: ProjectTimebase;

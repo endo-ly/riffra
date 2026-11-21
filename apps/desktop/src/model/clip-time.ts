@@ -1,5 +1,5 @@
-import type { AudioClip, MidiClip, ProjectTimebase } from './generated';
-import { secondsToTicks, ticksToSeconds } from './timebase';
+import type { AudioClip, MidiClip, ProjectTimebase } from '@/model/generated';
+import { secondsToTicks, ticksToSeconds } from '@/model/timebase';
 
 export function clipDurationTicks(clip: AudioClip, timebase: ProjectTimebase) {
   return Math.max(

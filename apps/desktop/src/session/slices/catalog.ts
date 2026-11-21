@@ -6,7 +6,7 @@ import type {
 } from '@/model/generated';
 import type { NativeApi } from '@/native/native-api';
 import { notify } from '@/shared/notify';
-import type { JobSlice } from './jobs';
+import type { JobSlice } from '@/session/slices/jobs';
 
 export interface CatalogSlice {
   plugins: PluginEntry[];

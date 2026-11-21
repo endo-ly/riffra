@@ -8,10 +8,10 @@ import {
   publishAudioMeterSummary,
   publishAudioMeters,
   resetAudioMeters,
-} from './audio-meters';
-import type { SessionStore } from './store';
+} from '@/session/audio-meters';
+import type { SessionStore } from '@/session/store';
 import { shallow } from 'zustand/vanilla/shallow';
-import { selectHostReady, selectStartupRestoreReady } from './selectors';
+import { selectHostReady, selectStartupRestoreReady } from '@/session/selectors';
 
 export function bindSessionRuntime(store: SessionStore, api: NativeApi): () => void {
   let disposed = false;

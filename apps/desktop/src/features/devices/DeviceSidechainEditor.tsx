@@ -7,7 +7,7 @@ import type {
 import { useSession, useSessionContext } from '@/session/session-context';
 import { SidechainSendControls } from '@/features/mixer/SidechainSendControls';
 import controls from '@/shared/ui/controls.module.css';
-import styles from './Devices.module.css';
+import styles from '@/features/devices/Devices.module.css';
 
 interface DeviceSidechainEditorProps {
   arrangement: Arrangement;

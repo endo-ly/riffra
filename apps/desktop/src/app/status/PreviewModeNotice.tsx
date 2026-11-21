@@ -1,7 +1,7 @@
 import { useSession } from '@/session/session-context';
 import { Notice } from '@/shared/ui/message/Notice';
 
-export function BrowserPreviewNotice() {
+export function PreviewModeNotice() {
   const nativeAvailable = useSession((state) => state.project.boot?.nativeAvailable ?? true);
   if (nativeAvailable) return null;
   return (

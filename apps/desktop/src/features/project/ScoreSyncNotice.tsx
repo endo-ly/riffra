@@ -4,7 +4,7 @@ import { notify } from '@/shared/notify';
 import { useSession } from '@/session/session-context';
 import { selectHostReady } from '@/session/selectors';
 import { Notice } from '@/shared/ui/message/Notice';
-import styles from './ScoreSyncNotice.module.css';
+import styles from '@/features/project/ScoreSyncNotice.module.css';
 
 const MAX_DIAGNOSTICS = 5;
 

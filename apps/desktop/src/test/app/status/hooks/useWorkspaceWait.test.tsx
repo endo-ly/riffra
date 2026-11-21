@@ -2,7 +2,7 @@
 import { act, renderHook } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { describe, expect, it } from 'vitest';
-import { useWorkspaceWait } from '@/app/runtime/useWorkspaceWait';
+import { useWorkspaceWait } from '@/app/status/hooks/useWorkspaceWait';
 import type { ProjectActivationResult, RuntimeProjectionStatus } from '@/model/generated';
 import { createFakeNativeApi } from '@/test/support/fake-native-api';
 import { createTestSessionStore, TestSessionProvider } from '@/test/support/session-provider';

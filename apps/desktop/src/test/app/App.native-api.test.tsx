@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import App from '@/app/App';
 import { createSessionStore } from '@/session/store';
 import { bindSessionRuntime } from '@/session/runtime';
-import { useAppUpdater } from '@/app/runtime/useAppUpdater';
+import { useAppUpdater } from '@/app/hooks/useAppUpdater';
 import { TestSessionProvider } from '@/test/support/session-provider';
 import {
   createFakeNativeApi,

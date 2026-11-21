@@ -8,9 +8,9 @@ import {
   MUSICAL_TYPING_OCTAVE_DOWN_KEY,
   MUSICAL_TYPING_OCTAVE_UP_KEY,
   baseNoteForOctave,
-} from './musical-typing';
+} from '@/features/live-input/musical-typing';
 import { isEditableTypingTarget } from '@/shared/input';
-import { useHeldMidiNotes } from './useHeldMidiNotes';
+import { useHeldMidiNotes } from '@/features/live-input/useHeldMidiNotes';
 
 interface UseMusicalTypingOptions {
   /** When false, all listeners detach and any held notes are released. */

@@ -3,11 +3,14 @@ import { resolveTrackColorById } from '@/model/track-color';
 import { selectTrack } from '@/session/selectors';
 import type { CSSProperties } from 'react';
 import type { AudioStatus } from '@/model/generated';
-import { drumPadByNote } from './drum-map';
-import { MUSICAL_TYPING_MAX_OCTAVE, MUSICAL_TYPING_MIN_OCTAVE } from './musical-typing';
+import { drumPadByNote } from '@/features/live-input/drum-map';
+import {
+  MUSICAL_TYPING_MAX_OCTAVE,
+  MUSICAL_TYPING_MIN_OCTAVE,
+} from '@/features/live-input/musical-typing';
 import { midiNoteName } from '@/model/midi';
-import type { LivePlay } from './useLivePlay';
-import { LIVE_PLAY_BLOCKED_REASON } from './useLivePlay';
+import type { LivePlay } from '@/features/live-input/useLivePlay';
+import { LIVE_PLAY_BLOCKED_REASON } from '@/features/live-input/useLivePlay';
 import {
   Toolbar,
   ToolbarButton,
@@ -15,9 +18,9 @@ import {
   ToolbarSegmented,
   ToolbarSlider,
 } from '@/shared/ui/Toolbar';
-import { DrumPadGrid } from './DrumPadGrid';
-import { MusicalTypingKeyboard } from './MusicalTypingKeyboard';
-import styles from './PlaySurface.module.css';
+import { DrumPadGrid } from '@/features/live-input/DrumPadGrid';
+import { MusicalTypingKeyboard } from '@/features/live-input/MusicalTypingKeyboard';
+import styles from '@/features/live-input/PlaySurface.module.css';
 import { InlineMessage } from '@/shared/ui/message/InlineMessage';
 
 interface PlaySurfaceProps {

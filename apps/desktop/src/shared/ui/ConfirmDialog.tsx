@@ -1,5 +1,5 @@
-import { Modal } from './Modal';
-import styles from './ConfirmDialog.module.css';
+import { Modal } from '@/shared/ui/Modal';
+import styles from '@/shared/ui/ConfirmDialog.module.css';
 
 interface ConfirmDialogProps {
   title: string;

@@ -1,7 +1,7 @@
 import type { AudioAnalysis, AudioClip, ProjectTimebase } from '@/model/generated';
-import { AudioWaveform } from './AudioWaveform';
+import { AudioWaveform } from '@/features/timeline/AudioWaveform';
 import { clipDurationTicks } from '@/model/clip-time';
-import styles from './TimelineClip.module.css';
+import styles from '@/features/timeline/TimelineClip.module.css';
 
 interface AudioClipViewProps {
   clip: AudioClip;

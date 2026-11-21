@@ -2,7 +2,7 @@ import type { RecoveryCandidate } from '@/model/generated';
 import { useSession } from '@/session/session-context';
 import { Dialog } from '@/shared/ui/Dialog';
 import controls from '@/shared/ui/controls.module.css';
-import styles from './RecoveryDialog.module.css';
+import styles from '@/features/project/RecoveryDialog.module.css';
 
 const MAX_CANDIDATES = 5;
 

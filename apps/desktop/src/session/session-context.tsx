@@ -2,8 +2,8 @@ import { createContext, useContext, useMemo } from 'react';
 import type { ReactNode } from 'react';
 import { useStore } from 'zustand';
 import type { NativeApi } from '@/native/native-api';
-import type { SessionCommit } from './commit';
-import type { SessionState, SessionStore } from './store';
+import type { SessionCommit } from '@/session/commit';
+import type { SessionState, SessionStore } from '@/session/store';
 
 interface SessionContextValue {
   api: NativeApi;

@@ -1,4 +1,4 @@
-import type { EditorCommit } from './useTimelineEditor';
+import type { EditorCommit } from '@/features/timeline/hooks/useTimelineEditor';
 import { useCallback, type DragEvent } from 'react';
 import type { TrackKind } from '@/model/generated';
 import {
@@ -10,7 +10,7 @@ import {
   readPluginDrag,
 } from '@/shared/browser-drag';
 import { TRACK_HEADER_WIDTH } from '@/features/timeline/model/timeline-layout';
-import { placeBrowserItem } from '@/features/timeline/place-browser-item';
+import { usePlaceBrowserItem } from '@/features/timeline/hooks/usePlaceBrowserItem';
 import { resolvePlacementTarget, type BrowserPlacement } from '@/model/placement';
 import { useSessionContext } from '@/session/session-context';
 import { notify } from '@/shared/notify';
@@ -62,6 +62,7 @@ function readBrowserDrag(dataTransfer: DataTransfer): BrowserPlacement | string 
 /** Coordinates Browser item and OS MIDI-file drops in the Arrange workspace. */
 export function useTimelineDrop({ commit, pixelsPerTick, snapTick }: UseTimelineDropOptions) {
   const { api } = useSessionContext();
+  const { place } = usePlaceBrowserItem(commit);
   const handleBrowserDrop = useCallback(
     async (event: DragEvent, trackId?: string, trackKind?: TrackKind): Promise<void> => {
       const placement = readBrowserDrag(event.dataTransfer);
@@ -85,9 +86,9 @@ export function useTimelineDrop({ commit, pixelsPerTick, snapTick }: UseTimeline
         (event.clientX - bounds.left - TRACK_HEADER_WIDTH) / pixelsPerTick,
         event.altKey,
       );
-      await placeBrowserItem(api, commit, placement, target, tick);
+      await place(placement, target, tick);
     },
-    [api, commit, pixelsPerTick, snapTick],
+    [place, pixelsPerTick, snapTick],
   );
 
   const handleOsMidiDrop = useCallback(

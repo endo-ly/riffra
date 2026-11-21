@@ -9,7 +9,7 @@ import {
   ToolbarStepper,
   ToolbarToggle,
 } from '@/shared/ui/Toolbar';
-import styles from './MidiEditorPanel.module.css';
+import styles from '@/features/midi-editor/MidiEditorPanel.module.css';
 
 interface MidiEditorToolbarProps {
   clipName: string;

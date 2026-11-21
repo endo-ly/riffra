@@ -12,10 +12,10 @@ import { MenuButton } from '@/shared/ui/MenuButton';
 import clsx from 'clsx';
 import { useEffect, useState, type CSSProperties } from 'react';
 import { resolveTrackColorById } from '@/model/track-color';
-import { ClipToggles } from './ClipToggles';
-import styles from './Inspector.module.css';
-import { MixValueField } from './MixValueField';
-import { MusicalTimeField } from './MusicalTimeField';
+import { ClipToggles } from '@/features/inspector/ClipToggles';
+import styles from '@/features/inspector/Inspector.module.css';
+import { MixValueField } from '@/features/inspector/MixValueField';
+import { MusicalTimeField } from '@/features/inspector/MusicalTimeField';
 import { InlineMessage } from '@/shared/ui/message/InlineMessage';
 
 interface AudioClipInspectorProps {

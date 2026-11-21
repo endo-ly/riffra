@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef } from 'react';
 import { selectStoppedPlayheadTick } from '@/session/selectors';
 import { useSession } from '@/session/session-context';
 import { TRACK_HEADER_WIDTH } from '@/features/timeline/model/timeline-layout';
-import styles from './TimelineView.module.css';
+import styles from '@/features/timeline/TimelineView.module.css';
 
 export function TimelinePlayhead({ pixelsPerTick }: { pixelsPerTick: number }) {
   const positionRef = useSession((state) => state.transport.playhead);

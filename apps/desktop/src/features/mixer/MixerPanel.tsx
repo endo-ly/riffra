@@ -13,11 +13,11 @@ import { ownerSelection, selectionOwner } from '@/model/editor-selection';
 import controls from '@/shared/ui/controls.module.css';
 import { useState } from 'react';
 import { MixdownDialog } from '@/features/render/MixdownDialog';
-import styles from './Mixer.module.css';
-import { MixerBusChannelStrip } from './MixerBusChannelStrip';
-import { MixerMasterChannelStrip } from './MixerMasterChannelStrip';
-import { MixerRouting } from './MixerRouting';
-import { MixerTrackChannelStrip } from './MixerTrackChannelStrip';
+import styles from '@/features/mixer/Mixer.module.css';
+import { MixerBusChannelStrip } from '@/features/mixer/MixerBusChannelStrip';
+import { MixerMasterChannelStrip } from '@/features/mixer/MixerMasterChannelStrip';
+import { MixerRouting } from '@/features/mixer/MixerRouting';
+import { MixerTrackChannelStrip } from '@/features/mixer/MixerTrackChannelStrip';
 import { InlineMessage } from '@/shared/ui/message/InlineMessage';
 
 interface MixerPanelProps {

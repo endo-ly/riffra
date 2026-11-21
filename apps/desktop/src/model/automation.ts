@@ -7,8 +7,8 @@ import type {
   DeviceParameterInfo,
   EffectOwner,
   ProjectTimebase,
-} from './generated';
-import { ticksToSeconds } from './timebase';
+} from '@/model/generated';
+import { ticksToSeconds } from '@/model/timebase';
 
 export interface AutomationOption {
   target: AutomationTarget;

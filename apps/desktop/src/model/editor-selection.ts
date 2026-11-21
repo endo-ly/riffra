@@ -1,4 +1,4 @@
-import type { EffectOwner } from './generated';
+import type { EffectOwner } from '@/model/generated';
 
 /** The selection state owned by the editor workspace. */
 export type EditorSelection =

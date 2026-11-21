@@ -4,12 +4,12 @@ import type { AudioStatus, CreativeSession } from '@/model/generated';
 import { tickToMusicalPosition } from '@/model/time-format';
 import { useSession, useSessionContext } from '@/session/session-context';
 import { Icon } from '@/shared/ui/Icon';
-import { AudioClipInspector } from './AudioClipInspector';
-import { MidiClipInspector } from './MidiClipInspector';
-import { MultiClipInspector } from './MultiClipInspector';
-import styles from './PropertiesPanel.module.css';
-import { TakeInspector } from './TakeInspector';
-import { TrackInspector } from './TrackInspector';
+import { AudioClipInspector } from '@/features/inspector/AudioClipInspector';
+import { MidiClipInspector } from '@/features/inspector/MidiClipInspector';
+import { MultiClipInspector } from '@/features/inspector/MultiClipInspector';
+import styles from '@/features/inspector/PropertiesPanel.module.css';
+import { TakeInspector } from '@/features/inspector/TakeInspector';
+import { TrackInspector } from '@/features/inspector/TrackInspector';
 
 interface PropertiesPanelProps {
   onOpenDevices: () => void;

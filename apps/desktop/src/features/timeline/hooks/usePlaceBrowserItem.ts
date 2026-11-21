@@ -1,7 +1,11 @@
+import { useCallback } from 'react';
 import type { ArrangementMutationResult } from '@/model/generated';
 import type { NativeApi } from '@/native/native-api';
-import type { resolvePlacementTarget } from '@/model/placement';
-import { type BrowserPlacement } from '@/model/placement';
+import { HostConnectionChangedError } from '@/native/invoke';
+import { resolvePlacementTarget, type BrowserPlacement } from '@/model/placement';
+import { notify } from '@/shared/notify';
+import type { SessionCommit } from '@/session/commit';
+import { useSessionContext, useSessionStore } from '@/session/session-context';
 
 type PlacementApi = Pick<
   NativeApi,
@@ -13,18 +17,24 @@ type PlacementApi = Pick<
   | 'addMidiClipToArrangement'
 >;
 
+/** A placement target the Browser can execute. */
+type ResolvedPlacementTarget = Exclude<
+  ReturnType<typeof resolvePlacementTarget>,
+  { kind: 'invalid' }
+>;
+
 /** Applies one mutation and resolves its result, or null when nothing was applied. */
 type PlacementRunner = (
   operation: Promise<ArrangementMutationResult>,
 ) => Promise<ArrangementMutationResult | null>;
 
 /** Places a Browser item with a single canonical commit. */
-export async function placeBrowserItem(
+async function placeBrowserItem(
   api: PlacementApi,
   run: PlacementRunner,
   placement: BrowserPlacement,
-  target: Exclude<ReturnType<typeof resolvePlacementTarget>, { kind: 'invalid' }>,
-  startTick?: number,
+  target: ResolvedPlacementTarget,
+  startTick: number | undefined,
 ): Promise<void> {
   if (target.kind === 'newTrack') {
     if (placement.kind === 'instrument') {
@@ -74,4 +84,43 @@ function loadOnTrack(
 function requireTrack(trackId: string | undefined): string {
   if (!trackId) throw new Error('instrument and effect placements require a Track');
   return trackId;
+}
+
+/**
+ * Executes a Browser placement on the Arrangement: at a drop position for the
+ * Timeline, or at the playhead for the Browser's apply action.
+ */
+export function usePlaceBrowserItem(commit: SessionCommit) {
+  const { api } = useSessionContext();
+  const store = useSessionStore();
+  const place = useCallback(
+    (placement: BrowserPlacement, target: ResolvedPlacementTarget, startTick: number) =>
+      placeBrowserItem(api, commit, placement, target, startTick),
+    [api, commit],
+  );
+  const placeAtPlayhead = useCallback(
+    async (placement: BrowserPlacement) => {
+      const state = store.getState();
+      const selection = state.workspace.selection;
+      const track =
+        selection.kind === 'track'
+          ? (state.project.boot?.canonical.session.arrangement.tracks.find(
+              (item) => item.id === selection.trackId,
+            ) ?? null)
+          : null;
+      const target = resolvePlacementTarget(placement, track, false);
+      if (target.kind === 'invalid') {
+        notify.info(target.reason);
+        return;
+      }
+      try {
+        await place(placement, target, state.transport.playhead.current);
+      } catch (error) {
+        if (!(error instanceof HostConnectionChangedError))
+          notify.error('Item could not be placed', { cause: error });
+      }
+    },
+    [place, store],
+  );
+  return { place, placeAtPlayhead };
 }

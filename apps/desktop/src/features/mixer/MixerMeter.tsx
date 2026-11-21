@@ -1,6 +1,6 @@
 import { useAudioChannelMeter } from '@/session/audio-meters';
 import type { EffectOwner } from '@/model/generated';
-import styles from './Mixer.module.css';
+import styles from '@/features/mixer/Mixer.module.css';
 
 interface MixerMeterProps {
   owner: EffectOwner;

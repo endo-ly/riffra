@@ -1,4 +1,4 @@
-import styles from './Meter.module.css';
+import styles from '@/shared/ui/Meter.module.css';
 
 /** Level meter whose lit length follows `value` (0–100) over a fixed safe/hot/clip scale. */
 export function Meter({ value }: { value: number }) {

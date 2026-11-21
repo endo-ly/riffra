@@ -16,7 +16,7 @@ import { ConfirmDialog } from '@/shared/ui/ConfirmDialog';
 import { ContextMenu } from '@/shared/ui/ContextMenu';
 import controls from '@/shared/ui/controls.module.css';
 import { Icon } from '@/shared/ui/Icon';
-import styles from './ProjectHostSelector.module.css';
+import styles from '@/features/project/ProjectHostSelector.module.css';
 import { InlineMessage } from '@/shared/ui/message/InlineMessage';
 import { fileName } from '@/shared/path';
 

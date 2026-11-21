@@ -1,7 +1,7 @@
-import { InlineMessage } from './InlineMessage';
-import { Progress, type ProgressValue } from './Progress';
-import { ToneIcon } from './ToneIcon';
-import styles from './WaitCard.module.css';
+import { InlineMessage } from '@/shared/ui/message/InlineMessage';
+import { Progress, type ProgressValue } from '@/shared/ui/message/Progress';
+import { ToneIcon } from '@/shared/ui/message/ToneIcon';
+import styles from '@/shared/ui/message/WaitCard.module.css';
 
 export interface WaitCardProps {
   title: string;

@@ -19,11 +19,11 @@ import { usePointerGesture } from '@/shared/hooks/usePointerGesture';
 import { ContextMenu } from '@/shared/ui/ContextMenu';
 import { collectGhostNotes } from '@/features/midi-editor/model/ghost-notes';
 import { PITCH_HIGH, PITCH_LOW, pitchRowTop } from '@/features/midi-editor/model/pitch-grid';
-import { MidiEditorRuler } from './MidiEditorRuler';
-import { MidiEditorToolbar } from './MidiEditorToolbar';
-import { MidiVelocityLane } from './MidiVelocityLane';
-import { NoteLane } from './NoteLane';
-import { PianoKeyboard } from './PianoKeyboard';
+import { MidiEditorRuler } from '@/features/midi-editor/MidiEditorRuler';
+import { MidiEditorToolbar } from '@/features/midi-editor/MidiEditorToolbar';
+import { MidiVelocityLane } from '@/features/midi-editor/MidiVelocityLane';
+import { NoteLane } from '@/features/midi-editor/NoteLane';
+import { PianoKeyboard } from '@/features/midi-editor/PianoKeyboard';
 import {
   LANE_LABEL_WIDTH,
   useMidiEditorViewport,
@@ -31,7 +31,7 @@ import {
 import { useMidiPreview } from '@/features/midi-editor/hooks/useMidiPreview';
 import { useNoteDrag } from '@/features/midi-editor/hooks/useNoteDrag';
 import { useNoteEditing } from '@/features/midi-editor/hooks/useNoteEditing';
-import styles from './MidiEditorPanel.module.css';
+import styles from '@/features/midi-editor/MidiEditorPanel.module.css';
 
 type MidiEditorTool = 'pointer' | 'draw';
 

@@ -1,4 +1,4 @@
-import type { CanonicalState } from './generated';
+import type { CanonicalState } from '@/model/generated';
 
 function entityId(value: unknown): string | undefined {
   if (value !== null && typeof value === 'object' && 'id' in value && typeof value.id === 'string')

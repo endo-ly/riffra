@@ -5,7 +5,7 @@ import type {
   MidiClip,
   Track,
   Vst3Plugin,
-} from './generated';
+} from '@/model/generated';
 
 export interface TrackClips {
   readonly audio: readonly AudioClip[];

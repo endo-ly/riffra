@@ -1,10 +1,10 @@
 import clsx from 'clsx';
 import { useId, useState, type ReactNode } from 'react';
-import type { Tone } from './tone';
-import { Progress, type ProgressValue } from './Progress';
-import { ToneIcon } from './ToneIcon';
-import toneStyles from './tone.module.css';
-import styles from './Notice.module.css';
+import type { Tone } from '@/shared/ui/message/tone';
+import { Progress, type ProgressValue } from '@/shared/ui/message/Progress';
+import { ToneIcon } from '@/shared/ui/message/ToneIcon';
+import toneStyles from '@/shared/ui/message/tone.module.css';
+import styles from '@/shared/ui/message/Notice.module.css';
 
 type NoticeTone = Extract<Tone, 'info' | 'warning' | 'danger'>;
 

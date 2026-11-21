@@ -13,16 +13,16 @@ import { useSession, useSessionContext } from '@/session/session-context';
 import { useShallow } from 'zustand/react/shallow';
 import { selectMissingDeviceIds } from '@/session/selectors';
 import { selectionOwner } from '@/model/editor-selection';
-import { resolveDeviceTarget } from './device-target';
+import { resolveDeviceTarget } from '@/features/devices/device-target';
 import { useInstrumentMidiInspection } from '@/session/hooks/useInstrumentMidiInspection';
 import { Toolbar } from '@/shared/ui/Toolbar';
 import { resolveTrackColorById } from '@/model/track-color';
-import { DeviceParameterEditor } from './DeviceParameterEditor';
-import { DeviceChain } from './DeviceChain';
-import { InstrumentMidiSettingsEditor } from './InstrumentMidiSettingsEditor';
-import type { DeviceTarget } from './device-target';
+import { DeviceParameterEditor } from '@/features/devices/DeviceParameterEditor';
+import { DeviceChain } from '@/features/devices/DeviceChain';
+import { InstrumentMidiSettingsEditor } from '@/features/devices/InstrumentMidiSettingsEditor';
+import type { DeviceTarget } from '@/features/devices/device-target';
 import controls from '@/shared/ui/controls.module.css';
-import styles from './Devices.module.css';
+import styles from '@/features/devices/Devices.module.css';
 import { InlineMessage } from '@/shared/ui/message/InlineMessage';
 
 interface DevicesPanelProps {

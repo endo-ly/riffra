@@ -1,4 +1,4 @@
-import type { EditorCommit } from './useTimelineEditor';
+import type { EditorCommit } from '@/features/timeline/hooks/useTimelineEditor';
 import { useCallback } from 'react';
 import type {
   AudioAnalysis,
@@ -25,7 +25,7 @@ import {
   readTrackRows,
   restoreClipElementStyle,
   restoreFadeHandleStyle,
-} from './clipMoveGesture';
+} from '@/features/timeline/hooks/clipMoveGesture';
 
 interface ClipInteractionOptions {
   session: CreativeSession;

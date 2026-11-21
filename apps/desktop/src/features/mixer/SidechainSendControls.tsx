@@ -2,7 +2,7 @@ import type { ArrangementMutationResult, CanonicalState, SidechainSend } from '@
 import { useSessionContext } from '@/session/session-context';
 import { usePreviewedValue } from '@/session/hooks/usePreviewedValue';
 import { useCallback } from 'react';
-import { SendRow } from './SendRow';
+import { SendRow } from '@/features/mixer/SendRow';
 
 interface SidechainSendControlsProps {
   sessionId: string;

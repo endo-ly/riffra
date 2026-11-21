@@ -1,4 +1,4 @@
-import { playbackProblem } from '@/app/runtime/runtime-projection';
+import { playbackProblem } from '@/app/status/model/runtime-status';
 import { useSession } from '@/session/session-context';
 import { selectHostReady } from '@/session/selectors';
 import { Notice } from '@/shared/ui/message/Notice';

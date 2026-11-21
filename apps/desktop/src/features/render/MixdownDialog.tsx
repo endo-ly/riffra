@@ -11,11 +11,11 @@ import { useSessionContext } from '@/session/session-context';
 import controls from '@/shared/ui/controls.module.css';
 import { Icon } from '@/shared/ui/Icon';
 import { useEffect, useId, useRef, useState } from 'react';
-import styles from './Render.module.css';
+import styles from '@/features/render/Render.module.css';
 import { Dialog, DialogRow, DialogSection } from '@/shared/ui/Dialog';
 import { fileName } from '@/shared/path';
-import { RenderHistoryPanel } from './RenderHistoryPanel';
-import { RenderMeasurements } from './RenderMeasurements';
+import { RenderHistoryPanel } from '@/features/render/RenderHistoryPanel';
+import { RenderMeasurements } from '@/features/render/RenderMeasurements';
 import { InlineMessage } from '@/shared/ui/message/InlineMessage';
 
 interface Props {

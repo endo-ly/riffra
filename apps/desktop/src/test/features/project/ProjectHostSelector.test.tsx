@@ -9,7 +9,7 @@ import type { HostConnectionState, LocalHostInfo } from '@/model/generated';
 import type { HostConnectionBootstrap } from '@/native/api/host-connection';
 import { defaultProjectState } from '@/native/preview/fixtures';
 import { openHostDataRoot } from '@/native/dialog';
-import { ProjectHostSelectorView } from '@/app/layout/ProjectHostSelector';
+import { ProjectHostSelectorView } from '@/features/project/ProjectHostSelector';
 
 vi.mock('@/native/dialog', () => ({
   openHostDataRoot: vi.fn().mockResolvedValue(null),

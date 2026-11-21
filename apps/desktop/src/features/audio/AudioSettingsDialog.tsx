@@ -17,11 +17,11 @@ import {
   mergeDeviceChannels,
   normalizeAudioSettingsDraft,
   selectDriverForDraft,
-} from './audio-settings';
+} from '@/features/audio/audio-settings';
 import { isAudioEngineUsable } from '@/model/audio-status';
 import { Dialog } from '@/shared/ui/Dialog';
 import surface from '@/shared/ui/Surface.module.css';
-import styles from './AudioSettingsDialog.module.css';
+import styles from '@/features/audio/AudioSettingsDialog.module.css';
 import { InlineMessage } from '@/shared/ui/message/InlineMessage';
 
 interface AudioSettingsDialogProps {

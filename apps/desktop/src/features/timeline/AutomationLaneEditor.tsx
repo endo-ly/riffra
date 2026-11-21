@@ -15,7 +15,7 @@ import {
   automationOwner,
   automationTargetKey,
 } from '@/model/automation';
-import { AutomationLaneView } from './AutomationLaneView';
+import { AutomationLaneView } from '@/features/timeline/AutomationLaneView';
 
 interface Props {
   session: CreativeSession;

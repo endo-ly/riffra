@@ -14,7 +14,7 @@ import {
   calculateNoteDrag,
   type NoteDragMode,
 } from '@/features/midi-editor/model/note-drag';
-import type { NoteEdit } from './useNoteEditing';
+import type { NoteEdit } from '@/features/midi-editor/hooks/useNoteEditing';
 
 interface Options {
   clip: MidiClip | null;

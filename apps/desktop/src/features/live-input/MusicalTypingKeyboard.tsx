@@ -1,7 +1,11 @@
 import { useRef } from 'react';
-import { MUSICAL_TYPING_KEYS, baseNoteForOctave, typingKeyForSemitone } from './musical-typing';
+import {
+  MUSICAL_TYPING_KEYS,
+  baseNoteForOctave,
+  typingKeyForSemitone,
+} from '@/features/live-input/musical-typing';
 import { isBlackKey, midiNoteName } from '@/model/midi';
-import styles from './MusicalTypingKeyboard.module.css';
+import styles from '@/features/live-input/MusicalTypingKeyboard.module.css';
 
 interface MusicalTypingKeyboardProps {
   /** Base octave displayed at the leftmost C. */

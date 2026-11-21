@@ -13,7 +13,7 @@ import { writeBrowserItemDrag } from '@/shared/browser-drag';
 import { ConfirmDialog } from '@/shared/ui/ConfirmDialog';
 import { ContextMenu, type ContextMenuItem } from '@/shared/ui/ContextMenu';
 import { Icon } from '@/shared/ui/Icon';
-import { BrowserItemEditor, type BrowserItemEdit } from './BrowserItemEditor';
+import { BrowserItemEditor, type BrowserItemEdit } from '@/features/library/BrowserItemEditor';
 import {
   browserItemPlacement,
   browserItemSummary,
@@ -21,8 +21,8 @@ import {
   searchBrowserItems,
   type BrowserItem,
 } from '@/features/library/model/browser-tree';
-import { FolderRow, ItemRow, type BrowserRow } from './BrowserRows';
-import styles from './BrowserPanel.module.css';
+import { FolderRow, ItemRow, type BrowserRow } from '@/features/library/BrowserRows';
+import styles from '@/features/library/BrowserPanel.module.css';
 
 type InstrumentController = CatalogSlice['instruments'] &
   ReturnType<typeof useInstrumentPreview> &

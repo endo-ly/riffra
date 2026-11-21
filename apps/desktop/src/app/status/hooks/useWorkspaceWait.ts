@@ -1,7 +1,7 @@
 import type { Track } from '@/model/generated';
 import { useSession } from '@/session/session-context';
 import type { WaitCardProps } from '@/shared/ui/message/WaitCard';
-import { instrumentLoading, type InstrumentLoading } from './runtime-projection';
+import { instrumentLoading, type InstrumentLoading } from '@/app/status/model/runtime-status';
 
 const NO_TRACKS: readonly Track[] = [];
 

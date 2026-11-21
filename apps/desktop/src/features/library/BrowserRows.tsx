@@ -5,7 +5,7 @@ import type {
   BrowserItemPlacementAction,
 } from '@/features/library/model/browser-item-actions';
 import { Icon } from '@/shared/ui/Icon';
-import { InlineEdit } from './BrowserItemEditor';
+import { InlineEdit } from '@/features/library/BrowserItemEditor';
 import {
   browserItemDetail,
   browserItemName,
@@ -13,7 +13,7 @@ import {
   type BrowserItem,
   type BrowserNode,
 } from '@/features/library/model/browser-tree';
-import styles from './BrowserPanel.module.css';
+import styles from '@/features/library/BrowserPanel.module.css';
 
 export interface BrowserRow {
   key: string;

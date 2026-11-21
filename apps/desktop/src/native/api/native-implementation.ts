@@ -1,26 +1,26 @@
 import type { NativeApi } from '@/native/native-api';
-import { analysisApi } from './analysis';
-import { audioApi } from './audio';
-import { automationApi } from './automation';
-import { bootstrapApi } from './bootstrap';
-import { clipsApi } from './clips';
-import { deviceApi } from './devices';
-import { eventApi } from './events';
-import { hostConnectionApi } from './host-connection';
-import { instrumentLibraryApi } from './instruments';
-import { jobsApi } from './jobs';
-import { libraryApi } from './library';
-import { midiNoteApi } from './midi-notes';
-import { missingDependencyApi } from './missing';
-import { mixerApi } from './mixer';
-import { projectApi } from './project';
-import { recordingApi } from './recording';
-import { renderApi } from './render';
-import { takesApi } from './takes';
-import { timelineApi } from './timeline';
-import { tracksApi } from './tracks';
-import { transportApi } from './transport';
-import { updaterApi } from './updater';
+import { analysisApi } from '@/native/api/analysis';
+import { audioApi } from '@/native/api/audio';
+import { automationApi } from '@/native/api/automation';
+import { bootstrapApi } from '@/native/api/bootstrap';
+import { clipsApi } from '@/native/api/clips';
+import { deviceApi } from '@/native/api/devices';
+import { eventApi } from '@/native/api/events';
+import { hostConnectionApi } from '@/native/api/host-connection';
+import { instrumentLibraryApi } from '@/native/api/instruments';
+import { jobsApi } from '@/native/api/jobs';
+import { libraryApi } from '@/native/api/library';
+import { midiNoteApi } from '@/native/api/midi-notes';
+import { missingDependencyApi } from '@/native/api/missing';
+import { mixerApi } from '@/native/api/mixer';
+import { projectApi } from '@/native/api/project';
+import { recordingApi } from '@/native/api/recording';
+import { renderApi } from '@/native/api/render';
+import { takesApi } from '@/native/api/takes';
+import { timelineApi } from '@/native/api/timeline';
+import { tracksApi } from '@/native/api/tracks';
+import { transportApi } from '@/native/api/transport';
+import { updaterApi } from '@/native/api/updater';
 
 export function createNativeApi(): NativeApi {
   return {

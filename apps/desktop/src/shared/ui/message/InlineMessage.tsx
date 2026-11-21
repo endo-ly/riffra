@@ -1,9 +1,9 @@
 import clsx from 'clsx';
 import type { ReactNode } from 'react';
-import type { Tone } from './tone';
-import { ToneIcon } from './ToneIcon';
-import toneStyles from './tone.module.css';
-import styles from './InlineMessage.module.css';
+import type { Tone } from '@/shared/ui/message/tone';
+import { ToneIcon } from '@/shared/ui/message/ToneIcon';
+import toneStyles from '@/shared/ui/message/tone.module.css';
+import styles from '@/shared/ui/message/InlineMessage.module.css';
 
 type InlineMessageTone = Extract<Tone, 'info' | 'warning' | 'danger'>;
 

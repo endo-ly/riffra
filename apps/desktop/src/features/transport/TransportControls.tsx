@@ -2,10 +2,10 @@ import { useEffect, useState } from 'react';
 import type { CreativeSession, MetronomeSound, SessionSettingsPatch } from '@/model/generated';
 import clsx from 'clsx';
 import { formatClock, formatMusicalPosition, tickToMusicalPosition } from '@/model/time-format';
-import { TransportIcon } from './TransportIcon';
+import { TransportIcon } from '@/features/transport/TransportIcon';
 import { useSession, useSessionContext } from '@/session/session-context';
 import { ContextMenu } from '@/shared/ui/ContextMenu';
-import styles from './TransportControls.module.css';
+import styles from '@/features/transport/TransportControls.module.css';
 
 const TIME_SIGNATURES = ['2/4', '3/4', '4/4', '5/4', '6/8', '7/8', '9/8', '12/8'];
 const METRONOME_SOUNDS: { sound: MetronomeSound; label: string }[] = [

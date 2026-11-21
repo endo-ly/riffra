@@ -8,9 +8,9 @@ import {
   MUSICAL_TYPING_DEFAULT_VELOCITY,
   MUSICAL_TYPING_MAX_OCTAVE,
   MUSICAL_TYPING_MIN_OCTAVE,
-} from './musical-typing';
-import { useDrumPads } from './useDrumPads';
-import { useMusicalTyping } from './useMusicalTyping';
+} from '@/features/live-input/musical-typing';
+import { useDrumPads } from '@/features/live-input/useDrumPads';
+import { useMusicalTyping } from '@/features/live-input/useMusicalTyping';
 
 type LivePlayMode = 'keys' | 'pads';
 

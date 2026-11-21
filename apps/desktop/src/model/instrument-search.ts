@@ -1,4 +1,4 @@
-import type { InstrumentCollection, PluginEntry } from './generated';
+import type { InstrumentCollection, PluginEntry } from '@/model/generated';
 
 interface InstrumentSearchable {
   id?: string;

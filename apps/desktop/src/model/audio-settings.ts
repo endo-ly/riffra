@@ -1,4 +1,4 @@
-import type { AudioStatus } from './generated';
+import type { AudioStatus } from '@/model/generated';
 
 export interface RequestedAudioSettings {
   driver: string;

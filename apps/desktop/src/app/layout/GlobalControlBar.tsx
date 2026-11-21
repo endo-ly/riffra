@@ -8,9 +8,9 @@ import { useAudioFeedbackSuspected } from '@/session/audio-meters';
 import { AudioMonitor } from '@/features/audio/AudioMonitor';
 import { TransportControls } from '@/features/transport/TransportControls';
 import { Icon } from '@/shared/ui/Icon';
-import { preparationLabel } from '@/app/runtime/runtime-projection';
-import { ProjectHostSelector } from './ProjectHostSelector';
-import styles from './GlobalControlBar.module.css';
+import { preparationLabel } from '@/app/status/model/runtime-status';
+import { ProjectHostSelector } from '@/features/project/ProjectHostSelector';
+import styles from '@/app/layout/GlobalControlBar.module.css';
 
 interface GlobalControlBarProps {
   onOpenCommand: () => void;

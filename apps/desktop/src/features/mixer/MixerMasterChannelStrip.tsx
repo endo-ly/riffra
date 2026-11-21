@@ -6,8 +6,8 @@ import { formatGainDb } from '@/model/mix';
 import { ValueSlider } from '@/shared/ui/ValueSlider';
 import { Icon } from '@/shared/ui/Icon';
 import { useEffect, useRef, useState } from 'react';
-import styles from './Mixer.module.css';
-import { MixerMeter } from './MixerMeter';
+import styles from '@/features/mixer/Mixer.module.css';
+import { MixerMeter } from '@/features/mixer/MixerMeter';
 
 interface MixerMasterChannelStripProps {
   session: CreativeSession;

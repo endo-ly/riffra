@@ -10,8 +10,8 @@ import { useSession, useSessionContext, useSessionStore } from '@/session/sessio
 import { Icon } from '@/shared/ui/Icon';
 import clsx from 'clsx';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import sharedStyles from './Inspector.module.css';
-import styles from './TakeInspector.module.css';
+import sharedStyles from '@/features/inspector/Inspector.module.css';
+import styles from '@/features/inspector/TakeInspector.module.css';
 import { InlineMessage } from '@/shared/ui/message/InlineMessage';
 
 type RecordingSession = CreativeSession['arrangement']['recordingSessions'][number];

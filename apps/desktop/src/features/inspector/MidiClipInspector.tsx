@@ -5,9 +5,9 @@ import { MenuButton } from '@/shared/ui/MenuButton';
 import { useEffect, useState, type CSSProperties } from 'react';
 import type { MidiClipPatch } from '@/model/generated';
 import { resolveTrackColorById } from '@/model/track-color';
-import { ClipToggles } from './ClipToggles';
-import styles from './Inspector.module.css';
-import { MusicalTimeField } from './MusicalTimeField';
+import { ClipToggles } from '@/features/inspector/ClipToggles';
+import styles from '@/features/inspector/Inspector.module.css';
+import { MusicalTimeField } from '@/features/inspector/MusicalTimeField';
 import { InlineMessage } from '@/shared/ui/message/InlineMessage';
 
 interface MidiClipInspectorProps {

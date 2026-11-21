@@ -5,7 +5,7 @@ import type { MissingDependency } from '@/model/generated';
 import { Dialog } from '@/shared/ui/Dialog';
 import { Icon } from '@/shared/ui/Icon';
 import surface from '@/shared/ui/Surface.module.css';
-import styles from './MissingDependencies.module.css';
+import styles from '@/features/project/MissingDependencies.module.css';
 
 interface MissingDependenciesProps {
   missing: MissingDependency[];

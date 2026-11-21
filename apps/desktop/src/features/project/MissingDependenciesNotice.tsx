@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useSession } from '@/session/session-context';
 import { selectHostReady } from '@/session/selectors';
 import { Notice } from '@/shared/ui/message/Notice';
-import { MissingDependenciesDialog } from './MissingDependencies';
+import { MissingDependenciesDialog } from '@/features/project/MissingDependencies';
 
 export function MissingDependenciesNotice() {
   const count = useSession((state) => state.missing.items.length);

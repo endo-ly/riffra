@@ -1,13 +1,13 @@
-import type { useAppUpdater } from '@/app/runtime/useAppUpdater';
-import { BackgroundJobNotice } from '@/app/notices/BackgroundJobNotice';
-import { BrowserPreviewNotice } from '@/app/notices/BrowserPreviewNotice';
-import { PlaybackNotice } from '@/app/notices/PlaybackNotice';
-import { SafeModeNotice } from '@/app/notices/SafeModeNotice';
-import { UpdateNotice } from '@/app/notices/UpdateNotice';
+import type { useAppUpdater } from '@/app/hooks/useAppUpdater';
+import { BackgroundJobNotice } from '@/app/status/BackgroundJobNotice';
+import { PreviewModeNotice } from '@/app/status/PreviewModeNotice';
+import { PlaybackNotice } from '@/app/status/PlaybackNotice';
+import { SafeModeNotice } from '@/app/status/SafeModeNotice';
+import { UpdateNotice } from '@/app/status/UpdateNotice';
 import { MissingDependenciesNotice } from '@/features/project/MissingDependenciesNotice';
 import { RecoveryNotice } from '@/features/project/RecoveryNotice';
 import { ScoreSyncNotice } from '@/features/project/ScoreSyncNotice';
-import styles from './NoticeBar.module.css';
+import styles from '@/app/status/NoticeBar.module.css';
 
 /**
  * App-wide conditions that continue alongside editing, docked below the
@@ -23,7 +23,7 @@ export function NoticeBar({ appUpdater }: { appUpdater: ReturnType<typeof useApp
       <RecoveryNotice />
       <BackgroundJobNotice />
       <UpdateNotice appUpdater={appUpdater} />
-      <BrowserPreviewNotice />
+      <PreviewModeNotice />
     </div>
   );
 }

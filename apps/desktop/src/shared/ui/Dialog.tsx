@@ -1,8 +1,8 @@
 import type { CSSProperties, ReactNode } from 'react';
-import { Icon } from './Icon';
-import controls from './controls.module.css';
-import { Modal } from './Modal';
-import styles from './Dialog.module.css';
+import { Icon } from '@/shared/ui/Icon';
+import controls from '@/shared/ui/controls.module.css';
+import { Modal } from '@/shared/ui/Modal';
+import styles from '@/shared/ui/Dialog.module.css';
 
 interface DialogProps {
   label: string;

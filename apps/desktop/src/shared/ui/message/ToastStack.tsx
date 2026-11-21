@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { clearToasts, dismissToast, useToasts, type Toast } from '@/shared/notify';
-import { ToneIcon } from './ToneIcon';
-import styles from './ToastStack.module.css';
+import { ToneIcon } from '@/shared/ui/message/ToneIcon';
+import styles from '@/shared/ui/message/ToastStack.module.css';
 
 const DISPLAY_MS: Record<Toast['tone'], number> = {
   info: 4_000,

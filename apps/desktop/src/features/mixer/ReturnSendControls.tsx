@@ -2,7 +2,7 @@ import type { ArrangementMutationResult, CanonicalState, Send } from '@/model/ge
 import { useSessionContext } from '@/session/session-context';
 import { usePreviewedValue } from '@/session/hooks/usePreviewedValue';
 import { useCallback, type ReactNode } from 'react';
-import { SendRow } from './SendRow';
+import { SendRow } from '@/features/mixer/SendRow';
 
 interface ReturnSendControlsProps {
   sessionId: string;

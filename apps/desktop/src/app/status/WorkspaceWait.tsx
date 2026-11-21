@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import { useWorkspaceWait } from '@/app/runtime/useWorkspaceWait';
+import { useWorkspaceWait } from '@/app/status/hooks/useWorkspaceWait';
 import { WaitCard } from '@/shared/ui/message/WaitCard';
-import styles from './WorkspaceWait.module.css';
+import styles from '@/app/status/WorkspaceWait.module.css';
 
 /** A wait shorter than this pauses input without flashing the card. */
 const REVEAL_DELAY_MS = 500;

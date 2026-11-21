@@ -10,8 +10,8 @@ import type { ContextMenuItem } from '@/shared/ui/ContextMenu';
 import { MenuButton } from '@/shared/ui/MenuButton';
 import { usePointerGesture } from '@/shared/hooks/usePointerGesture';
 import type { TrackSize } from '@/features/timeline/model/timeline-layout';
-import type { TimelineTrackProps } from './TimelineTrack';
-import styles from './TrackHeader.module.css';
+import type { TimelineTrackProps } from '@/features/timeline/TimelineTrack';
+import styles from '@/features/timeline/TrackHeader.module.css';
 
 interface PendingTrackValues {
   muted?: boolean;

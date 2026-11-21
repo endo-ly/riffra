@@ -1,4 +1,4 @@
-import styles from './Progress.module.css';
+import styles from '@/shared/ui/message/Progress.module.css';
 
 export interface ProgressValue {
   /** Completed share from 0 to 1. */

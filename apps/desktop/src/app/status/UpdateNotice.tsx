@@ -1,4 +1,4 @@
-import type { useAppUpdater } from '@/app/runtime/useAppUpdater';
+import type { useAppUpdater } from '@/app/hooks/useAppUpdater';
 import { Notice } from '@/shared/ui/message/Notice';
 
 export function UpdateNotice({ appUpdater }: { appUpdater: ReturnType<typeof useAppUpdater> }) {
