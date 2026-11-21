@@ -1,4 +1,4 @@
-import type { EditorCommit } from '@/features/timeline/hooks/useTimelineEditor';
+import type { EditorCommit } from './useTimelineEditor';
 import { useCallback, useEffect, useState, type MutableRefObject, type PointerEvent } from 'react';
 import type { CreativeSession, Marker } from '@/model/generated';
 import { useSessionContext, useSessionStore } from '@/session/session-context';

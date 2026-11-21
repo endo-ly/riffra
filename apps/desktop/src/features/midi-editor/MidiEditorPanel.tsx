@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import type { MidiClip, MidiNote } from '@/model/generated';
+import type { MidiNote } from '@/model/generated';
 import type { MidiGhostNote } from '@/features/midi-editor/model/ghost-notes';
 import { clipGridTicks, snapClipTick, snapGridTicks, type SnapGrid } from '@/model/clip-grid';
 import { formatMusicalLength, formatMusicalPosition } from '@/model/time-format';
@@ -19,36 +19,32 @@ import { usePointerGesture } from '@/shared/hooks/usePointerGesture';
 import { ContextMenu } from '@/shared/ui/ContextMenu';
 import { collectGhostNotes } from '@/features/midi-editor/model/ghost-notes';
 import { PITCH_HIGH, PITCH_LOW, pitchRowTop } from '@/features/midi-editor/model/pitch-grid';
-import { MidiEditorRuler } from '@/features/midi-editor/MidiEditorRuler';
-import { MidiEditorToolbar } from '@/features/midi-editor/MidiEditorToolbar';
-import { MidiVelocityLane } from '@/features/midi-editor/MidiVelocityLane';
-import { NoteLane } from '@/features/midi-editor/NoteLane';
-import { PianoKeyboard } from '@/features/midi-editor/PianoKeyboard';
-import {
-  LANE_LABEL_WIDTH,
-  useMidiEditorViewport,
-} from '@/features/midi-editor/hooks/useMidiEditorViewport';
+import { MidiEditorRuler } from './MidiEditorRuler';
+import { MidiEditorToolbar } from './MidiEditorToolbar';
+import { MidiVelocityLane } from './MidiVelocityLane';
+import { NoteLane } from './NoteLane';
+import { PianoKeyboard } from './PianoKeyboard';
+import { LANE_LABEL_WIDTH } from '@/features/midi-editor/model/pitch-grid';
+import { useMidiEditorViewport } from '@/features/midi-editor/hooks/useMidiEditorViewport';
 import { useMidiPreview } from '@/features/midi-editor/hooks/useMidiPreview';
 import { useNoteDrag } from '@/features/midi-editor/hooks/useNoteDrag';
 import { useNoteEditing } from '@/features/midi-editor/hooks/useNoteEditing';
-import styles from '@/features/midi-editor/MidiEditorPanel.module.css';
+import styles from './MidiEditorPanel.module.css';
 
 type MidiEditorTool = 'pointer' | 'draw';
 
 const EMPTY_GHOSTS: MidiGhostNote[] = [];
 
-interface MidiEditorPanelProps {
-  clip: MidiClip | null;
-  /** Color of the track that owns the clip; notes are drawn in it. */
-  trackColor: string | null;
-}
-
-export const MidiEditorPanel = memo(function MidiEditorPanel({
-  clip,
-  trackColor,
-}: MidiEditorPanelProps) {
+export const MidiEditorPanel = memo(function MidiEditorPanel() {
   const { api } = useSessionContext();
+  const clip = useSession((state) => selectMidiClip(state, state.workspace.lower.activeMidiClipId));
   const arrangement = useSession((state) => state.project.boot!.canonical.session.arrangement);
+  const trackColor = useSession((state) => {
+    const owner = selectTrack(state, clip?.trackId ?? null);
+    return owner
+      ? resolveTrackColorById(state.project.boot!.canonical.session.arrangement.tracks, owner.id)
+      : null;
+  });
   const sessionId = useSession((state) => state.project.boot!.canonical.session.sessionId);
   const hostGeneration = useSession((state) => state.host.connection.generation);
   const playhead = useSession((state) => state.transport.playhead);
@@ -419,15 +415,3 @@ export const MidiEditorPanel = memo(function MidiEditorPanel({
     </div>
   );
 });
-
-export function WorkspaceMidiEditor() {
-  const clip = useSession((state) => selectMidiClip(state, state.workspace.lower.activeMidiClipId));
-  const track = useSession((state) => selectTrack(state, clip?.trackId ?? null));
-  const tracks = useSession((state) => state.project.boot!.canonical.session.arrangement.tracks);
-  return (
-    <MidiEditorPanel
-      clip={clip}
-      trackColor={track ? resolveTrackColorById(tracks, track.id) : null}
-    />
-  );
-}

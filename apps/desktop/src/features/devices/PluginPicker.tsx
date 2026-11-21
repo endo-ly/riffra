@@ -2,7 +2,7 @@ import { matchesInstrumentQuery, matchesPluginQuery } from '@/model/instrument-s
 import type { InstrumentLibraryItem, PluginEntry, PluginRole } from '@/model/generated';
 import { Modal } from '@/shared/ui/Modal';
 import { useMemo, useState } from 'react';
-import styles from '@/features/devices/Picker.module.css';
+import styles from './Picker.module.css';
 
 type PickerInstrument = Pick<InstrumentLibraryItem, 'id' | 'name' | 'description' | 'origin'>;
 

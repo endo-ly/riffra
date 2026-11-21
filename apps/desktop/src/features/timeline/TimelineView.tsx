@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import type { AutomationTarget } from '@/model/generated';
 import { useSession, useSessionContext } from '@/session/session-context';
-import { TimelineRuler } from '@/features/timeline/TimelineRuler';
-import { TimelineToolbar } from '@/features/timeline/TimelineToolbar';
-import { TimelineTrackList } from '@/features/timeline/TimelineTrackList';
-import { TimelineOverlays } from '@/features/timeline/TimelineOverlays';
-import { RecordingPreview } from '@/features/timeline/RecordingPreview';
-import { TimelinePlayhead } from '@/features/timeline/TimelinePlayhead';
+import { TimelineRuler } from './TimelineRuler';
+import { TimelineToolbar } from './TimelineToolbar';
+import { TimelineTrackList } from './TimelineTrackList';
+import { TimelineOverlays } from './TimelineOverlays';
+import { RecordingPreview } from './RecordingPreview';
+import { TimelinePlayhead } from './TimelinePlayhead';
 import { formatMusicalPosition } from '@/model/time-format';
 import {
   timelineGridBackground,
@@ -24,7 +24,7 @@ import { useTimelineDrop } from '@/features/timeline/hooks/useTimelineDrop';
 import { useTimelineShortcuts } from '@/features/timeline/hooks/useTimelineShortcuts';
 import { useTimelineTrackOperations } from '@/features/timeline/hooks/useTimelineTrackOperations';
 import { useWaveformAnalyses } from '@/features/timeline/hooks/useWaveformAnalyses';
-import styles from '@/features/timeline/TimelineView.module.css';
+import styles from './TimelineView.module.css';
 
 interface TimelineViewProps {
   /** Toolbar element drawn after the toggles, e.g. the toggle of the Workspace's live input. */

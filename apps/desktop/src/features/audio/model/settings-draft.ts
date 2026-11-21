@@ -277,3 +277,15 @@ export function isAudioSettingsDraftValid(
     return false;
   return input.channels.some((channel) => channel.index === draft.inputChannel);
 }
+
+/** Whether two drafts request the same driver configuration. */
+export function sameAudioSettingsDraft(left: AudioDriverConfig, right: AudioDriverConfig): boolean {
+  return (
+    left.driver === right.driver &&
+    left.inputDevice === right.inputDevice &&
+    left.inputChannel === right.inputChannel &&
+    left.outputDevice === right.outputDevice &&
+    left.sampleRate === right.sampleRate &&
+    left.bufferSize === right.bufferSize
+  );
+}

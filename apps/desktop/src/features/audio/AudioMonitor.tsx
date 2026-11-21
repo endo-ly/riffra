@@ -4,7 +4,7 @@ import { useAudioMeters } from '@/session/audio-meters';
 import { Meter } from '@/shared/ui/Meter';
 import { ValueSlider } from '@/shared/ui/ValueSlider';
 import { useMasterGainValue } from '@/session/hooks/useMasterGainValue';
-import styles from '@/features/audio/AudioMonitor.module.css';
+import styles from './AudioMonitor.module.css';
 
 export function AudioMonitor({ disabled }: { disabled?: boolean }) {
   const session = useSession((state) => state.project.boot!.canonical.session);

@@ -4,23 +4,25 @@ import type {
   HostConnectionState,
   HostTarget,
   LocalHostInfo,
-  ProjectActivationResult,
-  ProjectState,
   ProjectSummary,
 } from '@/model/generated';
-
-import type { HostConnectionBootstrap } from '@/native/api/host-connection';
 import { openHostDataRoot } from '@/native/dialog';
 import { useSession, useSessionStore } from '@/session/session-context';
 import { ConfirmDialog } from '@/shared/ui/ConfirmDialog';
 import { ContextMenu } from '@/shared/ui/ContextMenu';
 import controls from '@/shared/ui/controls.module.css';
 import { Icon } from '@/shared/ui/Icon';
-import styles from '@/features/project/ProjectHostSelector.module.css';
+import styles from './ProjectHostSelector.module.css';
 import { InlineMessage } from '@/shared/ui/message/InlineMessage';
 import { fileName } from '@/shared/path';
 
 type ProjectOrder = 'recent' | 'name';
+
+/** Viewport position of the open panel. */
+interface PanelAnchor {
+  left: number;
+  top: number;
+}
 
 const PROJECT_ORDER_LABELS: Record<ProjectOrder, string> = { recent: 'Recent', name: 'Name' };
 
@@ -31,36 +33,17 @@ const PROJECT_ORDERS: Record<ProjectOrder, (a: ProjectSummary, b: ProjectSummary
   name: (a, b) => projectNameCollator.compare(a.name, b.name),
 };
 
-interface ProjectHostSelectorProps {
-  state: HostConnectionState;
-  hosts: LocalHostInfo[];
-  switching: boolean;
-  error: string | null;
-  onRefresh: () => Promise<unknown>;
-  onSwitch: (target: HostTarget) => Promise<HostConnectionBootstrap | null>;
-  onReconnect: () => Promise<unknown>;
-  onExportProject?: () => void;
-  onImportScore?: () => void;
-  onImportProject?: () => void;
-  projectState?: ProjectState | null;
-  projectSwitching?: boolean;
-  projectError?: string | null;
-  onCreateProject?: (name?: string) => Promise<ProjectActivationResult | null>;
-  onOpenProject?: (projectId: string) => Promise<ProjectActivationResult | null>;
-  onDeleteProject?: (projectId: string) => Promise<unknown>;
-  onRenameProject?: (name: string) => Promise<unknown>;
-}
-
-/** Viewport position of the open panel. */
-interface PanelAnchor {
-  left: number;
-  top: number;
-}
-
 export function ProjectHostSelector() {
   const host = useSession((state) => state.host);
   const project = useSession((state) => state.project);
   const store = useSessionStore();
+  const state = host.connection;
+  const hosts = host.hosts;
+  const switching = host.switching;
+  const error = host.error;
+  const projectState = project.boot?.projectState ?? null;
+  const projectSwitching = project.switching;
+  const projectError = project.error;
   const refresh = useCallback(async () => {
     const current = store.getState();
     const tasks: Promise<unknown>[] = [current.host.refresh()];
@@ -68,30 +51,17 @@ export function ProjectHostSelector() {
       tasks.push(current.project.refreshList());
     await Promise.allSettled(tasks);
   }, [store]);
-  return (
-    <ProjectHostSelectorView
-      state={host.connection}
-      hosts={host.hosts}
-      switching={host.switching}
-      error={host.error}
-      onRefresh={refresh}
-      onSwitch={host.switchHost}
-      onReconnect={host.reconnect}
-      projectState={project.boot?.projectState ?? null}
-      projectSwitching={project.switching}
-      projectError={project.error}
-      onCreateProject={project.create}
-      onOpenProject={project.open}
-      onDeleteProject={project.delete}
-      onRenameProject={project.rename}
-      onImportProject={() => void project.importPackage()}
-      onImportScore={() => void project.importScore()}
-      onExportProject={() => void project.exportPackage()}
-    />
-  );
-}
+  const onRefresh = refresh;
+  const onSwitch = host.switchHost;
+  const onReconnect = host.reconnect;
+  const onCreateProject = project.create;
+  const onOpenProject = project.open;
+  const onDeleteProject = project.delete;
+  const onRenameProject = project.rename;
+  const onImportProject = () => void project.importPackage();
+  const onImportScore = () => void project.importScore();
+  const onExportProject = () => void project.exportPackage();
 
-export function ProjectHostSelectorView(props: ProjectHostSelectorProps) {
   const [anchor, setAnchor] = useState<PanelAnchor | null>(null);
   const [nameDraft, setNameDraft] = useState('');
   const [query, setQuery] = useState('');
@@ -102,21 +72,19 @@ export function ProjectHostSelectorView(props: ProjectHostSelectorProps) {
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const discardNameDraftRef = useRef(false);
-  const { onRefresh, onSwitch } = props;
   const open = anchor !== null;
   const close = () => {
     if (panelRef.current?.contains(document.activeElement)) triggerRef.current?.focus();
     setAnchor(null);
   };
 
-  const hostLabel = getHostLabel(props.state, props.hosts);
-  const projects = props.projectState?.projects ?? [];
-  const activeProjectId = props.projectState?.activeProjectId;
+  const hostLabel = getHostLabel(state, hosts);
+  const projects = projectState?.projects ?? [];
+  const activeProjectId = projectState?.activeProjectId;
   const activeProject = projects.find((project) => project.projectId === activeProjectId);
   const activeName = activeProject?.name ?? '';
-  const projectName = props.projectState ? (activeProject?.name ?? 'Unreadable Project') : null;
-  const projectActionsDisabled =
-    props.switching || props.projectSwitching || props.state.mode === 'disconnected';
+  const projectName = projectState ? (activeProject?.name ?? 'Unreadable Project') : null;
+  const projectActionsDisabled = switching || projectSwitching || state.mode === 'disconnected';
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const visibleProjects = (
     normalizedQuery
@@ -209,8 +177,8 @@ export function ProjectHostSelectorView(props: ProjectHostSelectorProps) {
 
   const commitProjectName = (draft: string) => {
     const name = draft.trim();
-    if (!props.onRenameProject || name === activeName) return;
-    void props.onRenameProject(name);
+    if (!onRenameProject || name === activeName) return;
+    void onRenameProject(name);
   };
 
   const closeOnSuccess = (operation: Promise<unknown> | undefined) => {
@@ -228,7 +196,7 @@ export function ProjectHostSelectorView(props: ProjectHostSelectorProps) {
       close();
       return;
     }
-    closeOnSuccess(props.onOpenProject?.(project.projectId));
+    closeOnSuccess(onOpenProject(project.projectId));
   };
 
   const requestDelete = (project: ProjectSummary) => {
@@ -238,17 +206,17 @@ export function ProjectHostSelectorView(props: ProjectHostSelectorProps) {
 
   const switchHost = (target: HostTarget) => closeOnSuccess(onSwitch(target));
 
-  const hostBusy = props.switching || props.projectSwitching;
+  const hostBusy = switching || projectSwitching;
   const hostSection = (
     <section className={styles.section}>
       <header className={styles.sectionHeader}>
         <h3>Host</h3>
-        {props.state.mode === 'disconnected' && (
+        {state.mode === 'disconnected' && (
           <button
             type="button"
             className={styles.textButton}
             disabled={hostBusy}
-            onClick={() => void props.onReconnect()}
+            onClick={() => void onReconnect()}
           >
             Reconnect
           </button>
@@ -280,18 +248,16 @@ export function ProjectHostSelectorView(props: ProjectHostSelectorProps) {
         <button
           type="button"
           className={styles.row}
-          aria-current={props.state.mode === 'embedded' || undefined}
+          aria-current={state.mode === 'embedded' || undefined}
           disabled={hostBusy}
-          onClick={() =>
-            props.state.mode === 'embedded' ? close() : switchHost({ type: 'embedded' })
-          }
+          onClick={() => (state.mode === 'embedded' ? close() : switchHost({ type: 'embedded' }))}
         >
           <i className={styles.hostDot} data-mode="embedded" />
           <span className={styles.rowName}>Local Desktop</span>
-          {props.state.mode === 'embedded' && <Icon name="check" />}
+          {state.mode === 'embedded' && <Icon name="check" />}
         </button>
-        {props.hosts.map((host) => {
-          const current = host.instanceId === props.state.instanceId;
+        {hosts.map((host) => {
+          const current = host.instanceId === state.instanceId;
           return (
             <button
               type="button"
@@ -355,7 +321,7 @@ export function ProjectHostSelectorView(props: ProjectHostSelectorProps) {
             className={controls.smallButton}
             disabled={projectActionsDisabled}
             onClick={() => {
-              props.onExportProject?.();
+              onExportProject();
               close();
             }}
           >
@@ -415,12 +381,12 @@ export function ProjectHostSelectorView(props: ProjectHostSelectorProps) {
                 disabled={projectActionsDisabled}
                 onClick={() => openProject(project)}
                 onContextMenu={(event) => {
-                  if (!props.onDeleteProject) return;
+                  if (!onDeleteProject) return;
                   event.preventDefault();
                   setMenu({ x: event.clientX, y: event.clientY, project });
                 }}
                 onKeyDown={(event) => {
-                  if (event.key !== 'Delete' || !props.onDeleteProject || current) return;
+                  if (event.key !== 'Delete' || !onDeleteProject || current) return;
                   // The timeline deletes its selection on a window-level Delete unless it is handled.
                   event.preventDefault();
                   requestDelete(project);
@@ -445,7 +411,7 @@ export function ProjectHostSelectorView(props: ProjectHostSelectorProps) {
           type="button"
           className={`${controls.smallButton} ${controls.accent}`}
           disabled={projectActionsDisabled}
-          onClick={() => closeOnSuccess(props.onCreateProject?.())}
+          onClick={() => closeOnSuccess(onCreateProject())}
         >
           <Icon name="plus" />
           New Project
@@ -455,7 +421,7 @@ export function ProjectHostSelectorView(props: ProjectHostSelectorProps) {
           className={controls.smallButton}
           disabled={projectActionsDisabled}
           onClick={() => {
-            props.onImportProject?.();
+            onImportProject();
             close();
           }}
         >
@@ -468,7 +434,7 @@ export function ProjectHostSelectorView(props: ProjectHostSelectorProps) {
           title="Import Score YAML"
           disabled={projectActionsDisabled}
           onClick={() => {
-            props.onImportScore?.();
+            onImportScore();
             close();
           }}
         >
@@ -488,7 +454,7 @@ export function ProjectHostSelectorView(props: ProjectHostSelectorProps) {
         aria-label={`${projectName ? 'Project' : 'Host'}: ${projectName ?? hostLabel}`}
         aria-expanded={open}
         aria-haspopup="dialog"
-        title={props.state.dataRoot ?? hostLabel}
+        title={state.dataRoot ?? hostLabel}
         onClick={(event) => {
           const bounds = event.currentTarget.getBoundingClientRect();
           setAnchor((current) => (current ? null : { left: bounds.left, top: bounds.bottom + 4 }));
@@ -499,19 +465,19 @@ export function ProjectHostSelectorView(props: ProjectHostSelectorProps) {
             <>
               <span className={styles.projectName}>
                 <i className={styles.saveDot} title="Auto-saved" />
-                {props.projectSwitching ? 'Opening…' : projectName}
+                {projectSwitching ? 'Opening…' : projectName}
               </span>
               <span className={styles.hostLine}>
-                {props.state.mode === 'disconnected' && (
-                  <i className={styles.hostDot} data-mode={props.state.mode} />
+                {state.mode === 'disconnected' && (
+                  <i className={styles.hostDot} data-mode={state.mode} />
                 )}
-                {props.switching ? 'Connecting…' : hostLabel}
+                {switching ? 'Connecting…' : hostLabel}
               </span>
             </>
           ) : (
             <span className={styles.hostLine}>
-              <i className={styles.hostDot} data-mode={props.state.mode} />
-              {props.switching ? 'Connecting…' : hostLabel}
+              <i className={styles.hostDot} data-mode={state.mode} />
+              {switching ? 'Connecting…' : hostLabel}
             </span>
           )}
         </span>
@@ -529,10 +495,10 @@ export function ProjectHostSelectorView(props: ProjectHostSelectorProps) {
             aria-label="Project and Host"
             style={{ left: anchor.left, top: anchor.top }}
           >
-            {props.projectState && projectSection}
+            {projectState && projectSection}
             {hostSection}
-            {(props.error || props.projectError) && (
-              <InlineMessage tone="danger">{props.projectError ?? props.error}</InlineMessage>
+            {(error || projectError) && (
+              <InlineMessage tone="danger">{projectError ?? error}</InlineMessage>
             )}
             {menu && (
               <ContextMenu
@@ -561,7 +527,7 @@ export function ProjectHostSelectorView(props: ProjectHostSelectorProps) {
           onConfirm={() => {
             const { projectId } = pendingDelete;
             setPendingDelete(null);
-            void props.onDeleteProject?.(projectId);
+            void onDeleteProject(projectId);
           }}
           onCancel={() => setPendingDelete(null)}
         />

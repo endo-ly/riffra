@@ -7,9 +7,9 @@ import type {
 import { Icon } from '@/shared/ui/Icon';
 import controls from '@/shared/ui/controls.module.css';
 import { useSessionContext } from '@/session/session-context';
-import { PluginPicker } from '@/features/devices/PluginPicker';
-import type { DeviceTarget } from '@/features/devices/device-target';
-import styles from '@/features/devices/Devices.module.css';
+import { PluginPicker } from './PluginPicker';
+import type { DeviceTarget } from '@/features/devices/model/device-target';
+import styles from './Devices.module.css';
 
 interface DeviceChainProps {
   target: DeviceTarget;

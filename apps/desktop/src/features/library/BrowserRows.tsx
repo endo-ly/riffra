@@ -5,23 +5,15 @@ import type {
   BrowserItemPlacementAction,
 } from '@/features/library/model/browser-item-actions';
 import { Icon } from '@/shared/ui/Icon';
-import { InlineEdit } from '@/features/library/BrowserItemEditor';
+import { InlineEdit } from './BrowserItemEditor';
 import {
   browserItemDetail,
   browserItemName,
   type BrowserFolder,
   type BrowserItem,
-  type BrowserNode,
+  type BrowserRow,
 } from '@/features/library/model/browser-tree';
-import styles from '@/features/library/BrowserPanel.module.css';
-
-export interface BrowserRow {
-  key: string;
-  node: BrowserNode;
-  depth: number;
-  parentKey: string | null;
-  location?: string;
-}
+import styles from './BrowserPanel.module.css';
 
 export function FolderRow(props: {
   id: string;

@@ -27,6 +27,15 @@ export interface BrowserFolder {
 
 export type BrowserNode = BrowserFolder | BrowserItem;
 
+/** One line of the Browser's tree or search results. */
+export interface BrowserRow {
+  key: string;
+  node: BrowserNode;
+  depth: number;
+  parentKey: string | null;
+  location?: string;
+}
+
 interface BrowserSources {
   instruments: InstrumentLibraryItem[];
   /** The Host's filing categories, in display order. */
@@ -301,4 +310,21 @@ export function browserItemPlacement(item: BrowserItem): BrowserPlacement | null
         name: item.asset.name,
       };
   }
+}
+
+export function rowId(index: number): string {
+  return `browser-row-${index}`;
+}
+export function visibleRows(
+  nodes: BrowserNode[],
+  expanded: ReadonlySet<string>,
+  depth = 0,
+  parentKey: string | null = null,
+): BrowserRow[] {
+  return nodes.flatMap((node) => {
+    const key = parentKey ? `${parentKey}/${node.key}` : node.key;
+    const row: BrowserRow = { key, node, depth, parentKey };
+    if (node.kind !== 'folder' || !expanded.has(node.key)) return [row];
+    return [row, ...visibleRows(node.children, expanded, depth + 1, key)];
+  });
 }

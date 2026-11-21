@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useSession, useSessionContext } from '@/session/session-context';
 import { selectTrack } from '@/session/selectors';
-import { useSessionRead } from '@/session/hooks/useSessionRead';
+import { useSessionRead } from './useSessionRead';
 
 export function useInstrumentMidiInspection(trackId: string | null) {
   const { api } = useSessionContext();

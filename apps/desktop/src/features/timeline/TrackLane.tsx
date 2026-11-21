@@ -1,14 +1,14 @@
 import { useState } from 'react';
-import { AudioClipView } from '@/features/timeline/AudioClipView';
-import { MidiClipView } from '@/features/timeline/MidiClipView';
+import { AudioClipView } from './AudioClipView';
+import { MidiClipView } from './MidiClipView';
 import {
   trackLaneHeight,
   type TimelineAudioItem,
   type TimelineMidiItem,
 } from '@/features/timeline/model/timeline-layout';
-import { isBrowserItemDrag } from '@/features/timeline/hooks/useTimelineDrop';
-import type { TimelineTrackProps } from '@/features/timeline/TimelineTrack';
-import styles from '@/features/timeline/TrackLane.module.css';
+import { isBrowserItemDrag } from '@/shared/browser-drag';
+import type { TimelineTrackProps } from './TimelineTrack';
+import styles from './TrackLane.module.css';
 
 export function TrackLane(props: TimelineTrackProps) {
   const [dragOver, setDragOver] = useState(false);

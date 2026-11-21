@@ -1,13 +1,12 @@
-import { createTestSessionStore, TestSessionProvider } from '@/test/support/session-provider';
 // @vitest-environment jsdom
-import type { CreativeSession, EffectOwner, MixBus } from '@/model/generated';
+import type { MixBus } from '@/model/generated';
 import { defaultSession } from '@/native/preview/fixtures';
 import { createFakeNativeApi } from '@/test/support/fake-native-api';
+import { createTestSessionStore, TestSessionProvider } from '@/test/support/session-provider';
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { useState } from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
-import { MixerPanelView } from '@/features/mixer/MixerPanel';
+import { MixerPanel } from '@/features/mixer/MixerPanel';
 import { ToastStack } from '@/shared/ui/message/ToastStack';
 
 afterEach(cleanup);
@@ -83,35 +82,14 @@ it('edits Group and Send routes, commits their controls, and opens Bus and Maste
   });
   api.previewChannelMix = vi.fn().mockResolvedValue(undefined);
   api.previewSendLevel = vi.fn().mockResolvedValue(undefined);
-  const open = vi.fn();
-  const openAutomation = vi.fn();
-  function Harness() {
-    const [current, setCurrent] = useState<CreativeSession>(structuredClone(session));
-    const [owner, setOwner] = useState<EffectOwner | null>(null);
-    const [store] = useState(() =>
-      createTestSessionStore(api, {
-        session: current,
-        applyCanonical: (state) => setCurrent(state.session),
-      }),
-    );
-    return (
-      <TestSessionProvider api={api} store={store}>
-        <MixerPanelView
-          session={current}
-          selectedTrackId={null}
-          selectedOwner={owner}
-          onSelectOwner={setOwner}
-          onOpenOwnerDevices={open}
-          onSelectTrack={() => undefined}
-          onOpenDevices={() => undefined}
-          onOpenAutomation={openAutomation}
-          missingDeviceIds={[]}
-        />
-        <ToastStack />
-      </TestSessionProvider>
-    );
-  }
-  render(<Harness />);
+  // The store owns its snapshot; the stubs mutate the test's copy so accepted canonicals differ.
+  const store = createTestSessionStore(api, { session: structuredClone(session) });
+  render(
+    <TestSessionProvider api={api} store={store}>
+      <MixerPanel />
+      <ToastStack />
+    </TestSessionProvider>,
+  );
   expect(screen.getByLabelText('Keys gain')).toHaveStyle('--fill-direction: to top');
   expect(screen.getByLabelText('Keys pan')).toHaveStyle('--fill-direction: to right');
   expect(screen.getByLabelText('Master mixer gain')).toHaveStyle('--fill-direction: to top');
@@ -131,7 +109,10 @@ it('edits Group and Send routes, commits their controls, and opens Bus and Maste
   const send = await screen.findByRole('group', { name: 'Reverb send' });
   const slider = within(send).getByLabelText('Reverb send level');
   fireEvent.click(within(send).getByRole('button', { name: 'Automation' }));
-  expect(openAutomation).toHaveBeenLastCalledWith({ kind: 'sendLevel', sendId: 'send:1' });
+  expect(store.getState().workspace.automation.trackTargets['track:1']).toEqual({
+    kind: 'sendLevel',
+    sendId: 'send:1',
+  });
   fireEvent.pointerDown(slider);
   fireEvent.change(slider, { target: { value: '-12' } });
   fireEvent.pointerUp(slider);
@@ -169,7 +150,7 @@ it('edits Group and Send routes, commits their controls, and opens Bus and Maste
   expect(await screen.findByRole('button', { name: 'Group · 1 Sends' })).toBeInTheDocument();
   const group = screen.getByRole('article', { name: 'Group mixer channel' });
   fireEvent.click(within(group).getByRole('button', { name: 'Automation' }));
-  expect(openAutomation).toHaveBeenLastCalledWith({
+  expect(store.getState().workspace.automation.mixerTarget).toEqual({
     kind: 'busMix',
     busId: 'bus:group',
     parameter: 'gain',
@@ -188,19 +169,20 @@ it('edits Group and Send routes, commits their controls, and opens Bus and Maste
     ),
   );
   fireEvent.click(within(group).getByRole('button', { name: 'FX 0' }));
-  expect(open).toHaveBeenLastCalledWith({ kind: 'bus', id: 'bus:group' });
+  expect(store.getState().workspace.selection).toEqual({ kind: 'bus', busId: 'bus:group' });
+  expect(store.getState().workspace.lower.view).toBe('devices');
   fireEvent.click(
     within(screen.getByRole('complementary', { name: 'Master mixer channel' })).getByRole(
       'button',
       { name: 'FX 0' },
     ),
   );
-  expect(open).toHaveBeenLastCalledWith({ kind: 'master' });
+  expect(store.getState().workspace.selection).toEqual({ kind: 'master' });
   fireEvent.click(
     within(screen.getByRole('complementary', { name: 'Master mixer channel' })).getByRole(
       'button',
       { name: 'Automation' },
     ),
   );
-  expect(openAutomation).toHaveBeenLastCalledWith({ kind: 'masterGain' });
+  expect(store.getState().workspace.automation.mixerTarget).toEqual({ kind: 'masterGain' });
 });

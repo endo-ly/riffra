@@ -1,11 +1,16 @@
 import { useEffect, useState } from 'react';
-import type { CreativeSession, MetronomeSound, SessionSettingsPatch } from '@/model/generated';
+import type { MetronomeSound, SessionSettingsPatch } from '@/model/generated';
 import clsx from 'clsx';
 import { formatClock, formatMusicalPosition, tickToMusicalPosition } from '@/model/time-format';
-import { TransportIcon } from '@/features/transport/TransportIcon';
+import { TransportIcon } from './TransportIcon';
 import { useSession, useSessionContext } from '@/session/session-context';
 import { ContextMenu } from '@/shared/ui/ContextMenu';
-import styles from '@/features/transport/TransportControls.module.css';
+import {
+  countInBadge,
+  describeCountIn,
+  nextCountInBeats,
+} from '@/features/transport/model/count-in';
+import styles from './TransportControls.module.css';
 
 const TIME_SIGNATURES = ['2/4', '3/4', '4/4', '5/4', '6/8', '7/8', '9/8', '12/8'];
 const METRONOME_SOUNDS: { sound: MetronomeSound; label: string }[] = [
@@ -252,27 +257,4 @@ export function TransportControls() {
       )}
     </div>
   );
-}
-
-function describeCountIn(session: CreativeSession): string {
-  const beats = session.settings.countInBeats;
-  if (!beats) return 'Off';
-  const beatsPerBar = session.arrangement.timebase.timeSignatureChanges[0].numerator;
-  if (beats >= beatsPerBar * 2) return '2 Bars';
-  if (beats >= beatsPerBar) return '1 Bar';
-  return String(beats);
-}
-
-function countInBadge(session: CreativeSession): string {
-  const beats = session.settings.countInBeats;
-  const beatsPerBar = session.arrangement.timebase.timeSignatureChanges[0].numerator;
-  return beats % beatsPerBar === 0 ? String(beats / beatsPerBar) : `${beats}b`;
-}
-
-function nextCountInBeats(session: CreativeSession): number {
-  const beatsPerBar = session.arrangement.timebase.timeSignatureChanges[0].numerator;
-  const current = session.settings.countInBeats;
-  if (current === 0) return beatsPerBar;
-  if (current < beatsPerBar * 2) return beatsPerBar * 2;
-  return 0;
 }

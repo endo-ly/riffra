@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import shellStyles from '@/app/AppShell.module.css';
-import styles from '@/app/layout/BootScreen.module.css';
+import styles from './BootScreen.module.css';
 import { InlineMessage } from '@/shared/ui/message/InlineMessage';
 
 interface BootScreenProps {

@@ -1,18 +1,19 @@
 import { Fragment, useMemo, useState } from 'react';
 import type { AudioAnalysis, AutomationTarget } from '@/model/generated';
 import { useSession, useSessionContext } from '@/session/session-context';
-import { AutomationLaneEditor } from '@/features/timeline/AutomationLaneEditor';
-import { TimelineTrack } from '@/features/timeline/TimelineTrack';
+import { AutomationLaneEditor } from './AutomationLaneEditor';
+import { TimelineTrack } from './TimelineTrack';
 import {
   buildTrackTimelines,
   type TrackSize,
   type TrackTimeline,
 } from '@/features/timeline/model/timeline-layout';
-import { isBrowserItemDrag, type useTimelineDrop } from '@/features/timeline/hooks/useTimelineDrop';
+import { isBrowserItemDrag } from '@/shared/browser-drag';
+import type { useTimelineDrop } from '@/features/timeline/hooks/useTimelineDrop';
 import type { useTimelineEditor } from '@/features/timeline/hooks/useTimelineEditor';
 import type { useTimelineContextMenus } from '@/features/timeline/hooks/useTimelineContextMenus';
 import type { useTimelineTrackOperations } from '@/features/timeline/hooks/useTimelineTrackOperations';
-import styles from '@/features/timeline/TimelineView.module.css';
+import styles from './TimelineView.module.css';
 
 interface TimelineTrackListProps {
   editor: ReturnType<typeof useTimelineEditor>;

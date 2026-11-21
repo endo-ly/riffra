@@ -6,7 +6,7 @@ import {
   parseMusicalLength,
   parseMusicalPosition,
 } from '@/model/time-format';
-import styles from '@/features/inspector/Inspector.module.css';
+import styles from './Inspector.module.css';
 
 const FORMATS = {
   position: { format: formatMusicalPosition, parse: parseMusicalPosition },

@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useRef } from 'react';
-import { DRUM_PADS, DRUM_PAD_DEFAULT_VELOCITY, drumPadByKey } from '@/features/live-input/drum-map';
-import { GM_DRUM_CHANNEL } from '@/features/live-input/drum-map';
+import {
+  DRUM_PADS,
+  DRUM_PAD_DEFAULT_VELOCITY,
+  drumPadByKey,
+} from '@/features/live-input/model/drum-map';
+import { GM_DRUM_CHANNEL } from '@/features/live-input/model/drum-map';
 import { isEditableTypingTarget } from '@/shared/input';
-import { useHeldMidiNotes } from '@/features/live-input/useHeldMidiNotes';
+import { useHeldMidiNotes } from './useHeldMidiNotes';
 
 interface UseDrumPadsOptions {
   /** When false, all listeners detach and any held notes are released. */

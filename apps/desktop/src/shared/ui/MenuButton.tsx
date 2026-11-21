@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ContextMenu, type ContextMenuItem } from '@/shared/ui/ContextMenu';
-import { Icon } from '@/shared/ui/Icon';
-import controls from '@/shared/ui/controls.module.css';
+import { ContextMenu, type ContextMenuItem } from './ContextMenu';
+import { Icon } from './Icon';
+import controls from './controls.module.css';
 
 interface MenuButtonProps {
   label: string;

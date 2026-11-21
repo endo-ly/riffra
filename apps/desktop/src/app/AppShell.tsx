@@ -18,7 +18,7 @@ import { WorkspaceWait } from '@/app/status/WorkspaceWait';
 import { LeftColumn } from '@/app/layout/LeftColumn';
 import { CommandPalette } from '@/app/layout/CommandPalette';
 import { useAppUpdater } from '@/app/hooks/useAppUpdater';
-import shellStyles from '@/app/AppShell.module.css';
+import shellStyles from './AppShell.module.css';
 
 export function AppShell() {
   useSessionRuntime();

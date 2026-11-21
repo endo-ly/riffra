@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import clsx from 'clsx';
-import styles from '@/shared/ui/ContextMenu.module.css';
+import styles from './ContextMenu.module.css';
 
 export interface ContextMenuItem {
   label?: string;

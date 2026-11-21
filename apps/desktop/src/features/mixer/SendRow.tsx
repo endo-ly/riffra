@@ -6,7 +6,7 @@ import type { PreviewedValue } from '@/session/hooks/usePreviewedValue';
 import { Icon } from '@/shared/ui/Icon';
 import { ValueSlider } from '@/shared/ui/ValueSlider';
 import controls from '@/shared/ui/controls.module.css';
-import styles from '@/features/mixer/SendRow.module.css';
+import styles from './SendRow.module.css';
 
 interface SendRowProps {
   /** Names the row for assistive technology, e.g. `Plate Reverb send`. */

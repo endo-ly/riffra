@@ -6,11 +6,11 @@ import {
   selectTrackInstrumentPlayable,
   selectTrack,
 } from '@/session/selectors';
-import { useLivePlay } from '@/features/live-input/useLivePlay';
+import { useLivePlay } from '@/features/live-input/hooks/useLivePlay';
 import { LiveInputToggle } from '@/features/live-input/LiveInputToggle';
 import { TimelineView } from '@/features/timeline/TimelineView';
 import { TRACK_HEADER_WIDTH } from '@/features/timeline/model/timeline-layout';
-import { useWorkspaceShortcuts } from './hooks/useWorkspaceShortcuts';
+import { useWorkspaceShortcuts } from '@/app/workspace/hooks/useWorkspaceShortcuts';
 import { WorkspaceLowerArea } from './WorkspaceLowerArea';
 import styles from './EditorWorkspace.module.css';
 

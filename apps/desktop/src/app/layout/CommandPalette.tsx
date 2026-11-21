@@ -2,7 +2,7 @@ import { Fragment, useState } from 'react';
 import { Icon } from '@/shared/ui/Icon';
 import { Modal } from '@/shared/ui/Modal';
 import surface from '@/shared/ui/Surface.module.css';
-import styles from '@/app/layout/CommandPalette.module.css';
+import styles from './CommandPalette.module.css';
 
 interface CommandPaletteItem {
   section: string;

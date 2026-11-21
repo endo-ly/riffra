@@ -1,8 +1,8 @@
 import clsx from 'clsx';
 import type { ReactNode } from 'react';
-import type { Tone } from '@/shared/ui/message/tone';
-import toneStyles from '@/shared/ui/message/tone.module.css';
-import styles from '@/shared/ui/message/ToneIcon.module.css';
+import type { Tone } from './tone';
+import toneStyles from './tone.module.css';
+import styles from './ToneIcon.module.css';
 
 // Each tone has its own outline, so the icon reads without relying on color.
 const SHAPES: Record<Tone, ReactNode> = {

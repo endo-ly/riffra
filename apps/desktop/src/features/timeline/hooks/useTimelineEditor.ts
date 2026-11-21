@@ -9,7 +9,7 @@ import { snapGridTicks, type SnapGrid } from '@/model/clip-grid';
 import { isEditableTypingTarget } from '@/shared/input';
 import { idsInClientRect } from '@/shared/rect-selection';
 import { usePointerGesture } from '@/shared/hooks/usePointerGesture';
-import { useClipInteractions } from '@/features/timeline/hooks/useClipInteractions';
+import { useClipInteractions } from './useClipInteractions';
 import { useSessionContext } from '@/session/session-context';
 import type { SessionCommit } from '@/session/commit';
 import { notify } from '@/shared/notify';

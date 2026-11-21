@@ -1,4 +1,4 @@
-import type { SessionState } from '@/session/store';
+import type { SessionState } from './store';
 
 export const selectSession = (state: SessionState) => state.project.boot?.canonical.session ?? null;
 export const selectProjectState = (state: SessionState) => state.project.boot?.projectState ?? null;

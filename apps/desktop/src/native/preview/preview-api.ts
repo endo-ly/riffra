@@ -1,4 +1,4 @@
-import { canonicalState, defaultProjectState, defaultSession } from '@/native/preview/fixtures';
+import { canonicalState, defaultProjectState, defaultSession } from './fixtures';
 import { NativeCommandError } from '@/native/invoke';
 import type { NativeApi } from '@/native/native-api';
 import type { NativeEventApi } from '@/native/api/events';

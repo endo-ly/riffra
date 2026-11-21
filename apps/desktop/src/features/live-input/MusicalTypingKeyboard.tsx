@@ -3,9 +3,9 @@ import {
   MUSICAL_TYPING_KEYS,
   baseNoteForOctave,
   typingKeyForSemitone,
-} from '@/features/live-input/musical-typing';
+} from '@/features/live-input/model/musical-typing';
 import { isBlackKey, midiNoteName } from '@/model/midi';
-import styles from '@/features/live-input/MusicalTypingKeyboard.module.css';
+import styles from './MusicalTypingKeyboard.module.css';
 
 interface MusicalTypingKeyboardProps {
   /** Base octave displayed at the leftmost C. */

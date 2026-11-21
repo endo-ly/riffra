@@ -1,62 +1,28 @@
 import { useMemo, useState, type DragEvent } from 'react';
-import type { LibraryAsset, PluginEntry, RecordingAsset, Track } from '@/model/generated';
-import type { InboxController } from '@/features/library/hooks/useInbox';
-import type { CatalogSlice } from '@/session/slices/catalog';
+import type { LibraryAsset, PluginEntry, RecordingAsset } from '@/model/generated';
 import { useSession } from '@/session/session-context';
 import { useInstrumentPreview } from '@/features/library/hooks/useInstrumentPreview';
 import { useLibrary } from '@/features/library/hooks/useLibrary';
 import { useInbox } from '@/features/library/hooks/useInbox';
-import { rowId, useBrowserTreeNavigation } from '@/features/library/hooks/useBrowserTreeNavigation';
+import { useBrowserTreeNavigation } from '@/features/library/hooks/useBrowserTreeNavigation';
 import { actionFor, placementFor } from '@/features/library/model/browser-item-actions';
 import { type BrowserPlacement } from '@/model/placement';
 import { writeBrowserItemDrag } from '@/shared/browser-drag';
 import { ConfirmDialog } from '@/shared/ui/ConfirmDialog';
 import { ContextMenu, type ContextMenuItem } from '@/shared/ui/ContextMenu';
 import { Icon } from '@/shared/ui/Icon';
-import { BrowserItemEditor, type BrowserItemEdit } from '@/features/library/BrowserItemEditor';
+import { BrowserItemEditor, type BrowserItemEdit } from './BrowserItemEditor';
 import {
   browserItemPlacement,
   browserItemSummary,
   buildBrowserTree,
+  rowId,
   searchBrowserItems,
   type BrowserItem,
+  type BrowserRow,
 } from '@/features/library/model/browser-tree';
-import { FolderRow, ItemRow, type BrowserRow } from '@/features/library/BrowserRows';
-import styles from '@/features/library/BrowserPanel.module.css';
-
-type InstrumentController = CatalogSlice['instruments'] &
-  ReturnType<typeof useInstrumentPreview> &
-  Pick<
-    CatalogSlice,
-    | 'toggleFavorite'
-    | 'setCategory'
-    | 'setTags'
-    | 'createCollection'
-    | 'renameCollection'
-    | 'deleteCollection'
-    | 'setCollectionMembership'
-  > & { reload: CatalogSlice['reloadInstruments'] };
-
-export interface BrowserPanelProps {
-  query: string;
-  onQueryChange: (query: string) => void;
-  library: {
-    results: LibraryAsset[];
-    onPreviewAsset: (asset: LibraryAsset) => void;
-    onUpdateAsset: (asset: LibraryAsset, tag: string | null, note: string | null) => void;
-    onImportMidi: () => void;
-  };
-  instruments: InstrumentController;
-  plugins: PluginEntry[];
-  recordings: RecordingAsset[];
-  inbox: InboxController;
-  selectedTrack: Track | null;
-  onApply: (placement: BrowserPlacement) => void;
-  projectSwitching?: boolean;
-  safeMode?: boolean;
-  /** Opens a VST3's editor outside the Project. */
-  onOpenPlugin: (plugin: PluginEntry) => void;
-}
+import { FolderRow, ItemRow } from './BrowserRows';
+import styles from './BrowserPanel.module.css';
 
 export function BrowserPanel({ onApply }: { onApply: (placement: BrowserPlacement) => void }) {
   const project = useSession((state) => state.project);
@@ -70,7 +36,14 @@ export function BrowserPanel({ onApply }: { onApply: (placement: BrowserPlacemen
           (track) => track.id === selection.trackId,
         ) ?? null)
       : null;
-  const library = useLibrary({ query, onSearchRequested: setQuery });
+  const libraryHook = useLibrary({ query, onSearchRequested: setQuery });
+  const library = {
+    results: libraryHook.libraryResults,
+    previewAsset: (asset: LibraryAsset) => void libraryHook.previewLibraryAsset(asset),
+    updateAsset: (asset: LibraryAsset, tag: string | null, note: string | null) =>
+      void libraryHook.updateLibraryAsset(asset, tag, note),
+    importMidi: () => void libraryHook.importMidi(),
+  };
   const preview = useInstrumentPreview();
   const instruments = {
     ...catalog.instruments,
@@ -85,31 +58,9 @@ export function BrowserPanel({ onApply }: { onApply: (placement: BrowserPlacemen
     reload: catalog.reloadInstruments,
   };
   const inbox = useInbox();
-  return (
-    <BrowserPanelView
-      query={query}
-      onQueryChange={setQuery}
-      library={{
-        results: library.libraryResults,
-        onPreviewAsset: (asset) => void library.previewLibraryAsset(asset),
-        onUpdateAsset: (asset, tag, note) => void library.updateLibraryAsset(asset, tag, note),
-        onImportMidi: () => void library.importMidi(),
-      }}
-      instruments={instruments}
-      plugins={catalog.plugins}
-      recordings={recording.recordings}
-      inbox={inbox}
-      selectedTrack={selectedTrack}
-      onApply={onApply}
-      projectSwitching={project.switching}
-      safeMode={project.boot?.safeMode ?? false}
-      onOpenPlugin={(plugin) => void catalog.openPluginAudition(plugin)}
-    />
-  );
-}
+  const safeMode = project.boot?.safeMode ?? false;
+  const openPlugin = (plugin: PluginEntry) => void catalog.openPluginAudition(plugin);
 
-export function BrowserPanelView(props: BrowserPanelProps) {
-  const { instruments, inbox, library } = props;
   const [menu, setMenu] = useState<{ x: number; y: number; items: ContextMenuItem[] } | null>(null);
   const [renamingCollectionId, setRenamingCollectionId] = useState<number | null>(null);
   const [pendingCollectionDelete, setPendingCollectionDelete] = useState<{
@@ -124,51 +75,49 @@ export function BrowserPanelView(props: BrowserPanelProps) {
       instruments: instruments.items,
       categories: instruments.categories,
       collections: instruments.collections,
-      plugins: props.plugins,
-      recordings: props.recordings,
+      plugins: catalog.plugins,
+      recordings: recording.recordings,
     }),
     [
       instruments.categories,
       instruments.collections,
       instruments.items,
-      props.plugins,
-      props.recordings,
+      catalog.plugins,
+      recording.recordings,
     ],
   );
   const tree = useMemo(() => buildBrowserTree(sources), [sources]);
-  const searching = props.query.trim().length > 0;
+  const searching = query.trim().length > 0;
   const searchRows = useMemo<BrowserRow[] | null>(
     () =>
       searching
-        ? searchBrowserItems({ ...sources, assets: library.results }, props.query).map(
-            (result) => ({
-              key: result.item.key,
-              node: result.item,
-              depth: 0,
-              parentKey: null,
-              location: result.location,
-            }),
-          )
+        ? searchBrowserItems({ ...sources, assets: library.results }, query).map((result) => ({
+            key: result.item.key,
+            node: result.item,
+            depth: 0,
+            parentKey: null,
+            location: result.location,
+          }))
         : null,
-    [library.results, props.query, searching, sources],
+    [library.results, query, searching, sources],
   );
 
   const placementForItem = (item: BrowserItem) =>
-    placementFor(item, props.selectedTrack, !!props.projectSwitching);
+    placementFor(item, selectedTrack, !!project.switching);
   const actionForItem = (item: BrowserItem) =>
     actionFor(item, {
-      safeMode: props.safeMode,
+      safeMode: safeMode,
       previewingId: instruments.previewingId,
       previewPendingId: instruments.previewPendingId,
       previewInstrument: (value) => void instruments.preview(value),
       previewRecording: (value) => void inbox.preview(value),
-      previewAsset: library.onPreviewAsset,
-      openPlugin: props.onOpenPlugin,
+      previewAsset: library.previewAsset,
+      openPlugin: openPlugin,
     });
 
   const apply = (item: BrowserItem) => {
     const action = placementForItem(item);
-    if (action?.available) props.onApply(action.placement);
+    if (action?.available) onApply(action.placement);
   };
 
   const startDrag = (event: DragEvent, item: BrowserItem) => {
@@ -273,8 +222,8 @@ export function BrowserPanelView(props: BrowserPanelProps) {
           <Icon name="search" />
           <input
             aria-label="Browser search"
-            value={props.query}
-            onChange={(event) => props.onQueryChange(event.target.value)}
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
             placeholder="Search"
           />
         </label>
@@ -283,7 +232,7 @@ export function BrowserPanelView(props: BrowserPanelProps) {
           className={styles.toolButton}
           aria-label="Import MIDI"
           title="Import MIDI"
-          onClick={() => void library.onImportMidi()}
+          onClick={() => void library.importMidi()}
         >
           <Icon name="import" />
         </button>
@@ -368,7 +317,7 @@ export function BrowserPanelView(props: BrowserPanelProps) {
                     edit={editing.edit}
                     instruments={instruments}
                     inbox={inbox}
-                    onUpdateAsset={library.onUpdateAsset}
+                    onUpdateAsset={library.updateAsset}
                     onDone={() => setEditing(null)}
                   />
                 ) : null
@@ -386,7 +335,7 @@ export function BrowserPanelView(props: BrowserPanelProps) {
         {instruments.loading && <p className={styles.notice}>Loading instruments…</p>}
         {!instruments.loading && rows.length === 0 && (
           <p className={styles.notice}>
-            {searching ? `Nothing matches “${props.query.trim()}”.` : 'Nothing to browse yet.'}
+            {searching ? `Nothing matches “${query.trim()}”.` : 'Nothing to browse yet.'}
           </p>
         )}
       </div>

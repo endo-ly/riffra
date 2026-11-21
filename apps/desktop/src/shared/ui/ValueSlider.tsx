@@ -1,6 +1,6 @@
 import { useMemo, type CSSProperties, type KeyboardEvent, type PointerEvent } from 'react';
 import type { MixRange } from '@/model/mix';
-import controls from '@/shared/ui/controls.module.css';
+import controls from './controls.module.css';
 
 /** The edit lifecycle a slider drives: a value, its preview and one commit. */
 interface ValueControl {

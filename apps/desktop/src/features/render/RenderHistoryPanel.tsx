@@ -7,9 +7,9 @@ import { ConfirmDialog } from '@/shared/ui/ConfirmDialog';
 import controls from '@/shared/ui/controls.module.css';
 import { Icon } from '@/shared/ui/Icon';
 import { useCallback, useEffect, useState } from 'react';
-import styles from '@/features/render/Render.module.css';
+import styles from './Render.module.css';
 import { DialogSection } from '@/shared/ui/Dialog';
-import { RenderMeasurements } from '@/features/render/RenderMeasurements';
+import { RenderMeasurements } from './RenderMeasurements';
 import { InlineMessage } from '@/shared/ui/message/InlineMessage';
 import { fileName } from '@/shared/path';
 

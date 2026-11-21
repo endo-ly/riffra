@@ -2,7 +2,7 @@ import type { CSSProperties, MouseEvent, ReactNode } from 'react';
 import { useEffect, useRef } from 'react';
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
-import styles from '@/shared/ui/Modal.module.css';
+import styles from './Modal.module.css';
 
 interface ModalEntry {
   close: () => void;

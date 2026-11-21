@@ -2,8 +2,8 @@ import type { MixRange } from '@/model/mix';
 import type { PreviewedValue } from '@/session/hooks/usePreviewedValue';
 import { ValueSlider } from '@/shared/ui/ValueSlider';
 import { useRef, useState } from 'react';
-import sharedStyles from '@/features/inspector/Inspector.module.css';
-import styles from '@/features/inspector/MixValueField.module.css';
+import sharedStyles from './Inspector.module.css';
+import styles from './MixValueField.module.css';
 
 interface MixValueFieldProps {
   label: string;

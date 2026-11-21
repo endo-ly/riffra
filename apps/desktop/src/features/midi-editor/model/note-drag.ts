@@ -1,5 +1,5 @@
 import type { MidiNote } from '@/model/generated';
-import { PITCH_HIGH, PITCH_LOW } from '@/features/midi-editor/model/pitch-grid';
+import { PITCH_HIGH, PITCH_LOW } from './pitch-grid';
 
 export type NoteDragMode = 'move' | 'resizeStart' | 'resizeEnd';
 

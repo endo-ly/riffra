@@ -10,7 +10,7 @@ import { TransportControls } from '@/features/transport/TransportControls';
 import { Icon } from '@/shared/ui/Icon';
 import { preparationLabel } from '@/app/status/model/runtime-status';
 import { ProjectHostSelector } from '@/features/project/ProjectHostSelector';
-import styles from '@/app/layout/GlobalControlBar.module.css';
+import styles from './GlobalControlBar.module.css';
 
 interface GlobalControlBarProps {
   onOpenCommand: () => void;

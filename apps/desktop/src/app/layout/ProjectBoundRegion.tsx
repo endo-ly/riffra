@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { selectHostReady } from '@/session/selectors';
 import { useSession } from '@/session/session-context';
-import styles from '@/app/layout/ProjectBoundRegion.module.css';
+import styles from './ProjectBoundRegion.module.css';
 
 /** Rebuilds its content for each Project and disables its controls while the Host is away. */
 export function ProjectBoundRegion({ children }: { children: ReactNode }) {

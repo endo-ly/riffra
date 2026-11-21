@@ -1,5 +1,5 @@
 import { Icon } from '@/shared/ui/Icon';
-import styles from '@/features/inspector/Inspector.module.css';
+import styles from './Inspector.module.css';
 
 interface ClipTogglesProps {
   muted: boolean;

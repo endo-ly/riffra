@@ -10,7 +10,7 @@ import { canonicalState, defaultSession } from '@/native/preview/fixtures';
 import { MidiEditorPanel } from '@/features/midi-editor/MidiEditorPanel';
 import type { NoteLane } from '@/features/midi-editor/NoteLane';
 import { createFakeNativeApi, type FakeNativeApi } from '@/test/support/fake-native-api';
-import { renderWithSession } from '@/test/support/session-provider';
+import { createTestSessionStore, renderWithSession } from '@/test/support/session-provider';
 import { renderWorkspace } from '@/test/support/workspace';
 
 const noteLaneRenders = vi.hoisted(() => ({ count: 0 }));
@@ -26,10 +26,10 @@ vi.mock('@/features/midi-editor/NoteLane', async (importOriginal) => {
 
 afterEach(cleanup);
 
-function setup(startTick: number, lyric?: string) {
-  const clip: MidiClip = {
+function midiClip(id: string, startTick: number, lyric?: string): MidiClip {
+  return {
     instrumentControlEvents: [],
-    id: 'clip:1',
+    id,
     name: 'Clip',
     trackId: 'track:1',
     startTick,
@@ -49,6 +49,10 @@ function setup(startTick: number, lyric?: string) {
     muted: false,
     loopEnabled: false,
   };
+}
+
+function setup(startTick: number, lyric?: string, additionalClipIds: string[] = []) {
+  const clip = midiClip('clip:1', startTick, lyric);
   const session = defaultSession();
   session.arrangement.tracks.push({
     id: 'track:1',
@@ -65,7 +69,7 @@ function setup(startTick: number, lyric?: string) {
     midiInput: {},
     effects: [],
   });
-  session.arrangement.midiClips = [clip];
+  session.arrangement.midiClips = [clip, ...additionalClipIds.map((id) => midiClip(id, startTick))];
   const api = createFakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
   api.setResponse('getInstrumentMidiSettings', null);
   const addMidiNote = vi.fn(api.addMidiNote);
@@ -76,16 +80,16 @@ function setup(startTick: number, lyric?: string) {
   api.updateMidiNote = updateMidiNote;
   api.updateMidiNotes = updateMidiNotes;
   api.insertMidiNotes = insertMidiNotes;
-  const { store, rerender } = renderWithSession(<MidiEditorPanel clip={clip} trackColor={null} />, {
-    api,
-  });
+  const store = createTestSessionStore(api, { session });
+  store.getState().workspace.openMidiEditor(clip.id);
+  renderWithSession(<MidiEditorPanel />, { api, store });
   const lane = document.querySelector<HTMLElement>('[data-midi-lane]')!;
   Object.defineProperty(lane, 'getBoundingClientRect', {
     value: () => ({ left: 0, top: 0, width: 691.2, height: 1536 }),
   });
   return {
     clip,
-    rerender,
+    store,
     lane,
     addMidiNote,
     updateMidiNote,
@@ -103,14 +107,14 @@ function positions(root: Element, selector: string) {
 
 describe('MidiEditorPanel', () => {
   it('cancels a velocity drag when the edited clip changes', async () => {
-    const { clip, rerender, updateMidiNotes } = setup(0);
+    const { store, updateMidiNotes } = setup(0, undefined, ['clip:other']);
     const velocityLane = document.querySelector<HTMLElement>('[data-velocity-lane]')!;
     vi.spyOn(velocityLane, 'getBoundingClientRect').mockReturnValue({ height: 88 } as DOMRect);
     const bar = velocityLane.querySelector<HTMLElement>('[data-velocity-note-id]')!;
     fireEvent.pointerDown(bar, { pointerId: 1, clientY: 40 });
     fireEvent.pointerMove(window, { pointerId: 1, clientY: 32 });
 
-    rerender(<MidiEditorPanel clip={{ ...clip, id: 'clip:other' }} trackColor={null} />);
+    act(() => store.getState().workspace.openMidiEditor('clip:other'));
     fireEvent.pointerUp(window, { pointerId: 1, clientY: 32 });
     await act(async () => undefined);
 
@@ -319,7 +323,9 @@ describe('MidiEditorPanel', () => {
     api.setResponse('getInstrumentMidiSettings', null);
     const sendMidi = vi.spyOn(api, 'sendMidiToTrack');
     const panicMidi = vi.spyOn(api, 'panicMidiTrack');
-    const { store } = renderWithSession(<MidiEditorPanel clip={clip} trackColor={null} />, { api });
+    const store = createTestSessionStore(api, { session });
+    store.getState().workspace.openMidiEditor(clip.id);
+    renderWithSession(<MidiEditorPanel />, { api, store });
     const key = screen.getByRole('button', { name: 'Preview C4' });
 
     // Act: hold the key, then move the playhead so the panel renders again.

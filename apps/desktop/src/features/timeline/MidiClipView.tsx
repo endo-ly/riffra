@@ -1,5 +1,5 @@
 import type { MidiClip } from '@/model/generated';
-import styles from '@/features/timeline/TimelineClip.module.css';
+import styles from './TimelineClip.module.css';
 
 interface MidiClipViewProps {
   clip: MidiClip;

@@ -1,4 +1,4 @@
-import type { AssetId, TrackKind } from '@/model/generated';
+import type { AssetId, TrackKind } from './generated';
 
 /** Something the Browser can put into the Arrangement. */
 export type BrowserPlacement =

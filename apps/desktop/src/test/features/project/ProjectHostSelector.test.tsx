@@ -1,18 +1,19 @@
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { HostConnectionState, LocalHostInfo } from '@/model/generated';
-
-import type { HostConnectionBootstrap } from '@/native/api/host-connection';
+import type { HostConnectionState, LocalHostInfo, ProjectState } from '@/model/generated';
 import { defaultProjectState } from '@/native/preview/fixtures';
-import { openHostDataRoot } from '@/native/dialog';
-import { ProjectHostSelectorView } from '@/features/project/ProjectHostSelector';
+import { openHostDataRoot, openProjectPackage } from '@/native/dialog';
+import { ProjectHostSelector } from '@/features/project/ProjectHostSelector';
+import { createFakeNativeApi, type FakeNativeApi } from '@/test/support/fake-native-api';
+import { createTestSessionStore, renderWithSession } from '@/test/support/session-provider';
 
 vi.mock('@/native/dialog', () => ({
   openHostDataRoot: vi.fn().mockResolvedValue(null),
+  openProjectPackage: vi.fn().mockResolvedValue(null),
 }));
 
 beforeEach(() => {
@@ -50,26 +51,33 @@ const hosts: LocalHostInfo[] = [
   },
 ];
 
-function renderSelector(state: HostConnectionState = embedded, overrides = {}) {
-  return render(
-    <ProjectHostSelectorView
-      state={state}
-      hosts={hosts}
-      switching={false}
-      error={null}
-      onRefresh={vi.fn().mockResolvedValue(undefined)}
-      onSwitch={vi.fn().mockResolvedValue(null)}
-      onReconnect={vi.fn().mockResolvedValue(null)}
-      projectState={defaultProjectState()}
-      {...overrides}
-    />,
-  );
+async function renderSelector({
+  state = embedded,
+  projectState = defaultProjectState(),
+  hostError = null,
+}: {
+  state?: HostConnectionState;
+  projectState?: ProjectState | null;
+  hostError?: string | null;
+} = {}) {
+  const api = createFakeNativeApi({
+    bootstrapState: { projectState: projectState ?? defaultProjectState() },
+    hostConnection: state,
+    responses: { getHostConnectionState: state, listLocalHosts: hosts },
+  });
+  const store = createTestSessionStore(api);
+  store.getState().host.adoptConnection(state);
+  if (hostError) store.getState().host.setError(hostError);
+  await store.getState().host.refreshHosts();
+  if (projectState === null) store.getState().project.reset();
+  renderWithSession(<ProjectHostSelector />, { api, store });
+  return { api, store };
 }
 
 describe('ProjectHostSelector', () => {
   it('positions the dialog within the viewport and restores focus on Escape', async () => {
     const user = userEvent.setup();
-    renderSelector();
+    await renderSelector();
     const trigger = screen.getByRole('button', { name: /Project: Untitled Project/ });
     vi.spyOn(trigger, 'getBoundingClientRect').mockReturnValue({
       left: 950,
@@ -96,7 +104,7 @@ describe('ProjectHostSelector', () => {
 
   it('focuses Host controls when no Project is loaded', async () => {
     const user = userEvent.setup();
-    renderSelector(embedded, { projectState: null });
+    await renderSelector({ projectState: null });
     const trigger = screen.getByRole('button', { name: 'Host: Local Desktop' });
     await user.click(trigger);
     expect(screen.getByRole('button', { name: 'Connect…' })).toHaveFocus();
@@ -106,9 +114,9 @@ describe('ProjectHostSelector', () => {
     expect(trigger).toHaveFocus();
   });
 
-  it('shows the Project, its actions, and verified local Host candidates', () => {
-    const onRefresh = vi.fn().mockResolvedValue(undefined);
-    renderSelector(embedded, { onRefresh });
+  it('shows the Project, its actions, and verified local Host candidates', async () => {
+    const { api } = await renderSelector();
+    const refresh = vi.spyOn(api, 'getHostConnectionState');
 
     fireEvent.click(screen.getByRole('button', { name: /Project: Untitled Project/ }));
 
@@ -118,7 +126,7 @@ describe('ProjectHostSelector', () => {
     expect(screen.getByRole('button', { name: 'Export…' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /project-a/i })).toBeInTheDocument();
     expect(screen.getByText(/PID 18420 · Ready/)).toBeInTheDocument();
-    expect(onRefresh).toHaveBeenCalledOnce();
+    expect(refresh).toHaveBeenCalledOnce();
   });
 
   it('lists Projects by most recent update, or by name on request', async () => {
@@ -137,7 +145,7 @@ describe('ProjectHostSelector', () => {
       ],
     };
     const user = userEvent.setup();
-    renderSelector(embedded, { projectState });
+    await renderSelector({ projectState });
     const listedNames = () =>
       within(screen.getByRole('group', { name: 'Projects' }))
         .getAllByRole('button')
@@ -152,7 +160,6 @@ describe('ProjectHostSelector', () => {
   });
 
   it('deletes a non-active Project from the context menu or the Delete key, after confirmation', async () => {
-    const onDeleteProject = vi.fn().mockResolvedValue(undefined);
     const projectState = {
       ...defaultProjectState(),
       projects: [
@@ -162,7 +169,8 @@ describe('ProjectHostSelector', () => {
       ],
     };
     const user = userEvent.setup();
-    renderSelector(embedded, { onDeleteProject, projectState });
+    const { api } = await renderSelector({ projectState });
+    const deleteProject = vi.spyOn(api, 'deleteProject');
     const openPanel = () =>
       user.click(screen.getByRole('button', { name: /Project: Untitled Project/ }));
     const row = (name: RegExp) =>
@@ -184,7 +192,7 @@ describe('ProjectHostSelector', () => {
     await openPanel();
     fireEvent.contextMenu(row(/Night Circuit/));
     await user.click(screen.getByRole('menuitem', { name: 'Delete…' }));
-    const calledBeforeConfirm = onDeleteProject.mock.calls.length;
+    const calledBeforeConfirm = deleteProject.mock.calls.length;
     await confirmDelete();
     await openPanel();
     const deleteKeyLeftToOthers = fireEvent.keyDown(row(/Dawn/), { key: 'Delete' });
@@ -193,11 +201,10 @@ describe('ProjectHostSelector', () => {
     expect(activeItemDisabled).toBe(true);
     expect(calledBeforeConfirm).toBe(0);
     expect(deleteKeyLeftToOthers).toBe(false);
-    expect(onDeleteProject.mock.calls).toEqual([['night'], ['dawn']]);
+    expect(deleteProject.mock.calls).toEqual([['night'], ['dawn']]);
   });
 
   it('opens the first matching Project on Enter, but not on an IME confirmation', async () => {
-    const onOpenProject = vi.fn().mockResolvedValue(null);
     const projectState = {
       ...defaultProjectState(),
       projects: [
@@ -206,34 +213,36 @@ describe('ProjectHostSelector', () => {
       ],
     };
     const user = userEvent.setup();
-    renderSelector(embedded, { onOpenProject, projectState });
+    const { api } = await renderSelector({ projectState });
+    const openProject = vi.spyOn(api, 'openProject');
 
     await user.click(screen.getByRole('button', { name: /Project: Untitled Project/ }));
     await user.keyboard('night');
     const search = screen.getByRole('textbox', { name: 'Search Projects' });
     fireEvent.keyDown(search, { key: 'Enter', isComposing: true });
-    const openedWhileComposing = onOpenProject.mock.calls.length;
+    const openedWhileComposing = openProject.mock.calls.length;
     await user.keyboard('{Enter}');
 
     expect(openedWhileComposing).toBe(0);
-    expect(onOpenProject).toHaveBeenCalledWith('night');
+    expect(openProject).toHaveBeenCalledWith('night');
   });
 
   it('routes the external package action through Import Project', async () => {
-    const onImportProject = vi.fn();
+    const { api } = await renderSelector();
+    const importProject = vi.spyOn(api, 'importProject');
+    vi.mocked(openProjectPackage).mockResolvedValueOnce('D:\\packages\\Song.riffra');
     const user = userEvent.setup();
-    renderSelector(embedded, { onImportProject });
 
     await user.click(screen.getByRole('button', { name: /Project: Untitled Project/ }));
     await user.click(screen.getByRole('button', { name: 'Import…' }));
 
-    expect(onImportProject).toHaveBeenCalledOnce();
+    await waitFor(() => expect(importProject).toHaveBeenCalledWith('D:\\packages\\Song.riffra'));
   });
 
   it('commits an inline Project rename on Enter', async () => {
-    const onRenameProject = vi.fn().mockResolvedValue(undefined);
+    const { api } = await renderSelector();
+    const renameProject = vi.spyOn(api, 'renameProject');
     const user = userEvent.setup();
-    renderSelector(embedded, { onRenameProject });
 
     await user.click(screen.getByRole('button', { name: /Project: Untitled Project/ }));
     const nameInput = screen.getByRole('textbox', { name: 'Project name' });
@@ -241,14 +250,14 @@ describe('ProjectHostSelector', () => {
     await user.type(nameInput, 'My Project');
     await user.keyboard('{Enter}');
 
-    expect(onRenameProject).toHaveBeenCalledOnce();
-    expect(onRenameProject).toHaveBeenCalledWith('My Project');
+    expect(renameProject).toHaveBeenCalledOnce();
+    expect(renameProject).toHaveBeenCalledWith('My Project');
   });
 
   it('commits a pending Project rename when the selector closes from outside', async () => {
-    const onRenameProject = vi.fn().mockResolvedValue(undefined);
+    const { api } = await renderSelector();
+    const renameProject = vi.spyOn(api, 'renameProject');
     const user = userEvent.setup();
-    renderSelector(embedded, { onRenameProject });
 
     await user.click(screen.getByRole('button', { name: /Project: Untitled Project/ }));
     const nameInput = screen.getByRole('textbox', { name: 'Project name' });
@@ -257,20 +266,22 @@ describe('ProjectHostSelector', () => {
     await user.click(document.body);
 
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-    expect(onRenameProject).toHaveBeenCalledOnce();
-    expect(onRenameProject).toHaveBeenCalledWith('My Project');
+    expect(renameProject).toHaveBeenCalledOnce();
+    expect(renameProject).toHaveBeenCalledWith('My Project');
   });
 
   it('keeps the selector open and reports the failure when a Host switch fails', async () => {
-    const onSwitch = vi.fn().mockResolvedValue(null);
+    const { api } = await renderSelector();
+    const switchHost = vi
+      .spyOn(api, 'switchHost')
+      .mockRejectedValue(new Error('Host switch failed'));
     const user = userEvent.setup();
-    renderSelector(embedded, { onSwitch, error: 'Host switch failed' });
 
     await user.click(screen.getByRole('button', { name: /Project: Untitled Project/ }));
     await user.click(screen.getByRole('button', { name: /project-a/i }));
 
     await waitFor(() =>
-      expect(onSwitch).toHaveBeenCalledWith({ type: 'registration', instanceId: 'host-a' }),
+      expect(switchHost).toHaveBeenCalledWith({ type: 'registration', instanceId: 'host-a' }),
     );
     expect(screen.getByRole('dialog')).toBeInTheDocument();
     expect(screen.getByText('Host switch failed')).toBeInTheDocument();
@@ -279,7 +290,7 @@ describe('ProjectHostSelector', () => {
     await user.click(screen.getByRole('button', { name: 'Connect…' }));
 
     await waitFor(() =>
-      expect(onSwitch).toHaveBeenCalledWith({
+      expect(switchHost).toHaveBeenCalledWith({
         type: 'dataRoot',
         dataRoot: 'D:\\Music\\offline-host',
       }),
@@ -289,8 +300,6 @@ describe('ProjectHostSelector', () => {
   });
 
   it('keeps the selector open and reports the failure when the Project changes', async () => {
-    const onOpenProject = vi.fn().mockResolvedValue(null);
-    const onCreateProject = vi.fn().mockResolvedValue(null);
     const projectState = {
       ...defaultProjectState(),
       projects: [
@@ -303,52 +312,43 @@ describe('ProjectHostSelector', () => {
         },
       ],
     };
+    const { api } = await renderSelector({ projectState });
+    const openProject = vi
+      .spyOn(api, 'openProject')
+      .mockRejectedValue(new Error('audio definition schema is unsupported'));
+    const createProject = vi.spyOn(api, 'createProject').mockRejectedValue(new Error('disk full'));
     const user = userEvent.setup();
-    const { rerender } = renderSelector(embedded, {
-      onOpenProject,
-      onCreateProject,
-      projectState,
-      projectError: 'Project opening failed: audio definition schema is unsupported.',
-    });
 
     await user.click(screen.getByRole('button', { name: /Project: Untitled Project/ }));
     await user.click(screen.getByRole('button', { name: /Unreadable Project/ }));
 
     await waitFor(() =>
-      expect(onOpenProject).toHaveBeenCalledWith(projectState.projects[1].projectId),
+      expect(openProject).toHaveBeenCalledWith(projectState.projects[1].projectId),
     );
     expect(screen.getByRole('dialog')).toBeInTheDocument();
     expect(
-      screen.getByText('Project opening failed: audio definition schema is unsupported.'),
+      screen.getByText('Project opening failed: audio definition schema is unsupported'),
     ).toBeInTheDocument();
-
-    rerender(
-      <ProjectHostSelectorView
-        state={embedded}
-        hosts={hosts}
-        switching={false}
-        error={null}
-        onRefresh={vi.fn().mockResolvedValue(undefined)}
-        onSwitch={vi.fn().mockResolvedValue(null)}
-        onReconnect={vi.fn().mockResolvedValue(null)}
-        projectState={projectState}
-        onOpenProject={onOpenProject}
-        onCreateProject={onCreateProject}
-        projectError="Project creation failed: disk full"
-      />,
-    );
 
     await user.click(screen.getByRole('button', { name: 'New Project' }));
 
-    await waitFor(() => expect(onCreateProject).toHaveBeenCalledOnce());
+    await waitFor(() => expect(createProject).toHaveBeenCalledOnce());
     expect(screen.getByRole('dialog')).toBeInTheDocument();
     expect(screen.getByText('Project creation failed: disk full')).toBeInTheDocument();
   });
 
   it('closes the selector after Host switching succeeds', async () => {
-    const onSwitch = vi.fn().mockResolvedValue({} as HostConnectionBootstrap);
+    const { api } = await renderSelector();
+    vi.spyOn(api, 'switchHost').mockResolvedValue({
+      state: {
+        ...embedded,
+        mode: 'attached',
+        instanceId: 'host-a',
+        dataRoot: 'D:\\Music\\project-a',
+      },
+      bootstrap: api.bootstrapState,
+    });
     const user = userEvent.setup();
-    renderSelector(embedded, { onSwitch });
 
     await user.click(screen.getByRole('button', { name: /Project: Untitled Project/ }));
     await user.click(screen.getByRole('button', { name: /project-a/i }));
@@ -357,30 +357,26 @@ describe('ProjectHostSelector', () => {
   });
 
   it('offers reconnect when the active Host is disconnected', async () => {
-    const reconnect = vi.fn().mockResolvedValue(null);
     const state: HostConnectionState = {
       ...embedded,
       mode: 'disconnected',
       generation: 5,
       reason: 'Host event connection closed',
     };
-    render(
-      <ProjectHostSelectorView
-        state={state}
-        hosts={hosts}
-        switching={false}
-        error="Host event connection closed"
-        onRefresh={vi.fn().mockResolvedValue(undefined)}
-        onSwitch={vi.fn().mockResolvedValue(null)}
-        onReconnect={reconnect}
-        projectState={defaultProjectState()}
-      />,
-    );
+    const { api } = await renderSelector({ state });
+    const reconnect = vi.spyOn(api, 'reconnectHost');
+    vi.spyOn(api, 'listLocalHosts').mockRejectedValue(new Error('Host event connection closed'));
 
     fireEvent.click(screen.getByRole('button', { name: /Project: Untitled Project/ }));
+
+    // The failed Host list refresh explains why the Host is disconnected.
+    expect(await screen.findByText('Host event connection closed')).toBeInTheDocument();
+
     fireEvent.click(screen.getByRole('button', { name: 'Reconnect' }));
 
     await waitFor(() => expect(reconnect).toHaveBeenCalledOnce());
-    expect(screen.getAllByText('Host event connection closed').length).toBeGreaterThan(0);
   });
 });
+
+// Keeps the FakeNativeApi type in this file's imports explicit for spies above.
+export type { FakeNativeApi };

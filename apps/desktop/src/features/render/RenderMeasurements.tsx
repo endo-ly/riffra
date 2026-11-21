@@ -1,5 +1,5 @@
 import type { AudioMeasurements } from '@/model/generated';
-import styles from '@/features/render/Render.module.css';
+import styles from './Render.module.css';
 import { InlineMessage } from '@/shared/ui/message/InlineMessage';
 
 interface RenderMeasurementsProps {

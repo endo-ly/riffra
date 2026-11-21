@@ -7,8 +7,8 @@ import { Icon } from '@/shared/ui/Icon';
 import { ValueSlider } from '@/shared/ui/ValueSlider';
 import { useState, type CSSProperties } from 'react';
 import { useChannelMixValue } from '@/session/hooks/useChannelMixValue';
-import styles from '@/features/mixer/Mixer.module.css';
-import { MixerMeter } from '@/features/mixer/MixerMeter';
+import styles from './Mixer.module.css';
+import { MixerMeter } from './MixerMeter';
 interface MixerTrackChannelStripProps {
   sessionId: string;
   track: Track;

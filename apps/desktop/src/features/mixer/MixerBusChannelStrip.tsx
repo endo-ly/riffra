@@ -5,8 +5,8 @@ import { formatGainDb, formatPan } from '@/model/mix';
 import { useSessionContext } from '@/session/session-context';
 import { useChannelMixValue } from '@/session/hooks/useChannelMixValue';
 import { ValueSlider } from '@/shared/ui/ValueSlider';
-import styles from '@/features/mixer/Mixer.module.css';
-import { MixerMeter } from '@/features/mixer/MixerMeter';
+import styles from './Mixer.module.css';
+import { MixerMeter } from './MixerMeter';
 
 interface Props {
   sessionId: string;

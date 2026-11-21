@@ -11,8 +11,8 @@ import {
 } from '@/features/midi-editor/model/pitch-grid';
 import type { MidiGhostNote } from '@/features/midi-editor/model/ghost-notes';
 import type { useNoteDrag } from '@/features/midi-editor/hooks/useNoteDrag';
-import styles from '@/features/midi-editor/NoteLane.module.css';
-import sharedStyles from '@/features/midi-editor/MidiEditorPanel.module.css';
+import styles from './NoteLane.module.css';
+import sharedStyles from './MidiEditorPanel.module.css';
 
 interface Rect {
   left: number;

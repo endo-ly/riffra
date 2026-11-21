@@ -1,20 +1,11 @@
 import { useAudioChannelMeter } from '@/session/audio-meters';
+import { dbfs, formatMeterLevel, levelPercent } from '@/features/mixer/model/meter-level';
 import type { EffectOwner } from '@/model/generated';
-import styles from '@/features/mixer/Mixer.module.css';
+import styles from './Mixer.module.css';
 
 interface MixerMeterProps {
   owner: EffectOwner;
   mode?: 'peak' | 'peak-rms';
-}
-
-function dbfs(value: number): number {
-  return value > 0 ? 20 * Math.log10(value) : -Infinity;
-}
-
-function levelPercent(value: number): number {
-  const db = dbfs(value);
-  if (!Number.isFinite(db)) return 0;
-  return Math.max(0, Math.min(100, ((db + 60) / 66) * 100));
 }
 
 function meterTone(value: number): string {
@@ -22,12 +13,6 @@ function meterTone(value: number): string {
   if (db >= 0) return styles.meterDanger;
   if (db >= -6) return styles.meterWarning;
   return styles.meterNormal;
-}
-
-function formatDb(value: number): string {
-  const db = dbfs(value);
-  if (!Number.isFinite(db) || db <= -60) return '−∞';
-  return `${db >= 0 ? '+' : ''}${db.toFixed(1)}`;
 }
 
 export function MixerMeter({ mode = 'peak-rms', owner }: MixerMeterProps) {
@@ -47,7 +32,7 @@ export function MixerMeter({ mode = 'peak-rms', owner }: MixerMeterProps) {
               <b className={styles.meterPeak} style={{ bottom: `${levelPercent(peak)}%` }} />
             </div>
             <span>{channel === 'left' ? 'L' : 'R'}</span>
-            <small>{meter === null ? '—' : formatDb(peak)}</small>
+            <small>{meter === null ? '—' : formatMeterLevel(peak, -60)}</small>
           </div>
         );
       })}

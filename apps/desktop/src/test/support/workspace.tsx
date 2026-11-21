@@ -8,8 +8,8 @@ import { WorkspaceWait } from '@/app/status/WorkspaceWait';
 import { PlaybackNotice } from '@/app/status/PlaybackNotice';
 import { ToastStack } from '@/shared/ui/message/ToastStack';
 import { toAssetId } from '@/model/asset-id';
-import type { FakeNativeApi } from '@/test/support/fake-native-api';
-import { renderWithSession } from '@/test/support/session-provider';
+import type { FakeNativeApi } from './fake-native-api';
+import { renderWithSession } from './session-provider';
 
 function RuntimeBinding() {
   useSessionRuntime();

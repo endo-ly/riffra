@@ -1,17 +1,10 @@
-import type { EditorCommit } from '@/features/timeline/hooks/useTimelineEditor';
+import type { EditorCommit } from './useTimelineEditor';
 import { useCallback, type DragEvent } from 'react';
 import type { TrackKind } from '@/model/generated';
-import {
-  RIFFRA_ASSET_MIME,
-  RIFFRA_INSTRUMENT_MIME,
-  RIFFRA_PLUGIN_MIME,
-  readAssetDrag,
-  readInstrumentDrag,
-  readPluginDrag,
-} from '@/shared/browser-drag';
+import { readBrowserDrag } from '@/shared/browser-drag';
 import { TRACK_HEADER_WIDTH } from '@/features/timeline/model/timeline-layout';
-import { usePlaceBrowserItem } from '@/features/timeline/hooks/usePlaceBrowserItem';
-import { resolvePlacementTarget, type BrowserPlacement } from '@/model/placement';
+import { resolvePlacementTarget } from '@/model/placement';
+import { usePlaceBrowserItem } from './usePlaceBrowserItem';
 import { useSessionContext } from '@/session/session-context';
 import { notify } from '@/shared/notify';
 
@@ -24,40 +17,6 @@ interface UseTimelineDropOptions {
 }
 
 const isOsFileDrag = (event: DragEvent) => event.dataTransfer.types.includes('Files');
-
-/** Whether a drag carries something the Browser can place in the Arrangement. */
-export function isBrowserItemDrag(event: DragEvent): boolean {
-  const { types } = event.dataTransfer;
-  return [RIFFRA_ASSET_MIME, RIFFRA_INSTRUMENT_MIME, RIFFRA_PLUGIN_MIME].some((mime) =>
-    types.includes(mime),
-  );
-}
-
-/** Reads the Browser item carried by a drag, or explains why it cannot be placed. */
-function readBrowserDrag(dataTransfer: DataTransfer): BrowserPlacement | string {
-  if (dataTransfer.types.includes(RIFFRA_INSTRUMENT_MIME)) {
-    const instrument = readInstrumentDrag(dataTransfer);
-    return instrument
-      ? { kind: 'instrument', instrumentId: instrument.instrumentId, name: instrument.name }
-      : 'The dragged Instrument is not valid.';
-  }
-  if (dataTransfer.types.includes(RIFFRA_PLUGIN_MIME)) {
-    const plugin = readPluginDrag(dataTransfer);
-    if (!plugin) return 'The dragged Plugin is not valid.';
-    return {
-      kind: plugin.role === 'instrument' ? 'instrumentPlugin' : 'effectPlugin',
-      pluginPath: plugin.pluginPath,
-      name: plugin.name,
-    };
-  }
-  const asset = readAssetDrag(dataTransfer);
-  if (!asset) return 'The dragged Library item is not a valid Audio or MIDI Asset.';
-  return {
-    kind: asset.kind === 'audio' ? 'audioAsset' : 'midiAsset',
-    assetId: asset.assetId,
-    name: asset.name,
-  };
-}
 
 /** Coordinates Browser item and OS MIDI-file drops in the Arrange workspace. */
 export function useTimelineDrop({ commit, pixelsPerTick, snapTick }: UseTimelineDropOptions) {

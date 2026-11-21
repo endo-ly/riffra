@@ -3,7 +3,7 @@ import type { Ref } from 'react';
 import type { MidiNote } from '@/model/generated';
 import { midiNoteName } from '@/model/midi';
 import { usePointerGesture } from '@/shared/hooks/usePointerGesture';
-import styles from '@/features/midi-editor/MidiEditorPanel.module.css';
+import styles from './MidiEditorPanel.module.css';
 
 const VELOCITY_DRAG_THRESHOLD = 3;
 

@@ -2,12 +2,13 @@ import { useMasterGainValue } from '@/session/hooks/useMasterGainValue';
 import { MASTER_GAIN_DB } from '@/model/mix';
 import type { CreativeSession } from '@/model/generated';
 import { useAudioMeters } from '@/session/audio-meters';
+import { formatMeterLevel } from '@/features/mixer/model/meter-level';
 import { formatGainDb } from '@/model/mix';
 import { ValueSlider } from '@/shared/ui/ValueSlider';
 import { Icon } from '@/shared/ui/Icon';
 import { useEffect, useRef, useState } from 'react';
-import styles from '@/features/mixer/Mixer.module.css';
-import { MixerMeter } from '@/features/mixer/MixerMeter';
+import styles from './Mixer.module.css';
+import { MixerMeter } from './MixerMeter';
 
 interface MixerMasterChannelStripProps {
   session: CreativeSession;
@@ -98,7 +99,7 @@ export function MixerMasterChannelStrip(props: MixerMasterChannelStripProps) {
         <dl className={styles.diagnostics}>
           <div>
             <dt>PRE</dt>
-            <dd>{meters.available ? `${formatMeterDb(meters.preLimiterPeak)} dB` : '—'}</dd>
+            <dd>{meters.available ? `${formatMeterLevel(meters.preLimiterPeak)} dB` : '—'}</dd>
           </div>
           <div>
             <dt>LIMITER</dt>
@@ -116,10 +117,4 @@ export function MixerMasterChannelStrip(props: MixerMasterChannelStripProps) {
       </section>
     </aside>
   );
-}
-
-function formatMeterDb(value: number): string {
-  if (value <= 0 || !Number.isFinite(value)) return '−∞';
-  const db = 20 * Math.log10(value);
-  return `${db >= 0 ? '+' : ''}${db.toFixed(1)}`;
 }

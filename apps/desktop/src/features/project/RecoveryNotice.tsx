@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useSession } from '@/session/session-context';
 import { selectHostReady } from '@/session/selectors';
 import { Notice } from '@/shared/ui/message/Notice';
-import { RecoveryDialog } from '@/features/project/RecoveryDialog';
+import { RecoveryDialog } from './RecoveryDialog';
 
 export function RecoveryNotice() {
   const recovery = useSession((state) => state.project.boot?.recovery);

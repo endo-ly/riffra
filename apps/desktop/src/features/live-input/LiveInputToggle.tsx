@@ -1,6 +1,6 @@
 import { midiNoteName } from '@/model/midi';
 import { ToolbarToggle } from '@/shared/ui/Toolbar';
-import type { LivePlay } from './useLivePlay';
+import type { LivePlay } from '@/features/live-input/hooks/useLivePlay';
 
 const PAD_RANGE_LABEL = 'Pads';
 

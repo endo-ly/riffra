@@ -1,4 +1,4 @@
-import type { AudioStatus } from '@/model/generated';
+import type { AudioStatus } from './generated';
 
 /**
  * Audio safety state transitions. The Runtime remains the source of truth for

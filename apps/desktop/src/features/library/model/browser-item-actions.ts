@@ -10,7 +10,7 @@ import {
   resolvePlacementTarget,
   type BrowserPlacement,
 } from '@/model/placement';
-import { browserItemPlacement, type BrowserItem } from '@/features/library/model/browser-tree';
+import { browserItemPlacement, type BrowserItem } from './browser-tree';
 
 export interface BrowserItemAction {
   label: string;

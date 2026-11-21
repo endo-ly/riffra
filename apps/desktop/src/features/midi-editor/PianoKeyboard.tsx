@@ -2,7 +2,7 @@ import type { InstrumentMidiSettings } from '@/model/generated';
 import { isBlackKey, midiNoteName } from '@/model/midi';
 import { findKeyswitch, isInstrumentPlayable } from '@/features/midi-editor/model/instrument-notes';
 import { pitchRowTop } from '@/features/midi-editor/model/pitch-grid';
-import styles from '@/features/midi-editor/PianoKeyboard.module.css';
+import styles from './PianoKeyboard.module.css';
 
 interface PianoKeyboardProps {
   pitches: number[];

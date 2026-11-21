@@ -5,7 +5,7 @@ import type {
   DeviceChannels,
 } from '@/model/generated';
 import type { NativeApi } from '@/native/native-api';
-import { startingAudioStatus } from '@/session/slices/audio-defaults';
+import { startingAudioStatus } from './audio-defaults';
 import { isAudioEngineUsable, isEmergencyMuteActive } from '@/model/audio-status';
 import { reconcileAudioSettings } from '@/model/audio-settings';
 import { notify } from '@/shared/notify';

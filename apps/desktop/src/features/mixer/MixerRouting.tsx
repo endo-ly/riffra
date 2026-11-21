@@ -10,8 +10,8 @@ import { useSessionContext } from '@/session/session-context';
 import { notify } from '@/shared/notify';
 import controls from '@/shared/ui/controls.module.css';
 import { Dialog, DialogRow, DialogSection } from '@/shared/ui/Dialog';
-import { ReturnSendControls } from '@/features/mixer/ReturnSendControls';
-import { SidechainSendControls } from '@/features/mixer/SidechainSendControls';
+import { ReturnSendControls } from './ReturnSendControls';
+import { SidechainSendControls } from './SidechainSendControls';
 
 interface Props {
   sessionId: string;

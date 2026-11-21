@@ -1,11 +1,5 @@
 import { useSessionCommand } from '@/session/hooks/useSessionCommand';
-import type {
-  ArrangementMutationResult,
-  AutomationTarget,
-  CreativeSession,
-  EffectOwner,
-  MixBusKind,
-} from '@/model/generated';
+import type { ArrangementMutationResult, EffectOwner, MixBusKind } from '@/model/generated';
 import { useSession, useSessionContext } from '@/session/session-context';
 import { useShallow } from 'zustand/react/shallow';
 import { selectMissingDeviceIds } from '@/session/selectors';
@@ -13,56 +7,32 @@ import { ownerSelection, selectionOwner } from '@/model/editor-selection';
 import controls from '@/shared/ui/controls.module.css';
 import { useState } from 'react';
 import { MixdownDialog } from '@/features/render/MixdownDialog';
-import styles from '@/features/mixer/Mixer.module.css';
-import { MixerBusChannelStrip } from '@/features/mixer/MixerBusChannelStrip';
-import { MixerMasterChannelStrip } from '@/features/mixer/MixerMasterChannelStrip';
-import { MixerRouting } from '@/features/mixer/MixerRouting';
-import { MixerTrackChannelStrip } from '@/features/mixer/MixerTrackChannelStrip';
+import styles from './Mixer.module.css';
+import { MixerBusChannelStrip } from './MixerBusChannelStrip';
+import { MixerMasterChannelStrip } from './MixerMasterChannelStrip';
+import { MixerRouting } from './MixerRouting';
+import { MixerTrackChannelStrip } from './MixerTrackChannelStrip';
 import { InlineMessage } from '@/shared/ui/message/InlineMessage';
 
-interface MixerPanelProps {
-  session: CreativeSession;
-  selectedTrackId: string | null;
-  selectedOwner: EffectOwner | null;
-  onSelectOwner: (owner: EffectOwner) => void;
-  onOpenOwnerDevices: (owner: EffectOwner) => void;
-  missingDeviceIds: readonly string[];
-  onSelectTrack: (trackId: string) => void;
-  onOpenDevices: (trackId: string) => void;
-  onOpenAutomation: (target: AutomationTarget) => void;
-  disabled?: boolean;
-}
-
 export function MixerPanel() {
+  const { api } = useSessionContext();
+  const sessionCommit = useSessionCommand();
   const session = useSession((state) => state.project.boot!.canonical.session);
   const workspace = useSession((state) => state.workspace);
   const missingDeviceIds = useSession(useShallow(selectMissingDeviceIds));
   const selectedTrackId = workspace.selection.kind === 'track' ? workspace.selection.trackId : null;
-  return (
-    <MixerPanelView
-      session={session}
-      selectedTrackId={selectedTrackId}
-      selectedOwner={selectionOwner(workspace.selection)}
-      onSelectOwner={(owner) => workspace.setSelection(ownerSelection(owner))}
-      onOpenOwnerDevices={(owner) => {
-        workspace.setSelection(ownerSelection(owner));
-        workspace.openDevices();
-      }}
-      missingDeviceIds={missingDeviceIds}
-      onSelectTrack={(trackId) => workspace.setSelection({ kind: 'track', trackId })}
-      onOpenDevices={(trackId) => {
-        workspace.setSelection({ kind: 'track', trackId });
-        workspace.openDevices();
-      }}
-      onOpenAutomation={workspace.openAutomation}
-    />
-  );
-}
-
-export function MixerPanelView(props: MixerPanelProps) {
-  const { api } = useSessionContext();
-  const sessionCommit = useSessionCommand();
-  const { arrangement } = props.session;
+  const selectedOwner = selectionOwner(workspace.selection);
+  const selectOwner = (owner: EffectOwner) => workspace.setSelection(ownerSelection(owner));
+  const openOwnerDevices = (owner: EffectOwner) => {
+    selectOwner(owner);
+    workspace.openDevices();
+  };
+  const selectTrack = (trackId: string) => workspace.setSelection({ kind: 'track', trackId });
+  const openTrackDevices = (trackId: string) => {
+    selectTrack(trackId);
+    workspace.openDevices();
+  };
+  const { arrangement } = session;
   const [routingTrackId, setRoutingTrackId] = useState<string | null>(null);
   const [newName, setNewName] = useState('');
   const [newKind, setNewKind] = useState<MixBusKind>('group');
@@ -88,9 +58,9 @@ export function MixerPanelView(props: MixerPanelProps) {
     }
   };
   const selectedBus =
-    props.selectedOwner?.kind === 'bus'
+    selectedOwner?.kind === 'bus'
       ? arrangement.mixer.buses.find(
-          (bus) => props.selectedOwner?.kind === 'bus' && bus.id === props.selectedOwner.id,
+          (bus) => selectedOwner?.kind === 'bus' && bus.id === selectedOwner.id,
         )
       : undefined;
   const routingTrack = arrangement.tracks.find((track) => track.id === routingTrackId);
@@ -115,7 +85,7 @@ export function MixerPanelView(props: MixerPanelProps) {
             placeholder="Channel name"
             value={newName}
             onChange={(e) => setNewName(e.currentTarget.value)}
-            disabled={props.disabled || busy}
+            disabled={busy}
           />
           <select
             className={controls.control}
@@ -129,7 +99,7 @@ export function MixerPanelView(props: MixerPanelProps) {
           <button
             type="submit"
             className={`${controls.smallButton} ${controls.accent}`}
-            disabled={props.disabled || busy || !newName.trim()}
+            disabled={busy || !newName.trim()}
           >
             Add channel
           </button>
@@ -148,7 +118,6 @@ export function MixerPanelView(props: MixerPanelProps) {
               <button
                 type="button"
                 className={`${controls.smallButton} ${controls.danger}`}
-                disabled={props.disabled}
                 onClick={() => commit(api.removeMixBus(selectedBus.id))}
               >
                 Remove channel
@@ -164,7 +133,7 @@ export function MixerPanelView(props: MixerPanelProps) {
             {arrangement.tracks.map((track, trackIndex) => (
               <MixerTrackChannelStrip
                 key={track.id}
-                sessionId={props.session.sessionId}
+                sessionId={session.sessionId}
                 track={track}
                 trackIndex={trackIndex}
                 volumeAutomation={arrangement.automationLanes.find(
@@ -179,12 +148,12 @@ export function MixerPanelView(props: MixerPanelProps) {
                     lane.target.trackId === track.id &&
                     lane.target.parameter === 'pan',
                 )}
-                selected={props.selectedTrackId === track.id}
-                missingDeviceIds={props.missingDeviceIds}
-                onSelect={() => props.onSelectTrack(track.id)}
-                onOpenDevices={() => props.onOpenDevices(track.id)}
+                selected={selectedTrackId === track.id}
+                missingDeviceIds={missingDeviceIds}
+                onSelect={() => selectTrack(track.id)}
+                onOpenDevices={() => openTrackDevices(track.id)}
                 onOpenAutomation={() =>
-                  props.onOpenAutomation({
+                  workspace.openAutomation({
                     kind: 'trackMix',
                     trackId: track.id,
                     parameter: 'volume',
@@ -199,7 +168,6 @@ export function MixerPanelView(props: MixerPanelProps) {
                   arrangement.mixer.sends.filter((send) => send.trackId === track.id).length
                 }
                 onError={setError}
-                disabled={props.disabled}
               />
             ))}
             {(['group', 'return'] as const).flatMap((kind) =>
@@ -208,22 +176,19 @@ export function MixerPanelView(props: MixerPanelProps) {
                 .map((bus) => (
                   <MixerBusChannelStrip
                     key={bus.id}
-                    sessionId={props.session.sessionId}
+                    sessionId={session.sessionId}
                     bus={bus}
-                    selected={
-                      props.selectedOwner?.kind === 'bus' && props.selectedOwner.id === bus.id
-                    }
-                    missingDeviceIds={props.missingDeviceIds}
-                    onSelect={() => props.onSelectOwner({ kind: 'bus', id: bus.id })}
-                    onOpenDevices={() => props.onOpenOwnerDevices({ kind: 'bus', id: bus.id })}
+                    selected={selectedOwner?.kind === 'bus' && selectedOwner.id === bus.id}
+                    missingDeviceIds={missingDeviceIds}
+                    onSelect={() => selectOwner({ kind: 'bus', id: bus.id })}
+                    onOpenDevices={() => openOwnerDevices({ kind: 'bus', id: bus.id })}
                     onOpenAutomation={() =>
-                      props.onOpenAutomation({ kind: 'busMix', busId: bus.id, parameter: 'gain' })
+                      workspace.openAutomation({ kind: 'busMix', busId: bus.id, parameter: 'gain' })
                     }
                     automated={arrangement.automationLanes.some(
                       (lane) => lane.target.kind === 'busMix' && lane.target.busId === bus.id,
                     )}
                     onError={setError}
-                    disabled={props.disabled}
                   />
                 )),
             )}
@@ -237,25 +202,24 @@ export function MixerPanelView(props: MixerPanelProps) {
       </div>
 
       <MixerMasterChannelStrip
-        onOpenAutomation={() => props.onOpenAutomation({ kind: 'masterGain' })}
+        onOpenAutomation={() => workspace.openAutomation({ kind: 'masterGain' })}
         onOpenMixdown={() => setMixdownOpen(true)}
-        onOpenDevices={() => props.onOpenOwnerDevices({ kind: 'master' })}
-        missingDeviceIds={props.missingDeviceIds}
-        session={props.session}
-        disabled={props.disabled}
+        onOpenDevices={() => openOwnerDevices({ kind: 'master' })}
+        missingDeviceIds={missingDeviceIds}
+        session={session}
       />
       {error && <InlineMessage tone="danger">{error}</InlineMessage>}
       {mixdownOpen && (
         <MixdownDialog
-          key={props.session.sessionId}
-          session={props.session}
+          key={session.sessionId}
+          session={session}
           onClose={() => setMixdownOpen(false)}
         />
       )}
       {routingTrack && (
         <MixerRouting
-          sessionId={props.session.sessionId}
-          onOpenAutomation={props.onOpenAutomation}
+          sessionId={session.sessionId}
+          onOpenAutomation={workspace.openAutomation}
           arrangement={arrangement}
           track={routingTrack}
           onClose={() => setRoutingTrackId(null)}

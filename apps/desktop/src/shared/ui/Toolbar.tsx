@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
-import { Icon } from '@/shared/ui/Icon';
-import styles from '@/shared/ui/Toolbar.module.css';
+import { Icon } from './Icon';
+import styles from './Toolbar.module.css';
 
 export function Toolbar(props: { label: string; children: ReactNode; trailing?: ReactNode }) {
   return (

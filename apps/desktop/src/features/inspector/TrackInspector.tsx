@@ -12,9 +12,9 @@ import { Icon } from '@/shared/ui/Icon';
 import clsx from 'clsx';
 import { useCallback, useEffect, useState, type CSSProperties } from 'react';
 import { resolveTrackColorById, TRACK_COLOR_PALETTE } from '@/model/track-color';
-import sharedStyles from '@/features/inspector/Inspector.module.css';
-import styles from '@/features/inspector/TrackInspector.module.css';
-import { MixValueField } from '@/features/inspector/MixValueField';
+import sharedStyles from './Inspector.module.css';
+import styles from './TrackInspector.module.css';
+import { MixValueField } from './MixValueField';
 import { InlineMessage } from '@/shared/ui/message/InlineMessage';
 
 interface TrackInspectorProps {

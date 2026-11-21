@@ -10,11 +10,11 @@ import type {
 import { Icon } from '@/shared/ui/Icon';
 import controls from '@/shared/ui/controls.module.css';
 import { useSession, useSessionContext } from '@/session/session-context';
-import { useDeviceDetails } from '@/features/devices/useDeviceDetails';
-import { DeviceSidechainEditor } from '@/features/devices/DeviceSidechainEditor';
+import { useDeviceDetails } from '@/features/devices/hooks/useDeviceDetails';
+import { DeviceSidechainEditor } from './DeviceSidechainEditor';
 import { automationValueAt } from '@/model/automation';
 import { useAutomationValueDisplay } from '@/shared/hooks/useAutomationValueDisplay';
-import styles from '@/features/devices/Devices.module.css';
+import styles from './Devices.module.css';
 import { InlineMessage } from '@/shared/ui/message/InlineMessage';
 
 interface DeviceParameterEditorProps {

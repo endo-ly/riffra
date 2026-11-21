@@ -1,13 +1,13 @@
 import type { useAppUpdater } from '@/app/hooks/useAppUpdater';
-import { BackgroundJobNotice } from '@/app/status/BackgroundJobNotice';
-import { PreviewModeNotice } from '@/app/status/PreviewModeNotice';
-import { PlaybackNotice } from '@/app/status/PlaybackNotice';
-import { SafeModeNotice } from '@/app/status/SafeModeNotice';
-import { UpdateNotice } from '@/app/status/UpdateNotice';
+import { BackgroundJobNotice } from './BackgroundJobNotice';
+import { PreviewModeNotice } from './PreviewModeNotice';
+import { PlaybackNotice } from './PlaybackNotice';
+import { SafeModeNotice } from './SafeModeNotice';
+import { UpdateNotice } from './UpdateNotice';
 import { MissingDependenciesNotice } from '@/features/project/MissingDependenciesNotice';
 import { RecoveryNotice } from '@/features/project/RecoveryNotice';
 import { ScoreSyncNotice } from '@/features/project/ScoreSyncNotice';
-import styles from '@/app/status/NoticeBar.module.css';
+import styles from './NoticeBar.module.css';
 
 /**
  * App-wide conditions that continue alongside editing, docked below the

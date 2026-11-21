@@ -3,7 +3,7 @@ import { subscribeWithSelector } from 'zustand/middleware';
 import { buildSessionReadModel, type SessionReadModel } from '@/model/session-read-model';
 import type { Mutate, StoreApi } from 'zustand/vanilla';
 import type { NativeApi } from '@/native/native-api';
-import { createSessionCommit, type SessionCommit } from '@/session/commit';
+import { createSessionCommit, type SessionCommit } from './commit';
 import { createRuntimeSlice, type RuntimeSlice } from '@/session/slices/runtime';
 import { createAudioSlice, type AudioSlice } from '@/session/slices/audio';
 import { createHostSlice, type HostSlice } from '@/session/slices/host';
@@ -19,7 +19,7 @@ import {
   type WorkspaceSlice,
 } from '@/session/slices/workspace';
 import { createProjectSlice, type ProjectSlice } from '@/session/slices/project';
-import { selectStartupRestoreReady } from '@/session/selectors';
+import { selectStartupRestoreReady } from './selectors';
 
 export interface SessionScope {
   readonly generation: number;

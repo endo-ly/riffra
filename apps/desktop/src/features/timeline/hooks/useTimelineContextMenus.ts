@@ -13,8 +13,8 @@ import { notify } from '@/shared/notify';
 import { countOffGridNotes, snapGridTicks, type SnapGrid } from '@/model/clip-grid';
 import { clipDurationTicks } from '@/model/clip-time';
 import { useState, type MutableRefObject } from 'react';
-import type { useTimelineEditor } from '@/features/timeline/hooks/useTimelineEditor';
-import type { useTimelineRulerController } from '@/features/timeline/hooks/useTimelineRulerController';
+import type { useTimelineEditor } from './useTimelineEditor';
+import type { useTimelineRulerController } from './useTimelineRulerController';
 
 interface UseTimelineContextMenusOptions {
   arrangement: CreativeSession['arrangement'];

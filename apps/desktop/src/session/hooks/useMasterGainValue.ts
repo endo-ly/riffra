@@ -1,7 +1,7 @@
 import type { CanonicalState, CreativeSession } from '@/model/generated';
 import { useSessionContext } from '@/session/session-context';
 import { useCallback } from 'react';
-import { usePreviewedValue } from '@/session/hooks/usePreviewedValue';
+import { usePreviewedValue } from './usePreviewedValue';
 
 export function useMasterGainValue(
   session: CreativeSession,
