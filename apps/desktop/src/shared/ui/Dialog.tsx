@@ -1,6 +1,6 @@
 import type { CSSProperties, ReactNode } from 'react';
-import { Icon } from '@/shared/ui/primitives';
-import controls from '@/shared/ui/controls.module.css';
+import { Icon } from './Icon';
+import controls from './controls.module.css';
 import { Modal } from './Modal';
 import styles from './Dialog.module.css';
 

@@ -1,7 +1,7 @@
 use super::*;
 use riffra_core::{
     AudioTakeVariant, CreativeSession, FadeShape, InternalInstrumentResource, MidiEventKind,
-    MonitoringState, Track, TrackInstrumentSource, TrackKind, Vst3Plugin,
+    MonitoringState, Track, TrackInstrument, TrackInstrumentSource, TrackKind, Vst3Plugin,
 };
 use std::collections::HashSet;
 
@@ -39,57 +39,10 @@ pub(crate) fn project_graph(
         .tracks
         .iter()
         .map(|track| {
-            let instrument =
-                track
-                    .instrument
-                    .as_ref()
-                    .and_then(|instrument| match &instrument.source {
-                        TrackInstrumentSource::Vst3(plugin) => plugin_state(
-                            &instrument.id,
-                            plugin,
-                            instrument.bypassed,
-                            resources,
-                            &mut diagnostics,
-                        )
-                        .map(|state| GraphInstrument::Vst3 {
-                            id: instrument.id.clone(),
-                            path: plugin.path.clone(),
-                            state,
-                            midi: instrument.midi.clone(),
-                        }),
-                        TrackInstrumentSource::Internal {
-                            definition_json,
-                            resource: InternalInstrumentResource::BuiltInPreset { preset_id },
-                        } => resources
-                            .built_in_base_dirs
-                            .get(preset_id)
-                            .map(|base_dir| GraphInstrument::Internal {
-                                id: instrument.id.clone(),
-                                bypassed: instrument.bypassed,
-                                definition_json: definition_json.clone(),
-                                definition_base_dir: base_dir.to_string_lossy().into_owned(),
-                                midi: instrument.midi.clone(),
-                            })
-                            .or_else(|| {
-                                diagnostics.missing_device_ids.push(instrument.id.clone());
-                                None
-                            }),
-                        TrackInstrumentSource::Internal {
-                            definition_json,
-                            resource: InternalInstrumentResource::UserSnapshot { snapshot_id, .. },
-                        } => Some(GraphInstrument::Internal {
-                            id: instrument.id.clone(),
-                            bypassed: instrument.bypassed,
-                            definition_json: definition_json.clone(),
-                            definition_base_dir: resources
-                                .data_root
-                                .join("project-instruments")
-                                .join(snapshot_id)
-                                .to_string_lossy()
-                                .into_owned(),
-                            midi: instrument.midi.clone(),
-                        }),
-                    });
+            let instrument = track
+                .instrument
+                .as_ref()
+                .and_then(|instrument| project_instrument(instrument, resources, &mut diagnostics));
 
             let effects = project_effects(&track.effects, resources, &mut diagnostics);
 
@@ -171,7 +124,15 @@ pub(crate) fn project_graph(
 
             GraphTrack {
                 pan_law: track.pan_law,
-                external_audio_source_track_ids: track.external_audio_source_track_ids.clone(),
+                // An external audio route feeds one instrument. When the
+                // instrument is not projected, the route has no consumer and
+                // must not reach the engine, whose graph validation requires
+                // the pair to stay consistent.
+                external_audio_source_track_ids: if instrument.is_some() {
+                    track.external_audio_source_track_ids.clone()
+                } else {
+                    Vec::new()
+                },
                 output_bus_id: track.output_bus_id.clone(),
                 id: track.id.clone(),
                 kind: match track.kind {
@@ -270,6 +231,15 @@ pub(crate) fn project_graph(
         .chain(graph.mixer.master_effects.iter())
         .map(|effect| effect.id.as_str())
         .collect();
+    let executable_device_ids: HashSet<_> = graph
+        .tracks
+        .iter()
+        .filter_map(|track| track.instrument.as_ref())
+        .map(|instrument| match instrument {
+            GraphInstrument::Vst3 { id, .. } | GraphInstrument::Internal { id, .. } => id.as_str(),
+        })
+        .chain(executable_effect_ids.iter().copied())
+        .collect();
     graph
         .mixer
         .sidechain_sends
@@ -284,10 +254,68 @@ pub(crate) fn project_graph(
         riffra_core::AutomationTarget::SidechainSendLevel { sidechain_send_id } => {
             executable_sidechain_ids.contains(sidechain_send_id.as_str())
         }
+        riffra_core::AutomationTarget::DeviceParameter { device_id, .. } => {
+            executable_device_ids.contains(device_id.as_str())
+        }
         _ => true,
     });
 
     (graph, diagnostics)
+}
+
+/// Projects one assigned instrument. A bypassed instrument holds no runtime,
+/// so it never reaches the engine.
+fn project_instrument(
+    instrument: &TrackInstrument,
+    resources: &ResolvedResources,
+    diagnostics: &mut ProjectionDiagnostics,
+) -> Option<GraphInstrument> {
+    if instrument.bypassed {
+        return None;
+    }
+    let source = &instrument.source;
+    match source {
+        TrackInstrumentSource::Vst3(plugin) => {
+            plugin_state(&instrument.id, plugin, resources, diagnostics).map(|state| {
+                GraphInstrument::Vst3 {
+                    id: instrument.id.clone(),
+                    path: plugin.path.clone(),
+                    state,
+                    midi: instrument.midi.clone(),
+                }
+            })
+        }
+        TrackInstrumentSource::Internal {
+            definition_json,
+            resource: InternalInstrumentResource::BuiltInPreset { preset_id },
+        } => resources
+            .built_in_base_dirs
+            .get(preset_id)
+            .map(|base_dir| GraphInstrument::Internal {
+                id: instrument.id.clone(),
+                definition_json: definition_json.clone(),
+                definition_base_dir: base_dir.to_string_lossy().into_owned(),
+                midi: instrument.midi.clone(),
+            })
+            .or_else(|| {
+                diagnostics.missing_device_ids.push(instrument.id.clone());
+                None
+            }),
+        TrackInstrumentSource::Internal {
+            definition_json,
+            resource: InternalInstrumentResource::UserSnapshot { snapshot_id, .. },
+        } => Some(GraphInstrument::Internal {
+            id: instrument.id.clone(),
+            definition_json: definition_json.clone(),
+            definition_base_dir: resources
+                .data_root
+                .join("project-instruments")
+                .join(snapshot_id)
+                .to_string_lossy()
+                .into_owned(),
+            midi: instrument.midi.clone(),
+        }),
+    }
 }
 
 fn project_effects(
@@ -298,17 +326,15 @@ fn project_effects(
     effects
         .iter()
         .filter_map(|device| {
-            plugin_state(
-                &device.id,
-                &device.plugin,
-                device.bypassed,
-                resources,
-                diagnostics,
-            )
-            .map(|state| GraphPluginDevice {
-                id: device.id.clone(),
-                path: device.plugin.path.clone(),
-                state,
+            if device.bypassed {
+                return None;
+            }
+            plugin_state(&device.id, &device.plugin, resources, diagnostics).map(|state| {
+                GraphPluginDevice {
+                    id: device.id.clone(),
+                    path: device.plugin.path.clone(),
+                    state,
+                }
             })
         })
         .collect()
@@ -325,13 +351,12 @@ fn monitors_audio_input(track: &Track) -> bool {
         }
 }
 
-/// Projects an enabled plugin whose path is installed. A plugin that is not
+/// Projects one device that holds an audio instance. A plugin that is not
 /// installed is recorded as a missing device; a disabled placeholder is
 /// skipped.
 fn plugin_state(
     device_id: &str,
     plugin: &Vst3Plugin,
-    bypassed: bool,
     resources: &ResolvedResources,
     diagnostics: &mut ProjectionDiagnostics,
 ) -> Option<GraphPluginState> {
@@ -345,7 +370,9 @@ fn plugin_state(
     Some(GraphPluginState {
         state_data: plugin.state_data.clone(),
         parameter_values: plugin.parameter_values.clone(),
-        bypassed,
+        // A bypassed device is never projected, so every projected state
+        // states that the device plays.
+        bypassed: false,
     })
 }
 
@@ -944,6 +971,157 @@ mod tests {
             AutomationTarget::SidechainSendLevel {
                 sidechain_send_id: "sidechain:available".into()
             }
+        );
+    }
+
+    #[test]
+    fn omits_bypassed_devices_and_routes_that_feed_them() {
+        // Arrange
+        let mut session = CreativeSession::new(1);
+        session
+            .arrangement
+            .tracks
+            .push(Track::audio("track:source".into(), "Source".into()));
+
+        let mut bypassed_instrument_track = Track::instrument("track:keys".into(), "Keys".into());
+        let mut bypassed_vst3 = TrackInstrument::vst3(
+            "instrument:vst3".into(),
+            "VST".into(),
+            "instrument.vst3".into(),
+        )
+        .unwrap();
+        bypassed_vst3.bypassed = true;
+        bypassed_instrument_track.instrument = Some(bypassed_vst3);
+        bypassed_instrument_track.external_audio_source_track_ids = vec!["track:source".into()];
+        session.arrangement.tracks.push(bypassed_instrument_track);
+
+        let mut bypassed_internal_track = Track::instrument("track:drums".into(), "Drums".into());
+        let mut bypassed_internal = TrackInstrument::built_in(
+            "instrument:internal".into(),
+            "Internal".into(),
+            "preset".into(),
+            "{\"schemaVersion\":1}".into(),
+        )
+        .unwrap();
+        bypassed_internal.bypassed = true;
+        bypassed_internal_track.instrument = Some(bypassed_internal);
+        session.arrangement.tracks.push(bypassed_internal_track);
+
+        let mut target = Track::audio("track:target".into(), "Target".into());
+        let mut bypassed_effect = plugin_device("device:bypassed", "Bypassed", "fx.vst3", false);
+        bypassed_effect.bypassed = true;
+        target.effects.push(bypassed_effect);
+        target.effects.push(plugin_device(
+            "device:available",
+            "Available",
+            "fx.vst3",
+            false,
+        ));
+        session.arrangement.tracks.push(target);
+
+        session.arrangement.mixer.sidechain_sends = [
+            ("sidechain:bypassed", "device:bypassed"),
+            ("sidechain:available", "device:available"),
+        ]
+        .into_iter()
+        .map(|(id, target_device_id)| riffra_core::SidechainSend {
+            id: id.into(),
+            source_track_id: "track:source".into(),
+            target_device_id: target_device_id.into(),
+            level_db: -6.0,
+            position: riffra_core::SendPosition::PostFader,
+            enabled: true,
+        })
+        .collect();
+        session.arrangement.automation_lanes = [
+            (
+                "lane:bypassed-instrument",
+                AutomationTarget::DeviceParameter {
+                    device_id: "instrument:vst3".into(),
+                    parameter_id: "Gain".into(),
+                },
+            ),
+            (
+                "lane:bypassed-effect",
+                AutomationTarget::DeviceParameter {
+                    device_id: "device:bypassed".into(),
+                    parameter_id: "Threshold".into(),
+                },
+            ),
+            (
+                "lane:available",
+                AutomationTarget::DeviceParameter {
+                    device_id: "device:available".into(),
+                    parameter_id: "Threshold".into(),
+                },
+            ),
+        ]
+        .into_iter()
+        .map(|(id, target)| AutomationLane {
+            id: id.into(),
+            target,
+            interpolation: riffra_core::AutomationInterpolation::Linear,
+            points: vec![AutomationPoint {
+                id: format!("point:{id}"),
+                tick: riffra_core::TimelineTick(0),
+                value: 0.5,
+            }],
+        })
+        .collect();
+
+        // Act
+        let (graph, diagnostics) = project_graph(&session, &resources());
+
+        // Assert
+        assert!(diagnostics.missing_device_ids.is_empty());
+        let keys = graph
+            .tracks
+            .iter()
+            .find(|track| track.id == "track:keys")
+            .unwrap();
+        assert!(keys.instrument.is_none());
+        assert!(keys.external_audio_source_track_ids.is_empty());
+        let drums = graph
+            .tracks
+            .iter()
+            .find(|track| track.id == "track:drums")
+            .unwrap();
+        assert!(drums.instrument.is_none());
+        let target = graph
+            .tracks
+            .iter()
+            .find(|track| track.id == "track:target")
+            .unwrap();
+        assert_eq!(
+            target
+                .effects
+                .iter()
+                .map(|effect| effect.id.as_str())
+                .collect::<Vec<_>>(),
+            ["device:available"]
+        );
+        assert_eq!(
+            graph
+                .mixer
+                .sidechain_sends
+                .iter()
+                .map(|send| send.id.as_str())
+                .collect::<Vec<_>>(),
+            ["sidechain:available"]
+        );
+        assert_eq!(
+            graph
+                .automation
+                .iter()
+                .map(|lane| {
+                    if let AutomationTarget::DeviceParameter { device_id, .. } = &lane.target {
+                        device_id.as_str()
+                    } else {
+                        panic!("unexpected automation target")
+                    }
+                })
+                .collect::<Vec<_>>(),
+            ["device:available"]
         );
     }
 }

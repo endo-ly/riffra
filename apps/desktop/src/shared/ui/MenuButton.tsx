@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ContextMenu, type ContextMenuItem } from './ContextMenu';
-import { Icon } from './primitives';
+import { Icon } from './Icon';
 import controls from './controls.module.css';
 
 interface MenuButtonProps {

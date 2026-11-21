@@ -3,7 +3,7 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { canonicalState, defaultSession } from '@/native/browser-defaults';
+import { canonicalState, defaultSession } from '@/native/preview/fixtures';
 import { createFakeNativeApi } from '@/test/support/fake-native-api';
 import { renderWorkspace } from '@/test/support/workspace';
 

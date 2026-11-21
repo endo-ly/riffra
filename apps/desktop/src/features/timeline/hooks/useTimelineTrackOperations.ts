@@ -1,8 +1,8 @@
-import { useSessionCommand } from '@/shared/session/useSessionCommand';
+import { useSessionCommand } from '@/session/hooks/useSessionCommand';
 import { useMemo, useState } from 'react';
 import type { TrackKind } from '@/model/generated';
 import { ticksPerBar } from '@/model/timebase';
-import { useSession, useSessionContext, useSessionStore } from '@/shared/session/session-context';
+import { useSession, useSessionContext, useSessionStore } from '@/session/session-context';
 import { HostConnectionChangedError } from '@/native/invoke';
 import { notify } from '@/shared/notify';
 import { reorderTargetIndex } from '@/features/timeline/model/timeline-layout';

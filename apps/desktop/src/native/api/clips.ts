@@ -7,7 +7,7 @@ import type {
   MidiClipMove,
   MidiClipPatch,
 } from '@/model/generated';
-import { dispatchControl } from '../invoke';
+import { dispatchControl } from '@/native/invoke';
 
 export interface ClipApi {
   addAudioClipToArrangement(

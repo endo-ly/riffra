@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { useSession } from '@/shared/session/session-context';
-import { selectHostReady } from '@/shared/session/selectors';
+import { useSession } from '@/session/session-context';
+import { selectHostReady } from '@/session/selectors';
 import { Notice } from '@/shared/ui/message/Notice';
 import { MissingDependenciesDialog } from './MissingDependencies';
 

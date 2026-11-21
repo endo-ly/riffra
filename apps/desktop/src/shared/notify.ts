@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import { errorText } from '@/shared/errors';
+import { errorText } from './errors';
 import type { Tone } from '@/shared/ui/message/tone';
 
 type ToastTone = Extract<Tone, 'info' | 'success' | 'danger'>;

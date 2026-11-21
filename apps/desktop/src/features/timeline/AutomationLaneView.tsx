@@ -9,8 +9,8 @@ import type {
 } from '@/model/generated';
 import { automationTargetKey, automationValueAt, type AutomationOption } from '@/model/automation';
 import { isEditableTypingTarget } from '@/shared/input';
-import { usePointerGesture } from '@/shared/usePointerGesture';
-import { useAutomationValueDisplay } from '@/shared/useAutomationValueDisplay';
+import { usePointerGesture } from '@/shared/hooks/usePointerGesture';
+import { useAutomationValueDisplay } from '@/shared/hooks/useAutomationValueDisplay';
 import styles from './AutomationLane.module.css';
 
 const HEIGHT = 128;

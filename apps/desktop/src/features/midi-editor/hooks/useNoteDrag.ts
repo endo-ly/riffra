@@ -8,8 +8,12 @@ import {
   type RefObject,
 } from 'react';
 import type { MidiClip, MidiNote, MidiNoteInput } from '@/model/generated';
-import type { usePointerGesture } from '@/shared/usePointerGesture';
-import { buildNoteDragPreview, calculateNoteDrag, type NoteDragMode } from '../model/note-drag';
+import type { usePointerGesture } from '@/shared/hooks/usePointerGesture';
+import {
+  buildNoteDragPreview,
+  calculateNoteDrag,
+  type NoteDragMode,
+} from '@/features/midi-editor/model/note-drag';
 import type { NoteEdit } from './useNoteEditing';
 
 interface Options {

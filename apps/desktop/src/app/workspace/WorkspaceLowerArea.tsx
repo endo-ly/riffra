@@ -1,20 +1,21 @@
-import { Activity, type CSSProperties, type ReactNode } from 'react';
+import { Activity, type CSSProperties, type ReactNode, type RefObject } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { useSession } from '@/shared/session/session-context';
-import type { useLivePlay } from '@/features/live-input/useLivePlay';
-import { WorkspacePlaySurface } from '@/features/live-input/PlaySurface';
-import { WorkspaceMidiEditor } from '@/features/midi-editor/MidiEditorPanel';
+import { useSession } from '@/session/session-context';
+import type { useLivePlay } from '@/features/live-input/hooks/useLivePlay';
+import { PlaySurface } from '@/features/live-input/PlaySurface';
+import { MidiEditorPanel } from '@/features/midi-editor/MidiEditorPanel';
 import { DevicesPanel } from '@/features/devices/DevicesPanel';
 import { MixerPanel } from '@/features/mixer/MixerPanel';
 import { ToolbarButton } from '@/shared/ui/Toolbar';
 import { ResizeHandle } from '@/shared/ui/ResizeHandle';
-import { usePointerGesture } from '@/shared/usePointerGesture';
 import styles from './WorkspaceLowerArea.module.css';
-import type { WorkspaceLowerView } from '@/shared/session/slices/workspace';
+import type { WorkspaceLowerView } from '@/session/slices/workspace';
 
 const COLLAPSED_HEIGHT = 48;
 
 interface WorkspaceLowerAreaProps {
+  /** The Workspace element whose height bounds the lower area. */
+  workspaceRef: RefObject<HTMLElement | null>;
   view: WorkspaceLowerView;
   height: number;
   minimumHeight: number;
@@ -27,6 +28,7 @@ interface WorkspaceLowerAreaProps {
 }
 
 function LowerAreaLayout({
+  workspaceRef,
   view,
   height,
   minimumHeight,
@@ -37,11 +39,10 @@ function LowerAreaLayout({
   controls,
   children,
 }: WorkspaceLowerAreaProps) {
-  const startGesture = usePointerGesture();
   if (view === 'closed') return null;
 
-  const applyHeight = (workspace: HTMLElement | null, nextHeight: number) => {
-    const maxHeight = Math.max(minimumHeight, (workspace?.clientHeight ?? 900) - 42);
+  const applyHeight = (nextHeight: number) => {
+    const maxHeight = Math.max(minimumHeight, (workspaceRef.current?.clientHeight ?? 900) - 42);
     const clamped = Math.min(maxHeight, nextHeight);
     if (clamped < minimumHeight) {
       onCollapsedChange(true);
@@ -49,25 +50,6 @@ function LowerAreaLayout({
     }
     onCollapsedChange(false);
     onHeightChange(clamped);
-  };
-
-  const startResize = (event: React.PointerEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    const startY = event.clientY;
-    const startHeight = collapsed ? COLLAPSED_HEIGHT : height;
-    const workspace = event.currentTarget.closest<HTMLElement>('[data-arrange-workspace]');
-    startGesture(event, {
-      onMove: (pointer) => applyHeight(workspace, startHeight - pointer.clientY + startY),
-      onEnd: () => undefined,
-    });
-  };
-
-  const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
-    event.preventDefault();
-    const delta = (event.key === 'ArrowUp' ? 1 : -1) * (event.shiftKey ? 24 : 8);
-    const workspace = document.querySelector<HTMLElement>('[data-arrange-workspace]');
-    applyHeight(workspace, (collapsed ? COLLAPSED_HEIGHT : height) + delta);
   };
 
   return (
@@ -83,8 +65,9 @@ function LowerAreaLayout({
         ariaLabel="Resize Arrange lower area"
         ariaValueMin={COLLAPSED_HEIGHT}
         ariaValueNow={collapsed ? COLLAPSED_HEIGHT : height}
-        onPointerDown={startResize}
-        onKeyDown={onKeyDown}
+        value={collapsed ? COLLAPSED_HEIGHT : height}
+        direction={-1}
+        onResize={(startValue, delta) => applyHeight(startValue + delta)}
         style={{ position: 'absolute', top: 0, left: 0, width: '100%' }}
       />
       <div className={styles.actions} aria-label="Arrange lower area controls">
@@ -97,7 +80,13 @@ function LowerAreaLayout({
   );
 }
 
-export function WorkspaceLowerArea({ play }: { play: ReturnType<typeof useLivePlay> }) {
+export function WorkspaceLowerArea({
+  play,
+  workspaceRef,
+}: {
+  play: ReturnType<typeof useLivePlay>;
+  workspaceRef: RefObject<HTMLElement | null>;
+}) {
   const { lower, setLowerCollapsed, setLowerMaximized, setLowerHeight, closeLower } = useSession(
     useShallow((state) => ({
       lower: state.workspace.lower,
@@ -132,6 +121,7 @@ export function WorkspaceLowerArea({ play }: { play: ReturnType<typeof useLivePl
   );
   return (
     <LowerAreaLayout
+      workspaceRef={workspaceRef}
       view={lower.view}
       height={lower.heights[heightKey]}
       minimumHeight={lower.view === 'mixer' ? 240 : lower.view === 'playSurface' ? 220 : 180}
@@ -142,8 +132,8 @@ export function WorkspaceLowerArea({ play }: { play: ReturnType<typeof useLivePl
       controls={controls}
     >
       <>
-        {lower.view === 'playSurface' && <WorkspacePlaySurface play={play} />}
-        {lower.view === 'midiEditor' && <WorkspaceMidiEditor />}
+        {lower.view === 'playSurface' && <PlaySurface play={play} />}
+        {lower.view === 'midiEditor' && <MidiEditorPanel />}
         {lower.view === 'devices' && <DevicesPanel />}
         {lower.view === 'mixer' && <MixerPanel />}
       </>

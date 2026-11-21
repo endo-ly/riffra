@@ -1,4 +1,4 @@
-import { defaultSession } from '@/native/browser-defaults';
+import { defaultSession } from '@/native/preview/fixtures';
 import { describe, expect, it } from 'vitest';
 import type { AudioClip, MidiClip } from '@/model/generated';
 import {

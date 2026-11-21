@@ -363,15 +363,13 @@ bool decodeInstrument(const juce::var& value, const juce::String& path, Instrume
         return true;
     }
     if (type == "internal") {
-        ContractReader reader(
-            value, path, {"type", "id", "bypassed", "definitionJson", "definitionBaseDir", "midi"},
-            error);
+        ContractReader reader(value, path,
+                              {"type", "id", "definitionJson", "definitionBaseDir", "midi"}, error);
         juce::String actualType;
         InternalInstrumentSpec instrument;
         juce::var midi;
         if (!reader.string("type", actualType) || actualType != type ||
             !reader.string("id", instrument.id) ||
-            !reader.boolean("bypassed", instrument.bypassed) ||
             !reader.string("definitionJson", instrument.definitionJson) ||
             !reader.string("definitionBaseDir", instrument.definitionBaseDir) ||
             !reader.object("midi", midi) || !reader.finish())

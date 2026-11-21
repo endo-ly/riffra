@@ -137,7 +137,6 @@
         "instrument": {
           "type": "internal",
           "id": "instrument-internal",
-          "bypassed": true,
           "definitionJson": "{\"schemaVersion\":1}",
           "definitionBaseDir": "instruments/builtin/preset",
           "midi": {

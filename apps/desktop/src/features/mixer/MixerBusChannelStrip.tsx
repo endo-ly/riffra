@@ -1,9 +1,9 @@
 import type { MixBusPatch } from '@/model/generated';
 import type { MixBus } from '@/model/generated';
-import { MIX_GAIN_DB, MIX_PAN } from '@/model/mix-range';
-import { formatGainDb, formatPan } from '@/shared/audio/mix-format';
-import { useSessionContext } from '@/shared/session/session-context';
-import { useChannelMixValue } from '@/shared/session/useChannelMixValue';
+import { MIX_GAIN_DB, MIX_PAN } from '@/model/mix';
+import { formatGainDb, formatPan } from '@/model/mix';
+import { useSessionContext } from '@/session/session-context';
+import { useChannelMixValue } from '@/session/hooks/useChannelMixValue';
 import { ValueSlider } from '@/shared/ui/ValueSlider';
 import styles from './Mixer.module.css';
 import { MixerMeter } from './MixerMeter';

@@ -6,7 +6,7 @@ import type {
   ScoreRebuild,
 } from '@/model/generated';
 import type { SessionSettingsPatch } from '@/model/generated';
-import { dispatchControl } from '../invoke';
+import { dispatchControl } from '@/native/invoke';
 
 export interface ProjectApi {
   undoSession(): Promise<ArrangementMutationResult>;

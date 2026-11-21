@@ -4,4 +4,10 @@ import type { LoudnessMastering } from "./LoudnessMastering";
 /**
  * Project-wide offline render conditions and master mix envelope.
  */
-export type MixdownSettings = { musicalEndTick: number, tailSeconds: number, fadeOutSeconds: number, pluginWarmUpSeconds: number, mastering: LoudnessMastering | null, sampleRate: number | null, blockSize: number | null, };
+export type MixdownSettings = { musicalEndTick: number, tailSeconds: number, fadeOutSeconds: number, 
+/**
+ * Wall-clock seconds to process VST3 plugins before rendering, excluded from the WAV.
+ * Defaults to 2 when omitted; range 0..=60. Increase if asynchronous sample loading
+ * leaves the start silent or incomplete; 0 disables warm-up.
+ */
+pluginWarmUpSeconds: number, mastering: LoudnessMastering | null, sampleRate: number | null, blockSize: number | null, };

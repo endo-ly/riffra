@@ -29,6 +29,7 @@ use crate::jobs::{self, JobRegistry};
 use crate::recording::{self, RecordingContext};
 use crate::render;
 use crate::runtime::RuntimeError;
+use crate::session::adapter::BYPASSED_DEVICE_MESSAGE;
 use crate::session::{adapter as session_adapter, commit, context::SessionContext};
 use crate::startup;
 use crate::{

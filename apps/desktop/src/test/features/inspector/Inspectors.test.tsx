@@ -1,12 +1,12 @@
 import { createTestSessionStore, TestSessionProvider } from '@/test/support/session-provider';
-import { createSessionStore } from '@/shared/session/store';
-import { bindSessionRuntime } from '@/shared/session/runtime';
+import { createSessionStore } from '@/session/store';
+import { bindSessionRuntime } from '@/session/runtime';
 import type { ReactElement, ReactNode } from 'react';
 // @vitest-environment jsdom
 
 import type { EditorSelection } from '@/model/editor-selection';
 import type { CreativeSession } from '@/model/generated';
-import { canonicalState, defaultSession } from '@/native/browser-defaults';
+import { canonicalState, defaultSession } from '@/native/preview/fixtures';
 import { toAssetId } from '@/model/asset-id';
 import {
   createFakeNativeApi,

@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react';
 import type { MidiClip } from '@/model/generated';
-import { PITCH_HIGH } from '../model/pitch-grid';
+import { LANE_LABEL_WIDTH, PITCH_HIGH } from '@/features/midi-editor/model/pitch-grid';
 
 const ZOOM_STEP = 1.25;
-export const LANE_LABEL_WIDTH = 48;
 
 export function useMidiEditorViewport(
   clip: MidiClip | null,

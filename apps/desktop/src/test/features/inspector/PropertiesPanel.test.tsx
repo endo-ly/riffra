@@ -1,22 +1,19 @@
-import { TestSessionProvider } from '@/test/support/session-provider';
 // @vitest-environment jsdom
 
 import type { AudioClip, MidiClip } from '@/model/generated';
-import { canonicalState, defaultSession } from '@/native/browser-defaults';
+import type { EditorSelection } from '@/model/editor-selection';
+import { canonicalState, defaultSession } from '@/native/preview/fixtures';
 import { toAssetId } from '@/model/asset-id';
-import { createFakeNativeApi, fakeAudioStatus } from '@/test/support/fake-native-api';
+import { createFakeNativeApi } from '@/test/support/fake-native-api';
+import { createTestSessionStore, renderWithSession } from '@/test/support/session-provider';
 import '@testing-library/jest-dom/vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
-import { PropertiesPanelView } from '@/features/inspector/PropertiesPanel';
+import { PropertiesPanel } from '@/features/inspector/PropertiesPanel';
 
 afterEach(cleanup);
 
-function renderPanel(
-  selection: Parameters<typeof PropertiesPanelView>[0]['editorSelection'],
-  initialSession = defaultSession(),
-  onOpenDevices = () => undefined,
-) {
+function renderPanel(selection: EditorSelection, initialSession = defaultSession()) {
   const session = initialSession;
   session.arrangement.tracks.push({
     externalAudioSourceTrackIds: [],
@@ -34,19 +31,9 @@ function renderPanel(
     effects: [],
   });
   const api = createFakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
-  render(
-    <TestSessionProvider api={api}>
-      <PropertiesPanelView
-        audio={fakeAudioStatus()}
-        recordingCommandPending={false}
-        session={session}
-        editorSelection={selection}
-        setEditorSelection={() => undefined}
-        onOpenDevices={onOpenDevices}
-        onRecordAnotherTake={() => undefined}
-      />
-    </TestSessionProvider>,
-  );
+  const store = createTestSessionStore(api, { session });
+  store.getState().workspace.setSelection(selection);
+  renderWithSession(<PropertiesPanel />, { api, store });
 }
 
 function audioClip(id: string, name: string, startTick: number): AudioClip {

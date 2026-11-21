@@ -333,8 +333,8 @@ TimelineSnapshotSpec makeBuiltInInstrumentSnapshot(const juce::String& trackId,
     auto& track = snapshot.graph.tracks.front();
     track.armed = armed;
     track.instrument = InternalInstrumentSpec{
-        "instrument:clean-sub-bass", false,
-        preset.getChildFile("definition.json").loadFileAsString(), preset.getFullPathName()};
+        "instrument:clean-sub-bass", preset.getChildFile("definition.json").loadFileAsString(),
+        preset.getFullPathName()};
     track.midiClips.push_back(MidiClipSpec{"midi:builtin",
                                            0,
                                            loopEnabled ? 240u : 960u,

@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { SNAP_GRID_OPTIONS, snapGridLabel, type SnapGrid } from '@/model/clip-grid';
 import type { TimelineTool } from '@/features/timeline/model/timeline-layout';
 import {
@@ -27,19 +28,11 @@ interface TimelineToolbarProps {
   onTogglePlaySurface: () => void;
   mixerOpen: boolean;
   onToggleMixer: () => void;
-  computerKeyboardOn: boolean;
-  /** What the computer keyboard plays while it is on: an octave such as `C4`, or `Pads`. */
-  computerKeyboardRange: string;
-  /** Why live input cannot reach the focused Track, or `null` when it can. */
-  computerKeyboardBlockedReason: string | null;
-  onToggleComputerKeyboard: () => void;
+  /** Placed at the end of the toolbar, after the toggles. */
+  accessory?: ReactNode;
 }
 
 export function TimelineToolbar(props: TimelineToolbarProps) {
-  // One source of truth, so the toggle state and its label can never disagree.
-  const computerKeyboardOn =
-    props.computerKeyboardOn && props.computerKeyboardBlockedReason === null;
-
   return (
     <Toolbar
       label="Arrange toolbar"
@@ -112,19 +105,7 @@ export function TimelineToolbar(props: TimelineToolbarProps) {
       >
         Play Surface
       </ToolbarToggle>
-      <ToolbarToggle
-        active={computerKeyboardOn}
-        icon="computerKeyboard"
-        ariaLabel="Computer keyboard input"
-        title={
-          props.computerKeyboardBlockedReason === null
-            ? 'Play the focused Instrument Track from the computer keyboard (Ctrl+Shift+K)'
-            : `${props.computerKeyboardBlockedReason} Computer keyboard input stays off.`
-        }
-        onClick={props.onToggleComputerKeyboard}
-      >
-        {computerKeyboardOn ? props.computerKeyboardRange : undefined}
-      </ToolbarToggle>
+      {props.accessory}
     </Toolbar>
   );
 }

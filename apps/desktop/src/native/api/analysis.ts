@@ -1,5 +1,5 @@
 import type { AssetId, AudioAnalysis } from '@/model/generated';
-import { dispatchControl } from '../invoke';
+import { dispatchControl } from '@/native/invoke';
 
 export interface AnalysisApi {
   analyzeAsset(assetId: AssetId): Promise<AudioAnalysis>;

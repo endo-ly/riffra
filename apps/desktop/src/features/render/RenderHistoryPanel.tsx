@@ -2,15 +2,16 @@ import type { RenderHistoryEntry } from '@/model/generated';
 import { chooseRenderDirectory, saveRenderWav } from '@/native/dialog';
 import { errorText } from '@/shared/errors';
 import { notify } from '@/shared/notify';
-import { useSessionContext } from '@/shared/session/session-context';
+import { useSessionContext } from '@/session/session-context';
 import { ConfirmDialog } from '@/shared/ui/ConfirmDialog';
 import controls from '@/shared/ui/controls.module.css';
-import { Icon } from '@/shared/ui/primitives';
+import { Icon } from '@/shared/ui/Icon';
 import { useCallback, useEffect, useState } from 'react';
 import styles from './Render.module.css';
 import { DialogSection } from '@/shared/ui/Dialog';
 import { RenderMeasurements } from './RenderMeasurements';
 import { InlineMessage } from '@/shared/ui/message/InlineMessage';
+import { fileName } from '@/shared/path';
 
 interface Props {
   refreshToken: string;
@@ -40,12 +41,8 @@ function formatDuration(durationMs: number) {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 }
 
-function shortPath(path: string) {
-  return path.split(/[\\/]/).at(-1) || path;
-}
-
 function deleteRenderMessage(render: RenderHistoryEntry) {
-  const fileNames = render.files.map((file) => shortPath(file.path)).join(', ') || 'none';
+  const fileNames = render.files.map((file) => fileName(file.path)).join(', ') || 'none';
   const existingFiles = render.files.filter((file) => file.fileExists).length;
   const assetIds =
     render.files
@@ -213,7 +210,7 @@ export function RenderHistoryPanel({ refreshToken }: Props) {
                     {render.files.map((file) => (
                       <li key={`${file.path}:${file.assetId ?? ''}`} title={file.path}>
                         <Icon name="wave" />
-                        <span>{shortPath(file.path)}</span>
+                        <span>{fileName(file.path)}</span>
                         <small data-missing={!file.fileExists || !file.assetRegistered}>
                           {file.fileExists ? formatBytes(file.fileSizeBytes) : 'file missing'} ·{' '}
                           {file.assetRegistered ? `Asset ${file.assetId}` : 'Asset missing'}

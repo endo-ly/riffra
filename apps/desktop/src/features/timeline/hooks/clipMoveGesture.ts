@@ -1,5 +1,5 @@
 import type { PointerEvent as ReactPointerEvent } from 'react';
-import type { usePointerGesture } from '@/shared/usePointerGesture';
+import type { usePointerGesture } from '@/shared/hooks/usePointerGesture';
 import { notify } from '@/shared/notify';
 import type { TrackKind } from '@/model/generated';
 import {

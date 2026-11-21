@@ -170,7 +170,7 @@
 }
 
 .timeline {
-  composes: scope from '../../shared/ui/TimelineTokens.module.css';
+  composes: scope from '@/styles/TimelineTokens.module.css';
   position: relative;
   min-width: 100%;
   min-height: 100%;

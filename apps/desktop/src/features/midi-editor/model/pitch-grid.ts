@@ -1,3 +1,4 @@
+export const LANE_LABEL_WIDTH = 48;
 export const PITCH_HIGH = 128;
 export const PITCH_LOW = 0;
 

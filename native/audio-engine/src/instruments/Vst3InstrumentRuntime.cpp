@@ -24,7 +24,7 @@ std::unique_ptr<Vst3InstrumentRuntime> Vst3InstrumentRuntime::create(
     if (!rack->applyPersistedState(persistedState, error, observer)) return nullptr;
     auto runtime =
         std::unique_ptr<Vst3InstrumentRuntime>(new Vst3InstrumentRuntime(std::move(rack)));
-    if (mode == PluginProcessingMode::realtime && !persistedState.bypassed) {
+    if (mode == PluginProcessingMode::realtime) {
         if (observer) observer(LoadPhase::preparing);
         constexpr double warmUpSeconds = 2.0;
         const auto blockCount =

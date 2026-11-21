@@ -1,5 +1,5 @@
 import type { ArrangementMutationResult, AssetId, MissingDependency } from '@/model/generated';
-import { dispatchControl } from '../invoke';
+import { dispatchControl } from '@/native/invoke';
 
 export interface MissingDependencyApi {
   getMissingDependencies(): Promise<MissingDependency[]>;

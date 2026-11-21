@@ -2,8 +2,8 @@ import { useEffect } from 'react';
 import type { Arrangement, ProjectTimebase } from '@/model/generated';
 import { clipExtentTicks } from '@/features/timeline/model/timeline-layout';
 import { isEditableTypingTarget } from '@/shared/input';
-import { useSessionStore } from '@/shared/session/session-context';
-import { selectWorkspaceWaiting } from '@/shared/session/selectors';
+import { useSessionStore } from '@/session/session-context';
+import { selectWorkspaceWaiting } from '@/session/selectors';
 
 interface TimelineShortcutOptions {
   /** Ruler keys: range and marker handling. */

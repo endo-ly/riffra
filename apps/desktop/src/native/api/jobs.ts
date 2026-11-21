@@ -2,7 +2,7 @@ type ScanJobStatus = Extract<BackgroundJobStatus, { kind: 'scan' }>;
 
 import type { BackgroundJobStatus } from '@/model/generated';
 
-import { dispatchControl } from '../invoke';
+import { dispatchControl } from '@/native/invoke';
 
 export interface JobApi {
   startScanJob(path?: string): Promise<ScanJobStatus>;

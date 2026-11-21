@@ -7,13 +7,13 @@ import type {
   EffectOwner,
   ProjectTimebase,
 } from '@/model/generated';
-import { Icon } from '@/shared/ui/primitives';
+import { Icon } from '@/shared/ui/Icon';
 import controls from '@/shared/ui/controls.module.css';
-import { useSession, useSessionContext } from '@/shared/session/session-context';
-import { useDeviceDetails } from './useDeviceDetails';
+import { useSession, useSessionContext } from '@/session/session-context';
+import { useDeviceDetails } from '@/features/devices/hooks/useDeviceDetails';
 import { DeviceSidechainEditor } from './DeviceSidechainEditor';
 import { automationValueAt } from '@/model/automation';
-import { useAutomationValueDisplay } from '@/shared/useAutomationValueDisplay';
+import { useAutomationValueDisplay } from '@/shared/hooks/useAutomationValueDisplay';
 import styles from './Devices.module.css';
 import { InlineMessage } from '@/shared/ui/message/InlineMessage';
 

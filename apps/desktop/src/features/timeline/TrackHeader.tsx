@@ -1,15 +1,15 @@
 import { useEffect, useState } from 'react';
 import type { MonitoringState } from '@/model/generated';
-import { useSessionContext } from '@/shared/session/session-context';
-import { useChannelMixValue } from '@/shared/session/useChannelMixValue';
-import { MIX_GAIN_DB, MIX_PAN } from '@/model/mix-range';
+import { useSessionContext } from '@/session/session-context';
+import { useChannelMixValue } from '@/session/hooks/useChannelMixValue';
+import { MIX_GAIN_DB, MIX_PAN } from '@/model/mix';
 import { ValueSlider } from '@/shared/ui/ValueSlider';
-import { formatGainDb, formatPan } from '@/shared/audio/mix-format';
-import { Icon } from '@/shared/ui/primitives';
+import { formatGainDb, formatPan } from '@/model/mix';
+import { Icon } from '@/shared/ui/Icon';
 import type { ContextMenuItem } from '@/shared/ui/ContextMenu';
 import { MenuButton } from '@/shared/ui/MenuButton';
-import { usePointerGesture } from '@/shared/usePointerGesture';
-import type { TrackSize } from './model/timeline-layout';
+import { usePointerGesture } from '@/shared/hooks/usePointerGesture';
+import type { TrackSize } from '@/features/timeline/model/timeline-layout';
 import type { TimelineTrackProps } from './TimelineTrack';
 import styles from './TrackHeader.module.css';
 

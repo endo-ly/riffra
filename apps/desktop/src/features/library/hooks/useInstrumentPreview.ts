@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { InstrumentLibraryItem } from '@/model/generated';
 import { logNativeError } from '@/native/invoke';
 import { notify } from '@/shared/notify';
-import { useSession, useSessionContext, useSessionStore } from '@/shared/session/session-context';
+import { useSession, useSessionContext, useSessionStore } from '@/session/session-context';
 
 export function useInstrumentPreview() {
   const { api } = useSessionContext();
