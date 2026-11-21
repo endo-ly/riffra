@@ -100,7 +100,8 @@ void RecordingController::setFinalizationDispatcher(FinalizationDispatcher dispa
 }
 
 void RecordingController::setStopCompletion(StopCompletion completion) {
-    const std::lock_guard guard(stopMutex);
+    std::unique_lock guard(stopMutex);
+    stopCompletionFinished.wait(guard, [this] { return !stopCompletionRunning; });
     stopCompletion = std::move(completion);
 }
 
@@ -215,11 +216,17 @@ void RecordingController::stopWorkerLoop() {
             pending = *pendingStop;
             pendingStop.reset();
             completion = stopCompletion;
+            stopCompletionRunning = completion != nullptr;
         }
 
         juce::String error;
         const auto completed = applyStop(pending, error);
         if (completion != nullptr) completion(completed == RealtimeRequest::accepted, error);
+        {
+            const std::lock_guard guard(stopMutex);
+            stopCompletionRunning = false;
+        }
+        stopCompletionFinished.notify_all();
         finishStop();
     }
 }
