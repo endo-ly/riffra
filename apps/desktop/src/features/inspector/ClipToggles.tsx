@@ -1,4 +1,4 @@
-import { Icon } from '@/shared/ui/primitives';
+import { Icon } from '@/shared/ui/Icon';
 import styles from './Inspector.module.css';
 
 interface ClipTogglesProps {

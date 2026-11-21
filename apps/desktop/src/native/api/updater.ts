@@ -1,4 +1,4 @@
-import { invoke } from '../invoke';
+import { invoke } from '@/native/invoke';
 
 export interface UpdaterApi {
   checkForAppUpdate(): Promise<string | null>;

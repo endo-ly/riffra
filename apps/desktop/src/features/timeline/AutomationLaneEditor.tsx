@@ -7,7 +7,7 @@ import type {
   DeviceParameterInfo,
   EffectOwner,
 } from '@/model/generated';
-import { useSession, useSessionContext } from '@/shared/session/session-context';
+import { useSession, useSessionContext } from '@/session/session-context';
 import { errorText } from '@/shared/errors';
 import {
   automationDevices,

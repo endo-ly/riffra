@@ -7,10 +7,10 @@ import type {
   MidiClip,
   TrackKind,
 } from '@/model/generated';
-import { useSessionContext } from '@/shared/session/session-context';
+import { useSessionContext } from '@/session/session-context';
 import { notify } from '@/shared/notify';
 import { ticksToFrames } from '@/model/timebase';
-import { usePointerGesture } from '@/shared/usePointerGesture';
+import { usePointerGesture } from '@/shared/hooks/usePointerGesture';
 import { clipDurationTicks, midiClipDurationTicks } from '@/model/clip-time';
 import type { TimelineTool } from '@/features/timeline/model/timeline-layout';
 import {

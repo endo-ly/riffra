@@ -4,7 +4,7 @@ import type {
   DeviceSidechainCapability,
   EffectOwner,
 } from '@/model/generated';
-import { useSession, useSessionContext } from '@/shared/session/session-context';
+import { useSession, useSessionContext } from '@/session/session-context';
 import { SidechainSendControls } from '@/features/mixer/SidechainSendControls';
 import controls from '@/shared/ui/controls.module.css';
 import styles from './Devices.module.css';

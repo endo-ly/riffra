@@ -1,12 +1,7 @@
 import { errorText } from '@/shared/errors';
-import { useSession } from '@/shared/session/session-context';
+import { useSession } from '@/session/session-context';
 import { useEffect, useRef, useState } from 'react';
-import type {
-  AudioDeviceProbe,
-  AudioDriverConfig,
-  AudioStatus,
-  DeviceChannels,
-} from '@/model/generated';
+import type { AudioStatus } from '@/model/generated';
 import {
   audioBufferSizeOptions,
   audioSampleRateOptions,
@@ -16,66 +11,31 @@ import {
   mergeAudioStatusChannels,
   mergeDeviceChannels,
   normalizeAudioSettingsDraft,
+  sameAudioSettingsDraft,
   selectDriverForDraft,
-} from '@/features/audio/audio-settings';
-import { isAudioEngineUsable } from '@/shared/audio/audio-safety';
+} from '@/features/audio/model/settings-draft';
+import { isAudioEngineUsable } from '@/model/audio-status';
 import { Dialog } from '@/shared/ui/Dialog';
 import surface from '@/shared/ui/Surface.module.css';
 import styles from './AudioSettingsDialog.module.css';
 import { InlineMessage } from '@/shared/ui/message/InlineMessage';
 
-interface AudioSettingsDialogProps {
-  audio: AudioStatus;
-  probe: AudioDeviceProbe;
-  safeMode: boolean;
-  recordingActive: boolean;
-
-  onClose: () => void;
-  onRefresh: () => Promise<AudioDeviceProbe>;
-  onProbeChannels: (
-    driver: string,
-    inputDevice: string,
-    outputDevice: string,
-  ) => Promise<DeviceChannels>;
-  onApply: (config: AudioDriverConfig) => Promise<AudioStatus>;
-  onRecover: () => Promise<AudioStatus>;
-}
-
 export function AudioSettingsDialog({ onClose }: { onClose: () => void }) {
-  const audio = useSession((state) => state.audio);
+  const audioSlice = useSession((state) => state.audio);
   const recording = useSession((state) => state.recording);
+  const audio = audioSlice.status;
+  const probe = audioSlice.probe;
   const safeMode = useSession((state) => state.project.boot?.safeMode ?? false);
-  return (
-    <AudioSettingsDialogView
-      audio={audio.status}
-      probe={audio.probe}
-      safeMode={safeMode}
-      recordingActive={
-        audio.status.recording.active ||
-        audio.status.recording.processing ||
-        recording.commandPending ||
-        recording.stopPending
-      }
-      onClose={onClose}
-      onRefresh={audio.refreshDevices}
-      onProbeChannels={audio.probeChannels}
-      onApply={audio.selectDriver}
-      onRecover={audio.recover}
-    />
-  );
-}
+  const recordingActive =
+    audio.recording.active ||
+    audio.recording.processing ||
+    recording.commandPending ||
+    recording.stopPending;
+  const onRefresh = audioSlice.refreshDevices;
+  const onProbeChannels = audioSlice.probeChannels;
+  const onApply = audioSlice.selectDriver;
+  const onRecover = audioSlice.recover;
 
-export function AudioSettingsDialogView({
-  audio,
-  probe,
-  safeMode,
-  recordingActive,
-  onClose,
-  onRefresh,
-  onProbeChannels,
-  onApply,
-  onRecover,
-}: AudioSettingsDialogProps) {
   const [initialProbe] = useState(() => mergeAudioStatusChannels(probe, audio));
   const [availableProbe, setAvailableProbe] = useState(initialProbe);
   const [initialDraft] = useState(() => createAudioSettingsDraft(audio, initialProbe));
@@ -196,7 +156,7 @@ export function AudioSettingsDialogView({
     (activeDriver.devicePairing === 'sameDevice'
       ? pairedDevices.length > 0
       : activeDriver.inputs.length > 0 && activeDriver.outputs.length > 0);
-  const changed = !sameDraft(draft, initialDraft);
+  const changed = !sameAudioSettingsDraft(draft, initialDraft);
   const valid = isAudioSettingsDraftValid(draft, availableProbe);
   const busy = refreshing || applying || recovering;
   const fieldsDisabled = busy || safeMode;
@@ -491,17 +451,6 @@ export function AudioSettingsDialogView({
         {error && <InlineMessage tone="danger">{error}</InlineMessage>}
       </div>
     </Dialog>
-  );
-}
-
-function sameDraft(left: AudioDriverConfig, right: AudioDriverConfig): boolean {
-  return (
-    left.driver === right.driver &&
-    left.inputDevice === right.inputDevice &&
-    left.inputChannel === right.inputChannel &&
-    left.outputDevice === right.outputDevice &&
-    left.sampleRate === right.sampleRate &&
-    left.bufferSize === right.bufferSize
   );
 }
 

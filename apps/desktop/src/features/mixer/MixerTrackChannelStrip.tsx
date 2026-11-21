@@ -1,12 +1,12 @@
 import { resolveTrackColor } from '@/model/track-color';
 import type { AutomationLane, Track } from '@/model/generated';
-import { MIX_GAIN_DB, MIX_PAN } from '@/model/mix-range';
-import { formatGainDb, formatPan } from '@/shared/audio/mix-format';
-import { useSessionContext } from '@/shared/session/session-context';
-import { Icon } from '@/shared/ui/primitives';
+import { MIX_GAIN_DB, MIX_PAN } from '@/model/mix';
+import { formatGainDb, formatPan } from '@/model/mix';
+import { useSessionContext } from '@/session/session-context';
+import { Icon } from '@/shared/ui/Icon';
 import { ValueSlider } from '@/shared/ui/ValueSlider';
 import { useState, type CSSProperties } from 'react';
-import { useChannelMixValue } from '@/shared/session/useChannelMixValue';
+import { useChannelMixValue } from '@/session/hooks/useChannelMixValue';
 import styles from './Mixer.module.css';
 import { MixerMeter } from './MixerMeter';
 interface MixerTrackChannelStripProps {

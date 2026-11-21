@@ -7,7 +7,7 @@ import type {
   ProjectTimebase,
   TrackKind,
 } from '@/model/generated';
-import { useSessionContext } from '@/shared/session/session-context';
+import { useSessionContext } from '@/session/session-context';
 import type { ContextMenuItem } from '@/shared/ui/ContextMenu';
 import { notify } from '@/shared/notify';
 import { countOffGridNotes, snapGridTicks, type SnapGrid } from '@/model/clip-grid';

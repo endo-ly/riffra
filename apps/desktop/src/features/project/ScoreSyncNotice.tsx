@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { openScoreYaml } from '@/native/dialog';
 import { notify } from '@/shared/notify';
-import { useSession } from '@/shared/session/session-context';
-import { selectHostReady } from '@/shared/session/selectors';
+import { useSession } from '@/session/session-context';
+import { selectHostReady } from '@/session/selectors';
 import { Notice } from '@/shared/ui/message/Notice';
 import styles from './ScoreSyncNotice.module.css';
 

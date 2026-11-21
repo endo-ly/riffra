@@ -3,8 +3,8 @@ import {
   MUSICAL_TYPING_KEYS,
   baseNoteForOctave,
   typingKeyForSemitone,
-} from '@/features/live-input/musical-typing';
-import { isBlackKey, midiNoteName } from '@/shared/midi';
+} from '@/features/live-input/model/musical-typing';
+import { isBlackKey, midiNoteName } from '@/model/midi';
 import styles from './MusicalTypingKeyboard.module.css';
 
 interface MusicalTypingKeyboardProps {

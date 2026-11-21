@@ -1,17 +1,17 @@
-import { useSessionCommand } from '@/shared/session/useSessionCommand';
+import { useSessionCommand } from '@/session/hooks/useSessionCommand';
 import { snapToBar } from '@/model/timebase';
 import { useCallback, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import type { AudioAnalysis, CreativeSession } from '@/model/generated';
-import type { EditorSelection } from '../../../model/editor-selection';
+import type { EditorSelection } from '@/model/editor-selection';
 import { type TimelineTool } from '@/features/timeline/model/timeline-layout';
 import { timelineObjectEndTick } from '@/model/clip-time';
 import { snapGridTicks, type SnapGrid } from '@/model/clip-grid';
 import { isEditableTypingTarget } from '@/shared/input';
 import { idsInClientRect } from '@/shared/rect-selection';
-import { usePointerGesture } from '@/shared/usePointerGesture';
+import { usePointerGesture } from '@/shared/hooks/usePointerGesture';
 import { useClipInteractions } from './useClipInteractions';
-import { useSessionContext } from '@/shared/session/session-context';
-import type { SessionCommit } from '@/shared/session/commit';
+import { useSessionContext } from '@/session/session-context';
+import type { SessionCommit } from '@/session/commit';
 import { notify } from '@/shared/notify';
 export type EditorCommit = SessionCommit;
 

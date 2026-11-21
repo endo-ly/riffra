@@ -1,5 +1,5 @@
 import type { AudioStatus, RecordingStopResult } from '@/model/generated';
-import { dispatchControl } from '../invoke';
+import { dispatchControl } from '@/native/invoke';
 
 export interface RecordingApi {
   startArrangeRecording(): Promise<AudioStatus>;

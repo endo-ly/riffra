@@ -7,7 +7,7 @@ import type {
   SendPosition,
   SidechainSendPatch,
 } from '@/model/generated';
-import { dispatchControl } from '../invoke';
+import { dispatchControl } from '@/native/invoke';
 
 export interface MixerApi {
   addMixBus(name: string, kind: MixBusKind): Promise<ArrangementMutationResult>;

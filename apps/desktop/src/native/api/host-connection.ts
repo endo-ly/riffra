@@ -5,7 +5,7 @@ import type {
   LocalHostInfo,
 } from '@/model/generated';
 import { listen } from '@tauri-apps/api/event';
-import { adoptHostConnection, HostConnectionChangedError, invoke } from '../invoke';
+import { adoptHostConnection, HostConnectionChangedError, invoke } from '@/native/invoke';
 export interface HostConnectionBootstrap {
   state: HostConnectionState;
   bootstrap: BootstrapState;

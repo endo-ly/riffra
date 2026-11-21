@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import shellStyles from '../AppShell.module.css';
+import shellStyles from '@/app/AppShell.module.css';
 import styles from './BootScreen.module.css';
 import { InlineMessage } from '@/shared/ui/message/InlineMessage';
 

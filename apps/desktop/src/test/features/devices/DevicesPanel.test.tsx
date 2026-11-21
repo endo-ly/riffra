@@ -1,4 +1,5 @@
 import type * as SidechainModule from '@/features/devices/DeviceSidechainEditor';
+import type * as InlineMessageModule from '@/shared/ui/message/InlineMessage';
 import { createTestSessionStore, TestSessionProvider } from '@/test/support/session-provider';
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
@@ -11,10 +12,9 @@ import {
   screen,
   waitFor,
 } from '@testing-library/react';
-import { Profiler, useState } from 'react';
+import { Profiler, type ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type {
-  AutomationTarget,
   CreativeSession,
   DeviceSidechainCapability,
   EffectOwner,
@@ -22,11 +22,12 @@ import type {
   InstrumentLibraryItem,
   Track,
 } from '@/model/generated';
-import { defaultSession } from '@/native/browser-defaults';
+import { defaultSession } from '@/native/preview/fixtures';
 import { createFakeNativeApi, type FakeNativeApi } from '@/test/support/fake-native-api';
-import { resolveDeviceTarget } from '@/features/devices/device-target';
-import { DevicesPanel, DevicesPanelView } from '@/features/devices/DevicesPanel';
-import { useDeviceDetails } from '@/features/devices/useDeviceDetails';
+import { ownerSelection } from '@/model/editor-selection';
+import { resolveDeviceTarget } from '@/features/devices/model/device-target';
+import { DevicesPanel } from '@/features/devices/DevicesPanel';
+import { useDeviceDetails } from '@/features/devices/hooks/useDeviceDetails';
 import { HostConnectionChangedError } from '@/native/invoke';
 
 const sidechainRenders = vi.hoisted(() => ({ count: 0 }));
@@ -37,6 +38,17 @@ vi.mock('@/features/devices/DeviceSidechainEditor', async (importOriginal) => {
     DeviceSidechainEditor: (props: Parameters<typeof actual.DeviceSidechainEditor>[0]) => {
       sidechainRenders.count += 1;
       return <actual.DeviceSidechainEditor {...props} />;
+    },
+  };
+});
+const inlineMessageRenders = vi.hoisted(() => ({ count: 0 }));
+vi.mock('@/shared/ui/message/InlineMessage', async (importOriginal) => {
+  const actual = await importOriginal<typeof InlineMessageModule>();
+  return {
+    ...actual,
+    InlineMessage: (props: Parameters<typeof actual.InlineMessage>[0]) => {
+      inlineMessageRenders.count += 1;
+      return <actual.InlineMessage {...props} />;
     },
   };
 });
@@ -101,8 +113,10 @@ function runtimeApi(
     stereo: false,
     channels: 0,
   },
+  instruments: InstrumentLibraryItem[] = [],
 ) {
   return createFakeNativeApi({
+    instruments,
     responses: {
       inspectDevice: {
         id: effect.id,
@@ -128,47 +142,32 @@ function runtimeApi(
     },
   });
 }
-function Harness({
+function renderDevices({
   api,
   initialTrack = track,
   initialSession,
-  instruments = [],
   owner = { kind: 'track', id: track.id },
-  onOpenAutomation = () => undefined,
+  wrapper,
 }: {
   api: FakeNativeApi;
   initialTrack?: Track;
   initialSession?: CreativeSession;
-  instruments?: InstrumentLibraryItem[];
   owner?: EffectOwner;
-  onOpenAutomation?: (target: AutomationTarget) => void;
+  wrapper?: (content: ReactNode) => ReactNode;
 }) {
   const initial = initialSession ?? defaultSession();
   if (!initialSession) initial.arrangement.tracks = [structuredClone(initialTrack)];
-  const [session, setSession] = useState(initial);
-  const [store] = useState(() =>
-    createTestSessionStore(api, {
-      session: initial,
-      applyCanonical: (canonical) => setSession(canonical.session),
-    }),
-  );
-  return (
+  const store = createTestSessionStore(api, { session: initial });
+  store.getState().workspace.setSelection(ownerSelection(owner));
+  void store.getState().catalog.reloadInstruments();
+  const content = (
     <TestSessionProvider api={api} store={store}>
-      <DevicesPanelView
-        sessionId={session.sessionId}
-        automationLanes={session.arrangement.automationLanes}
-        arrangement={session.arrangement}
-        onOpenAutomation={onOpenAutomation}
-        target={resolveDeviceTarget(session.arrangement, owner)}
-        plugins={[]}
-        instruments={instruments}
-        missingDeviceIds={[]}
-        onDisableMissingPlugin={async () => undefined}
-        onReplaceMissingPlugin={async () => undefined}
-        onRescanMissingPlugins={async () => undefined}
-      />
+      <DevicesPanel />
     </TestSessionProvider>
   );
+  const tree = wrapper ? wrapper(content) : content;
+  const { rerender } = render(tree);
+  return { store, rerender: () => rerender(tree) };
 }
 
 describe('DevicesPanel', () => {
@@ -328,12 +327,12 @@ describe('DevicesPanel', () => {
 
   it('keeps device metadata loaded when the same owner is rendered again', async () => {
     const api = runtimeApi();
-    const { rerender } = render(<Harness api={api} />);
+    const { rerender } = renderDevices({ api });
     fireEvent.click(screen.getByRole('button', { name: effect.name }));
     await screen.findByRole('slider', { name: 'Level' });
     await waitFor(() => expect(screen.getByRole('button', { name: 'Reset Level' })).toBeEnabled());
 
-    rerender(<Harness api={api} />);
+    rerender();
     await act(async () => undefined);
 
     expect(api.calls.filter((call) => call === 'inspectDevice')).toHaveLength(1);
@@ -406,17 +405,23 @@ describe('DevicesPanel', () => {
         return api.mutationResult(structuredClone(currentSession));
       });
       api.openPluginEditor = vi.fn().mockResolvedValue(undefined);
-      render(
-        <Profiler
-          id="device-editor"
-          onRender={() => {
-            const reset = screen.queryByRole('button', { name: 'Reset Level' });
-            if (refreshingMode && reset) enabledDuringRefresh.push(!reset.hasAttribute('disabled'));
-          }}
-        >
-          <Harness api={api} initialSession={structuredClone(currentSession)} owner={owner} />
-        </Profiler>,
-      );
+      renderDevices({
+        api,
+        initialSession: structuredClone(currentSession),
+        owner,
+        wrapper: (content) => (
+          <Profiler
+            id="device-editor"
+            onRender={() => {
+              const reset = screen.queryByRole('button', { name: 'Reset Level' });
+              if (refreshingMode && reset)
+                enabledDuringRefresh.push(!reset.hasAttribute('disabled'));
+            }}
+          >
+            {content}
+          </Profiler>
+        ),
+      });
       if (kind === 'track') expect(screen.getByText('Audio Input →')).toBeInTheDocument();
       else expect(screen.queryByText('Audio Input →')).not.toBeInTheDocument();
       fireEvent.click(screen.getByRole('button', { name: 'Test Effect' }));
@@ -470,7 +475,8 @@ describe('DevicesPanel', () => {
     },
   );
 
-  it('ignores a parameter response after the device is deleted and leaves inspection errors on its card', async () => {
+  it('ignores a parameter response after the device is deleted and keeps errors on the selected owner', async () => {
+    // Arrange: a device whose parameter read stays pending.
     const api = runtimeApi();
     let resolve!: (value: DeviceParameterInfo[]) => void;
     api.listDeviceParameters = vi.fn(
@@ -479,46 +485,71 @@ describe('DevicesPanel', () => {
           resolve = done;
         }),
     );
-    const props = {
-      sessionId: 'project:1',
-      automationLanes: [],
-      arrangement: defaultSession().arrangement,
-      onOpenAutomation: () => undefined,
-      target: {
-        owner: { kind: 'track' as const, id: track.id },
-        name: track.name,
-        track,
-        effects: track.effects,
-      },
-      plugins: [],
-      instruments: [],
-      missingDeviceIds: [],
-      onDisableMissingPlugin: async () => undefined,
-      onReplaceMissingPlugin: async () => undefined,
-      onRescanMissingPlugins: async () => undefined,
-    };
-    const { rerender } = render(<DevicesPanelView {...props} />, {
-      wrapper: ({ children }) => <TestSessionProvider api={api}>{children}</TestSessionProvider>,
-    });
+    const session = defaultSession();
+    session.arrangement.tracks = [structuredClone(track)];
+    const { store } = renderDevices({ api, initialSession: structuredClone(session) });
     fireEvent.click(screen.getByRole('button', { name: 'Test Effect' }));
     await waitFor(() => expect(api.listDeviceParameters).toHaveBeenCalled());
-    rerender(
-      <DevicesPanelView
-        {...props}
-        target={{ ...props.target, track: { ...track, effects: [] }, effects: [] }}
-      />,
-    );
+
+    // Act: the device is removed while its parameters are loading.
+    act(() => {
+      const withoutEffect = structuredClone(session);
+      withoutEffect.arrangement.tracks[0].effects = [];
+      store.getState().project.acceptCanonical(api.mutationResult(withoutEffect).canonical);
+    });
     await act(async () => resolve(parameters));
+
+    // Assert: the late response is not shown.
     expect(screen.queryByLabelText('Level')).not.toBeInTheDocument();
+
+    // Act: the device returns and its inspection fails.
     api.listDeviceParameters = vi.fn().mockRejectedValue(new Error('Inspection unavailable'));
-    rerender(<DevicesPanelView {...props} />);
+    act(() => {
+      store
+        .getState()
+        .project.acceptCanonical(api.mutationResult(structuredClone(session)).canonical);
+    });
     fireEvent.click(screen.getByRole('button', { name: 'Test Effect' }));
+
+    // Assert: the card stays and reports the failure.
     expect(await screen.findByRole('alert')).toHaveTextContent('Inspection unavailable');
     expect(screen.getByRole('button', { name: 'Test Effect' })).toBeInTheDocument();
+
+    // Act: a device command fails on the selected channel.
+    api.setDeviceBypassed = vi.fn().mockRejectedValue(new Error('Bypass rejected'));
+    fireEvent.click(screen.getByRole('button', { name: 'Bypass' }));
+    expect(await screen.findByText('Bypass rejected')).toBeInTheDocument();
+
+    // Act: the selection moves to the master.
+    inlineMessageRenders.count = 0;
+    act(() => {
+      store.getState().workspace.setSelection(ownerSelection({ kind: 'master' }));
+    });
+
+    // Assert: the previous owner's error is not rendered again.
+    expect(inlineMessageRenders.count).toBe(0);
   });
 
-  it('shows built-in and missing device controls without querying VST3 parameters', () => {
-    const api = runtimeApi();
+  it('shows built-in and missing device controls without querying VST3 parameters', async () => {
+    const api = runtimeApi(undefined, [
+      {
+        id: 'builtin:keys',
+        presetId: 'keys',
+        origin: 'builtIn',
+        name: 'Built-in Keys',
+        author: null,
+        description: null,
+        defaultCategory: 'Keys',
+        category: 'Keys',
+        defaultTags: [],
+        userTags: [],
+        tags: [],
+        favorite: false,
+        collectionIds: [],
+        recommendedRange: { minMidi: 48, maxMidi: 84 },
+        preview: null,
+      },
+    ]);
     const builtin: Track = {
       ...track,
       kind: 'instrument',
@@ -535,32 +566,8 @@ describe('DevicesPanel', () => {
       },
       effects: [{ ...effect, plugin: { ...effect.plugin, disabledPlaceholder: true } }],
     };
-    render(
-      <Harness
-        api={api}
-        initialTrack={builtin}
-        instruments={[
-          {
-            id: 'builtin:keys',
-            presetId: 'keys',
-            origin: 'builtIn',
-            name: 'Built-in Keys',
-            author: null,
-            description: null,
-            defaultCategory: 'Keys',
-            category: 'Keys',
-            defaultTags: [],
-            userTags: [],
-            tags: [],
-            favorite: false,
-            collectionIds: [],
-            recommendedRange: { minMidi: 48, maxMidi: 84 },
-            preview: null,
-          },
-        ]}
-      />,
-    );
-    expect(screen.getByText(/Library recommendation:/)).toBeInTheDocument();
+    renderDevices({ api, initialTrack: builtin });
+    expect(await screen.findByText(/Library recommendation:/)).toBeInTheDocument();
     expect(screen.getByLabelText('Playable notes')).toHaveValue('none');
     fireEvent.click(screen.getByRole('button', { name: 'Built-in Keys' }));
     expect(screen.getByRole('button', { name: 'Change' })).toBeInTheDocument();
@@ -576,7 +583,7 @@ describe('DevicesPanel', () => {
       ...structuredClone(track),
       effects: [{ ...structuredClone(effect), bypassed: true }],
     };
-    render(<Harness api={api} initialTrack={bypassed} />);
+    renderDevices({ api, initialTrack: bypassed });
     fireEvent.click(screen.getByRole('button', { name: 'Test Effect' }));
     expect(screen.getByText('Bypassed · unbypass to edit this device.')).toBeInTheDocument();
     expect(api.calls.filter((call) => call === 'inspectDevice')).toHaveLength(0);
@@ -610,20 +617,19 @@ describe('DevicesPanel', () => {
       currentSession.arrangement.mixer.sidechainSends = [];
       return mutation();
     });
-    const opened: AutomationTarget[] = [];
-    render(
-      <Harness
-        api={api}
-        initialSession={structuredClone(currentSession)}
-        onOpenAutomation={(target) => opened.push(target)}
-      />,
-    );
+    const { store } = renderDevices({
+      api,
+      initialSession: structuredClone(currentSession),
+    });
     fireEvent.click(screen.getByRole('button', { name: 'Test Effect' }));
     expect(await screen.findByText('Sidechain input · Stereo · 2 channels')).toBeInTheDocument();
     expect(screen.getByLabelText('Add Sidechain source')).toBeDisabled();
     expect(screen.getByText('All Tracks already feed this device.')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Automation' }));
-    expect(opened).toEqual([{ kind: 'sidechainSendLevel', sidechainSendId: 'sidechain:1' }]);
+    expect(store.getState().workspace.automation.trackTargets['track:2']).toEqual({
+      kind: 'sidechainSendLevel',
+      sidechainSendId: 'sidechain:1',
+    });
     const slider = screen.getByLabelText('Drums sidechain level');
     fireEvent.pointerDown(slider, { pointerId: 1 });
     fireEvent.change(slider, { target: { value: '-12' } });
@@ -654,7 +660,7 @@ describe('DevicesPanel', () => {
       { ...structuredClone(track), id: 'track:2', name: 'Drums', effects: [] },
     ];
 
-    render(<Harness api={api} initialSession={structuredClone(currentSession)} />);
+    renderDevices({ api, initialSession: structuredClone(currentSession) });
     fireEvent.click(screen.getByRole('button', { name: 'Test Effect' }));
 
     expect(
@@ -689,7 +695,7 @@ describe('DevicesPanel', () => {
       },
     ];
 
-    render(<Harness api={api} initialSession={structuredClone(currentSession)} />);
+    renderDevices({ api, initialSession: structuredClone(currentSession) });
     fireEvent.click(screen.getByRole('button', { name: 'Test Effect' }));
 
     expect(

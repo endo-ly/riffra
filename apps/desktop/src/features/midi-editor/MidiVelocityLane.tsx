@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Ref } from 'react';
 import type { MidiNote } from '@/model/generated';
-import { midiNoteName } from '@/shared/midi';
-import { usePointerGesture } from '@/shared/usePointerGesture';
+import { midiNoteName } from '@/model/midi';
+import { usePointerGesture } from '@/shared/hooks/usePointerGesture';
 import styles from './MidiEditorPanel.module.css';
 
 const VELOCITY_DRAG_THRESHOLD = 3;

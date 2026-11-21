@@ -1,5 +1,5 @@
 import type { AssetId, LibraryAsset, RecordingAsset } from '@/model/generated';
-import { dispatchControl, invokeHost } from '../invoke';
+import { dispatchControl, invokeHost } from '@/native/invoke';
 
 export interface LibraryApi {
   listRecordings(query?: string): Promise<RecordingAsset[]>;

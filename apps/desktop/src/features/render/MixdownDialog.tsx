@@ -7,37 +7,21 @@ import type {
 } from '@/model/generated';
 import { chooseRenderDirectory, saveRenderWav } from '@/native/dialog';
 import { errorText } from '@/shared/errors';
-import { useSessionContext } from '@/shared/session/session-context';
+import { useSessionContext } from '@/session/session-context';
 import controls from '@/shared/ui/controls.module.css';
-import { Icon } from '@/shared/ui/primitives';
+import { Icon } from '@/shared/ui/Icon';
 import { useEffect, useId, useRef, useState } from 'react';
 import styles from './Render.module.css';
 import { Dialog, DialogRow, DialogSection } from '@/shared/ui/Dialog';
+import { fileName } from '@/shared/path';
 import { RenderHistoryPanel } from './RenderHistoryPanel';
 import { RenderMeasurements } from './RenderMeasurements';
 import { InlineMessage } from '@/shared/ui/message/InlineMessage';
+import { sameMixdownSettings } from '@/features/render/model/mixdown-settings';
 
 interface Props {
   session: CreativeSession;
   onClose: () => void;
-}
-
-function sameMixdownSettings(left: MixdownSettings, right: MixdownSettings) {
-  const sameMastering =
-    left.mastering === null || right.mastering === null
-      ? left.mastering === right.mastering
-      : left.mastering.integratedLufs === right.mastering.integratedLufs &&
-        left.mastering.truePeakDb === right.mastering.truePeakDb &&
-        left.mastering.loudnessRangeLu === right.mastering.loudnessRangeLu;
-  return (
-    left.musicalEndTick === right.musicalEndTick &&
-    left.tailSeconds === right.tailSeconds &&
-    left.fadeOutSeconds === right.fadeOutSeconds &&
-    left.pluginWarmUpSeconds === right.pluginWarmUpSeconds &&
-    left.sampleRate === right.sampleRate &&
-    left.blockSize === right.blockSize &&
-    sameMastering
-  );
 }
 
 interface NumberFieldProps {
@@ -85,10 +69,6 @@ const OUTPUTS: readonly [boolean, string][] = [
   [false, 'Stereo mix'],
   [true, 'Aligned Track stems'],
 ];
-
-function fileName(path: string) {
-  return path.split(/[\\/]/).at(-1) || path;
-}
 
 export function MixdownDialog(props: Props) {
   const { api, commit: sessionCommit } = useSessionContext();

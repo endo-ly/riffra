@@ -18,7 +18,7 @@ import { useWaveformAnalyses } from '@/features/timeline/hooks/useWaveformAnalys
 import { useClipInteractions } from '@/features/timeline/hooks/useClipInteractions';
 import { TestSessionProvider } from '@/test/support/session-provider';
 import { renderWithSession } from '@/test/support/session-provider';
-import { canonicalState, defaultSession } from '@/native/browser-defaults';
+import { canonicalState, defaultSession } from '@/native/preview/fixtures';
 import { toAssetId } from '@/model/asset-id';
 import { createFakeNativeApi, type FakeNativeApi } from '@/test/support/fake-native-api';
 import type { TimelineTrack } from '@/features/timeline/TimelineTrack';

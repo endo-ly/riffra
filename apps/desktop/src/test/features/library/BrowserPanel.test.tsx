@@ -1,18 +1,22 @@
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { BrowserPanelView, type BrowserPanelProps } from '@/features/library/BrowserPanel';
-import type { InboxController } from '@/features/library/hooks/useInbox';
+import { BrowserPanel } from '@/features/library/BrowserPanel';
 import type {
+  CreativeSession,
   InstrumentLibraryItem,
   LibraryAsset,
   PluginEntry,
   RecordingAsset,
   Track,
 } from '@/model/generated';
+import { createFakeNativeApi, type FakeNativeApi } from '@/test/support/fake-native-api';
+import { createTestSessionStore, renderWithSession } from '@/test/support/session-provider';
+import { defaultSession } from '@/native/preview/fixtures';
+import type { BrowserPlacement } from '@/model/placement';
 import { RIFFRA_PLUGIN_MIME } from '@/shared/browser-drag';
 
 const bass: InstrumentLibraryItem = {
@@ -74,6 +78,7 @@ const targetAsset: LibraryAsset = {
 
 const take = {
   id: 'recording:C:\\inbox\\take-a',
+  path: 'C:\\inbox\\take-a.wav',
   name: 'Take A',
   state: 'completed',
   error: null,
@@ -84,62 +89,47 @@ const take = {
   midiAssetId: null,
 } as RecordingAsset;
 
-const keysTrack = { id: 'track:keys', name: 'Keys', kind: 'instrument' } as Track;
+const keysTrack: Track = {
+  externalAudioSourceTrackIds: [],
+  panLaw: 'equalPower',
+  id: 'track:keys',
+  name: 'Keys',
+  kind: 'instrument',
+  gainDb: 0,
+  pan: 0,
+  muted: false,
+  solo: false,
+  armed: false,
+  monitoring: 'off',
+  midiInput: {},
+  effects: [],
+};
 
-function inbox(): InboxController {
-  return {
-    selectedId: null,
-    setSelectedId: vi.fn(),
-    selected: null,
-    duplicateGroups: [],
-    duplicateIds: new Set(),
-    rename: vi.fn().mockResolvedValue(undefined),
-    remove: vi.fn().mockResolvedValue(undefined),
-    archive: vi.fn().mockResolvedValue(undefined),
-    promote: vi.fn().mockResolvedValue(undefined),
-    tag: vi.fn().mockResolvedValue(null),
-    preview: vi.fn().mockResolvedValue(undefined),
-    detectDuplicates: vi.fn().mockResolvedValue(undefined),
-  };
+function browserSession(track: Track | null): CreativeSession {
+  const session = defaultSession();
+  if (track) session.arrangement.tracks = [track];
+  return session;
 }
 
-function renderBrowser(overrides: Partial<BrowserPanelProps> = {}) {
-  const props: BrowserPanelProps = {
-    query: '',
-    onQueryChange: vi.fn(),
-    library: {
-      results: [] as LibraryAsset[],
-      onPreviewAsset: vi.fn(),
-      onUpdateAsset: vi.fn(),
-      onImportMidi: vi.fn(),
-    },
-    instruments: {
-      items: [bass],
-      categories: ['Bass', 'Other'],
-      collections: [],
-      previewingId: null,
-      previewPendingId: null,
-      loading: false,
-      toggleFavorite: vi.fn(),
-      setCategory: vi.fn(),
-      setTags: vi.fn(),
-      createCollection: vi.fn(),
-      renameCollection: vi.fn(),
-      deleteCollection: vi.fn(),
-      setCollectionMembership: vi.fn(),
-      preview: vi.fn(),
-      reload: vi.fn(),
-    },
-    plugins: [verb],
-    recordings: [take],
-    inbox: inbox(),
-    selectedTrack: null,
-    onApply: vi.fn(),
-    onOpenPlugin: vi.fn(),
-    ...overrides,
-  };
-  render(<BrowserPanelView {...props} />);
-  return props;
+async function renderBrowser({
+  api = createFakeNativeApi({ instruments: [bass] }),
+  selectedTrack = null,
+  onApply = vi.fn(),
+  plugins = [verb],
+}: {
+  api?: FakeNativeApi;
+  selectedTrack?: Track | null;
+  onApply?: (placement: BrowserPlacement) => void;
+  plugins?: PluginEntry[];
+} = {}) {
+  const store = createTestSessionStore(api, { session: browserSession(selectedTrack) });
+  store.getState().catalog.acceptPlugins(plugins);
+  await store.getState().catalog.reloadInstruments();
+  await store.getState().recording.reload();
+  if (selectedTrack)
+    store.getState().workspace.setSelection({ kind: 'track', trackId: selectedTrack.id });
+  renderWithSession(<BrowserPanel onApply={onApply} />, { api, store });
+  return { api, store, onApply };
 }
 
 const treeItem = (name: string) => screen.getByRole('treeitem', { name: new RegExp(`^${name}`) });
@@ -153,14 +143,14 @@ describe('BrowserPanel', () => {
   it('opens a category folder and loads an instrument on a new Track by double-click', async () => {
     // Arrange
     const user = userEvent.setup();
-    const props = renderBrowser();
+    const { onApply } = await renderBrowser();
 
     // Act
     await user.click(treeItem('Bass'));
     await user.dblClick(treeItem('Clean Sub Bass'));
 
     // Assert
-    expect(props.onApply).toHaveBeenCalledWith({
+    expect(onApply).toHaveBeenCalledWith({
       kind: 'instrument',
       instrumentId: 'builtin:bass',
       name: 'Clean Sub Bass',
@@ -171,7 +161,7 @@ describe('BrowserPanel', () => {
   it('offers effect plug-ins for a selected Instrument Track', async () => {
     // Arrange
     const user = userEvent.setup();
-    const props = renderBrowser({ selectedTrack: keysTrack });
+    const { onApply } = await renderBrowser({ selectedTrack: keysTrack });
 
     // Act
     await user.click(treeItem('Effects'));
@@ -179,7 +169,7 @@ describe('BrowserPanel', () => {
     await user.click(screen.getByRole('button', { name: 'Add to Keys' }));
 
     // Assert
-    expect(props.onApply).toHaveBeenCalledWith({
+    expect(onApply).toHaveBeenCalledWith({
       kind: 'effectPlugin',
       pluginPath: 'C:\\VST3\\SpaceVerb.vst3',
       name: 'Space Verb',
@@ -189,7 +179,9 @@ describe('BrowserPanel', () => {
   it('opens instrument and effect plug-ins from their rows instead of previewing them', async () => {
     // Arrange
     const user = userEvent.setup();
-    const props = renderBrowser({ plugins: [verb, synth] });
+    const api = createFakeNativeApi({ instruments: [bass], plugins: [verb, synth] });
+    const openPlugin = vi.spyOn(api, 'openPluginAudition');
+    await renderBrowser({ api, plugins: [verb, synth] });
     await user.click(treeItem('Plug-ins'));
 
     // Act
@@ -200,14 +192,14 @@ describe('BrowserPanel', () => {
     await user.click(screen.getByRole('button', { name: 'Open Space Verb' }));
 
     // Assert
-    expect(props.onOpenPlugin).toHaveBeenNthCalledWith(1, synth);
-    expect(props.onOpenPlugin).toHaveBeenNthCalledWith(2, verb);
+    expect(openPlugin).toHaveBeenNthCalledWith(1, synth.path);
+    expect(openPlugin).toHaveBeenNthCalledWith(2, verb.path);
   });
 
   it('only offers Open for a validated plug-in with a classified role', async () => {
     // Arrange
     const user = userEvent.setup();
-    renderBrowser({ plugins: [unclassified] });
+    await renderBrowser({ plugins: [unclassified] });
     await user.click(treeItem('Unclassified Plug-ins'));
 
     // Act
@@ -220,17 +212,18 @@ describe('BrowserPanel', () => {
   it('previews and edits the asset from the invoked row', async () => {
     // Arrange
     const user = userEvent.setup();
-    const onPreviewAsset = vi.fn();
-    const onUpdateAsset = vi.fn();
-    renderBrowser({
-      query: 'Asset',
-      library: {
-        results: [sourceAsset, targetAsset],
-        onPreviewAsset,
-        onUpdateAsset,
-        onImportMidi: vi.fn(),
+    const api = createFakeNativeApi({
+      instruments: [bass],
+      responses: {
+        searchLibrary: [sourceAsset, targetAsset],
+        updateLibraryAsset: (id: string, tag: string | null) => ({ ...targetAsset, id, tag }),
       },
     });
+    const previewAsset = vi.spyOn(api, 'previewAsset');
+    const updateLibraryAsset = vi.spyOn(api, 'updateLibraryAsset');
+    await renderBrowser({ api });
+    await user.type(screen.getByRole('textbox', { name: 'Browser search' }), 'Asset');
+    await screen.findByRole('treeitem', { name: /^Target Asset/ });
     await user.click(treeItem('Source Asset'));
 
     // Act
@@ -244,15 +237,15 @@ describe('BrowserPanel', () => {
     await user.type(screen.getByRole('textbox', { name: 'Asset tag' }), 'Kit{Enter}');
 
     // Assert
-    expect(onPreviewAsset).toHaveBeenNthCalledWith(1, targetAsset);
-    expect(onPreviewAsset).toHaveBeenNthCalledWith(2, targetAsset);
-    expect(onUpdateAsset).toHaveBeenCalledWith(targetAsset, 'Kit', null);
+    expect(previewAsset).toHaveBeenNthCalledWith(1, 'asset:target', {});
+    expect(previewAsset).toHaveBeenNthCalledWith(2, 'asset:target', {});
+    expect(updateLibraryAsset).toHaveBeenCalledWith('asset:target', 'Kit', null);
   });
 
   it('drags a plug-in so it can be dropped on a Track', async () => {
     // Arrange
     const user = userEvent.setup();
-    renderBrowser();
+    await renderBrowser();
     await user.click(treeItem('Effects'));
     const setData = vi.fn();
 
@@ -274,23 +267,31 @@ describe('BrowserPanel', () => {
   it('deletes a recording from its context menu only after confirmation', async () => {
     // Arrange
     const user = userEvent.setup();
-    const props = renderBrowser();
+    const api = createFakeNativeApi({ instruments: [bass], recordings: [take] });
+    const deleteRecording = vi.spyOn(api, 'deleteRecording');
+    await renderBrowser({ api });
     await user.click(treeItem('Recordings'));
 
     // Act
     fireEvent.contextMenu(treeItem('Take A'));
     await user.click(screen.getByRole('menuitem', { name: 'Delete…' }));
-    expect(props.inbox.remove).not.toHaveBeenCalled();
+    expect(deleteRecording).not.toHaveBeenCalled();
     await user.click(screen.getByRole('button', { name: 'Delete' }));
 
     // Assert
-    expect(props.inbox.remove).toHaveBeenCalledWith(take.id);
+    expect(deleteRecording).toHaveBeenCalledWith(take.id);
   });
 
   it('renames a take in place from its context menu', async () => {
     // Arrange
     const user = userEvent.setup();
-    const props = renderBrowser();
+    const api = createFakeNativeApi({
+      instruments: [bass],
+      recordings: [take],
+      responses: { renameRecording: () => take.id },
+    });
+    const renameRecording = vi.spyOn(api, 'renameRecording');
+    await renderBrowser({ api });
     await user.click(treeItem('Recordings'));
     await user.click(treeItem('Take A'));
 
@@ -302,13 +303,15 @@ describe('BrowserPanel', () => {
     await user.type(name, 'Verse take{Enter}');
 
     // Assert
-    expect(props.inbox.rename).toHaveBeenCalledWith(take.id, 'Verse take');
+    expect(renameRecording).toHaveBeenCalledWith(take.id, 'Verse take');
   });
 
   it('edits the tags of the selected instrument in place', async () => {
     // Arrange
     const user = userEvent.setup();
-    const props = renderBrowser();
+    const api = createFakeNativeApi({ instruments: [bass] });
+    const setInstrumentUserTags = vi.spyOn(api, 'setInstrumentUserTags');
+    await renderBrowser({ api });
     await user.click(treeItem('Bass'));
     await user.click(treeItem('Clean Sub Bass'));
 
@@ -321,6 +324,6 @@ describe('BrowserPanel', () => {
     );
 
     // Assert
-    expect(props.instruments.setTags).toHaveBeenCalledWith(bass, ['Dark', 'Wide']);
+    expect(setInstrumentUserTags).toHaveBeenCalledWith(bass.id, ['Dark', 'Wide']);
   });
 });

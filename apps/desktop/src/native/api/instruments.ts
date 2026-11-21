@@ -1,5 +1,5 @@
 import type { InstrumentCollection, InstrumentLibraryItem } from '@/model/generated';
-import { dispatchControl } from '../invoke';
+import { dispatchControl } from '@/native/invoke';
 
 export interface InstrumentLibraryApi {
   listInstruments(): Promise<InstrumentLibraryItem[]>;

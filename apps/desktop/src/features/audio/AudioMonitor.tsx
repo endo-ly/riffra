@@ -1,9 +1,9 @@
-import { MASTER_GAIN_DB } from '@/model/mix-range';
-import { useSession } from '@/shared/session/session-context';
-import { useAudioMeters } from '@/shared/audio/audio-meters';
-import { Meter } from '@/shared/ui/primitives';
+import { MASTER_GAIN_DB } from '@/model/mix';
+import { useSession } from '@/session/session-context';
+import { useAudioMeters } from '@/session/audio-meters';
+import { Meter } from '@/shared/ui/Meter';
 import { ValueSlider } from '@/shared/ui/ValueSlider';
-import { useMasterGainValue } from './hooks/useMasterGainValue';
+import { useMasterGainValue } from '@/session/hooks/useMasterGainValue';
 import styles from './AudioMonitor.module.css';
 
 export function AudioMonitor({ disabled }: { disabled?: boolean }) {

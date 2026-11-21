@@ -22,9 +22,9 @@ export default {
     {
       files: [
         'apps/desktop/src/styles/tokens.css',
-        'apps/desktop/src/app/BrandTokens.module.css',
-        'apps/desktop/src/shared/ui/PianoKeyTokens.module.css',
-        'apps/desktop/src/shared/ui/TimelineTokens.module.css',
+        'apps/desktop/src/styles/BrandTokens.module.css',
+        'apps/desktop/src/styles/PianoKeyTokens.module.css',
+        'apps/desktop/src/styles/TimelineTokens.module.css',
       ],
       rules: { 'color-no-hex': null, 'color-named': null },
     },

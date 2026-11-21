@@ -1,23 +1,12 @@
 import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
-import type { BrowserFolder, BrowserItem, BrowserNode } from '../model/browser-tree';
-import type { BrowserRow } from '../BrowserRows';
+import type {
+  BrowserFolder,
+  BrowserItem,
+  BrowserNode,
+  BrowserRow,
+} from '@/features/library/model/browser-tree';
+import { rowId, visibleRows } from '@/features/library/model/browser-tree';
 
-export function rowId(index: number): string {
-  return `browser-row-${index}`;
-}
-function visibleRows(
-  nodes: BrowserNode[],
-  expanded: ReadonlySet<string>,
-  depth = 0,
-  parentKey: string | null = null,
-): BrowserRow[] {
-  return nodes.flatMap((node) => {
-    const key = parentKey ? `${parentKey}/${node.key}` : node.key;
-    const row: BrowserRow = { key, node, depth, parentKey };
-    if (node.kind !== 'folder' || !expanded.has(node.key)) return [row];
-    return [row, ...visibleRows(node.children, expanded, depth + 1, key)];
-  });
-}
 export function useBrowserTreeNavigation(
   tree: BrowserNode[],
   searchRows: BrowserRow[] | null,

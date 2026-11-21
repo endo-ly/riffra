@@ -47,7 +47,7 @@
 }
 
 .logoMark {
-  composes: scope from './BrandTokens.module.css';
+  composes: scope from '@/styles/BrandTokens.module.css';
 
   width: 28px;
   height: 28px;

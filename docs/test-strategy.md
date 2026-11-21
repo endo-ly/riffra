@@ -22,9 +22,9 @@
 | 全体簡易確認  | アプリ全体                   | 主要フローと保存復元                   | 作業単位の終端     |
 | 実機(Windows) | OS、機器、VST3、実音         | 自動化で代替できない挙動               | マイルストーン終端 |
 
-Rust側のUnit testは対象実装と同じソースファイル内に置き、別モジュールや専用ファイルへ集約しない。フロントエンドのテストは `apps/desktop/src/test/` に集約し、`app/`、`features/`、`model/`、`native/`、`shared/` の所有領域に対応する階層へ置く。FakeNativeApiとテスト用Providerは `test/support/` に置き、部品テストは `createFakeNativeApi` で作った `FakeNativeApi` を注入して呼び出し記録とイベント発火を扱う。制作規則・履歴・検証の判断はCoreのテストが担うため、部品テストが制作規則を再実装することはない。
+Rust側のUnit testは対象実装と同じソースファイル内に置き、別モジュールや専用ファイルへ集約しない。フロントエンドのテストは `apps/desktop/src/test/` に集約し、`app/`、`features/`、`session/`、`model/`、`native/`、`shared/` の所有領域に対応する階層へ置く。FakeNativeApiとテスト用Providerは `test/support/` に置き、部品テストは `createFakeNativeApi` で作った `FakeNativeApi` を注入して呼び出し記録とイベント発火を扱う。制作規則・履歴・検証の判断はCoreのテストが担うため、部品テストが制作規則を再実装することはない。
 
-画面をまたいで共有する状態と操作は `shared/session/` のセッションストアが持つ。そのため、アプリ全体の状態と操作は `createSessionStore(createFakeNativeApi(…))` に対してスライスを直接呼んでテストし、Nativeイベントに依存する観点は `bindSessionRuntime(store, api)` を呼んでからイベントを発火する。部品のテストは `TestSessionProvider`（または `renderWithSession`）でストアを与え、ストアの状態と操作を props で渡さない。再描画の範囲は、値を描く部品の描画回数で確認する。再生位置のように高頻度で変わる値を受け取っても、それを描かない部品が再描画されないことを、タイムラインのトラック行で固定する。
+画面をまたいで共有する状態と操作は `session/` のセッションストアが持つ。そのため、アプリ全体の状態と操作は `createSessionStore(createFakeNativeApi(…))` に対してスライスを直接呼んでテストし、Nativeイベントに依存する観点は `bindSessionRuntime(store, api)` を呼んでからイベントを発火する。部品のテストは `TestSessionProvider`（または `renderWithSession`）でストアを与え、ストアの状態と操作を props で渡さない。再描画の範囲は、値を描く部品の描画回数で確認する。再生位置のように高頻度で変わる値を受け取っても、それを描かない部品が再描画されないことを、タイムラインのトラック行で固定する。
 
 ---
 
@@ -47,6 +47,7 @@ RustとC++の境界契約は、生成する側と検証する側が同じフィ�
 
 - 単体テストでは、命令の適用、各トラックがブロックごとにちょうど1回処理されること、固定グラフのオフラインレンダーのビット一致、資源の退役と回収、診断の計算を確認する
 - ThreadSanitizerの対象は、実際に複数スレッドが動くケース、オブジェクトの公開・解放が競合するケース、リアルタイムコールバックと制御処理が競合するケースに限られる。数値・MIDI内容・JSON形式・音声結果の一致だけを確認するテストは対象外である
+- ThreadSanitizerビルドはテスト用VST3バンドルをビルドしない。VST3を読み込むテストは対象に含めず、通常のネイティブテストで実行する
 - 抑制ファイル `tsan.supp` にはJUCE内部に起因する報告だけを理由付きで記録する。Riffraのコードに対する報告は修正し、抑制しない
 - 実行するテストはスイートとケースを明示して指定する
 

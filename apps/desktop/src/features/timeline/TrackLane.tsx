@@ -5,8 +5,8 @@ import {
   trackLaneHeight,
   type TimelineAudioItem,
   type TimelineMidiItem,
-} from './model/timeline-layout';
-import { isBrowserItemDrag } from './hooks/useTimelineDrop';
+} from '@/features/timeline/model/timeline-layout';
+import { isBrowserItemDrag } from '@/shared/browser-drag';
 import type { TimelineTrackProps } from './TimelineTrack';
 import styles from './TrackLane.module.css';
 

@@ -1,17 +1,13 @@
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AudioSettingsDialogView } from '@/features/audio/AudioSettingsDialog';
-import { fakeAudioStatus } from '@/test/support/fake-native-api';
-import type {
-  AudioDeviceProbe,
-  AudioDriverConfig,
-  AudioStatus,
-  DeviceChannels,
-} from '@/model/generated';
+import { AudioSettingsDialog } from '@/features/audio/AudioSettingsDialog';
+import { createFakeNativeApi, fakeAudioStatus } from '@/test/support/fake-native-api';
+import { createTestSessionStore, renderWithSession } from '@/test/support/session-provider';
+import type { AudioDeviceProbe, AudioStatus } from '@/model/generated';
 
 const probe: AudioDeviceProbe = {
   drivers: [
@@ -52,77 +48,52 @@ const probe: AudioDeviceProbe = {
 
 afterEach(cleanup);
 
-function renderDialog(
-  overrides: Partial<{
-    audio: AudioStatus;
-    probe: AudioDeviceProbe;
-    onApply: (config: AudioDriverConfig) => Promise<AudioStatus>;
-    onProbeChannels: (
-      driver: string,
-      inputDevice: string,
-      outputDevice: string,
-    ) => Promise<DeviceChannels>;
-  }> = {},
-) {
+const defaultStatus = () =>
+  fakeAudioStatus({
+    driver: 'Windows Audio',
+    inputDevice: 'Mic',
+    inputChannel: 0,
+    inputChannels: [
+      { index: 0, name: 'Mic 1' },
+      { index: 1, name: 'Mic 2' },
+    ],
+    outputDevice: 'Speakers',
+    outputChannels: [{ index: 0, name: 'Left' }],
+  });
+
+async function renderDialog({
+  status = defaultStatus(),
+  probe: activeProbe = probe,
+}: {
+  status?: AudioStatus;
+  probe?: AudioDeviceProbe;
+} = {}) {
+  const api = createFakeNativeApi({
+    audio: status,
+    responses: { probeAudioDevices: activeProbe },
+  });
   const onClose = vi.fn();
-  const onApply = overrides.onApply ?? vi.fn(async () => fakeAudioStatus());
-  const activeProbe = overrides.probe ?? probe;
-  const view = render(
-    <AudioSettingsDialogView
-      audio={
-        overrides.audio ??
-        fakeAudioStatus({
-          driver: 'Windows Audio',
-          inputDevice: 'Mic',
-          inputChannel: 0,
-          inputChannels: [
-            { index: 0, name: 'Mic 1' },
-            { index: 1, name: 'Mic 2' },
-          ],
-          outputDevice: 'Speakers',
-          outputChannels: [{ index: 0, name: 'Left' }],
-        })
-      }
-      probe={activeProbe}
-      safeMode={false}
-      recordingActive={false}
-      onClose={onClose}
-      onRefresh={async () => activeProbe}
-      onProbeChannels={
-        overrides.onProbeChannels ??
-        (async (_driver, inputDevice, outputDevice) => ({
-          driver: _driver,
-          inputDevice,
-          inputChannels: [
-            { index: 0, name: 'Mic 1' },
-            { index: 1, name: 'Mic 2' },
-          ],
-          outputDevice,
-          outputChannels: [{ index: 0, name: 'Left' }],
-        }))
-      }
-      onApply={onApply}
-      onRecover={async () => fakeAudioStatus()}
-    />,
-  );
-  return { onApply, onClose, view };
+  const store = createTestSessionStore(api);
+  await store.getState().audio.refreshDevices();
+  renderWithSession(<AudioSettingsDialog onClose={onClose} />, { api, store });
+  return { api, store, onClose };
 }
 
 describe('AudioSettingsDialog', () => {
   it('does not apply settings when it is opened or cancelled', async () => {
-    const onApply = vi.fn(async () => fakeAudioStatus());
-    const { onClose } = renderDialog({ onApply });
+    const { api, onClose } = await renderDialog();
+    const setAudioDriver = vi.spyOn(api, 'setAudioDriver');
     const user = userEvent.setup();
 
-    expect(onApply).not.toHaveBeenCalled();
+    expect(setAudioDriver).not.toHaveBeenCalled();
     await user.click(screen.getByRole('button', { name: 'Cancel' }));
 
-    expect(onApply).not.toHaveBeenCalled();
+    expect(setAudioDriver).not.toHaveBeenCalled();
     expect(onClose).toHaveBeenCalledOnce();
   });
 
   it('shows channel choices from the selected input device before applying', async () => {
-    renderDialog();
+    await renderDialog();
     const user = userEvent.setup();
 
     await user.selectOptions(screen.getByRole('combobox', { name: 'Input channel' }), '1');
@@ -132,6 +103,7 @@ describe('AudioSettingsDialog', () => {
   });
 
   it('runs one device detail-probe lifecycle without retrying stale results', async () => {
+    // Arrange: a probe that reports devices without channel details.
     const passiveProbe: AudioDeviceProbe = {
       ...probe,
       drivers: probe.drivers.map((driver) => ({
@@ -140,8 +112,20 @@ describe('AudioSettingsDialog', () => {
         outputs: driver.outputs.map((device) => ({ ...device, channels: [] })),
       })),
     };
-    const onProbeChannels = vi
-      .fn()
+    const audio = fakeAudioStatus({
+      driver: 'Windows Audio',
+      inputDevice: 'Mic',
+      inputChannel: 1,
+      inputChannels: [
+        { index: 0, name: 'Mic 1' },
+        { index: 1, name: 'Mic 2' },
+      ],
+      outputDevice: 'Speakers',
+      outputChannels: [{ index: 0, name: 'Left' }],
+    });
+    const { api, store } = await renderDialog({ probe: passiveProbe, status: audio });
+    const probeChannels = vi
+      .spyOn(api, 'probeDeviceChannels')
       .mockResolvedValueOnce({
         driver: 'ASIO',
         inputDevice: 'Focusrite USB ASIO',
@@ -161,67 +145,30 @@ describe('AudioSettingsDialog', () => {
         outputChannels: [{ index: 0, name: 'Output 1' }],
       });
 
-    const audio = fakeAudioStatus({
-      driver: 'Windows Audio',
-      inputDevice: 'Mic',
-      inputChannel: 1,
-      inputChannels: [
-        { index: 0, name: 'Mic 1' },
-        { index: 1, name: 'Mic 2' },
-      ],
-      outputDevice: 'Speakers',
-      outputChannels: [{ index: 0, name: 'Left' }],
-    });
-    const { view } = renderDialog({
-      probe: passiveProbe,
-      audio,
-      onProbeChannels,
-    });
-
     await waitFor(() => expect(screen.getByRole('option', { name: 'Mic 2' })).toBeInTheDocument());
-    expect(onProbeChannels).not.toHaveBeenCalled();
+    expect(probeChannels).not.toHaveBeenCalled();
     const user = userEvent.setup();
 
+    // Act: selecting a driver lazily probes its interface once.
     await user.selectOptions(screen.getByRole('combobox', { name: 'Audio driver' }), 'ASIO');
-    await waitFor(() => expect(onProbeChannels).toHaveBeenCalledOnce());
+    await waitFor(() => expect(probeChannels).toHaveBeenCalledOnce());
     await new Promise((resolve) => window.setTimeout(resolve, 50));
-    expect(onProbeChannels).toHaveBeenCalledOnce();
 
-    const refreshedPassiveProbe = { ...passiveProbe, refreshedAtMs: 2 };
-    view.rerender(
-      <AudioSettingsDialogView
-        audio={audio}
-        probe={refreshedPassiveProbe}
-        safeMode={false}
-        recordingActive={false}
-        onClose={vi.fn()}
-        onRefresh={async () => refreshedPassiveProbe}
-        onProbeChannels={onProbeChannels}
-        onApply={async () => fakeAudioStatus()}
-        onRecover={async () => fakeAudioStatus()}
-      />,
-    );
-
-    await waitFor(() => expect(onProbeChannels).toHaveBeenCalledTimes(2));
+    // Assert: a refresh does not repeat the finished probe and reports its failure.
+    expect(probeChannels).toHaveBeenCalledOnce();
+    api.setResponse('probeAudioDevices', { ...passiveProbe, refreshedAtMs: 2 });
+    await act(() => store.getState().audio.refreshDevices());
+    await waitFor(() => expect(probeChannels).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('probe failed'));
     await new Promise((resolve) => window.setTimeout(resolve, 50));
-    expect(onProbeChannels).toHaveBeenCalledTimes(2);
+    expect(probeChannels).toHaveBeenCalledTimes(2);
 
-    const reprobedPassiveProbe = { ...passiveProbe, refreshedAtMs: 3 };
-    view.rerender(
-      <AudioSettingsDialogView
-        audio={audio}
-        probe={reprobedPassiveProbe}
-        safeMode={false}
-        recordingActive={false}
-        onClose={vi.fn()}
-        onRefresh={async () => reprobedPassiveProbe}
-        onProbeChannels={onProbeChannels}
-        onApply={async () => fakeAudioStatus()}
-        onRecover={async () => fakeAudioStatus()}
-      />,
-    );
-    await waitFor(() => expect(onProbeChannels).toHaveBeenCalledTimes(3));
+    // Act: a later refresh probes the still-unknown interface again.
+    api.setResponse('probeAudioDevices', { ...passiveProbe, refreshedAtMs: 3 });
+    await act(() => store.getState().audio.refreshDevices());
+
+    // Assert: the probe result fills the channel choices.
+    await waitFor(() => expect(probeChannels).toHaveBeenCalledTimes(3));
     expect(screen.getByRole('option', { name: 'Input 2' })).toBeInTheDocument();
   });
 
@@ -239,9 +186,9 @@ describe('AudioSettingsDialog', () => {
         ...probe.drivers,
       ],
     };
-    renderDialog({
+    await renderDialog({
       probe: emptyDriverProbe,
-      audio: fakeAudioStatus({ driver: 'Unavailable Driver' }),
+      status: fakeAudioStatus({ driver: 'Unavailable Driver' }),
     });
     const user = userEvent.setup();
 
@@ -257,58 +204,38 @@ describe('AudioSettingsDialog', () => {
   });
 
   it('applies once, then keeps the dialog open for a faulted response', async () => {
-    const onApply = vi.fn(async () => fakeAudioStatus());
-    onApply
+    const { api, onClose } = await renderDialog();
+    const setAudioDriver = vi
+      .spyOn(api, 'setAudioDriver')
       .mockResolvedValueOnce(fakeAudioStatus())
       .mockResolvedValueOnce(
         fakeAudioStatus({ state: 'faulted', message: 'The selected device could not be opened.' }),
       );
-    const { onClose } = renderDialog({ onApply });
     const user = userEvent.setup();
 
     await user.selectOptions(screen.getByRole('combobox', { name: 'Sample rate' }), '96000');
     await user.click(screen.getByRole('button', { name: 'Apply' }));
 
-    expect(onApply).toHaveBeenCalledOnce();
+    expect(setAudioDriver).toHaveBeenCalledOnce();
     expect(onClose).toHaveBeenCalledOnce();
     await user.selectOptions(screen.getByRole('combobox', { name: 'Buffer size' }), '64');
     await user.click(screen.getByRole('button', { name: 'Apply' }));
 
-    expect(onApply).toHaveBeenCalledTimes(2);
+    expect(setAudioDriver).toHaveBeenCalledTimes(2);
     expect(onClose).toHaveBeenCalledOnce();
     expect(screen.getByRole('alert')).toHaveTextContent('could not be opened');
   });
 
   it('disables Apply while recording is active', async () => {
-    const onApply = vi.fn(async () => fakeAudioStatus());
-    render(
-      <AudioSettingsDialogView
-        audio={fakeAudioStatus({
-          driver: 'Windows Audio',
-          inputDevice: 'Mic',
-          outputDevice: 'Speakers',
-        })}
-        probe={probe}
-        safeMode={false}
-        recordingActive
-        onClose={vi.fn()}
-        onRefresh={async () => probe}
-        onProbeChannels={async (_driver, inputDevice, outputDevice) => ({
-          driver: _driver,
-          inputDevice,
-          inputChannels: [{ index: 0, name: 'Mic 1' }],
-          outputDevice,
-          outputChannels: [],
-        })}
-        onApply={onApply}
-        onRecover={async () => fakeAudioStatus()}
-      />,
-    );
+    const status = defaultStatus();
+    status.recording = { ...status.recording, active: true };
+    const { api } = await renderDialog({ status });
+    const setAudioDriver = vi.spyOn(api, 'setAudioDriver');
     const user = userEvent.setup();
 
     await user.selectOptions(screen.getByRole('combobox', { name: 'Buffer size' }), '64');
 
     expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled();
-    expect(onApply).not.toHaveBeenCalled();
+    expect(setAudioDriver).not.toHaveBeenCalled();
   });
 });

@@ -1,8 +1,8 @@
 import { useRef, useState, type KeyboardEvent } from 'react';
 import type { LibraryAsset, RecordingAsset } from '@/model/generated';
 import type { InboxController } from '@/features/library/hooks/useInbox';
-import type { CatalogSlice } from '@/shared/session/slices/catalog';
-import { browserItemName, type BrowserItem } from './model/browser-tree';
+import type { CatalogSlice } from '@/session/slices/catalog';
+import { browserItemName, type BrowserItem } from '@/features/library/model/browser-tree';
 import styles from './BrowserPanel.module.css';
 
 /** What of a Browser item is being edited in its row. */

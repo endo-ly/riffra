@@ -22,7 +22,7 @@ import type {
   ScoreSyncStatus,
   TransportStatus,
 } from '@/model/generated';
-import { defaultSession } from '@/native/browser-defaults';
+import { defaultSession } from '@/native/preview/fixtures';
 import type { NativeApi } from '@/native/native-api';
 import { nativeApiMethodNames } from '@/native/api/native-implementation';
 import type { HostConnectionBootstrap } from '@/native/api/host-connection';

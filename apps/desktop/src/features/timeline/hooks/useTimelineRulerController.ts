@@ -1,10 +1,10 @@
 import type { EditorCommit } from './useTimelineEditor';
 import { useCallback, useEffect, useState, type MutableRefObject, type PointerEvent } from 'react';
 import type { CreativeSession, Marker } from '@/model/generated';
-import { useSessionContext, useSessionStore } from '@/shared/session/session-context';
+import { useSessionContext, useSessionStore } from '@/session/session-context';
 import { tickToMusicalPosition } from '@/model/time-format';
 import { isEditableTypingTarget } from '@/shared/input';
-import { usePointerGesture } from '@/shared/usePointerGesture';
+import { usePointerGesture } from '@/shared/hooks/usePointerGesture';
 
 type RangeKind = 'loop' | 'punch';
 
