@@ -11,6 +11,7 @@
 #include "device/AudioDeviceController.h"
 #include "device/MidiInputService.h"
 #include "plugins/PluginEditorHost.h"
+#include "timeline/TimelineSnapshotBuilder.h"
 
 namespace riffra {
 

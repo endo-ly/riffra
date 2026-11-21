@@ -4,7 +4,7 @@
 #include <cmath>
 #include <utility>
 
-#include "contract/InstrumentPreviewContract.h"
+#include "contract/InstrumentPreview.h"
 #include "preview/InstrumentPreviewSession.h"
 #include "preview/PreviewEngine.h"
 #include "timeline/SonalloyTestSupport.h"

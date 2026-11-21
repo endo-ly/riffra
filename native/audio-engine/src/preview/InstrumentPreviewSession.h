@@ -4,34 +4,32 @@
 
 #include <array>
 #include <atomic>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <vector>
 
+#include "contract/InstrumentPreview.h"
 #include "instruments/InstrumentRuntime.h"
 
+namespace riffra::instrument_preview {
+
+inline double barPositionForFrame(const std::uint64_t frame, const double sampleRate,
+                                  const double tempoBpm, const std::uint8_t numerator,
+                                  const std::uint8_t denominator) noexcept {
+    if (!std::isfinite(sampleRate) || sampleRate <= 0.0 || !isValidTempo(tempoBpm) ||
+        !isValidNumerator(numerator) || !isValidDenominator(denominator))
+        return 0.0;
+    const auto beatPosition = static_cast<double>(frame) / sampleRate * tempoBpm / 60.0;
+    const auto beatsPerBar =
+        static_cast<double>(numerator) * 4.0 / static_cast<double>(denominator);
+    return beatPosition / beatsPerBar;
+}
+
+}  // namespace riffra::instrument_preview
+
 namespace riffra {
-
-struct InstrumentPreviewTimeSignature final {
-    std::uint8_t numerator = 4;
-    std::uint8_t denominator = 4;
-};
-
-struct InstrumentPreviewNote final {
-    std::uint64_t tick = 0;
-    std::uint64_t durationTicks = 0;
-    std::uint8_t note = 0;
-    std::uint8_t velocity = 0;
-};
-
-struct InstrumentPreviewSpec final {
-    double tempoBpm = 120.0;
-    std::uint16_t ticksPerBeat = 480;
-    InstrumentPreviewTimeSignature timeSignature;
-    std::uint64_t lengthTicks = 0;
-    std::vector<InstrumentPreviewNote> notes;
-};
 
 /// Owns the prepared runtime and fixed MIDI schedule for one built-in preview.
 class InstrumentPreviewSession final {

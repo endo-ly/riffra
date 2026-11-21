@@ -91,9 +91,8 @@ target_sources(riffra-engine-core PRIVATE
   src/contract/ExecutionGraph.h
   src/contract/ExecutionGraphDecoder.cpp
   src/contract/ExecutionGraphDecoder.h
-  src/contract/InstrumentPreviewContract.h
+  src/contract/InstrumentPreview.h
   src/contract/LoadProgress.h
-  src/contract/MixerGraphValidation.h
   src/contract/SidecarCommands.cpp
   src/contract/SidecarCommands.h
   src/contract/SidecarMessages.cpp

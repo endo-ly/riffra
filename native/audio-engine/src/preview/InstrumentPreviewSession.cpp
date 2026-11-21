@@ -6,7 +6,7 @@
 #include <limits>
 #include <utility>
 
-#include "contract/InstrumentPreviewContract.h"
+#include "contract/InstrumentPreview.h"
 #include "instruments/SonalloyInstrumentRuntime.h"
 
 namespace riffra {
