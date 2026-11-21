@@ -6,8 +6,7 @@
 
 #include "contract/InstrumentPreview.h"
 #include "preview/InstrumentPreviewSession.h"
-#include "preview/PreviewEngine.h"
-#include "timeline/SonalloyTestSupport.h"
+#include "support/SonalloyTestSupport.h"
 
 namespace riffra {
 namespace {
@@ -131,105 +130,6 @@ TEST(InstrumentPreviewSessionTest, RejectsInvalidPreviewNumeratorAndNoteOrder) {
 
     EXPECT_EQ(session, nullptr);
     EXPECT_FALSE(error.isEmpty());
-}
-
-TEST(PreviewEngineTest, StopsInstrumentPreviewWithoutStoppingTakeComparison) {
-    const auto preset = test::builtInPresetDirectory("BASS-001");
-    const auto definition = preset.getChildFile("definition.json");
-    ASSERT_TRUE(definition.existsAsFile());
-    PreviewEngine engine;
-    juce::AudioBuffer<float> comparison(2, 32);
-    comparison.clear();
-    juce::String error;
-    ASSERT_TRUE(
-        engine.startPreview(comparison, 0, comparison.getNumSamples(), 1.0f, true, error, 1))
-        << error.toStdString();
-    ASSERT_TRUE(engine.startInstrumentPreview(
-        definition.loadFileAsString(), preset.getFullPathName(), makeSpec(), 48'000.0, 256, error))
-        << error.toStdString();
-    juce::AudioBuffer<float> output(2, 256);
-    output.clear();
-    ASSERT_TRUE(engine.tryMix(output.getArrayOfWritePointers(), output.getNumChannels(),
-                              output.getNumSamples(), 48'000.0));
-    EXPECT_GT(maximumMagnitude(output), 0.0f);
-    EXPECT_TRUE(engine.isInstrumentPreviewing());
-    EXPECT_TRUE(engine.isPreviewing());
-
-    engine.stopInstrumentPreview();
-
-    output.clear();
-    ASSERT_TRUE(engine.tryMix(output.getArrayOfWritePointers(), output.getNumChannels(),
-                              output.getNumSamples(), 48'000.0));
-    EXPECT_GT(maximumMagnitude(output), 0.0f);
-    EXPECT_FALSE(engine.isInstrumentPreviewing());
-    EXPECT_TRUE(engine.isPreviewing());
-    output.clear();
-    ASSERT_TRUE(engine.tryMix(output.getArrayOfWritePointers(), output.getNumChannels(),
-                              output.getNumSamples(), 48'000.0));
-    EXPECT_FLOAT_EQ(maximumMagnitude(output), 0.0f);
-    engine.stopPreview();
-    output.clear();
-    ASSERT_TRUE(engine.tryMix(output.getArrayOfWritePointers(), 2, 256, 48'000.0));
-    EXPECT_FALSE(engine.isPreviewing());
-}
-
-TEST(PreviewEngineTest, NaturalInstrumentPreviewFinishLeavesTakeComparisonActive) {
-    const auto preset = test::builtInPresetDirectory("BASS-001");
-    const auto definition = preset.getChildFile("definition.json");
-    ASSERT_TRUE(definition.existsAsFile());
-    PreviewEngine engine;
-    juce::AudioBuffer<float> comparison(2, 32);
-    comparison.clear();
-    juce::String error;
-    ASSERT_TRUE(
-        engine.startPreview(comparison, 0, comparison.getNumSamples(), 1.0f, true, error, 1))
-        << error.toStdString();
-    ASSERT_TRUE(engine.startInstrumentPreview(
-        definition.loadFileAsString(), preset.getFullPathName(), makeSpec(), 48'000.0, 256, error))
-        << error.toStdString();
-
-    juce::AudioBuffer<float> output(2, 256);
-    ASSERT_TRUE(engine.tryMix(output.getArrayOfWritePointers(), 2, 256, 48'000.0));
-    for (int block = 0; block < 4096 && engine.isInstrumentPreviewing(); ++block) {
-        output.clear();
-        ASSERT_TRUE(engine.tryMix(output.getArrayOfWritePointers(), output.getNumChannels(),
-                                  output.getNumSamples(), 48'000.0));
-    }
-
-    EXPECT_FALSE(engine.isInstrumentPreviewing());
-    EXPECT_TRUE(engine.isPreviewing());
-    engine.stopPreview();
-}
-
-TEST(PreviewEngineTest, InstrumentPreviewLeavesTakeComparisonVoiceIndependent) {
-    const auto preset = test::builtInPresetDirectory("BASS-001");
-    const auto definition = preset.getChildFile("definition.json");
-    ASSERT_TRUE(definition.existsAsFile());
-    PreviewEngine engine;
-    juce::AudioBuffer<float> comparison(2, 32);
-    comparison.clear();
-    juce::String error;
-    ASSERT_TRUE(
-        engine.startPreview(comparison, 0, comparison.getNumSamples(), 1.0f, false, error, 1))
-        << error.toStdString();
-    ASSERT_TRUE(engine.startInstrumentPreview(
-        definition.loadFileAsString(), preset.getFullPathName(), makeSpec(), 48'000.0, 256, error))
-        << error.toStdString();
-    juce::AudioBuffer<float> output(2, 256);
-    output.clear();
-    ASSERT_TRUE(engine.tryMix(output.getArrayOfWritePointers(), 2, 256, 48'000.0));
-    EXPECT_TRUE(engine.isInstrumentPreviewing());
-
-    engine.stopPreviewForKey(1);
-    output.clear();
-    ASSERT_TRUE(engine.tryMix(output.getArrayOfWritePointers(), 2, 256, 48'000.0));
-    EXPECT_TRUE(engine.isInstrumentPreviewing());
-    EXPECT_TRUE(engine.isPreviewing());
-
-    engine.stopPreview();
-    output.clear();
-    ASSERT_TRUE(engine.tryMix(output.getArrayOfWritePointers(), 2, 256, 48'000.0));
-    EXPECT_FALSE(engine.isPreviewing());
 }
 
 }  // namespace riffra

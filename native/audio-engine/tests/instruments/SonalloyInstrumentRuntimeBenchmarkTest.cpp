@@ -9,7 +9,7 @@
 #include <vector>
 
 #include "instruments/SonalloyInstrumentRuntime.h"
-#include "timeline/SonalloyTestSupport.h"
+#include "support/SonalloyTestSupport.h"
 
 namespace riffra {
 namespace {

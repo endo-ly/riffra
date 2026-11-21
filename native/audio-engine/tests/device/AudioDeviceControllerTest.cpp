@@ -8,8 +8,8 @@
 #include "device/AudioDeviceController.h"
 #include "pipeline/AudioRenderPipeline.h"
 #include "recording/ArrangeRecordingSession.h"
+#include "support/TimelineTestSupport.h"
 #include "timeline/TimelineEngine.h"
-#include "timeline/TimelineTestSupport.h"
 
 namespace riffra {
 namespace {

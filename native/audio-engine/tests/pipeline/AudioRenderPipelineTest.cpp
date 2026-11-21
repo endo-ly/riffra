@@ -12,8 +12,8 @@
 #include "preview/PreviewEngine.h"
 #include "recording/ArrangeRecordingSession.h"
 #include "support/TestAudioProcessor.h"
+#include "support/TimelineTestSupport.h"
 #include "timeline/TimelineEngine.h"
-#include "timeline/TimelineTestSupport.h"
 
 namespace riffra {
 namespace {

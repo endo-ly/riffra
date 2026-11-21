@@ -512,40 +512,48 @@ if(BUILD_TESTING)
 
   add_executable(riffra-audio-tests)
   target_sources(riffra-audio-tests PRIVATE
-    tests/contract/ExecutionGraphContractTest.cpp
-    tests/contract/SidecarContractTest.cpp
-    tests/contract/SidecarMessageFixtureTest.cpp
-    tests/protocol/CommandResponderTest.cpp
-    tests/timeline/ArrangementGraphTest.cpp
-    tests/timeline/AutomationRuntimeTest.cpp
-    tests/audio/PreviewEngineTest.cpp
-    tests/audio/AudioMetricsTest.cpp
-    tests/audio/AudioRenderPipelineTest.cpp
-    tests/audio/AudioSafetyDspTest.cpp
-    tests/audio/InstrumentPreviewSessionTest.cpp
-    tests/audio/PluginAuditionTest.cpp
-    tests/device/AudioDeviceControllerTest.cpp
-    tests/plugins/PluginRackTest.cpp
-    tests/plugins/PluginChainTest.cpp
-    tests/plugins/RuntimeLifecycleExecutorTest.cpp
-    tests/recording/RecordingCaptureRuntimeTest.cpp
-    tests/recording/RecordingSessionTest.cpp
-    tests/recording/ArrangeRecordingSessionTest.cpp
-    tests/timeline/MetronomeClicksTest.cpp
-    tests/timeline/MidiSchedulerTest.cpp
+    tests/app/AudioCommandDispatcherTest.cpp
+    tests/app/AudioStatusBuilderTest.cpp
+    tests/automation/AutomationRuntimeTest.cpp
     tests/concurrency/BoundedMpmcQueueTest.cpp
     tests/concurrency/RealtimeCommandQueueTest.cpp
     tests/concurrency/SeqLockFrameTest.cpp
-    tests/timeline/TimelineSnapshotTest.cpp
-    tests/timeline/TimelineTransportTest.cpp
-    tests/timeline/TimelineRealtimeTest.cpp
-    tests/timeline/TrackProcessingPoolTest.cpp
-    tests/timeline/TimelineRenderTest.cpp
-    tests/timeline/TimelineRecordingTest.cpp
+    tests/contract/ExecutionGraphContractTest.cpp
+    tests/contract/SidecarContractTest.cpp
+    tests/contract/SidecarMessageFixtureTest.cpp
+    tests/device/AudioDeviceControllerTest.cpp
+    tests/device/AudioDeviceServiceTest.cpp
+    tests/device/MidiInputServiceTest.cpp
+    tests/instruments/SonalloyInstrumentRuntimeTest.cpp
+    tests/pipeline/AudioMetricsTest.cpp
+    tests/pipeline/AudioRenderPipelineTest.cpp
+    tests/pipeline/AudioSafetyDspTest.cpp
+    tests/plugins/PluginChainTest.cpp
+    tests/plugins/PluginEditorHostTest.cpp
+    tests/plugins/PluginRackTest.cpp
+    tests/plugins/RuntimeLifecycleExecutorTest.cpp
+    tests/preview/InstrumentPreviewSessionTest.cpp
+    tests/preview/PluginAuditionTest.cpp
+    tests/preview/PreviewEngineTest.cpp
+    tests/protocol/AudioProtocolTest.cpp
+    tests/protocol/CommandResponderTest.cpp
+    tests/recording/ArrangeRecordingSessionTest.cpp
+    tests/recording/RecordingCaptureRuntimeTest.cpp
+    tests/recording/RecordingSessionTest.cpp
+    tests/render/OfflineRendererTest.cpp
+    tests/timeline/ArrangementGraphTest.cpp
+    tests/timeline/MetronomeClicksTest.cpp
+    tests/timeline/MidiSchedulerTest.cpp
+    tests/timeline/MixerRoutingTest.cpp
     tests/timeline/TimelineDeviceTest.cpp
     tests/timeline/TimelineMidiTest.cpp
-    tests/timeline/instruments/SonalloyInstrumentRuntimeTest.cpp
-    tests/protocol/AudioProtocolTest.cpp
+    tests/timeline/TimelineMixTest.cpp
+    tests/timeline/TimelineReadAheadSourceTest.cpp
+    tests/timeline/TimelineRealtimeTest.cpp
+    tests/timeline/TimelineRecordingTest.cpp
+    tests/timeline/TimelineSnapshotTest.cpp
+    tests/timeline/TimelineTransportTest.cpp
+    tests/timeline/TrackProcessingPoolTest.cpp
   )
   target_link_libraries(riffra-audio-tests PRIVATE
     riffra-serve-core
@@ -601,10 +609,13 @@ if(BUILD_TESTING)
     PROPERTIES LABELS slow)
 
   add_executable(riffra-audio-benchmarks EXCLUDE_FROM_ALL
-    tests/timeline/instruments/SonalloyInstrumentRuntimeBenchmarkTest.cpp)
+    tests/instruments/SonalloyInstrumentRuntimeBenchmarkTest.cpp)
   target_link_libraries(riffra-audio-benchmarks PRIVATE
     riffra-serve-core
     GTest::gtest_main)
+  target_include_directories(riffra-audio-benchmarks PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests
+  )
   target_compile_definitions(riffra-audio-benchmarks PRIVATE
     RIFFRA_SONALLOY_TEST_PRESET_ROOT="${RIFFRA_BUILTIN_RESOURCE_ROOT}"
     RIFFRA_SONALLOY_TEST_SOURCE_RELEASE="${RIFFRA_SONALLOY_SOURCE_RELEASE}")

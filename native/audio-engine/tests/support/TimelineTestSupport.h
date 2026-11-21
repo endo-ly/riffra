@@ -12,6 +12,8 @@
 #include <vector>
 
 #include "SonalloyTestSupport.h"
+#include "TestAudioProcessor.h"
+#include "TestSupport.h"
 #include "contract/ExecutionGraph.h"
 #include "contract/ExecutionGraphDecoder.h"
 #include "instruments/Vst3InstrumentRuntime.h"
@@ -19,8 +21,6 @@
 #include "recording/ArrangeRecordingSession.h"
 #include "recording/ArrangementCaptureSink.h"
 #include "render/OfflineRenderer.h"
-#include "support/TestAudioProcessor.h"
-#include "support/TestSupport.h"
 #include "timeline/TimelineEngine.h"
 
 namespace riffra {
