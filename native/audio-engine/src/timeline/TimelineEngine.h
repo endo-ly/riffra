@@ -12,7 +12,6 @@
 #include <vector>
 
 #include "ArrangementGraph.h"
-#include "AutomationRuntime.h"
 #include "ControlGraphRegistry.h"
 #include "MidiScheduler.h"
 #include "MidiSourceRegistry.h"
@@ -22,6 +21,7 @@
 #include "TimelineTimebase.h"
 #include "TrackProcessingPool.h"
 #include "TrackRuntime.h"
+#include "automation/AutomationRuntime.h"
 #include "concurrency/BoundedMpmcQueue.h"
 #include "concurrency/RealtimeCommandQueue.h"
 #include "concurrency/SeqLockFrame.h"

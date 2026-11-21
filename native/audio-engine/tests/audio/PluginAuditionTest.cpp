@@ -4,8 +4,8 @@
 #include <thread>
 #include <vector>
 
-#include "../support/TestAudioProcessor.h"
-#include "audio/PluginAudition.h"
+#include "preview/PluginAudition.h"
+#include "support/TestAudioProcessor.h"
 
 namespace riffra {
 namespace {

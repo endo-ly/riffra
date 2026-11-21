@@ -4,8 +4,8 @@
 #include <cmath>
 #include <utility>
 
-#include "InstrumentPreviewSession.h"
-#include "PreviewEngine.h"
+#include "preview/InstrumentPreviewSession.h"
+#include "preview/PreviewEngine.h"
 #include "timeline/TimelineEngine.h"
 
 namespace riffra {

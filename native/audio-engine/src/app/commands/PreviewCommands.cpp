@@ -6,9 +6,9 @@
 #include <limits>
 #include <memory>
 
-#include "../AudioCommandDispatcher.h"
-#include "audio/InstrumentPreviewSession.h"
+#include "app/AudioCommandDispatcher.h"
 #include "plugins/PluginEditorHost.h"
+#include "preview/InstrumentPreviewSession.h"
 #include "timeline/TimelineEngine.h"
 
 namespace riffra {

@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 
-#include "timeline/AutomationRuntime.h"
-#include "timeline/MixAutomation.h"
+#include "automation/AutomationRuntime.h"
+#include "automation/MixAutomation.h"
 
 namespace riffra {
 namespace {

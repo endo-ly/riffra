@@ -3,13 +3,13 @@
 #include <algorithm>
 #include <array>
 
-#include "../timeline/TimelineTestSupport.h"
 #include "app/AudioStatusBuilder.h"
-#include "audio/AudioRenderPipeline.h"
 #include "device/AudioDeviceService.h"
-#include "midi/MidiInputService.h"
+#include "device/MidiInputService.h"
+#include "pipeline/AudioRenderPipeline.h"
 #include "protocol/OutputQueue.h"
 #include "timeline/TimelineEngine.h"
+#include "timeline/TimelineTestSupport.h"
 
 namespace riffra {
 

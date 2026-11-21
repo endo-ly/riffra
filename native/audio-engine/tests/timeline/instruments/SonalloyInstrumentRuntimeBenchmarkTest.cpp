@@ -8,8 +8,8 @@
 #include <string>
 #include <vector>
 
-#include "../SonalloyTestSupport.h"
 #include "instruments/SonalloyInstrumentRuntime.h"
+#include "timeline/SonalloyTestSupport.h"
 
 namespace riffra {
 namespace {

@@ -8,9 +8,9 @@
 
 #include "AudioMetrics.h"
 #include "AudioSafetyDsp.h"
-#include "PluginAudition.h"
-#include "PreviewEngine.h"
-#include "app/RecordingController.h"
+#include "RecordingController.h"
+#include "preview/PluginAudition.h"
+#include "preview/PreviewEngine.h"
 
 namespace riffra {
 

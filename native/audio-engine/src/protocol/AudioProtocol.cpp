@@ -7,8 +7,8 @@
 #include <utility>
 
 #include "OutputQueue.h"
+#include "ProtocolChannel.h"
 #include "plugins/FaultInjection.h"
-#include "protocol/ProtocolChannel.h"
 
 namespace riffra {
 namespace {

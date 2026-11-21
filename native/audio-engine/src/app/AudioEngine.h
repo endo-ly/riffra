@@ -9,11 +9,11 @@
 #include <thread>
 
 #include "AudioCommandDispatcher.h"
-#include "audio/AudioRenderPipeline.h"
+#include "RuntimeLifecycleExecutor.h"
 #include "device/AudioDeviceController.h"
-#include "midi/MidiInputService.h"
+#include "device/MidiInputService.h"
+#include "pipeline/AudioRenderPipeline.h"
 #include "plugins/PluginEditorHost.h"
-#include "plugins/RuntimeLifecycleExecutor.h"
 #include "timeline/TimelineEngine.h"
 
 namespace riffra {

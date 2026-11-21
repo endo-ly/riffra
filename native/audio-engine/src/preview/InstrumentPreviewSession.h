@@ -9,7 +9,7 @@
 #include <memory>
 #include <vector>
 
-#include "../instruments/InstrumentRuntime.h"
+#include "instruments/InstrumentRuntime.h"
 
 namespace riffra {
 

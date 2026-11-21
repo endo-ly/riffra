@@ -11,16 +11,16 @@
 #include <utility>
 #include <vector>
 
-#include "../support/TestAudioProcessor.h"
-#include "../support/TestSupport.h"
 #include "SonalloyTestSupport.h"
-#include "audio/AudioRenderPipeline.h"
 #include "contract/ExecutionGraph.h"
 #include "contract/ExecutionGraphDecoder.h"
 #include "instruments/Vst3InstrumentRuntime.h"
+#include "pipeline/AudioRenderPipeline.h"
 #include "recording/ArrangeRecordingSession.h"
 #include "recording/ArrangementCaptureSink.h"
 #include "render/OfflineRenderer.h"
+#include "support/TestAudioProcessor.h"
+#include "support/TestSupport.h"
 #include "timeline/TimelineEngine.h"
 
 namespace riffra {

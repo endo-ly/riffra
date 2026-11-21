@@ -1,9 +1,9 @@
 #include <gtest/gtest.h>
 
-#include "../timeline/SonalloyTestSupport.h"
-#include "audio/AudioRenderPipeline.h"
-#include "audio/InstrumentPreviewSession.h"
-#include "audio/PreviewEngine.h"
+#include "pipeline/AudioRenderPipeline.h"
+#include "preview/InstrumentPreviewSession.h"
+#include "preview/PreviewEngine.h"
+#include "timeline/SonalloyTestSupport.h"
 #include "timeline/TimelineEngine.h"
 
 namespace riffra {

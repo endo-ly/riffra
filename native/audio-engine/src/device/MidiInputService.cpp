@@ -1,7 +1,7 @@
 #include "MidiInputService.h"
 
-#include "audio/PluginAudition.h"
-#include "audio/PreviewEngine.h"
+#include "preview/PluginAudition.h"
+#include "preview/PreviewEngine.h"
 #include "timeline/TimelineEngine.h"
 
 namespace riffra {

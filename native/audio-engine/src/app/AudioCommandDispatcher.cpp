@@ -5,7 +5,7 @@
 #include <utility>
 #include <variant>
 
-#include "midi/MidiInputService.h"
+#include "device/MidiInputService.h"
 #include "protocol/AudioProtocol.h"
 #include "timeline/TimelineEngine.h"
 

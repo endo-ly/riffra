@@ -1,4 +1,4 @@
-#include "../AudioCommandDispatcher.h"
+#include "app/AudioCommandDispatcher.h"
 #include "timeline/TimelineEngine.h"
 
 namespace riffra {

@@ -4,10 +4,10 @@
 #include <cmath>
 #include <utility>
 
-#include "../timeline/SonalloyTestSupport.h"
-#include "audio/InstrumentPreviewContract.h"
-#include "audio/InstrumentPreviewSession.h"
-#include "audio/PreviewEngine.h"
+#include "contract/InstrumentPreviewContract.h"
+#include "preview/InstrumentPreviewSession.h"
+#include "preview/PreviewEngine.h"
+#include "timeline/SonalloyTestSupport.h"
 
 namespace riffra {
 namespace {

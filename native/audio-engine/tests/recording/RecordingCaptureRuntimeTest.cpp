@@ -1,8 +1,8 @@
 #include <gtest/gtest.h>
 
-#include "../timeline/TimelineTestSupport.h"
 #include "concurrency/RealtimeCommandQueue.h"
 #include "timeline/RealtimeCommand.h"
+#include "timeline/TimelineTestSupport.h"
 
 namespace riffra {
 

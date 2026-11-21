@@ -2,7 +2,7 @@
 
 #include <vector>
 
-#include "audio/AudioMetrics.h"
+#include "pipeline/AudioMetrics.h"
 
 namespace riffra {
 

@@ -3,7 +3,7 @@
 #include <utility>
 
 #include "AudioDeviceService.h"
-#include "audio/AudioRenderPipeline.h"
+#include "pipeline/AudioRenderPipeline.h"
 
 namespace riffra {
 

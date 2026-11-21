@@ -26,8 +26,8 @@ extern "C" void* __wrap_malloc(const std::size_t size) noexcept {
 }
 #endif
 
-#include "../SonalloyTestSupport.h"
 #include "instruments/SonalloyInstrumentRuntime.h"
+#include "timeline/SonalloyTestSupport.h"
 
 namespace riffra {
 namespace {

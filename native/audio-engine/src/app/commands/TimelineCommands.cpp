@@ -3,7 +3,7 @@
 #include <climits>
 #include <memory>
 
-#include "../AudioCommandDispatcher.h"
+#include "app/AudioCommandDispatcher.h"
 #include "plugins/PluginEditorHost.h"
 #include "timeline/TimelineEngine.h"
 

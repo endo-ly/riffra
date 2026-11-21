@@ -12,10 +12,10 @@
 #include <thread>
 
 #include "AudioStatusBuilder.h"
-#include "audio/AudioRenderPipeline.h"
+#include "RuntimeLifecycleExecutor.h"
 #include "contract/SidecarCommands.h"
 #include "device/AudioDeviceController.h"
-#include "plugins/RuntimeLifecycleExecutor.h"
+#include "pipeline/AudioRenderPipeline.h"
 #include "protocol/CommandResponder.h"
 #include "timeline/RealtimeCommand.h"
 

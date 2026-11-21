@@ -9,7 +9,7 @@
 #include <variant>
 
 #include "ExecutionGraph.h"
-#include "audio/InstrumentPreviewSession.h"
+#include "preview/InstrumentPreviewSession.h"
 
 namespace riffra {
 

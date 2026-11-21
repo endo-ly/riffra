@@ -2,7 +2,7 @@
 #include <memory>
 #include <string>
 
-#include "../AudioCommandDispatcher.h"
+#include "app/AudioCommandDispatcher.h"
 #include "plugins/PluginEditorHost.h"
 #include "protocol/AudioProtocol.h"
 #include "timeline/TimelineEngine.h"

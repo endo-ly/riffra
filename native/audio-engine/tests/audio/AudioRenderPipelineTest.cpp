@@ -8,12 +8,12 @@
 #include <thread>
 #include <utility>
 
-#include "../support/TestAudioProcessor.h"
-#include "../timeline/TimelineTestSupport.h"
-#include "audio/AudioRenderPipeline.h"
-#include "audio/PreviewEngine.h"
+#include "pipeline/AudioRenderPipeline.h"
+#include "preview/PreviewEngine.h"
 #include "recording/ArrangeRecordingSession.h"
+#include "support/TestAudioProcessor.h"
 #include "timeline/TimelineEngine.h"
+#include "timeline/TimelineTestSupport.h"
 
 namespace riffra {
 namespace {

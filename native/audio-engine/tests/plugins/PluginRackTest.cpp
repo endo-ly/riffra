@@ -4,8 +4,8 @@
 #include <cmath>
 #include <thread>
 
-#include "../support/TestAudioProcessor.h"
 #include "plugins/PluginEditorHost.h"
+#include "support/TestAudioProcessor.h"
 
 namespace riffra {
 namespace {

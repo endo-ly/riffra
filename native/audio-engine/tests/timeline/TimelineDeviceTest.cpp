@@ -9,7 +9,7 @@
 #include "TimelineTestSupport.h"
 #include "app/AudioCommandDispatcher.h"
 #include "device/AudioDeviceController.h"
-#include "midi/MidiInputService.h"
+#include "device/MidiInputService.h"
 #include "plugins/PluginEditorHost.h"
 
 namespace riffra {
