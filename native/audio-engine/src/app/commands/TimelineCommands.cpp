@@ -25,19 +25,19 @@ void AudioCommandDispatcher::handle(const WaitForTimelineIdleCommand& command,
                        "runtime.timeline.waitForIdle");
         return;
     }
-    if (command.closeEditor && context.trackPluginEditor != nullptr) {
-        context.trackPluginEditor->close();
+    if (command.closeEditor && trackPluginEditor != nullptr) {
+        trackPluginEditor->close();
         const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
             deadline - std::chrono::steady_clock::now());
-        if (!context.trackPluginEditor->waitForClosingState(
+        if (!trackPluginEditor->waitForClosingState(
                 static_cast<int>(std::clamp<std::int64_t>(remaining.count(), 0, INT_MAX)))) {
             responder.fail("trackDevice", "The closing plugin state could not be captured.",
                            "runtime.timeline.waitForIdle");
             return;
         }
-        context.trackPluginEditor.reset();
-        context.pluginEditorOwner = {};
-        context.trackPluginEditorDeviceId.clear();
+        trackPluginEditor.reset();
+        pluginEditorOwner = {};
+        trackPluginEditorDeviceId.clear();
     }
     responder.respond(TimelineIdleAckSpec{});
 }
@@ -52,7 +52,7 @@ void AudioCommandDispatcher::handle(const PrepareTimelineSnapshotCommand& comman
     const auto blockSize = device != nullptr ? device->getCurrentBufferSizeSamples() : 0;
     const auto sampleRate = context.pipeline.getSampleRate();
     const auto pending = std::make_shared<CommandResponder>(std::move(responder));
-    context.timelineOperationRunning.store(true, std::memory_order_release);
+    timelineOperationRunning.store(true, std::memory_order_release);
     pending->progress({});
     const auto submitted = context.runtimeLifecycle.submitLoad([this, snapshot = command.snapshot,
                                                                 pending, sampleRate, blockSize] {
@@ -68,14 +68,14 @@ void AudioCommandDispatcher::handle(const PrepareTimelineSnapshotCommand& comman
         } catch (...) {
             timelineError = "Arrangement VST3 loading failed with an unknown exception.";
         }
-        context.timelineOperationRunning.store(false, std::memory_order_release);
+        timelineOperationRunning.store(false, std::memory_order_release);
         if (loaded)
             pending->respond(TimelineAckSpec{});
         else
             pending->fail("timeline", timelineError, "runtime.timeline.prepare");
     });
     if (!submitted) {
-        context.timelineOperationRunning.store(false, std::memory_order_release);
+        timelineOperationRunning.store(false, std::memory_order_release);
         pending->fail("runtimeLifecycle", "The VST lifecycle executor is stopping.",
                       "runtime.timeline.prepare");
     }
@@ -88,19 +88,18 @@ void AudioCommandDispatcher::handle(const CommitTimelineSnapshotCommand&,
                                 "committed yet."))
         return;
     const auto pending = std::make_shared<CommandResponder>(std::move(responder));
-    context.timelineOperationRunning.store(true, std::memory_order_release);
+    timelineOperationRunning.store(true, std::memory_order_release);
     const auto submitted = context.runtimeLifecycle.submit(
         [this, pending] {
-            const auto shouldCloseEditor =
-                context.timelineEngine.hasPreparedSnapshot() &&
-                context.trackPluginEditor != nullptr &&
-                !context.timelineEngine.preparedDeviceIsReused(context.pluginEditorOwner,
-                                                               context.trackPluginEditorDeviceId);
+            const auto shouldCloseEditor = context.timelineEngine.hasPreparedSnapshot() &&
+                                           trackPluginEditor != nullptr &&
+                                           !context.timelineEngine.preparedDeviceIsReused(
+                                               pluginEditorOwner, trackPluginEditorDeviceId);
             std::shared_ptr<PluginEditorHost> closingEditor;
-            if (shouldCloseEditor) closingEditor = context.trackPluginEditor;
+            if (shouldCloseEditor) closingEditor = trackPluginEditor;
             juce::String timelineError;
             const auto committed = context.timelineEngine.commitPreparedSnapshot(timelineError);
-            context.timelineOperationRunning.store(false, std::memory_order_release);
+            timelineOperationRunning.store(false, std::memory_order_release);
             if (rejectUnlessAccepted(*pending, committed, "timeline", timelineError,
                                      "runtime.timeline.commit"))
                 return;
@@ -109,7 +108,7 @@ void AudioCommandDispatcher::handle(const CommitTimelineSnapshotCommand&,
         },
         kTimelineVstLifecycleTimeout);
     if (!submitted) {
-        context.timelineOperationRunning.store(false, std::memory_order_release);
+        timelineOperationRunning.store(false, std::memory_order_release);
         pending->fail("runtimeLifecycle", "The VST lifecycle executor is stopping.",
                       "runtime.timeline.commit");
     }
@@ -122,17 +121,17 @@ void AudioCommandDispatcher::handle(const DiscardTimelineSnapshotCommand&,
                                 "discarded yet."))
         return;
     const auto pending = std::make_shared<CommandResponder>(std::move(responder));
-    context.timelineOperationRunning.store(true, std::memory_order_release);
+    timelineOperationRunning.store(true, std::memory_order_release);
     const auto submitted = context.runtimeLifecycle.submit(
         [this, pending] {
             context.timelineEngine.discardPreparedSnapshot();
-            context.timelineOperationRunning.store(false, std::memory_order_release);
+            timelineOperationRunning.store(false, std::memory_order_release);
             context.timelineEngine.reclaimRetiredGraphs();
             pending->respond(TimelineAckSpec{});
         },
         std::chrono::seconds(5));
     if (!submitted) {
-        context.timelineOperationRunning.store(false, std::memory_order_release);
+        timelineOperationRunning.store(false, std::memory_order_release);
         pending->fail("runtimeLifecycle", "The VST lifecycle executor is stopping.",
                       "runtime.timeline.discard");
     }

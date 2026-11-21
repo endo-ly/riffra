@@ -17,12 +17,9 @@ class TimelineEngine;
 
 class MidiMonitor final {
 public:
-    // Control thread only. The callback reads the installed targets without
-    // taking a lock.
-    void setPreviewEngine(PreviewEngine* preview) noexcept;
-    void setTimelineEngine(TimelineEngine* engine) noexcept;
-    /// Installs the audition that receives live MIDI ahead of the Timeline.
-    void setAudition(PluginAudition* audition) noexcept;
+    /// The targets are fixed for the lifetime of the monitor.
+    MidiMonitor(PreviewEngine& previewEngine, PluginAudition& audition,
+                TimelineEngine& timelineEngine) noexcept;
 
     // JUCE MIDI callback threads. This path must remain non-blocking.
     /// Routes one message from the device with the given MidiSourceRegistry index.
@@ -37,16 +34,17 @@ private:
     std::atomic<bool> active{false};
     std::atomic<std::uint64_t> messageCount{0};
     std::atomic<int> lastNote{-1};
-    PreviewEngine* previewEngine = nullptr;
-    TimelineEngine* timelineEngine = nullptr;
-    PluginAudition* pluginAudition = nullptr;
+    PreviewEngine& previewEngine;
+    PluginAudition& pluginAudition;
+    TimelineEngine& timelineEngine;
 };
 
 class MidiInputService final {
 public:
     // Control thread only. MIDI device open/close is never performed from an
     // audio callback.
-    MidiInputService(PreviewEngine& previewEngine, TimelineEngine& timelineEngine);
+    MidiInputService(PreviewEngine& previewEngine, PluginAudition& audition,
+                     TimelineEngine& timelineEngine);
     ~MidiInputService();
 
     MidiInputService(const MidiInputService&) = delete;

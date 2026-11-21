@@ -68,16 +68,13 @@ AudioEngine::AudioEngine()
                                (void)pipeline.recording().stop(ignored);
                            });
                        }),
-      midiInputs(pipeline.preview(), timelineEngine),
+      midiInputs(pipeline.preview(), pipeline.audition(), timelineEngine),
       runtimeLifecycle([](RuntimeLifecycleExecutor::Task task) {
           if (!juce::MessageManager::callSync([task = std::move(task)]() mutable { task(); }))
               std::_Exit(125);
       }) {
     commandDispatcher = std::make_unique<AudioCommandDispatcher>(AudioCommandDispatcher::Context{
-        formatManager, timelineEngine, pipeline, deviceController, midiInputs, runtimeLifecycle,
-        trackPluginEditor, pluginEditorOwner, trackPluginEditorDeviceId, auditionEditor,
-        comparisonRaw, comparisonProcessed, timelineOperationRunning});
-    midiInputs.monitor().setAudition(&pipeline.audition());
+        formatManager, timelineEngine, pipeline, deviceController, midiInputs, runtimeLifecycle});
 }
 
 AudioEngine::~AudioEngine() = default;
@@ -113,7 +110,11 @@ int AudioEngine::serve(const std::optional<std::uint32_t> parentPid,
         return 2;
     }
     pipeline.setInputChannel(startupConfiguration.inputChannel);
-    deviceController.setDeviceLossHandler([&] { writeEvent(currentStatus()); });
+    deviceController.setDeviceLossHandler([&] {
+        juce::String ignored;
+        (void)pipeline.recording().stop(ignored);
+        writeEvent(currentStatus());
+    });
     deviceController.attach();
     writeEvent(ReadySpec{currentStatus()});
 
@@ -210,17 +211,7 @@ int AudioEngine::serve(const std::optional<std::uint32_t> parentPid,
     std::thread commandThread([this] {
         commandDispatcher->run(std::cin);
         const auto cleanupSubmitted = runtimeLifecycle.submit(
-            [&] {
-                if (trackPluginEditor != nullptr) {
-                    trackPluginEditor->close();
-                    trackPluginEditor.reset();
-                    pluginEditorOwner = {};
-                    trackPluginEditorDeviceId.clear();
-                }
-                commandDispatcher->closePluginAudition();
-                timelineOperationRunning.store(false, std::memory_order_release);
-            },
-            std::chrono::seconds(10));
+            [&] { commandDispatcher->closeRuntimeEditors(); }, std::chrono::seconds(10));
         if (cleanupSubmitted && !runtimeLifecycle.waitForIdle(std::chrono::milliseconds(1500)))
             std::_Exit(125);
         juce::MessageManager::callAsync(
@@ -232,7 +223,8 @@ int AudioEngine::serve(const std::optional<std::uint32_t> parentPid,
     juce::MessageManager::getInstance()->runDispatchLoop();
     graphReclaimTimer.stopTimer();
     if (commandThread.joinable()) commandThread.join();
-    if (!commandDispatcher->waitForBackgroundWork(std::chrono::milliseconds(1500))) std::_Exit(125);
+    if (!pipeline.recording().waitForStopCompletion(std::chrono::milliseconds(1500)))
+        std::_Exit(125);
     if (!runtimeLifecycle.waitForIdle(std::chrono::milliseconds(1500))) std::_Exit(125);
     pipeline.recording().setFinalizationDispatcher({});
     runtimeLifecycle.requestStop();

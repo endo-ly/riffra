@@ -3,10 +3,14 @@
 #include <JuceHeader.h>
 
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
+#include <thread>
 
 #include "contract/SidecarMessages.h"
 #include "recording/ArrangeRecordingSession.h"
@@ -16,17 +20,12 @@ namespace riffra {
 
 class TimelineEngine;
 
-/// Realtime stop command state handed from the dispatcher to its completion worker.
-struct PendingRecordingStop final {
-    std::uint64_t commandSequence = 0;
-    bool cancelCountIn = false;
-};
-
-/// Owns arrange-recording control state and finalization hand-off.
+/// Owns arrange-recording control state, finalization hand-off, and stop completion.
 class RecordingController final {
 public:
     using FinalizationDispatcher =
         std::function<void(std::unique_ptr<ArrangeRecordingSession>, const juce::String&)>;
+    using StopCompletion = std::function<void(bool completed, const juce::String& error)>;
 
     explicit RecordingController(TimelineEngine& timeline) noexcept;
     ~RecordingController();
@@ -36,24 +35,44 @@ public:
 
     // Control thread only.
     RealtimeRequest start(const juce::File& directory, int countInBeats, juce::String& error);
-    RealtimeRequest requestStop(PendingRecordingStop& pending, juce::String& error);
-    RealtimeRequest completeStop(const PendingRecordingStop& pending, juce::String& error);
+    /// Accepts one asynchronous stop. The worker applies the stop and then calls
+    /// the completion handler. `cancelCountIn` reports whether the stop cancels
+    /// a count-in rather than a running capture.
+    RealtimeRequest requestStopAsync(bool& cancelCountIn, juce::String& error);
     RealtimeRequest stop(juce::String& error);
     void setFinalizationDispatcher(FinalizationDispatcher dispatcher);
-    std::unique_ptr<ArrangeRecordingSession> takePendingFinalization() noexcept;
+    void setStopCompletion(StopCompletion completion);
+    [[nodiscard]] bool waitForStopCompletion(std::chrono::milliseconds timeout);
     void completeProcessing(const ArrangeRecordingSummary& summary, const juce::String& error);
     [[nodiscard]] RecordingStatusSpec status() const;
 
 private:
+    struct PendingRecordingStop final {
+        std::uint64_t commandSequence = 0;
+        bool cancelCountIn = false;
+    };
+
+    RealtimeRequest beginStop(PendingRecordingStop& pending, juce::String& error);
+    RealtimeRequest applyStop(const PendingRecordingStop& pending, juce::String& error);
+    void finishStop();
+    void stopWorkerLoop();
+
     TimelineEngine& timeline;
     mutable juce::CriticalSection lock;
     std::unique_ptr<ArrangeRecordingSession> arrangeRecording;
-    std::unique_ptr<ArrangeRecordingSession> pendingFinalization;
     FinalizationDispatcher finalizationDispatcher;
     std::optional<RecordingStatusSpec> finalizationStatus;
     bool processing = false;
-    bool stopInProgress = false;
     std::atomic<bool> cancelled{false};
+
+    std::mutex stopMutex;
+    std::condition_variable stopWake;
+    std::condition_variable stopFinished;
+    std::optional<PendingRecordingStop> pendingStop;
+    StopCompletion stopCompletion;
+    bool stopInProgress = false;
+    bool stopWorkerStopping = false;
+    std::thread stopWorker;
 };
 
 }  // namespace riffra

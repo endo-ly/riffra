@@ -101,7 +101,7 @@ TEST(AudioDeviceServiceTest, KeepsProjectMeterEpochAndCumulativeDiagnosticsConsi
     callback.metrics().beginProjectBlock(newProjectEpoch);
     callback.metrics().recordBlock(newProjectEpoch, 0.1f, 0.2f, 0.3f, 0.25f, 0.35f, 2.5f, 0, 0);
 
-    MidiInputService midi(callback.preview(), timeline);
+    MidiInputService midi(callback.preview(), callback.audition(), timeline);
     const auto status =
         AudioStatusBuilder::currentStatus(manager, callback, midi.monitor(), timeline);
     EXPECT_FLOAT_EQ(static_cast<float>(status.inputPeak), 0.1f);
@@ -131,7 +131,7 @@ TEST(AudioDeviceServiceTest, ReportsProbeFieldsRequiredByTheHost) {
 TEST(MidiInputServiceTest, ProcessesMonitoredNotesWithoutListeningForDevices) {
     TimelineEngine timeline;
     AudioRenderPipeline callback(timeline);
-    MidiInputService service(callback.preview(), timeline);
+    MidiInputService service(callback.preview(), callback.audition(), timeline);
     auto& monitor = service.monitor();
 
     monitor.setActive(true);

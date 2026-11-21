@@ -15,13 +15,34 @@
 
 namespace riffra {
 
+class AudioCommandDispatcherTestPeer final {
+public:
+    static void setTrackPluginEditor(AudioCommandDispatcher& dispatcher,
+                                     std::shared_ptr<PluginEditorHost> editor,
+                                     EffectOwnerSpec owner, juce::String deviceId) {
+        dispatcher.trackPluginEditor = std::move(editor);
+        dispatcher.pluginEditorOwner = std::move(owner);
+        dispatcher.trackPluginEditorDeviceId = std::move(deviceId);
+    }
+
+    [[nodiscard]] static std::shared_ptr<PluginEditorHost> trackPluginEditor(
+        const AudioCommandDispatcher& dispatcher) {
+        return dispatcher.trackPluginEditor;
+    }
+
+    static void setTimelineOperationRunning(AudioCommandDispatcher& dispatcher,
+                                            const bool running) {
+        dispatcher.timelineOperationRunning.store(running, std::memory_order_release);
+    }
+};
+
 TEST(AudioCommandDispatcherTest, CommitAcknowledgesAndRetainsDeferredEditorUntilIdle) {
     juce::ScopedJuceInitialiser_GUI initialiser;
     juce::AudioFormatManager formats;
     TimelineEngine timeline;
     AudioRenderPipeline pipeline(timeline);
     AudioDeviceController deviceController(pipeline);
-    MidiInputService midiInputs(pipeline.preview(), timeline);
+    MidiInputService midiInputs(pipeline.preview(), pipeline.audition(), timeline);
     RuntimeLifecycleExecutor lifecycle;
     ProcessorTrace trace;
     juce::String error;
@@ -36,15 +57,10 @@ TEST(AudioCommandDispatcherTest, CommitAcknowledgesAndRetainsDeferredEditorUntil
         PluginEditorHost::ParameterCallback{}, PluginEditorHost::ClosedCallback{}, rack);
     ASSERT_TRUE(editor->open(error)) << error;
     rack->beginAutomationRead();
-    auto trackEditor = editor;
-    EffectOwnerSpec editorOwner;
-    juce::String editorDeviceId = "old-device";
-    std::shared_ptr<PluginEditorHost> auditionEditor;
-    juce::AudioBuffer<float> raw, processed;
-    std::atomic<bool> operationRunning{false};
-    AudioCommandDispatcher dispatcher({formats, timeline, pipeline, deviceController, midiInputs,
-                                       lifecycle, trackEditor, editorOwner, editorDeviceId,
-                                       auditionEditor, raw, processed, operationRunning});
+    AudioCommandDispatcher dispatcher(
+        {formats, timeline, pipeline, deviceController, midiInputs, lifecycle});
+    AudioCommandDispatcherTestPeer::setTrackPluginEditor(dispatcher, editor, {},
+                                                         juce::String("old-device"));
     ASSERT_TRUE(timeline.loadSnapshot(makeTestSnapshot(), formats, 48'000.0, 32, error, false))
         << error;
 
@@ -77,7 +93,7 @@ TEST(AudioCommandDispatcherTest, CommitAcknowledgesAndRetainsDeferredEditorUntil
     EXPECT_EQ(firstWaitKind, "error");
     EXPECT_EQ(secondWaitKind, "response");
     EXPECT_TRUE(captured.load());
-    EXPECT_EQ(trackEditor, nullptr);
+    EXPECT_EQ(AudioCommandDispatcherTestPeer::trackPluginEditor(dispatcher), nullptr);
 }
 
 TEST(TimelineEngineTest, KeepsCanonicalTrackStateWhenDeviceRuntimeIsReused) {
@@ -155,30 +171,10 @@ TEST(AudioCommandDispatcherTest, QueueFullDoesNotPreventSafetyMutes) {
     TimelineEngine timeline;
     AudioRenderPipeline pipeline(timeline);
     AudioDeviceController deviceController(pipeline);
-    MidiInputService midiInputs(pipeline.preview(), timeline);
+    MidiInputService midiInputs(pipeline.preview(), pipeline.audition(), timeline);
     RuntimeLifecycleExecutor runtimeLifecycle;
-    std::shared_ptr<PluginEditorHost> trackPluginEditor;
-    EffectOwnerSpec pluginEditorOwner;
-    juce::String trackPluginEditorDeviceId;
-    std::shared_ptr<PluginEditorHost> auditionEditor;
-    juce::AudioBuffer<float> comparisonRaw;
-    juce::AudioBuffer<float> comparisonProcessed;
-    std::atomic<bool> timelineOperationRunning{false};
-    AudioCommandDispatcher dispatcher({
-        formats,
-        timeline,
-        pipeline,
-        deviceController,
-        midiInputs,
-        runtimeLifecycle,
-        trackPluginEditor,
-        pluginEditorOwner,
-        trackPluginEditorDeviceId,
-        auditionEditor,
-        comparisonRaw,
-        comparisonProcessed,
-        timelineOperationRunning,
-    });
+    AudioCommandDispatcher dispatcher(
+        {formats, timeline, pipeline, deviceController, midiInputs, runtimeLifecycle});
     timeline.setRealtimeOwner(RealtimeOwner::audio);
     for (std::size_t command = 0; command < TimelineEngineTestPeer::realtimeCommandCapacity();
          ++command)
@@ -236,30 +232,11 @@ TEST(AudioCommandDispatcherTest, RejectsDeviceChangesDuringGraphOperations) {
     TimelineEngine timeline;
     AudioRenderPipeline pipeline(timeline);
     AudioDeviceController deviceController(pipeline);
-    MidiInputService midiInputs(pipeline.preview(), timeline);
+    MidiInputService midiInputs(pipeline.preview(), pipeline.audition(), timeline);
     RuntimeLifecycleExecutor runtimeLifecycle;
-    std::shared_ptr<PluginEditorHost> trackPluginEditor;
-    EffectOwnerSpec pluginEditorOwner;
-    juce::String trackPluginEditorDeviceId;
-    std::shared_ptr<PluginEditorHost> auditionEditor;
-    juce::AudioBuffer<float> comparisonRaw;
-    juce::AudioBuffer<float> comparisonProcessed;
-    std::atomic<bool> timelineOperationRunning{true};
-    AudioCommandDispatcher dispatcher({
-        formats,
-        timeline,
-        pipeline,
-        deviceController,
-        midiInputs,
-        runtimeLifecycle,
-        trackPluginEditor,
-        pluginEditorOwner,
-        trackPluginEditorDeviceId,
-        auditionEditor,
-        comparisonRaw,
-        comparisonProcessed,
-        timelineOperationRunning,
-    });
+    AudioCommandDispatcher dispatcher(
+        {formats, timeline, pipeline, deviceController, midiInputs, runtimeLifecycle});
+    AudioCommandDispatcherTestPeer::setTimelineOperationRunning(dispatcher, true);
     juce::var reply;
 
     dispatcher.dispatch(
@@ -279,30 +256,10 @@ TEST(AudioCommandDispatcherTest, PanicMustApplyBeforeASafetyMuteCanBeReleased) {
     TimelineEngine timeline;
     AudioRenderPipeline pipeline(timeline);
     AudioDeviceController deviceController(pipeline);
-    MidiInputService midiInputs(pipeline.preview(), timeline);
+    MidiInputService midiInputs(pipeline.preview(), pipeline.audition(), timeline);
     RuntimeLifecycleExecutor runtimeLifecycle;
-    std::shared_ptr<PluginEditorHost> trackPluginEditor;
-    EffectOwnerSpec pluginEditorOwner;
-    juce::String trackPluginEditorDeviceId;
-    std::shared_ptr<PluginEditorHost> auditionEditor;
-    juce::AudioBuffer<float> comparisonRaw;
-    juce::AudioBuffer<float> comparisonProcessed;
-    std::atomic<bool> timelineOperationRunning{false};
-    AudioCommandDispatcher dispatcher({
-        formats,
-        timeline,
-        pipeline,
-        deviceController,
-        midiInputs,
-        runtimeLifecycle,
-        trackPluginEditor,
-        pluginEditorOwner,
-        trackPluginEditorDeviceId,
-        auditionEditor,
-        comparisonRaw,
-        comparisonProcessed,
-        timelineOperationRunning,
-    });
+    AudioCommandDispatcher dispatcher(
+        {formats, timeline, pipeline, deviceController, midiInputs, runtimeLifecycle});
     timeline.setRealtimeOwner(RealtimeOwner::audio);
     auto requestId = std::uint64_t{1};
     const auto send = [&](const SidecarCommandSpec& command) {
@@ -356,30 +313,10 @@ TEST(AudioCommandDispatcherTest, StopWaitDoesNotBlockFurtherCommandDispatch) {
     TimelineEngine timeline;
     AudioRenderPipeline pipeline(timeline);
     AudioDeviceController deviceController(pipeline);
-    MidiInputService midiInputs(pipeline.preview(), timeline);
+    MidiInputService midiInputs(pipeline.preview(), pipeline.audition(), timeline);
     RuntimeLifecycleExecutor runtimeLifecycle;
-    std::shared_ptr<PluginEditorHost> trackPluginEditor;
-    EffectOwnerSpec pluginEditorOwner;
-    juce::String trackPluginEditorDeviceId;
-    std::shared_ptr<PluginEditorHost> auditionEditor;
-    juce::AudioBuffer<float> comparisonRaw;
-    juce::AudioBuffer<float> comparisonProcessed;
-    std::atomic<bool> timelineOperationRunning{false};
-    AudioCommandDispatcher dispatcher({
-        formats,
-        timeline,
-        pipeline,
-        deviceController,
-        midiInputs,
-        runtimeLifecycle,
-        trackPluginEditor,
-        pluginEditorOwner,
-        trackPluginEditorDeviceId,
-        auditionEditor,
-        comparisonRaw,
-        comparisonProcessed,
-        timelineOperationRunning,
-    });
+    AudioCommandDispatcher dispatcher(
+        {formats, timeline, pipeline, deviceController, midiInputs, runtimeLifecycle});
     timeline.setRealtimeOwner(RealtimeOwner::audio);
     juce::var stopReply;
     dispatcher.dispatch(
@@ -396,7 +333,7 @@ TEST(AudioCommandDispatcherTest, StopWaitDoesNotBlockFurtherCommandDispatch) {
     EXPECT_FALSE(stopReply.isVoid());
     EXPECT_FALSE(statusReply.isVoid());
     timeline.setRealtimeOwner(RealtimeOwner::control);
-    EXPECT_TRUE(dispatcher.waitForBackgroundWork(std::chrono::seconds(2)));
+    EXPECT_TRUE(pipeline.recording().waitForStopCompletion(std::chrono::seconds(2)));
 }
 
 }  // namespace riffra

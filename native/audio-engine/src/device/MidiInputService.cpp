@@ -6,23 +6,16 @@
 
 namespace riffra {
 
-void MidiMonitor::setPreviewEngine(PreviewEngine* const preview) noexcept {
-    previewEngine = preview;
-}
-
-void MidiMonitor::setTimelineEngine(TimelineEngine* const engine) noexcept {
-    timelineEngine = engine;
-}
-
-void MidiMonitor::setAudition(PluginAudition* const audition) noexcept {
-    pluginAudition = audition;
-}
+MidiMonitor::MidiMonitor(PreviewEngine& previewEngineIn, PluginAudition& auditionIn,
+                         TimelineEngine& timelineEngineIn) noexcept
+    : previewEngine(previewEngineIn),
+      pluginAudition(auditionIn),
+      timelineEngine(timelineEngineIn) {}
 
 void MidiMonitor::receive(const std::uint16_t sourceIndex, const juce::MidiMessage& message) {
     messageCount.fetch_add(1, std::memory_order_relaxed);
     const auto routed =
-        (pluginAudition != nullptr && pluginAudition->enqueueMidi(message)) ||
-        (timelineEngine != nullptr && timelineEngine->enqueueLiveMidi(sourceIndex, message));
+        pluginAudition.enqueueMidi(message) || timelineEngine.enqueueLiveMidi(sourceIndex, message);
     if (routed) {
         if (message.isNoteOn() || message.isNoteOff())
             lastNote.store(message.getNoteNumber(), std::memory_order_release);
@@ -33,12 +26,11 @@ void MidiMonitor::receive(const std::uint16_t sourceIndex, const juce::MidiMessa
     lastNote.store(message.getNoteNumber(), std::memory_order_release);
 
     if (message.isNoteOff()) {
-        if (previewEngine != nullptr) previewEngine->stopSynthNote(message.getNoteNumber());
+        previewEngine.stopSynthNote(message.getNoteNumber());
         return;
     }
 
-    if (previewEngine != nullptr)
-        previewEngine->startSynthNote(message.getNoteNumber(), message.getFloatVelocity());
+    previewEngine.startSynthNote(message.getNoteNumber(), message.getFloatVelocity());
 }
 
 void MidiMonitor::setActive(const bool value) noexcept {
@@ -62,11 +54,9 @@ void MidiInputService::SourceCallback::handleIncomingMidiMessage(juce::MidiInput
     monitor.receive(sourceIndex, message);
 }
 
-MidiInputService::MidiInputService(PreviewEngine& previewEngine, TimelineEngine& timelineEngine)
-    : timeline(timelineEngine) {
-    midiMonitor.setPreviewEngine(&previewEngine);
-    midiMonitor.setTimelineEngine(&timelineEngine);
-}
+MidiInputService::MidiInputService(PreviewEngine& previewEngine, PluginAudition& audition,
+                                   TimelineEngine& timelineEngine)
+    : timeline(timelineEngine), midiMonitor(previewEngine, audition, timelineEngine) {}
 
 MidiInputService::~MidiInputService() {
     setListening(false);

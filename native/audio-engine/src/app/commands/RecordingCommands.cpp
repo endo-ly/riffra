@@ -19,19 +19,15 @@ void AudioCommandDispatcher::handle(const StartArrangeRecordingCommand& command,
 
 void AudioCommandDispatcher::handle(const StopArrangeRecordingCommand&,
                                     CommandResponder responder) {
-    if (!reserveRecordingStop(responder)) return;
-
     juce::String recordingError;
-    PendingRecordingStop pending;
-    const auto requested = context.pipeline.recording().requestStop(pending, recordingError);
-    if (rejectUnlessAccepted(responder, requested, "recording", recordingError, "recording.stop")) {
-        releaseRecordingStopReservation();
+    bool cancelCountIn = false;
+    const auto requested =
+        context.pipeline.recording().requestStopAsync(cancelCountIn, recordingError);
+    if (rejectUnlessAccepted(responder, requested, "recording", recordingError, "recording.stop"))
         return;
-    }
 
-    queueRecordingStop(pending);
     auto status = currentStatus();
-    if (pending.cancelCountIn) status.recording.cancelled = true;
+    if (cancelCountIn) status.recording.cancelled = true;
     responder.respond(status);
 }
 

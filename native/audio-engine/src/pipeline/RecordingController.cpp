@@ -35,20 +35,34 @@ RecordingStatusSpec recordingStatus(const ArrangeRecordingSummary& summary) {
 }  // namespace
 
 RecordingController::RecordingController(TimelineEngine& timelineIn) noexcept
-    : timeline(timelineIn) {}
+    : timeline(timelineIn) {
+    stopWorker = std::thread([this] { stopWorkerLoop(); });
+}
 
 RecordingController::~RecordingController() {
     juce::String ignored;
     (void)stop(ignored);
+    {
+        const std::lock_guard guard(stopMutex);
+        stopWorkerStopping = true;
+    }
+    stopWake.notify_all();
+    if (stopWorker.joinable()) stopWorker.join();
 }
 
 RealtimeRequest RecordingController::start(const juce::File& directory, const int countInBeats,
                                            juce::String& error) {
     const juce::ScopedLock guard(lock);
-    if (arrangeRecording != nullptr || pendingFinalization != nullptr || processing ||
-        stopInProgress) {
+    if (arrangeRecording != nullptr || processing) {
         error = "A recording is already active.";
         return RealtimeRequest::rejected;
+    }
+    {
+        const std::lock_guard stopGuard(stopMutex);
+        if (stopInProgress) {
+            error = "A recording is already active.";
+            return RealtimeRequest::rejected;
+        }
     }
     auto candidate =
         ArrangeRecordingSession::create(directory, timeline.recordingConfiguration(), error);
@@ -85,16 +99,23 @@ void RecordingController::setFinalizationDispatcher(FinalizationDispatcher dispa
     finalizationDispatcher = std::move(dispatcher);
 }
 
-RealtimeRequest RecordingController::requestStop(PendingRecordingStop& pending,
-                                                 juce::String& error) {
+void RecordingController::setStopCompletion(StopCompletion completion) {
+    const std::lock_guard guard(stopMutex);
+    stopCompletion = std::move(completion);
+}
+
+RealtimeRequest RecordingController::beginStop(PendingRecordingStop& pending, juce::String& error) {
     {
         const juce::ScopedLock guard(lock);
         if (processing) {
             error = "The previous recording is still being processed.";
             return RealtimeRequest::rejected;
         }
-        if (pendingFinalization != nullptr) {
-            error = "The previous recording is waiting for finalization.";
+    }
+    {
+        const std::lock_guard guard(stopMutex);
+        if (stopWorkerStopping) {
+            error = "The recording stop worker is stopping.";
             return RealtimeRequest::rejected;
         }
         if (stopInProgress) {
@@ -107,8 +128,7 @@ RealtimeRequest RecordingController::requestStop(PendingRecordingStop& pending,
     pending.cancelCountIn = timeline.status().frame.recordingPhase == RecordingPhase::countingIn;
     const auto sequence = timeline.enqueueArrangeRecordingStop();
     if (!sequence.has_value()) {
-        const juce::ScopedLock guard(lock);
-        stopInProgress = false;
+        finishStop();
         error = "The realtime command queue is full.";
         return RealtimeRequest::queueFull;
     }
@@ -116,8 +136,21 @@ RealtimeRequest RecordingController::requestStop(PendingRecordingStop& pending,
     return RealtimeRequest::accepted;
 }
 
-RealtimeRequest RecordingController::completeStop(const PendingRecordingStop& pending,
-                                                  juce::String& error) {
+RealtimeRequest RecordingController::requestStopAsync(bool& cancelCountIn, juce::String& error) {
+    PendingRecordingStop pending;
+    const auto requested = beginStop(pending, error);
+    if (requested != RealtimeRequest::accepted) return requested;
+    {
+        const std::lock_guard guard(stopMutex);
+        pendingStop = pending;
+    }
+    stopWake.notify_one();
+    cancelCountIn = pending.cancelCountIn;
+    return RealtimeRequest::accepted;
+}
+
+RealtimeRequest RecordingController::applyStop(const PendingRecordingStop& pending,
+                                               juce::String& error) {
     timeline.waitForCommandApplied(pending.commandSequence);
 
     std::unique_ptr<ArrangeRecordingSession> detached;
@@ -129,18 +162,15 @@ RealtimeRequest RecordingController::completeStop(const PendingRecordingStop& pe
         if (pending.cancelCountIn) {
             if (!timeline.clearRecordingSink()) {
                 error = "The recording sink was not retired within one second.";
-                stopInProgress = false;
                 return RealtimeRequest::rejected;
             }
             if (arrangeRecording == nullptr) {
                 cancelled.store(true, std::memory_order_release);
-                stopInProgress = false;
                 return RealtimeRequest::accepted;
             }
             auto cancelling = std::move(arrangeRecording);
             const auto wasCancelled = cancelling->cancel(error);
             cancelled.store(wasCancelled, std::memory_order_release);
-            stopInProgress = false;
             return wasCancelled ? RealtimeRequest::accepted : RealtimeRequest::rejected;
         }
 
@@ -148,11 +178,9 @@ RealtimeRequest RecordingController::completeStop(const PendingRecordingStop& pe
         if (!finalized) error = finalizationError;
         if (!timeline.clearRecordingSink()) {
             error = "The recording sink was not retired within one second.";
-            stopInProgress = false;
             return RealtimeRequest::rejected;
         }
         if (arrangeRecording == nullptr) {
-            stopInProgress = false;
             return finalized ? RealtimeRequest::accepted : RealtimeRequest::rejected;
         }
 
@@ -162,28 +190,52 @@ RealtimeRequest RecordingController::completeStop(const PendingRecordingStop& pe
         finalizationStatus->active = false;
         finalizationStatus->processing = true;
         dispatcher = finalizationDispatcher;
-        stopInProgress = false;
     }
 
-    if (dispatcher != nullptr)
-        dispatcher(std::move(detached), finalizationError);
-    else {
-        const juce::ScopedLock guard(lock);
-        pendingFinalization = std::move(detached);
-    }
+    if (dispatcher != nullptr) dispatcher(std::move(detached), finalizationError);
     return finalized ? RealtimeRequest::accepted : RealtimeRequest::rejected;
+}
+
+void RecordingController::finishStop() {
+    {
+        const std::lock_guard guard(stopMutex);
+        stopInProgress = false;
+    }
+    stopFinished.notify_all();
+}
+
+void RecordingController::stopWorkerLoop() {
+    for (;;) {
+        PendingRecordingStop pending;
+        StopCompletion completion;
+        {
+            std::unique_lock guard(stopMutex);
+            stopWake.wait(guard, [this] { return stopWorkerStopping || pendingStop.has_value(); });
+            if (stopWorkerStopping && !pendingStop.has_value()) return;
+            pending = *pendingStop;
+            pendingStop.reset();
+            completion = stopCompletion;
+        }
+
+        juce::String error;
+        const auto completed = applyStop(pending, error);
+        if (completion != nullptr) completion(completed == RealtimeRequest::accepted, error);
+        finishStop();
+    }
 }
 
 RealtimeRequest RecordingController::stop(juce::String& error) {
     PendingRecordingStop pending;
-    const auto requested = requestStop(pending, error);
+    const auto requested = beginStop(pending, error);
     if (requested != RealtimeRequest::accepted) return requested;
-    return completeStop(pending, error);
+    const auto completed = applyStop(pending, error);
+    finishStop();
+    return completed;
 }
 
-std::unique_ptr<ArrangeRecordingSession> RecordingController::takePendingFinalization() noexcept {
-    const juce::ScopedLock guard(lock);
-    return std::move(pendingFinalization);
+bool RecordingController::waitForStopCompletion(const std::chrono::milliseconds timeout) {
+    std::unique_lock guard(stopMutex);
+    return stopFinished.wait_for(guard, timeout, [this] { return !stopInProgress; });
 }
 
 void RecordingController::completeProcessing(const ArrangeRecordingSummary& summary,

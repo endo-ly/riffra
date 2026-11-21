@@ -76,7 +76,7 @@ void AudioCommandDispatcher::handle(const OpenPluginAuditionCommand& command,
                                 "be opened when it finishes."))
         return;
     const auto pending = std::make_shared<CommandResponder>(std::move(responder));
-    context.timelineOperationRunning.store(true, std::memory_order_release);
+    timelineOperationRunning.store(true, std::memory_order_release);
     const auto submitted = context.runtimeLifecycle.submit(
         [this, path = command.path, pending] {
             juce::String error;
@@ -89,7 +89,7 @@ void AudioCommandDispatcher::handle(const OpenPluginAuditionCommand& command,
                 error = "Opening the VST3 failed with an unknown exception.";
             }
             if (!opened) closePluginAudition();
-            context.timelineOperationRunning.store(false, std::memory_order_release);
+            timelineOperationRunning.store(false, std::memory_order_release);
             if (!opened) {
                 pending->fail("pluginAudition", error, "plugin.audition.open");
                 return;
@@ -98,7 +98,7 @@ void AudioCommandDispatcher::handle(const OpenPluginAuditionCommand& command,
         },
         kPluginAuditionTimeout);
     if (!submitted) {
-        context.timelineOperationRunning.store(false, std::memory_order_release);
+        timelineOperationRunning.store(false, std::memory_order_release);
         pending->fail("runtimeLifecycle", "The VST lifecycle executor is stopping.",
                       "plugin.audition.open");
     }
@@ -112,7 +112,7 @@ bool AudioCommandDispatcher::openPluginAudition(const juce::String& path, juce::
         const auto status = current->status();
         // An instance prepared for an earlier device format stays silent, so it is reloaded.
         if (status.path == path && status.sampleRate == sampleRate && status.blockSize == blockSize)
-            return context.auditionEditor->open(error);
+            return auditionEditor->open(error);
     }
     closePluginAudition();
 
@@ -128,25 +128,25 @@ bool AudioCommandDispatcher::openPluginAudition(const juce::String& path, juce::
     }
     auto& rack = *loaded;
     audition.install(std::move(loaded), sampleRate, blockSize);
-    context.auditionEditor = std::make_shared<PluginEditorHost>(
+    auditionEditor = std::make_shared<PluginEditorHost>(
         rack, PluginEditorHost::StateCallback{}, PluginEditorHost::ClosingStateCallback{},
         PluginEditorHost::ParameterCallback{}, [this] {
             // Closing the window ends the audition; the plug-in is not kept.
             // The audition may have been reopened or replaced before this runs.
             (void)context.runtimeLifecycle.submit(
                 [this] {
-                    if (context.auditionEditor != nullptr && !context.auditionEditor->isOpen())
+                    if (auditionEditor != nullptr && !auditionEditor->isOpen())
                         closePluginAudition();
                 },
                 kPluginAuditionTimeout);
         });
-    return context.auditionEditor->open(error);
+    return auditionEditor->open(error);
 }
 
 void AudioCommandDispatcher::closePluginAudition() {
-    if (context.auditionEditor != nullptr) {
-        context.auditionEditor->close();
-        context.auditionEditor.reset();
+    if (auditionEditor != nullptr) {
+        auditionEditor->close();
+        auditionEditor.reset();
     }
     // The plug-in is destroyed here, on the lifecycle thread.
     (void)context.pipeline.audition().uninstall();
@@ -161,14 +161,13 @@ void AudioCommandDispatcher::handle(const StartTakeComparisonCommand& command,
     const auto targetRate = context.pipeline.getSampleRate();
     juce::String comparisonError;
     if (!loadComparisonFile(context.formatManager, targetRate, command.rawPath,
-                            command.rawStartFrame, command.rawEndFrame, context.comparisonRaw,
+                            command.rawStartFrame, command.rawEndFrame, comparisonRaw,
                             comparisonError) ||
         !loadComparisonFile(context.formatManager, targetRate, command.processedPath,
                             command.processedStartFrame, command.processedEndFrame,
-                            context.comparisonProcessed, comparisonError) ||
-        !context.pipeline.preview().startPreview(context.comparisonRaw, 0,
-                                                 context.comparisonRaw.getNumSamples(), 1.0f, false,
-                                                 comparisonError, 1)) {
+                            comparisonProcessed, comparisonError) ||
+        !context.pipeline.preview().startPreview(comparisonRaw, 0, comparisonRaw.getNumSamples(),
+                                                 1.0f, false, comparisonError, 1)) {
         responder.fail("takeComparison", comparisonError, "preview.takeComparison");
         return;
     }
@@ -179,8 +178,8 @@ void AudioCommandDispatcher::handle(const SwitchTakeComparisonVariantCommand& co
                                     CommandResponder responder) {
     juce::String comparisonError;
     const auto& buffer = command.variant == TakeComparisonVariantSpec::processed
-                             ? context.comparisonProcessed
-                             : context.comparisonRaw;
+                             ? comparisonProcessed
+                             : comparisonRaw;
     if (!context.pipeline.preview().switchPreviewBuffer(1, buffer, comparisonError)) {
         responder.fail("takeComparison", comparisonError, "preview.takeComparison");
         return;
@@ -194,8 +193,8 @@ void AudioCommandDispatcher::handle(const StopTakeComparisonCommand&, CommandRes
         responder.fail("takeComparison", error, "preview.takeComparison.stop");
         return;
     }
-    context.comparisonRaw.setSize(0, 0);
-    context.comparisonProcessed.setSize(0, 0);
+    comparisonRaw.setSize(0, 0);
+    comparisonProcessed.setSize(0, 0);
     responder.respond(currentStatus());
 }
 
