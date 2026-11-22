@@ -329,7 +329,7 @@ riffra --data-root ./data --interactive
 riffra --attach --interactive
 ```
 
-- 要求は `command` と `params` を持ち、`requestId` は応答へそのまま返す。これ以外のエンベロープフィールドは `invalidRequest` として拒否する
+- 要求は `command` と `params` を持ち、`requestId` は応答へそのまま返す。未知のエンベロープフィールドは `invalidRequest` として拒否する
 - Project-bound requestには `expectedProjectId`(`project.list` / `host.bootstrap` で取得)を付ける。Live Hostは `expectedProjectId` を必須とし、欠落は `invalidRequest`、不一致は `conflict` で返す。Standaloneは自Active Projectで補完する
 
 ```json
