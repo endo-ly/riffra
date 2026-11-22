@@ -92,10 +92,13 @@ bool hostsPlugins(const ExecutionGraph& graph) noexcept {
            });
 }
 
+}  // namespace
+
 /// Waits in short slices for the paced loop. Windows' default scheduler tick (~15.6 ms)
 /// stretches every slice, so the wait runs on a high-resolution timer; systems without one keep
-/// the regular tick, which only makes the render slower than wall-clock time.
-class PacingWaiter final {
+/// the regular tick, which only makes the render slower than wall-clock time. A render owns one
+/// waiter, so a timer is never shared with another render pacing in the same process.
+class OfflineRenderer::PacingWaiter final {
 public:
     PacingWaiter() noexcept {
 #if JUCE_WINDOWS
@@ -130,8 +133,6 @@ private:
     HANDLE timer = nullptr;
 #endif
 };
-
-}  // namespace
 
 OfflineRenderer::OfflineRenderer(Plan renderPlan,
                                  std::unique_ptr<TimelineEngine> timelineEngine) noexcept
@@ -280,10 +281,9 @@ bool OfflineRenderer::warmUpPlugins() {
     return !isCancelled();
 }
 
-bool OfflineRenderer::waitForPacing(const std::chrono::steady_clock::time_point start,
+bool OfflineRenderer::waitForPacing(const PacingWaiter& waiter,
+                                    const std::chrono::steady_clock::time_point start,
                                     const std::int64_t processedSamples) {
-    // One timer serves every slice of every render in this process.
-    static const PacingWaiter waiter;
     const auto target =
         start +
         std::chrono::duration_cast<std::chrono::steady_clock::duration>(
@@ -368,13 +368,14 @@ bool OfflineRenderer::render(juce::AudioFormatManager& formats, Result& result,
     const auto writeBegin = plan.startSample + plan.latencySamples;
     const auto writeEnd = plan.outputEndSample + plan.latencySamples;
     std::uint64_t writtenFrames = 0;
+    // Cumulative samples the production loop has processed, counted from sample 0 of the graph.
     std::int64_t position = 0;
     {
         const bool realtimePacing = plan.renderMode == RenderMode::realtime;
         // The pacing clock starts immediately before the production loop: the warm-up and the
         // plugin reset would otherwise count as render time and let the first blocks burst.
         const auto pacedStart = std::chrono::steady_clock::now();
-        std::int64_t pacedSamples = 0;
+        const PacingWaiter pacingWaiter;
         while (position < plan.processingEnd) {
             if (isCancelled()) {
                 error = "Offline Render was cancelled.";
@@ -414,8 +415,7 @@ bool OfflineRenderer::render(juce::AudioFormatManager& formats, Result& result,
             position += count;
             // Pacing is measured by the samples this loop produced, not by the timeline position,
             // so a range that starts later than zero paces from its first block.
-            pacedSamples += count;
-            if (realtimePacing && !waitForPacing(pacedStart, pacedSamples)) {
+            if (realtimePacing && !waitForPacing(pacingWaiter, pacedStart, position)) {
                 error = "Offline Render was cancelled.";
                 return false;
             }

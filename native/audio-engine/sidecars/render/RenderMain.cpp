@@ -12,6 +12,8 @@
 #include <windows.h>
 #else
 #include <poll.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #endif
 
 #include "contract/ContractReader.h"
@@ -33,7 +35,12 @@ bool requestPipeClosed() noexcept {
     if (GetFileType(input) != FILE_TYPE_PIPE) return false;
     return PeekNamedPipe(input, nullptr, 0, nullptr, nullptr, nullptr) == 0;
 #else
-    pollfd descriptor{0, POLLIN, 0};
+    // poll(2) reports readiness for regular files too, and standard input is often redirected
+    // from a file; only a pipe or socket reports its peer's close this way.
+    struct stat input{};
+    if (::fstat(STDIN_FILENO, &input) != 0) return false;
+    if (!S_ISFIFO(input.st_mode) && !S_ISSOCK(input.st_mode)) return false;
+    pollfd descriptor{STDIN_FILENO, POLLIN, 0};
     return ::poll(&descriptor, 1, 0) > 0;
 #endif
 }
@@ -44,7 +51,7 @@ class RequestPipeWatcher final : private juce::Timer {
 public:
     explicit RequestPipeWatcher(riffra::OfflineRenderer& rendererToCancel)
         : renderer(rendererToCancel) {
-        startTimer(100);
+        startTimer(25);
     }
 
     ~RequestPipeWatcher() override { stopTimer(); }

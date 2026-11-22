@@ -146,7 +146,6 @@ impl RenderWorker {
             .write_all(&encoded)
             .and_then(|()| request_pipe.write_all(b"\n"))
             .map_err(RenderWorkerError::Write)?;
-        let request_pipe = Some(request_pipe);
         let mut stdout = child.stdout.take().ok_or_else(|| {
             RenderWorkerError::Wait(std::io::Error::other(
                 "render worker standard output is unavailable",
@@ -165,7 +164,7 @@ impl RenderWorker {
             let mut bytes = Vec::new();
             stderr.read_to_end(&mut bytes).map(|_| bytes)
         });
-        loop {
+        let status = loop {
             if cancelled.load(Ordering::Acquire) {
                 Self::stop_child(&mut child, request_pipe);
                 let _ = stdout_reader.join();
@@ -173,11 +172,10 @@ impl RenderWorker {
                 return Err(RenderWorkerError::Cancelled);
             }
             match child.try_wait().map_err(RenderWorkerError::Wait)? {
-                Some(_) => break,
+                Some(status) => break status,
                 None => thread::sleep(WORKER_POLL_INTERVAL),
             }
-        }
-        let status = child.wait().map_err(RenderWorkerError::Wait)?;
+        };
         let stdout = stdout_reader
             .join()
             .map_err(|_| RenderWorkerError::Wait(std::io::Error::other("stdout reader panicked")))?
@@ -195,7 +193,7 @@ impl RenderWorker {
 
     /// Asks the worker to stop by closing its request pipe, then kills it when it does not
     /// exit within the grace period.
-    fn stop_child(child: &mut Child, request_pipe: Option<ChildStdin>) {
+    fn stop_child(child: &mut Child, request_pipe: ChildStdin) {
         drop(request_pipe);
         let deadline = Instant::now() + CANCEL_GRACE;
         while Instant::now() < deadline {

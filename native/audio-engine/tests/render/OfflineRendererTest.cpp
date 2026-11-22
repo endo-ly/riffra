@@ -245,7 +245,8 @@ TEST(OfflineRendererTest, RealtimeRenderFollowsWallClockPace) {
 
 TEST(OfflineRendererTest, RealtimeRenderOfALaterRangePacesFromItsFirstBlock) {
     // Arrange: the range starts 0.5 seconds into the timeline and lasts 0.2 seconds. The engine
-    // processes the graph from the timeline start, so only that span may elapse.
+    // processes the graph from the timeline start up to the end tick, so the whole 0.7 seconds
+    // paces; the later start position is not slept a second time.
     juce::ScopedJuceInitialiser_GUI initialiser;
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();
@@ -257,9 +258,10 @@ TEST(OfflineRendererTest, RealtimeRenderOfALaterRangePacesFromItsFirstBlock) {
         renderRange(snapshot.graph, formats, directory.get().getChildFile("range.wav"), 960, 1'344,
                     RenderMode::realtime);
 
-    // Assert: pacing counts processed samples, not the timeline position.
+    // Assert: pacing counts processed samples, not the timeline position, so the render takes
+    // about 0.7 seconds and never the extra 0.5 seconds of the start position.
     ASSERT_TRUE(render.rendered) << render.error;
-    EXPECT_GE(render.elapsed, std::chrono::milliseconds(200));
+    EXPECT_GE(render.elapsed, std::chrono::milliseconds(700));
     EXPECT_LT(render.elapsed, std::chrono::seconds(1));
     EXPECT_EQ(render.result.frames, 9'600u);
 }

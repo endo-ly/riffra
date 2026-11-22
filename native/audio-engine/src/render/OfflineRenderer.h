@@ -79,9 +79,13 @@ private:
     /// loading. Returns false when a cancellation request stopped the warm-up.
     bool warmUpPlugins();
 
+    /// Waits in short slices for the paced production loop. One instance belongs to one render.
+    class PacingWaiter;
+
     /// Waits until the processed sample count reaches the wall-clock target. Returns false
     /// when a cancellation request stopped the wait.
-    bool waitForPacing(std::chrono::steady_clock::time_point start, std::int64_t processedSamples);
+    bool waitForPacing(const PacingWaiter& waiter, std::chrono::steady_clock::time_point start,
+                       std::int64_t processedSamples);
 
     [[nodiscard]] bool isCancelled() const noexcept;
 
