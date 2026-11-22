@@ -171,12 +171,31 @@ Assetの検索では、未登録、登録済みの内容ファイル欠落、保
 | `TrackInstrument`            | Instrument Trackに割り当てる音源。id、name、bypassed、実装source、MIDI移調、演奏可能音域、Keyswitch設定を持つ                            |
 | `TrackInstrumentSource`      | `internal`(同梱definition本文とBuilt-in preset ID)または `vst3`(`Vst3Plugin`)を表す判別付きsource                                        |
 | `InternalInstrumentResource` | 同梱Built-in presetの識別子。definition本文を正準状態に保存し、resourceの絶対pathは保存対象外である                                      |
-| `EffectDevice`               | Track・Bus・Masterが所有する順序付きエフェクト列の要素。id、name、bypassed、`Vst3Plugin` を持つ                                          |
+| `EffectDevice`               | Track・Bus・Master・リグが所有する順序付きエフェクト列の要素。id、name、bypassed、`Vst3Plugin` を持つ                                    |
 | `Vst3Plugin`                 | VST3プラグインの永続状態。path、パラメータ値、プラグイン状態データ(不透明文字列)、欠落プラグインを無効化した状態(`disabled_placeholder`) |
 
 `TrackInstrument` と `EffectDevice` は別々に管理し、VST3の永続状態はどちらも `Vst3Plugin` で表す。Built-in音源とVST3音源は同じInstrument RuntimeからRealtimeとOffline Renderへ接続され、Built-in音源にはVST3 editorや外部plugin pathは割り当てられない。
 
+エフェクト列の追加・削除・並べ替えは、Track・Bus・Masterとリグが同じドメイン関数を使う。Bypassの変更はどちらも `EffectDevice::set_bypassed`、状態保存はどちらも `domain::plugin::apply_plugin_state` を通す。追加は1チャンネルあたりの上限とデバイスIDの一意性を検査し、並べ替えは現在の全エフェクトを一度ずつ含む順序だけを受け付ける。状態保存は非有限のパラメータ値を拒否し、パラメータ値を0〜1へクランプする。
+
 移調と演奏可能音域は演奏時に適用し、既存のMIDI Clipは変更しない。Keyswitch Noteは移調対象外である。
+
+### 6.1 リグ
+
+リグは、Projectとは別にオーディオ入力からすぐ音を出すためのHost所有の演奏状態である。MIDI入力と音源は持たない。
+
+| フィールド    | 内容                                                            |
+| ------------- | --------------------------------------------------------------- |
+| `id`          | `rig:<UUIDv7>`                                                  |
+| `name`        | リグの表示名                                                    |
+| `audio_input` | 監視する物理入力。Trackと同じ `AudioInputRoute`                 |
+| `effects`     | 順序付きの `EffectDevice` 列。Trackと同じ型・同じ編集規則を使う |
+| `gain_db`     | リグ出力の音量                                                  |
+
+- リグのエフェクトは `EffectDevice` そのもので、追加・削除・並べ替え・Bypass・状態保存は上の共通規則に従う。リグ専用の複製型や別の編集規則は持たない
+- リグは `CreativeSession` の外の集約であり、編集はセッションのrevision・履歴・undo/redoに触れない。Projectに属さないため、Projectのマスター音量・マスターエフェクトの影響も受けない
+- 同時に鳴らすリグは1つである。別のリグを鳴らすと入れ替わり、起動時は何も鳴らさない
+- 保存はDataRoot直下の `rigs/rig-<uuid>.json` に1リグ1ファイルで行う。VST3の状態は `EffectDevice` の `Vst3Plugin` として同じファイルに含める
 
 ---
 
@@ -225,6 +244,9 @@ flowchart TD
     TI -->|vst3| VP[Vst3Plugin]
     ED --> VP
     CS --> SE[SessionSettings]
+    HS[Host] --> RG[Rig]
+    RG --> AIR[AudioInputRoute]
+    RG --> ED
     RC[RecordingCapture] -->|生成物| AS
     RC -->|ドロップアウト診断| DI[DropoutInformation]
 ```
@@ -245,6 +267,7 @@ flowchart TD
 | ---------- | ------------------------------------------------------------------------------------------------------------------ |
 | AssetId    | `asset:<UUIDv7>` のみ有効                                                                                          |
 | ProjectId  | `projects/` 直下のディレクトリ名としてcanonical lowercase UUIDを使う。`CreativeSession` へは埋め込まない           |
+| RigId      | `rig:<UUIDv7>`。DataRootの `rigs/rig-<uuid>.json` に対応し、同じ内容を複製したリグは別IDを持つ                     |
 | session_id | 空文字は不可。新規は `session-<ms>`                                                                                |
 | 参照の整合 | セッションが参照するアセットIDはすべて登録済みである。未登録のIDを含むセッションは保存・読み込みともに採用されない |
 
