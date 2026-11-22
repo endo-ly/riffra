@@ -256,7 +256,7 @@ Hostのrender.start / render.stems Jobはそれぞれ一つのriffra-renderを�
 | 項目 | 契約                                                                                                                                                                                                                                    |
 | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 起動 | RuntimeBinariesの実行ファイルを使用。配置規則はDesktopとHeadlessで共通                                                                                                                                                                  |
-| 要求 | stdinへJSON 1行。renderTimelineOffline、protocolVersion: 4、requestにgraph、出力先、時間範囲、音声形式、レンダーモードと処理設定を含む。出力先は単一のMixdownまたはTrack IDと保存先の組のリスト                                         |
+| 要求 | stdinへJSON 1行。renderTimelineOffline、protocolVersion: 5、requestにgraph、出力先、時間範囲、音声形式、レンダーモードと処理設定を含む。出力先は単一のMixdownまたはTrack IDと保存先の組のリスト                                         |
 | 応答 | 成功はofflineRenderCompleteのframes・sampleRate、失敗はerror。contracts/sidecar/messages/render.*.jsonで形を固定                                                                                                                        |
 | 異常 | Hostは要求の間stdinを開いたままにし、クローズでキャンセルを伝える。Nativeは途中出力を削除して終了し、猶予時間を超えて残るプロセスはHostが終了する。プロセス異常終了・応答不一致・デコード失敗はJob失敗として扱い、部分的なWAVを破棄する |
 
