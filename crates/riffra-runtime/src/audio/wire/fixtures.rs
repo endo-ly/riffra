@@ -199,6 +199,20 @@ fn command_samples() -> Vec<SidecarCommand> {
         SidecarCommand::OpenPluginAudition {
             path: "plugins/Synth.vst3".into(),
         },
+        SidecarCommand::OpenRig {
+            projection: crate::execution::RigProjection {
+                rig_id: "rig-1".into(),
+                revision: 1,
+                audio_input_channel: 0,
+                gain_db: -3.0,
+                effects: Vec::new(),
+            },
+        },
+        SidecarCommand::CloseRig,
+        SidecarCommand::OpenRigEditor {
+            device_id: device(),
+        },
+        SidecarCommand::CloseRigEditor { timeout_ms: 30_000 },
         SidecarCommand::StopInstrumentPreview,
         SidecarCommand::StartTakeComparison {
             raw_path: "takes/raw.wav".into(),
@@ -299,6 +313,7 @@ fn response_name(response: &SidecarResponse) -> &'static str {
         SidecarResponse::MidiAck {} => "midiAck",
         SidecarResponse::MixAck {} => "mixAck",
         SidecarResponse::DeviceAck {} => "deviceAck",
+        SidecarResponse::RigAck {} => "rigAck",
         SidecarResponse::DeviceStatus(_) => "deviceStatus",
         SidecarResponse::DeviceParameters(_) => "deviceParameters",
         SidecarResponse::DevicePrograms(_) => "devicePrograms",
@@ -318,6 +333,8 @@ fn event_name(event: &SidecarEvent) -> &'static str {
         SidecarEvent::PluginStateChanged(_) => "pluginStateChanged",
         SidecarEvent::PluginStateFinal(_) => "pluginStateFinal",
         SidecarEvent::PluginParameterChanged(_) => "pluginParameterChanged",
+        SidecarEvent::RigPluginStateChanged(_) => "rigPluginStateChanged",
+        SidecarEvent::RigPluginStateFinal(_) => "rigPluginStateFinal",
         SidecarEvent::Fault(_) => "fault",
     }
 }
@@ -329,7 +346,7 @@ fn render_name(message: &RenderMessage) -> &'static str {
     }
 }
 
-const RESPONSES: [&str; 12] = [
+const RESPONSES: [&str; 13] = [
     "audioStatus",
     "transportAccepted",
     "timelineAck",
@@ -337,13 +354,14 @@ const RESPONSES: [&str; 12] = [
     "midiAck",
     "mixAck",
     "deviceAck",
+    "rigAck",
     "deviceStatus",
     "deviceParameters",
     "devicePrograms",
     "pluginState",
     "deviceProgramChanged",
 ];
-const EVENTS: [&str; 10] = [
+const EVENTS: [&str; 12] = [
     "ready",
     "audioStatus",
     "audioMeters",
@@ -353,6 +371,8 @@ const EVENTS: [&str; 10] = [
     "pluginStateFinal",
     "timelineLoadProgress",
     "pluginParameterChanged",
+    "rigPluginStateChanged",
+    "rigPluginStateFinal",
     "fault",
 ];
 const RENDER_MESSAGES: [&str; 2] = ["offlineRenderComplete", "error"];

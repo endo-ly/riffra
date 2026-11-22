@@ -1,5 +1,6 @@
 use super::HostState;
 use super::events::HostEventSubscription;
+use super::rig::{RigChangeError, RigHost, RigPluginStateEvent};
 use crate::execution::GraphPluginState;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
@@ -13,14 +14,32 @@ pub(super) struct PluginStatePersistenceCoordinator {
 }
 
 pub(super) enum PluginPersistenceCommand {
+    /// Hands the pending changes of one transition to the caller.
     TakePending {
-        project_id: String,
-        result: mpsc::Sender<Vec<QueuedPluginChange>>,
+        scope: PendingScope,
+        result: mpsc::Sender<TakenChanges>,
     },
     Acknowledge {
         orders: Vec<u64>,
         result: mpsc::Sender<()>,
     },
+}
+
+/// Which pending changes one transition takes.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum PendingScope {
+    /// The Host's rig snapshots and the device changes of one Project.
+    Project(String),
+    /// Only the Host's rig snapshots.
+    Rig,
+}
+
+/// Changes the worker hands to a transition, in arrival order. They stay
+/// pending until the caller acknowledges them.
+#[derive(Clone, Debug, Default)]
+pub(super) struct TakenChanges {
+    pub(super) rig: Vec<QueuedRigChange>,
+    pub(super) project: Vec<QueuedProjectChange>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -48,17 +67,60 @@ struct PluginParameterEvent {
 }
 
 #[derive(Clone, Debug)]
-enum PendingPluginChange {
+enum ProjectChange {
     State(PluginStateEvent),
     Final(PluginStateEvent),
     Parameter(PluginParameterEvent),
 }
 
-#[derive(Clone)]
-pub(super) struct QueuedPluginChange {
+/// A Project device change waiting for the Project write lock.
+#[derive(Clone, Debug)]
+pub(super) struct QueuedProjectChange {
     order: u64,
     project_id: String,
-    change: PendingPluginChange,
+    change: ProjectChange,
+}
+
+/// A rig editor snapshot. Rig state belongs to the Host, never to a Project.
+#[derive(Clone, Debug)]
+pub(super) struct QueuedRigChange {
+    order: u64,
+    event: RigPluginStateEvent,
+}
+
+#[derive(Default)]
+struct PendingPluginChanges {
+    /// Rig editor snapshots, coalesced per device.
+    rig: HashMap<(String, String), QueuedRigChange>,
+    /// Project device changes, coalesced per device, parameter, or snapshot.
+    project: HashMap<PluginChangeKey, QueuedProjectChange>,
+}
+
+impl PendingPluginChanges {
+    /// Returns the changes one transition takes, ordered by arrival.
+    fn take(&self, scope: &PendingScope) -> TakenChanges {
+        let mut taken = TakenChanges {
+            rig: self.rig.values().cloned().collect(),
+            project: match scope {
+                PendingScope::Project(project_id) => self
+                    .project
+                    .values()
+                    .filter(|queued| &queued.project_id == project_id)
+                    .cloned()
+                    .collect(),
+                PendingScope::Rig => Vec::new(),
+            },
+        };
+        taken.rig.sort_by_key(|queued| queued.order);
+        taken.project.sort_by_key(|queued| queued.order);
+        taken
+    }
+
+    fn retain_stored(&mut self, orders: &[u64]) {
+        self.rig.retain(|_, queued| !orders.contains(&queued.order));
+        self.project
+            .retain(|_, queued| !orders.contains(&queued.order));
+    }
 }
 
 #[derive(Hash, Eq, PartialEq)]
@@ -66,6 +128,30 @@ enum PluginChangeKey {
     State(String, riffra_core::EffectOwner, String),
     Parameter(String, riffra_core::EffectOwner, String, i32),
     Final(u64),
+}
+
+#[derive(Clone, Hash, Eq, PartialEq)]
+enum PluginChangeTarget {
+    Project(String, riffra_core::EffectOwner, String),
+    Rig(String, String),
+}
+
+impl QueuedProjectChange {
+    fn target(&self) -> PluginChangeTarget {
+        let (owner, device_id) = match &self.change {
+            ProjectChange::State(change) | ProjectChange::Final(change) => {
+                (&change.owner, &change.device_id)
+            }
+            ProjectChange::Parameter(change) => (&change.owner, &change.device_id),
+        };
+        PluginChangeTarget::Project(self.project_id.clone(), owner.clone(), device_id.clone())
+    }
+}
+
+impl QueuedRigChange {
+    fn target(&self) -> PluginChangeTarget {
+        PluginChangeTarget::Rig(self.event.rig_id.clone(), self.event.device_id.clone())
+    }
 }
 
 impl PluginStatePersistenceCoordinator {
@@ -80,25 +166,19 @@ impl PluginStatePersistenceCoordinator {
             std::thread::Builder::new()
                 .name("riffra-plugin-state-persistence".into())
                 .spawn(move || {
-                    let mut pending = HashMap::new();
+                    let mut pending = PendingPluginChanges::default();
                     let mut next_order = 0;
                     loop {
                         while let Ok(command) = command_receiver.try_recv() {
                             match command {
-                                PluginPersistenceCommand::TakePending { project_id, result } => {
+                                PluginPersistenceCommand::TakePending { scope, result } => {
                                     while let Ok(frame) = subscription.try_recv() {
                                         collect_plugin_change(&mut pending, frame, &mut next_order);
                                     }
-                                    let mut changes: Vec<_> = pending
-                                        .values()
-                                        .filter(|queued| queued.project_id == project_id)
-                                        .cloned()
-                                        .collect();
-                                    changes.sort_by_key(|queued| queued.order);
-                                    let _ = result.send(changes);
+                                    let _ = result.send(pending.take(&scope));
                                 }
                                 PluginPersistenceCommand::Acknowledge { orders, result } => {
-                                    pending.retain(|_, queued| !orders.contains(&queued.order));
+                                    pending.retain_stored(&orders);
                                     let _ = result.send(());
                                 }
                             }
@@ -148,12 +228,14 @@ impl PluginStatePersistenceCoordinator {
 }
 
 fn collect_plugin_change(
-    pending: &mut HashMap<PluginChangeKey, QueuedPluginChange>,
+    pending: &mut PendingPluginChanges,
     frame: riffra_control::HostEventFrame,
     next_order: &mut u64,
 ) {
     if frame.event == "runtime-restarted" {
-        pending.retain(|key, _| matches!(key, PluginChangeKey::Final(_)));
+        pending
+            .project
+            .retain(|key, _| matches!(key, PluginChangeKey::Final(_)));
         return;
     }
     let order = *next_order;
@@ -163,7 +245,7 @@ fn collect_plugin_change(
             if let Ok(change) = serde_json::from_value::<PluginStateEvent>(frame.payload) {
                 // The final snapshot includes every earlier editor parameter and opaque-state
                 // change. It must remain usable even if the native process exits afterwards.
-                pending.retain(|key, _| match key {
+                pending.project.retain(|key, _| match key {
                     PluginChangeKey::State(project, owner, device)
                     | PluginChangeKey::Parameter(project, owner, device, _) => {
                         project != &change.project_id
@@ -172,46 +254,55 @@ fn collect_plugin_change(
                     }
                     PluginChangeKey::Final(_) => true,
                 });
-                pending.insert(
+                pending.project.insert(
                     PluginChangeKey::Final(order),
-                    QueuedPluginChange {
+                    QueuedProjectChange {
                         order,
                         project_id: change.project_id.clone(),
-                        change: PendingPluginChange::Final(change),
+                        change: ProjectChange::Final(change),
                     },
                 );
             }
         }
         "plugin-state-changed" => {
             if let Ok(change) = serde_json::from_value::<PluginStateEvent>(frame.payload) {
-                pending.insert(
+                pending.project.insert(
                     PluginChangeKey::State(
                         change.project_id.clone(),
                         change.owner.clone(),
                         change.device_id.clone(),
                     ),
-                    QueuedPluginChange {
+                    QueuedProjectChange {
                         order,
                         project_id: change.project_id.clone(),
-                        change: PendingPluginChange::State(change),
+                        change: ProjectChange::State(change),
                     },
                 );
             }
         }
         "plugin-parameter-changed" => {
             if let Ok(change) = serde_json::from_value::<PluginParameterEvent>(frame.payload) {
-                pending.insert(
+                pending.project.insert(
                     PluginChangeKey::Parameter(
                         change.project_id.clone(),
                         change.owner.clone(),
                         change.device_id.clone(),
                         change.parameter_index,
                     ),
-                    QueuedPluginChange {
+                    QueuedProjectChange {
                         order,
                         project_id: change.project_id.clone(),
-                        change: PendingPluginChange::Parameter(change),
+                        change: ProjectChange::Parameter(change),
                     },
+                );
+            }
+        }
+        "rig-plugin-state-changed" | "rig-plugin-state-final" => {
+            if let Ok(mut event) = serde_json::from_value::<RigPluginStateEvent>(frame.payload) {
+                event.final_capture = frame.event == "rig-plugin-state-final";
+                pending.rig.insert(
+                    (event.rig_id.clone(), event.device_id.clone()),
+                    QueuedRigChange { order, event },
                 );
             }
         }
@@ -239,68 +330,123 @@ impl HostState {
         writer: &mut super::open_project::ProjectWriter<'_>,
         project_runtime: bool,
     ) -> Result<(), riffra_control::ProtocolError> {
-        let commands = self
+        let Some(taken) = self.take_pending_changes(PendingScope::Project(
+            writer.project().core.project_id().to_owned(),
+        ))?
+        else {
+            return Ok(());
+        };
+        let mut orders = Vec::new();
+        let mut failure = None;
+        for change in taken.rig {
+            match self.try_apply_rig_plugin_change(&change.event) {
+                Ok(()) => orders.push(change.order),
+                // A rig command owns the lock across its audio transition; the
+                // snapshot stays pending for the next flush.
+                Err(RigChangeError::Busy) => {}
+                Err(RigChangeError::Failed(error)) => {
+                    failure = Some(error);
+                    break;
+                }
+            }
+        }
+        for change in taken.project {
+            if failure.is_some() {
+                break;
+            }
+            match self.apply_plugin_change(writer, &change, project_runtime) {
+                Ok(()) => orders.push(change.order),
+                Err(error) => failure = Some(error),
+            }
+        }
+        self.acknowledge_plugin_changes(orders)?;
+        failure.map_or(Ok(()), |error| Err(super::control::command_error(error)))
+    }
+
+    /// Stores the rig snapshots pending after a rig editor was closed.
+    pub(super) fn take_pending_rig_changes(
+        &self,
+        host: &RigHost,
+    ) -> Result<(), riffra_control::ProtocolError> {
+        let Some(taken) = self.take_pending_changes(PendingScope::Rig)? else {
+            return Ok(());
+        };
+        let mut orders = Vec::new();
+        let mut failure = None;
+        for change in taken.rig {
+            match host.apply_plugin_change(&change.event) {
+                Ok(()) => orders.push(change.order),
+                Err(error) => {
+                    failure = Some(error);
+                    break;
+                }
+            }
+        }
+        self.acknowledge_plugin_changes(orders)?;
+        failure.map_or(Ok(()), |error| Err(super::control::command_error(error)))
+    }
+
+    fn take_pending_changes(
+        &self,
+        scope: PendingScope,
+    ) -> Result<Option<TakenChanges>, riffra_control::ProtocolError> {
+        let Some(commands) = self.plugin_persistence_commands()? else {
+            return Ok(None);
+        };
+        let (result, receiver) = mpsc::channel();
+        commands
+            .send(PluginPersistenceCommand::TakePending { scope, result })
+            .map_err(|_| {
+                super::control::command_error("plugin persistence worker is unavailable")
+            })?;
+        receiver.recv().map(Some).map_err(|_| {
+            super::control::command_error("plugin persistence worker stopped unexpectedly")
+        })
+    }
+
+    fn acknowledge_plugin_changes(
+        &self,
+        orders: Vec<u64>,
+    ) -> Result<(), riffra_control::ProtocolError> {
+        let Some(commands) = self.plugin_persistence_commands()? else {
+            return Ok(());
+        };
+        let (result, receiver) = mpsc::channel();
+        commands
+            .send(PluginPersistenceCommand::Acknowledge { orders, result })
+            .map_err(|_| {
+                super::control::command_error("plugin persistence worker is unavailable")
+            })?;
+        receiver.recv().map_err(|_| {
+            super::control::command_error("plugin persistence worker stopped unexpectedly")
+        })
+    }
+
+    fn plugin_persistence_commands(
+        &self,
+    ) -> Result<Option<mpsc::Sender<PluginPersistenceCommand>>, riffra_control::ProtocolError> {
+        Ok(self
             .plugin_persistence_commands
             .lock()
             .map_err(|_| super::control::command_error("plugin persistence lock was poisoned"))?
-            .clone();
-        if let Some(commands) = commands {
-            let (result, receiver) = mpsc::channel();
-            commands
-                .send(PluginPersistenceCommand::TakePending {
-                    project_id: writer.project().core.project_id().to_owned(),
-                    result,
-                })
-                .map_err(|_| {
-                    super::control::command_error("plugin persistence worker is unavailable")
-                })?;
-            let changes = receiver.recv().map_err(|_| {
-                super::control::command_error("plugin persistence worker stopped unexpectedly")
-            })?;
-            let mut orders = Vec::new();
-            let mut failure = None;
-            for change in changes {
-                match self.apply_plugin_change(writer, &change, project_runtime) {
-                    Ok(()) => orders.push(change.order),
-                    Err(error) => {
-                        failure = Some(error);
-                        break;
-                    }
-                }
-            }
-            // Keep failed and unprocessed changes owned by the worker. Only
-            // acknowledge exact arrival orders, so newer events remain pending.
-            let (result, receiver) = mpsc::channel();
-            commands
-                .send(PluginPersistenceCommand::Acknowledge { orders, result })
-                .map_err(|_| {
-                    super::control::command_error("plugin persistence worker is unavailable")
-                })?;
-            receiver.recv().map_err(|_| {
-                super::control::command_error("plugin persistence worker stopped unexpectedly")
-            })?;
-            if let Some(error) = failure {
-                return Err(super::control::command_error(error));
-            }
-        }
-        Ok(())
+            .clone())
     }
 
     fn apply_plugin_change(
         &self,
         writer: &mut super::open_project::ProjectWriter<'_>,
-        queued: &QueuedPluginChange,
+        queued: &QueuedProjectChange,
         project_runtime: bool,
     ) -> Result<(), String> {
         if queued.project_id != writer.project().core.project_id() {
-            return if matches!(queued.change, PendingPluginChange::Final(_)) {
+            return if matches!(queued.change, ProjectChange::Final(_)) {
                 Err("final plugin state belongs to a different project".into())
             } else {
                 Ok(())
             };
         }
         let canonical = writer.project().core.canonical_state();
-        if let PendingPluginChange::Final(change) = &queued.change {
+        if let ProjectChange::Final(change) = &queued.change {
             let destination_matches = canonical
                 .session
                 .arrangement
@@ -323,8 +469,8 @@ impl HostState {
             }
         }
         let (owner, device_id, state) = match &queued.change {
-            PendingPluginChange::State(change) | PendingPluginChange::Final(change) => {
-                let state = if matches!(queued.change, PendingPluginChange::State(_))
+            ProjectChange::State(change) | ProjectChange::Final(change) => {
+                let state = if matches!(queued.change, ProjectChange::State(_))
                     && change.arrangement_revision != canonical.session.arrangement.revision
                 {
                     if !accepts_runtime_state(&canonical, &change.owner, &change.device_id) {
@@ -347,7 +493,7 @@ impl HostState {
                 };
                 (change.owner.clone(), change.device_id.clone(), state)
             }
-            PendingPluginChange::Parameter(change) => {
+            ProjectChange::Parameter(change) => {
                 if change.parameter_index < 0 || !change.value.is_finite() {
                     return Err(riffra_core::ApplicationError::InvalidCommand(
                         "plugin parameter value is invalid".into(),
@@ -394,8 +540,8 @@ impl HostState {
         Ok(())
     }
 
-    fn confirm_final_plugin_state(&self, queued: &QueuedPluginChange) {
-        if let PendingPluginChange::Final(change) = &queued.change {
+    fn confirm_final_plugin_state(&self, queued: &QueuedProjectChange) {
+        if let ProjectChange::Final(change) = &queued.change {
             self.events.emit(crate::HostEvent::PluginStateSaved(
                 crate::PluginStateChanged {
                     project_id: change.project_id.clone(),
@@ -455,49 +601,70 @@ fn canonical_plugin_state_matches(
 
 fn flush_plugin_changes(
     state: &std::sync::Weak<HostState>,
-    pending: &mut HashMap<PluginChangeKey, QueuedPluginChange>,
+    pending: &mut PendingPluginChanges,
     final_flush: bool,
 ) -> Result<(), String> {
     let Some(state) = state.upgrade() else {
-        pending.clear();
+        *pending = PendingPluginChanges::default();
         return Ok(());
     };
+    let mut failure = None;
+    let mut failed_targets = HashSet::new();
+
+    // Rig state belongs to the Host, not to the active Project. Saving it
+    // never takes the Project write lock, so an open rig editor cannot starve
+    // Project edits with its periodic snapshots.
+    let mut rig_changes = pending.rig.drain().collect::<Vec<_>>();
+    rig_changes.sort_by_key(|(_, change)| change.order);
+    for (key, change) in rig_changes {
+        let target = change.target();
+        if failed_targets.contains(&target) {
+            pending.rig.insert(key, change);
+            continue;
+        }
+        match state.try_apply_rig_plugin_change(&change.event) {
+            Ok(()) => {}
+            // A rig command holds the lock while it opens the rig; the next
+            // flush retries the snapshot.
+            Err(RigChangeError::Busy) => {
+                pending.rig.insert(key, change);
+            }
+            Err(RigChangeError::Failed(error)) => {
+                tracing::warn!(%error, "Host rig plugin state persistence failed");
+                failed_targets.insert(target);
+                pending.rig.insert(key, change);
+                failure.get_or_insert(error);
+            }
+        }
+    }
+    if pending.project.is_empty() {
+        return failure.map_or(Ok(()), Err);
+    }
+
     let mut writer = if final_flush {
         state.project.write()
     } else {
-        let Some(writer) = state.project.try_write() else {
-            return Ok(());
-        };
-        writer
+        match state.project.try_write() {
+            Some(writer) => writer,
+            None => return failure.map_or(Ok(()), Err),
+        }
     };
-    let mut changes = pending.drain().collect::<Vec<_>>();
-    changes.sort_by_key(|(_, queued)| queued.order);
-    let mut failure = None;
-    let mut failed_devices = HashSet::new();
-    for (key, queued) in changes {
-        let device = match &queued.change {
-            PendingPluginChange::State(change) | PendingPluginChange::Final(change) => (
-                change.project_id.clone(),
-                change.owner.clone(),
-                change.device_id.clone(),
-            ),
-            PendingPluginChange::Parameter(change) => (
-                change.project_id.clone(),
-                change.owner.clone(),
-                change.device_id.clone(),
-            ),
-        };
-        if failed_devices.contains(&device) {
-            pending.insert(key, queued);
+    let mut project_changes = pending.project.drain().collect::<Vec<_>>();
+    project_changes.sort_by_key(|(_, change)| change.order);
+    for (key, change) in project_changes {
+        let target = change.target();
+        if failed_targets.contains(&target) {
+            pending.project.insert(key, change);
             continue;
         }
-        if let Err(error) = state.apply_plugin_change(&mut writer, &queued, true) {
+        if let Err(error) = state.apply_plugin_change(&mut writer, &change, true) {
             tracing::warn!(%error, "Host plugin state persistence failed");
-            failed_devices.insert(device);
-            pending.insert(key, queued);
+            failed_targets.insert(target);
+            pending.project.insert(key, change);
             failure.get_or_insert(error);
         }
     }
+    drop(writer);
     failure.map_or(Ok(()), Err)
 }
 
@@ -507,7 +674,7 @@ mod tests {
 
     #[test]
     fn plugin_parameter_changes_coalesce_per_project_and_parameter_index() {
-        let mut pending = HashMap::new();
+        let mut pending = PendingPluginChanges::default();
         let mut next_order = 0;
         for (project_id, value) in [("project:a", 0.25), ("project:a", 0.5)] {
             collect_plugin_change(
@@ -540,8 +707,8 @@ mod tests {
             &mut next_order,
         );
 
-        assert_eq!(pending.len(), 2);
-        assert!(pending.contains_key(&PluginChangeKey::Parameter(
+        assert_eq!(pending.project.len(), 2);
+        assert!(pending.project.contains_key(&PluginChangeKey::Parameter(
             "project:a".into(),
             riffra_core::EffectOwner::Track {
                 id: "track:1".into()
@@ -549,7 +716,7 @@ mod tests {
             "device:1".into(),
             1,
         )));
-        assert!(pending.contains_key(&PluginChangeKey::Parameter(
+        assert!(pending.project.contains_key(&PluginChangeKey::Parameter(
             "project:b".into(),
             riffra_core::EffectOwner::Track {
                 id: "track:1".into()
@@ -561,7 +728,7 @@ mod tests {
 
     #[test]
     fn runtime_restart_discards_pending_plugin_changes() {
-        let mut pending = HashMap::new();
+        let mut pending = PendingPluginChanges::default();
         let mut next_order = 0;
         collect_plugin_change(
             &mut pending,
@@ -586,7 +753,7 @@ mod tests {
             &mut next_order,
         );
 
-        assert!(pending.is_empty());
+        assert!(pending.project.is_empty());
     }
     fn plugin_host() -> (std::path::PathBuf, Arc<HostState>) {
         let root = std::env::temp_dir().join(format!(
@@ -643,7 +810,7 @@ mod tests {
         let (root, state) = plugin_host();
         let project_id = state.project.read().canonical.project_id.clone();
         let events = state.event_hub.subscribe().unwrap();
-        let mut pending = HashMap::new();
+        let mut pending = PendingPluginChanges::default();
         let mut order = 0;
         for path in [Some("old.vst3"), None] {
             let mut frame = opaque_plugin_state_change(&project_id, 0);
@@ -652,7 +819,7 @@ mod tests {
             collect_plugin_change(&mut pending, frame, &mut order);
         }
         flush_plugin_changes(&Arc::downgrade(&state), &mut pending, true).unwrap();
-        assert!(pending.is_empty());
+        assert!(pending.project.is_empty());
         let canonical = state.project.read().canonical.clone();
         assert_eq!(canonical.sequence, 0);
         assert_eq!(
@@ -673,18 +840,18 @@ mod tests {
         let events = state.event_hub.subscribe().unwrap();
         let mut frame = opaque_plugin_state_change(&project_id, 0);
         frame.event = "plugin-state-final".into();
-        let mut pending = HashMap::new();
+        let mut pending = PendingPluginChanges::default();
         collect_plugin_change(&mut pending, frame, &mut 0);
         let writer = state.project.write();
         let storage = writer.project().storage.clone();
 
         flush_plugin_changes(&Arc::downgrade(&state), &mut pending, false).unwrap();
-        assert_eq!(pending.len(), 1);
+        assert_eq!(pending.project.len(), 1);
         assert!(events.try_recv().is_err());
         drop(writer);
         flush_plugin_changes(&Arc::downgrade(&state), &mut pending, true).unwrap();
 
-        assert!(pending.is_empty());
+        assert!(pending.project.is_empty());
         let saved = storage.load_existing().unwrap();
         assert_eq!(
             saved.session.arrangement.tracks[0].effects[0]
@@ -708,7 +875,7 @@ mod tests {
         let events = state.event_hub.subscribe().unwrap();
         let mut frame = opaque_plugin_state_change("other-project", 0);
         frame.event = "plugin-state-final".into();
-        let mut pending = HashMap::new();
+        let mut pending = PendingPluginChanges::default();
         let mut order = 0;
         collect_plugin_change(&mut pending, frame, &mut order);
         collect_plugin_change(
@@ -721,7 +888,7 @@ mod tests {
         );
 
         assert!(flush_plugin_changes(&Arc::downgrade(&state), &mut pending, true).is_err());
-        assert_eq!(pending.len(), 1);
+        assert_eq!(pending.project.len(), 1);
         assert!(events.try_recv().is_err());
         drop(state);
         let _ = std::fs::remove_dir_all(root);
@@ -732,7 +899,7 @@ mod tests {
         let (root, state) = plugin_host();
         let project_id = state.project.read().canonical.project_id.clone();
         let events = state.event_hub.subscribe().unwrap();
-        let mut pending = HashMap::new();
+        let mut pending = PendingPluginChanges::default();
         let mut order = 0;
         let mut earlier = plugin_state_change(&project_id, 0.25);
         earlier.payload["arrangementRevision"] = serde_json::json!(1);
@@ -741,9 +908,9 @@ mod tests {
         final_state.event = "plugin-state-final".into();
         collect_plugin_change(&mut pending, final_state, &mut order);
 
-        assert_eq!(pending.len(), 1);
+        assert_eq!(pending.project.len(), 1);
         flush_plugin_changes(&Arc::downgrade(&state), &mut pending, true).unwrap();
-        assert!(pending.is_empty());
+        assert!(pending.project.is_empty());
         assert_eq!(state.project.read().canonical.sequence, 1);
         assert!(
             std::iter::from_fn(|| events.try_recv().ok())
@@ -756,13 +923,13 @@ mod tests {
     fn persists_opaque_program_state_and_skips_an_identical_snapshot() {
         let (root, state) = plugin_host();
         let project_id = state.project.read().canonical.project_id.clone();
-        let mut pending = HashMap::new();
+        let mut pending = PendingPluginChanges::default();
         collect_plugin_change(
             &mut pending,
             opaque_plugin_state_change(&project_id, 0),
             &mut 0,
         );
-        let queued = pending.into_values().next().unwrap();
+        let queued = pending.project.into_values().next().unwrap();
         let mut writer = state.project.write();
 
         state
@@ -778,13 +945,13 @@ mod tests {
             Some("cHJlc2V0LXN0YXRl")
         );
 
-        let mut pending = HashMap::new();
+        let mut pending = PendingPluginChanges::default();
         collect_plugin_change(
             &mut pending,
             opaque_plugin_state_change(&project_id, saved.session.arrangement.revision),
             &mut 1,
         );
-        let duplicate = pending.into_values().next().unwrap();
+        let duplicate = pending.project.into_values().next().unwrap();
         state
             .apply_plugin_change(&mut writer, &duplicate, true)
             .unwrap();
@@ -812,7 +979,7 @@ mod tests {
         let weak = Arc::downgrade(&state);
         let frame = plugin_state_change(&own_snapshot.canonical.project_id, 0.75);
         let periodic = std::thread::spawn(move || {
-            let mut pending = HashMap::new();
+            let mut pending = PendingPluginChanges::default();
             collect_plugin_change(&mut pending, frame, &mut 0);
             flush_plugin_changes(&weak, &mut pending, false).unwrap();
             pending
@@ -820,12 +987,12 @@ mod tests {
 
         let mut pending = periodic.join().unwrap();
         let (result, _) = state.publish_commit(committed);
-        assert_eq!(pending.len(), 1);
+        assert_eq!(pending.project.len(), 1);
         assert_eq!(result.canonical, own_snapshot.canonical);
         drop(writer);
         flush_plugin_changes(&Arc::downgrade(&state), &mut pending, true).unwrap();
 
-        assert!(pending.is_empty());
+        assert!(pending.project.is_empty());
         assert_eq!(result.canonical.sequence, 1);
         assert_eq!(
             result.canonical.session.arrangement.tracks[0].effects[0]
@@ -863,7 +1030,7 @@ mod tests {
                 })
                 .unwrap(),
         );
-        let mut pending = HashMap::new();
+        let mut pending = PendingPluginChanges::default();
         let mut order = 0;
         let mut stale = plugin_state_change(&project_id, 0.5);
         stale.payload["arrangementRevision"] = serde_json::json!(0);
@@ -873,7 +1040,7 @@ mod tests {
         flush_plugin_changes(&Arc::downgrade(&state), &mut pending, true).unwrap();
 
         // Assert
-        assert!(pending.is_empty());
+        assert!(pending.project.is_empty());
         let canonical = state.project.read().canonical.clone();
         let device = &canonical.session.arrangement.tracks[0].effects[0];
         assert!(device.bypassed);
@@ -945,6 +1112,67 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
     }
     #[test]
+    fn a_rig_editor_snapshot_reaches_the_rig_store_while_the_rig_is_locked() {
+        // Arrange
+        let (root, state) = plugin_host();
+        let worker = PluginStatePersistenceCoordinator::start(
+            Arc::downgrade(&state),
+            state.event_hub.subscribe_plugin_persistence(),
+        );
+        *state.plugin_persistence_commands.lock().unwrap() = Some(worker.commands.clone());
+        let mut rig = riffra_core::Rig::create("Live".into(), 0).unwrap();
+        let device_id = rig
+            .add_effect("Effect".into(), "effect.vst3".into())
+            .unwrap();
+        let store = riffra_host::RigStore::new(&root);
+        store.save(&rig).unwrap();
+        let revision = 3;
+        state.rig.lock().unwrap().revision = revision;
+        state.rig.lock().unwrap().active = Some(super::super::rig::ActiveRig {
+            id: rig.id.clone(),
+            revision,
+            effects: Vec::new(),
+        });
+        // The lock is held before the snapshot exists, so the persistence
+        // worker cannot store it on its own.
+        let host = state.rig.lock().unwrap();
+        state.events.emit(crate::HostEvent::RigPluginStateFinal(
+            crate::model::RigPluginStateChanged {
+                rig_id: rig.id.clone(),
+                device_id: device_id.clone(),
+                parameter_values: vec![0.5],
+                state_data: Some("preset".into()),
+                revision,
+                source_plugin_path: Some("effect.vst3".into()),
+            },
+        ));
+
+        // The worker cannot store the queued snapshot while this thread owns
+        // the lock.
+        assert!(
+            store.load(&rig.id).unwrap().effects[0]
+                .plugin
+                .parameter_values
+                .is_empty()
+        );
+
+        // Act: the caller stores the snapshot while it owns the rig lock.
+        state.take_pending_rig_changes(&host).unwrap();
+        drop(host);
+
+        // Assert
+        let stored = store.load(&rig.id).unwrap();
+        assert_eq!(stored.effects[0].plugin.parameter_values, [0.5]);
+        assert_eq!(
+            stored.effects[0].plugin.state_data.as_deref(),
+            Some("preset")
+        );
+        worker.shutdown();
+        drop(state);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn failed_switch_retains_failed_and_unprocessed_plugin_changes_for_retry() {
         // Arrange
         let (root, state) = plugin_host();
@@ -983,14 +1211,14 @@ mod tests {
             worker
                 .commands
                 .send(PluginPersistenceCommand::TakePending {
-                    project_id: previous.project_id.clone(),
+                    scope: PendingScope::Project(previous.project_id.clone()),
                     result,
                 })
                 .unwrap();
             let changes = receiver.recv().unwrap();
-            assert_eq!(changes.len(), 2);
+            assert_eq!(changes.project.len(), 2);
             assert!(
-                matches!(&changes[1].change, PendingPluginChange::State(change) if change.parameter_values == [0.75])
+                matches!(&changes.project[1].change, ProjectChange::State(change) if change.parameter_values == [0.75])
             );
         }
         drop(writer);

@@ -257,6 +257,18 @@ pub(crate) enum GraphMidiEventKind {
     ChannelPressure,
 }
 
+/// One rig sent to the realtime sidecar.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RigProjection {
+    pub(crate) rig_id: String,
+    /// Projection revision assigned by the Host for editor state correlation.
+    pub(crate) revision: u64,
+    pub(crate) audio_input_channel: u32,
+    pub(crate) gain_db: f64,
+    pub(crate) effects: Vec<GraphPluginDevice>,
+}
+
 /// A request sent to the offline `riffra-render` process.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]

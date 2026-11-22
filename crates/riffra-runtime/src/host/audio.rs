@@ -152,6 +152,18 @@ impl HostState {
     pub(super) fn reproject_after_audio_device_change(&self) -> Result<(), String> {
         self.audio.advance_audio_environment();
         self.runtime.advance_audio_environment();
+        let project = self.project_for_audio_environment();
+        // The rig plays its own input through its own chain; a Project that
+        // cannot follow the new device must not silence it.
+        if let Err(error) = self.reopen_active_rig() {
+            tracing::warn!(%error, "playing rig could not be restored for the new audio environment");
+        }
+        project
+    }
+
+    /// Re-exchanges the canonical Project with the sidecar after its audio
+    /// environment changed.
+    fn project_for_audio_environment(&self) -> Result<(), String> {
         let snapshot = self.canonical().map_err(|error| error.to_string())?;
         let project_id = snapshot.project_id.clone();
         self.runtime

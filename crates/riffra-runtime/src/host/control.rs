@@ -754,6 +754,19 @@ impl HostState {
                 audio_status(self.audio.open_plugin_audition(&path))?
             }
 
+            RuntimeCommand::RigList(_) => ControlOutput::RigState(self.rig_state()?),
+            RuntimeCommand::RigCreate(params) => self.create_rig(params)?,
+            RuntimeCommand::RigUpdate(params) => self.update_rig(params)?,
+            RuntimeCommand::RigDuplicate(params) => self.duplicate_rig(params)?,
+            RuntimeCommand::RigDelete(params) => self.delete_rig(params)?,
+            RuntimeCommand::RigEffectAdd(params) => self.add_rig_effect(params)?,
+            RuntimeCommand::RigEffectRemove(params) => self.remove_rig_effect(params)?,
+            RuntimeCommand::RigEffectMove(params) => self.move_rig_effect(params)?,
+            RuntimeCommand::RigEffectUpdate(params) => self.update_rig_effect(params)?,
+            RuntimeCommand::RigStart(params) => self.start_rig(params)?,
+            RuntimeCommand::RigStop(_) => self.stop_rig()?,
+            RuntimeCommand::RigEditorOpen(params) => self.open_rig_editor(params)?,
+
             RuntimeCommand::MidiListeningEnable(_) => {
                 if self.safe_mode {
                     return Err(runtime_unavailable(

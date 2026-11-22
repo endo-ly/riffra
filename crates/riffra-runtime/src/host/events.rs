@@ -1,9 +1,10 @@
 use crate::api::output::{
-    AudioStatus, ProjectActivationResult, ProjectState, RuntimeProjectionStatus, ScoreSyncStatus,
+    AudioStatus, ProjectActivationResult, ProjectState, RigState, RuntimeProjectionStatus,
+    ScoreSyncStatus,
 };
 use crate::model::{
     AudioMeterFrame, PluginParameterChanged, PluginStateChanged, RecordingFinalized,
-    RuntimeRestarted, RuntimeStartupFinished, TransportStatus,
+    RigPluginStateChanged, RuntimeRestarted, RuntimeStartupFinished, TransportStatus,
 };
 use riffra_control::HostEventFrame;
 use riffra_core::CanonicalState;
@@ -45,6 +46,12 @@ pub enum HostEvent {
     PluginStateSaved(PluginStateChanged),
     /// One parameter changed in an open native plugin editor.
     PluginParameterChanged(PluginParameterChanged),
+    /// The Host-owned rig list or its playing rig changed.
+    RigStateChanged(RigState),
+    /// Plugin state captured from a rig's native editor.
+    RigPluginStateChanged(RigPluginStateChanged),
+    /// Final editor snapshot of a rig awaiting persistence.
+    RigPluginStateFinal(RigPluginStateChanged),
 }
 
 impl HostEvent {
@@ -82,6 +89,13 @@ impl HostEvent {
             Self::PluginStateSaved(value) => ("plugin-state-saved", serde_json::to_value(value)),
             Self::PluginParameterChanged(value) => {
                 ("plugin-parameter-changed", serde_json::to_value(value))
+            }
+            Self::RigStateChanged(value) => ("rig-state-changed", serde_json::to_value(value)),
+            Self::RigPluginStateChanged(value) => {
+                ("rig-plugin-state-changed", serde_json::to_value(value))
+            }
+            Self::RigPluginStateFinal(value) => {
+                ("rig-plugin-state-final", serde_json::to_value(value))
             }
         };
         Ok(HostEventFrame::new(event, payload?))
@@ -392,6 +406,8 @@ fn is_plugin_persistence_event(event: &str) -> bool {
             | "plugin-state-changed"
             | "plugin-state-final"
             | "plugin-parameter-changed"
+            | "rig-plugin-state-changed"
+            | "rig-plugin-state-final"
     )
 }
 

@@ -1,7 +1,7 @@
 //! Commands sent to `riffra-audio` and the request sent to `riffra-render`.
 
 use crate::api::output::InstrumentPreviewDefinition;
-use crate::execution::{GraphPluginState, OfflineRenderRequest, TimelineSnapshot};
+use crate::execution::{GraphPluginState, OfflineRenderRequest, RigProjection, TimelineSnapshot};
 use serde::Serialize;
 
 /// One command accepted by the realtime sidecar.
@@ -145,6 +145,16 @@ pub(crate) enum SidecarCommand {
     OpenPluginAudition {
         path: String,
     },
+    OpenRig {
+        projection: RigProjection,
+    },
+    CloseRig,
+    OpenRigEditor {
+        device_id: String,
+    },
+    CloseRigEditor {
+        timeout_ms: u64,
+    },
     StartTakeComparison {
         raw_path: String,
         processed_path: String,
@@ -191,6 +201,7 @@ pub(crate) enum ExpectedResponse {
     MidiAck,
     MixAck,
     DeviceAck,
+    RigAck,
     DeviceStatus,
     DeviceParameters,
     DevicePrograms,
@@ -240,6 +251,10 @@ impl SidecarCommand {
             | Self::SetPluginState { .. }
             | Self::OpenPluginEditor { .. }
             | Self::ClosePluginEditor { .. } => ExpectedResponse::DeviceAck,
+            Self::OpenRig { .. }
+            | Self::CloseRig
+            | Self::OpenRigEditor { .. }
+            | Self::CloseRigEditor { .. } => ExpectedResponse::RigAck,
             Self::GetDeviceStatus { .. } => ExpectedResponse::DeviceStatus,
             Self::GetDeviceParameters { .. }
             | Self::GetDeviceParameterValueForText { .. }

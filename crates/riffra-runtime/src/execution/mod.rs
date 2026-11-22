@@ -3,10 +3,12 @@
 mod contract;
 mod project;
 mod resolve;
+mod rig;
 
 pub(crate) use contract::*;
 pub(crate) use project::{project, project_graph};
 pub(crate) use resolve::{ResolvedResources, resolve};
+pub(crate) use rig::project_rig;
 
 use crate::api::output::ProjectionDiagnostics;
 use crate::instrument::BuiltInInstrumentCatalog;

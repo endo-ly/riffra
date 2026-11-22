@@ -10,6 +10,7 @@ mod job;
 mod library;
 mod project;
 mod recording;
+mod rig;
 mod score;
 mod session;
 
@@ -20,6 +21,7 @@ pub use job::*;
 pub use library::*;
 pub use project::*;
 pub use recording::*;
+pub use rig::*;
 pub use score::*;
 pub use session::*;
 
@@ -94,6 +96,7 @@ pub enum ControlOutput {
     Plugins(Vec<PluginEntry>),
     PluginScan(ScanReport),
     Missing(Vec<MissingDependency>),
+    RigState(RigState),
     HostStatus(HostStatus),
     HostInfo(HostInfo),
     HostBootstrap(Box<HostBootstrap>),

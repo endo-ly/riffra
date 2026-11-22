@@ -121,6 +121,7 @@ impl DawHost {
             lifecycle: HostLifecycle::new(),
             shutdown_requested: AtomicBool::new(false),
             plugin_persistence_commands: Mutex::new(None),
+            rig: Mutex::new(super::rig::RigHost::new(&config.data_root)),
         });
         if let Err(error) = audio.set_restart_preferences(preferences) {
             audio.force_shutdown();
@@ -186,9 +187,8 @@ impl DawHost {
         }
         self.state.audio.cancel_waits_for_shutdown();
         self.state.lifecycle.close();
-        if !self.state.safe_mode
-            && self.state.audio.sidecar_is_ready()
-            && let Err(error) = self
+        if !self.state.safe_mode && self.state.audio.sidecar_is_ready() {
+            if let Err(error) = self
                 .state
                 .audio
                 .stop_timeline_before_shutdown()
@@ -197,8 +197,12 @@ impl DawHost {
                         .audio
                         .close_editor_before_shutdown(std::time::Duration::from_secs(30))
                 })
-        {
-            tracing::warn!(%error, "plugin editor state could not be captured before shutdown");
+            {
+                tracing::warn!(%error, "plugin editor state could not be captured before shutdown");
+            }
+            if let Err(error) = self.state.audio.close_rig_before_shutdown() {
+                tracing::warn!(%error, "rig state could not be captured before shutdown");
+            }
         }
         self.state.audio.force_shutdown();
         if let Ok(mut persistence) = self.plugin_persistence.lock()

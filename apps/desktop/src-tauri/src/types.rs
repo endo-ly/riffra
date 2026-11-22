@@ -13,7 +13,7 @@ use riffra_core::{
     CanonicalState, CreativeSession, EffectDevice, FrameDuration, FrameRange, HarmonyChord,
     HarmonyEvent, HistoryState, Marker, MidiClip, MidiClipMove, MidiClipPatch, MidiInputRoute,
     MidiNote, MonitoringState, MusicalNoteName, ProjectTimebase, RecordingPassRecord,
-    RecordingSessionRecord, RecordingSessionTrackSlot, RecordingTakeRecord, SessionSettings,
+    RecordingSessionRecord, RecordingSessionTrackSlot, RecordingTakeRecord, Rig, SessionSettings,
     TimelineLoopRange, TimelineRegion, Track, TrackKind, Vst3Plugin,
 };
 use riffra_runtime::api::output::{
@@ -37,7 +37,7 @@ use riffra_runtime::{
     AudioDiagnosticsOutput, AudioDiagnosticsRealtime, AudioDiagnosticsReport, AudioInstrumentFault,
     AudioMeterFrame, DeviceCapabilities, DeviceInspection, DeviceParameterChoice,
     DeviceParameterInfo, DeviceSidechainCapability, PluginPresetInfo, PluginStateSnapshot,
-    ProjectionDiagnostics, RecordingFinalized, RecordingPhase, RuntimeProjectionState,
+    ProjectionDiagnostics, RecordingFinalized, RecordingPhase, RigState, RuntimeProjectionState,
     RuntimeRestarted, RuntimeStartupFinished, ScoreChordInspection, ScoreDiagnostic,
     ScoreInspection, ScoreInstrumentInspection, ScoreLaneInspection, ScoreRebuild,
     ScoreSectionInspection, ScoreSummary, ScoreSyncState, ScoreSyncStatus, ScoreValidation,
@@ -70,6 +70,7 @@ fn export_types() {
     MonitoringState::export_all(&cfg).expect("MonitoringState bindings");
     AudioInputRoute::export_all(&cfg).expect("AudioInputRoute bindings");
     MidiInputRoute::export_all(&cfg).expect("MidiInputRoute bindings");
+    Rig::export_all(&cfg).expect("Rig bindings");
     Track::export_all(&cfg).expect("Track bindings");
     AutomationTarget::export_all(&cfg).expect("AutomationTarget bindings");
     AutomationInterpolation::export_all(&cfg).expect("AutomationInterpolation bindings");
@@ -111,6 +112,7 @@ fn export_types() {
     AudioDiagnosticsMute::export_all(&cfg).expect("AudioDiagnosticsMute bindings");
     AudioDiagnosticsRealtime::export_all(&cfg).expect("AudioDiagnosticsRealtime bindings");
     AudioDiagnosticsOutput::export_all(&cfg).expect("AudioDiagnosticsOutput bindings");
+    RigState::export_all(&cfg).expect("RigState bindings");
     RuntimeProjectionState::export_all(&cfg).expect("RuntimeProjectionState bindings");
     ProjectionDiagnostics::export_all(&cfg).expect("ProjectionDiagnostics bindings");
     RuntimeProjectionStatus::export_all(&cfg).expect("RuntimeProjectionStatus bindings");

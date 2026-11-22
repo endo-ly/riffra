@@ -12,6 +12,27 @@ pub(crate) struct ResolvedResources {
     pub(super) data_root: PathBuf,
 }
 
+/// Resolves the plugin paths referenced by one effect chain.
+pub(super) fn resolve_effects(effects: &[riffra_core::EffectDevice]) -> ResolvedResources {
+    let mut existing_plugin_paths = HashSet::new();
+    for device in effects {
+        record_existing_plugin(&mut existing_plugin_paths, &device.plugin);
+    }
+    ResolvedResources {
+        audio_paths: HashMap::new(),
+        existing_plugin_paths,
+        built_in_base_dirs: HashMap::new(),
+        data_root: PathBuf::new(),
+    }
+}
+
+/// Records a plugin path that can be loaded into the execution graph.
+fn record_existing_plugin(existing: &mut HashSet<String>, plugin: &riffra_core::Vst3Plugin) {
+    if !plugin.disabled_placeholder && Path::new(&plugin.path).exists() {
+        existing.insert(plugin.path.clone());
+    }
+}
+
 /// Resolves only resources referenced by the current session.
 pub(crate) fn resolve(
     data_root: &Path,
@@ -41,9 +62,7 @@ pub(crate) fn resolve(
             .map(|device| &device.plugin)
             .chain(track.instrument.as_ref().and_then(TrackInstrument::as_vst3));
         for plugin in plugins {
-            if !plugin.disabled_placeholder && Path::new(&plugin.path).exists() {
-                existing_plugin_paths.insert(plugin.path.clone());
-            }
+            record_existing_plugin(&mut existing_plugin_paths, plugin);
         }
         if let Some(preset_id) = track
             .instrument
@@ -63,9 +82,7 @@ pub(crate) fn resolve(
         .flat_map(|bus| &bus.effects)
         .chain(&session.arrangement.mixer.master_effects)
     {
-        if !effect.plugin.disabled_placeholder && Path::new(&effect.plugin.path).exists() {
-            existing_plugin_paths.insert(effect.plugin.path.clone());
-        }
+        record_existing_plugin(&mut existing_plugin_paths, &effect.plugin);
     }
 
     Ok(ResolvedResources {

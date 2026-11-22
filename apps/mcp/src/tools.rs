@@ -1171,7 +1171,7 @@ mod tests {
         let commands: std::collections::HashSet<_> =
             actions.iter().map(|action| action.command).collect();
         assert_eq!(commands.len(), 225);
-        assert_eq!(command_names().len(), 229);
+        assert_eq!(command_names().len(), 241);
         let public_commands: std::collections::HashSet<_> =
             command_names().iter().copied().collect();
         let mut unused = public_commands
@@ -1186,6 +1186,18 @@ mod tests {
                 "clip.midi.note.clear",
                 "clip.midi.note.update",
                 "instrument.list",
+                "rig.create",
+                "rig.delete",
+                "rig.duplicate",
+                "rig.editor.open",
+                "rig.effect.add",
+                "rig.effect.move",
+                "rig.effect.remove",
+                "rig.effect.update",
+                "rig.list",
+                "rig.start",
+                "rig.stop",
+                "rig.update",
             ]
         );
         for tool in TOOLS {

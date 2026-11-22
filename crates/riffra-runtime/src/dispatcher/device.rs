@@ -176,7 +176,7 @@ impl HostDispatcher<'_> {
                 path.display()
             )));
         }
-        let name = plugin_name(path);
+        let name = plugins::display_name(path);
         let snapshot = application.canonical_state();
         let is_instrument = snapshot.session.arrangement.tracks.iter().any(|track| {
             track
@@ -223,17 +223,9 @@ impl HostDispatcher<'_> {
             plugins::validated_plugin(&self.data_root, path, expected_role)
                 .map_err(DispatchError::CommandFailed)
         } else {
-            Ok((plugin_name(path), path.to_path_buf()))
+            Ok((plugins::display_name(path), path.to_path_buf()))
         }
     }
-}
-
-fn plugin_name(path: &Path) -> String {
-    path.file_stem()
-        .and_then(|value| value.to_str())
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or("Plugin")
-        .to_owned()
 }
 
 #[cfg(test)]

@@ -50,6 +50,7 @@ pub(crate) enum SidecarResponse {
     MidiAck {},
     MixAck {},
     DeviceAck {},
+    RigAck {},
     DeviceStatus(WireDeviceStatus),
     DeviceParameters(WireDeviceParameters),
     DevicePrograms(WireDevicePrograms),
@@ -69,6 +70,7 @@ impl SidecarResponse {
             Self::MidiAck {} => ExpectedResponse::MidiAck,
             Self::MixAck {} => ExpectedResponse::MixAck,
             Self::DeviceAck {} => ExpectedResponse::DeviceAck,
+            Self::RigAck {} => ExpectedResponse::RigAck,
             Self::DeviceStatus(_) => ExpectedResponse::DeviceStatus,
             Self::DeviceParameters(_) => ExpectedResponse::DeviceParameters,
             Self::DevicePrograms(_) => ExpectedResponse::DevicePrograms,
@@ -115,6 +117,8 @@ pub(crate) enum SidecarEvent {
     PluginStateChanged(WirePluginStateChanged),
     PluginStateFinal(WirePluginStateChanged),
     PluginParameterChanged(WirePluginParameterChanged),
+    RigPluginStateChanged(WireRigPluginStateChanged),
+    RigPluginStateFinal(WireRigPluginStateFinal),
     /// A failure that is not tied to a request, such as a lost device.
     Fault(SidecarError),
 }
@@ -438,6 +442,25 @@ pub(crate) struct WirePluginStateChanged {
     pub(crate) arrangement_revision: u64,
     #[serde(default)]
     pub(crate) source_plugin_path: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct WireRigPluginStateChanged {
+    pub(crate) rig_id: String,
+    pub(crate) device_id: String,
+    pub(crate) state: WirePluginState,
+    pub(crate) revision: u64,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct WireRigPluginStateFinal {
+    pub(crate) rig_id: String,
+    pub(crate) device_id: String,
+    pub(crate) state: WirePluginState,
+    pub(crate) revision: u64,
+    pub(crate) source_plugin_path: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]

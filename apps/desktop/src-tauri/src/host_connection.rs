@@ -330,7 +330,10 @@ impl DesktopEventRouter {
     fn receive(&self, generation: u64, frame: HostEventFrame) {
         if matches!(
             frame.event.as_str(),
-            "plugin-state-changed" | "plugin-parameter-changed"
+            "plugin-state-changed"
+                | "plugin-parameter-changed"
+                | "rig-plugin-state-changed"
+                | "rig-plugin-state-final"
         ) {
             return;
         }
