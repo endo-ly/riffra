@@ -15,6 +15,7 @@ import type { MixerApi } from '@/native/api/mixer';
 import type { ProjectApi as NativeProjectApi } from '@/native/api/project';
 import type { RecordingApi } from '@/native/api/recording';
 import type { RenderApi } from '@/native/api/render';
+import type { RigApi } from '@/native/api/rig';
 import type { TakeApi } from '@/native/api/takes';
 import type { TimelineApi } from '@/native/api/timeline';
 import type { TrackApi } from '@/native/api/tracks';
@@ -42,6 +43,7 @@ export interface NativeApi
     DeviceApi,
     TransportApi,
     MissingDependencyApi,
+    RigApi,
     HostConnectionApi,
     UpdaterApi,
     NativeEventApi {}

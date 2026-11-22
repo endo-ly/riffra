@@ -135,7 +135,10 @@ export function bindSessionRuntime(store: SessionStore, api: NativeApi): () => v
         clearPendingAudio();
         if (initialLoadTimer !== null) clearTimeout(initialLoadTimer);
         initialLoadTimer = null;
-        if (selectHostReady(state) && !state.project.boot) void state.project.bootstrap();
+        if (selectHostReady(state)) {
+          if (!state.project.boot) void state.project.bootstrap();
+          void state.rig.load();
+        }
       },
       { equalityFn: shallow, fireImmediately: true },
     ),
@@ -241,6 +244,7 @@ export function bindSessionRuntime(store: SessionStore, api: NativeApi): () => v
       store.getState().project.acceptActivation(value);
     }),
     api.onScoreSyncStatusChanged((value) => store.getState().project.acceptScoreSync(value)),
+    api.onRigStateChanged((value) => store.getState().rig.accept(value)),
     api.onRuntimeProjectionStatus((value) => {
       projectionEvent += 1;
       store.getState().runtime.acceptProjection(value);

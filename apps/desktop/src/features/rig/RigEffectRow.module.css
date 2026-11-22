@@ -1,0 +1,56 @@
+.effect {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-1-5);
+  background: var(--color-bg-surface);
+  border-radius: var(--radius-sm);
+}
+
+.effect[data-bypassed='true'] .effectName {
+  color: var(--color-text-muted);
+  text-decoration: line-through;
+}
+
+.effectName {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-small);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.effect button {
+  height: var(--size-control-dense);
+  display: grid;
+  place-items: center;
+  padding: 0 var(--space-1);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-micro);
+  background: transparent;
+  border-radius: var(--radius-sm);
+}
+
+.effect button:hover:not(:disabled) {
+  color: var(--color-text-primary);
+  background: var(--color-bg-hover);
+}
+
+.effect button[aria-pressed='true'] {
+  color: var(--color-accent);
+}
+
+.effect button:disabled {
+  color: var(--color-text-disabled);
+}
+
+.effect svg {
+  width: var(--size-icon-sm);
+  height: var(--size-icon-sm);
+}
+
+.effect .left {
+  transform: rotate(180deg);
+}

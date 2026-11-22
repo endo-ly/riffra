@@ -10,6 +10,7 @@ import { TransportControls } from '@/features/transport/TransportControls';
 import { Icon } from '@/shared/ui/Icon';
 import { preparationLabel } from '@/app/status/model/runtime-status';
 import { ProjectHostSelector } from '@/features/project/ProjectHostSelector';
+import { RigControl } from '@/features/rig/RigControl';
 import styles from './GlobalControlBar.module.css';
 
 interface GlobalControlBarProps {
@@ -81,6 +82,10 @@ export function GlobalControlBar(ui: GlobalControlBarProps) {
               <Icon name="redo" />
             </button>
           </div>
+        </fieldset>
+        <span className={styles.divider} aria-hidden="true" />
+        <fieldset className={styles.rigControls} disabled={!props.hostConnected}>
+          <RigControl />
         </fieldset>
       </div>
 

@@ -16,6 +16,7 @@ import { mixerApi } from './mixer';
 import { projectApi } from './project';
 import { recordingApi } from './recording';
 import { renderApi } from './render';
+import { rigApi } from './rig';
 import { takesApi } from './takes';
 import { timelineApi } from './timeline';
 import { tracksApi } from './tracks';
@@ -40,6 +41,7 @@ export function createNativeApi(): NativeApi {
     ...analysisApi,
     ...jobsApi,
     ...missingDependencyApi,
+    ...rigApi,
     ...recordingApi,
     ...renderApi,
     ...transportApi,

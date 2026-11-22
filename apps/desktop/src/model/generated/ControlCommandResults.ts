@@ -179,6 +179,18 @@ export type ControlCommandResults = {
   'plugin.scan.start': OutputValue<'job'>;
   'plugin.editor.open': OutputValue<'ok'>;
   'plugin.audition.open': OutputValue<'audioStatus'>;
+  'rig.list': OutputValue<'rigState'>;
+  'rig.create': OutputValue<'rigState'>;
+  'rig.update': OutputValue<'rigState'>;
+  'rig.duplicate': OutputValue<'rigState'>;
+  'rig.delete': OutputValue<'rigState'>;
+  'rig.effect.add': OutputValue<'rigState'>;
+  'rig.effect.remove': OutputValue<'rigState'>;
+  'rig.effect.move': OutputValue<'rigState'>;
+  'rig.effect.update': OutputValue<'rigState'>;
+  'rig.start': OutputValue<'rigState'>;
+  'rig.stop': OutputValue<'rigState'>;
+  'rig.editor.open': OutputValue<'ok'>;
   'device.inspect': OutputValue<'deviceInspection'>;
   'device.parameter.list': OutputValue<'deviceParameters'>;
   'device.parameter.get': OutputValue<'deviceParameter'>;

@@ -18,6 +18,7 @@ import type {
   LocalHostInfo,
   ProjectActivationResult,
   RecordingFinalized,
+  RigState,
   RuntimeStartupFinished,
   ScoreSyncStatus,
   TransportStatus,
@@ -38,6 +39,7 @@ export interface FakeNativeApiOptions {
   instruments?: InstrumentLibraryItem[];
   instrumentCollections?: InstrumentCollection[];
   missingDependencies?: MissingDependency[];
+  rigState?: RigState;
   responses?: Partial<Record<keyof NativeApi, ResponseValue>>;
   failures?: Partial<Record<keyof NativeApi, Error>>;
   hostConnection?: Partial<HostConnectionState>;
@@ -144,6 +146,7 @@ interface EventPayloads {
   onRuntimeRestarted: number;
   onRecordingFinalized: RecordingFinalized;
   onScoreSyncStatusChanged: ScoreSyncStatus;
+  onRigStateChanged: RigState;
 }
 
 class FakeNativeControls {
@@ -158,6 +161,7 @@ class FakeNativeControls {
   bootstrapState: BootstrapState;
   hostConnectionState: HostConnectionState;
   missing: MissingDependency[];
+  rigState: RigState;
 
   private readonly responses = new Map<keyof NativeApi, ResponseValue>();
   private readonly failures = new Map<keyof NativeApi, Error>();
@@ -165,12 +169,14 @@ class FakeNativeControls {
   private readonly jobs = new Map<string, BackgroundJobStatus>();
   private jobSequence = 0;
   private canonicalSequence = 0;
+  private rigSequence = 0;
 
   constructor(options: FakeNativeApiOptions = {}) {
     this.audio = options.audio ?? fakeAudioStatus();
     this.recordings = options.recordings ?? [];
     this.plugins = options.plugins ?? [];
     this.missing = options.missingDependencies ?? [];
+    this.rigState = options.rigState ?? { rigs: [], activeRigId: null };
     this.bootstrapState = mergeBootstrap(options.bootstrapState);
     this.canonicalSequence = this.bootstrapState.canonical.sequence;
     this.instruments = options.instruments ?? defaultInstrumentLibraryItems();
@@ -274,6 +280,10 @@ class FakeNativeControls {
     this.recordCall('onScoreSyncStatusChanged');
     return this.subscribe('onScoreSyncStatusChanged', callback);
   }
+  onRigStateChanged(callback: Parameters<NativeApi['onRigStateChanged']>[0]) {
+    this.recordCall('onRigStateChanged');
+    return this.subscribe('onRigStateChanged', callback);
+  }
   private recordCall(name: keyof NativeApi): void {
     this.calls.push(String(name));
   }
@@ -356,6 +366,11 @@ class FakeNativeControls {
       ...status,
     };
     this.emit('onTransportStatus', next);
+  }
+
+  emitRigState(state: RigState = this.rigState): void {
+    this.rigState = state;
+    this.emit('onRigStateChanged', state);
   }
 
   emitAudioStatus(status: AudioStatus): void {
@@ -615,6 +630,163 @@ class FakeNativeControls {
         return Promise.resolve({ drivers: [], refreshedAtMs: 1, message: 'fake' });
       case 'probeDeviceChannels':
         return Promise.resolve({ inputChannels: [], outputChannels: [] });
+      case 'getRigState':
+        return Promise.resolve(this.rigState);
+      case 'createRig': {
+        const [name, channelIndex] = arguments_ as [string, number];
+        const rig: RigState['rigs'][number] = {
+          id: `rig:test-${++this.rigSequence}`,
+          name: name.trim(),
+          audioInput: { channelIndex },
+          effects: [],
+          gainDb: 0,
+        };
+        this.rigState = { ...this.rigState, rigs: [...this.rigState.rigs, rig] };
+        this.emitRigState();
+        return Promise.resolve(this.rigState);
+      }
+      case 'updateRig': {
+        const [rigId, patch] = arguments_ as [
+          string,
+          { name?: string; channelIndex?: number; gainDb?: number },
+        ];
+        this.rigState = {
+          ...this.rigState,
+          rigs: this.rigState.rigs.map((rig) =>
+            rig.id !== rigId
+              ? rig
+              : {
+                  ...rig,
+                  name: patch.name ?? rig.name,
+                  audioInput:
+                    patch.channelIndex === undefined
+                      ? rig.audioInput
+                      : { channelIndex: patch.channelIndex },
+                  gainDb: patch.gainDb ?? rig.gainDb,
+                },
+          ),
+        };
+        this.emitRigState();
+        return Promise.resolve(this.rigState);
+      }
+      case 'duplicateRig': {
+        const [rigId] = arguments_ as [string];
+        const source = this.rigState.rigs.find((rig) => rig.id === rigId);
+        if (!source) return Promise.reject(new Error('rig was not found'));
+        const duplicate = {
+          ...source,
+          id: `rig:test-${++this.rigSequence}`,
+          name: `${source.name} copy`,
+          effects: source.effects.map((effect, index) => ({
+            ...effect,
+            id: `effect:test-${this.rigSequence}-${index}`,
+          })),
+        };
+        this.rigState = { ...this.rigState, rigs: [...this.rigState.rigs, duplicate] };
+        this.emitRigState();
+        return Promise.resolve(this.rigState);
+      }
+      case 'deleteRig': {
+        const [rigId] = arguments_ as [string];
+        this.rigState = {
+          rigs: this.rigState.rigs.filter((rig) => rig.id !== rigId),
+          activeRigId: this.rigState.activeRigId === rigId ? null : this.rigState.activeRigId,
+        };
+        this.emitRigState();
+        return Promise.resolve(this.rigState);
+      }
+      case 'addRigEffect': {
+        const [rigId, pluginPath] = arguments_ as [string, string];
+        this.rigState = {
+          ...this.rigState,
+          rigs: this.rigState.rigs.map((rig) =>
+            rig.id !== rigId
+              ? rig
+              : {
+                  ...rig,
+                  effects: [
+                    ...rig.effects,
+                    {
+                      id: `effect:test-${++this.rigSequence}`,
+                      name: pluginPath.replace(/^.*[\\/]/, '').replace(/\.vst3$/i, ''),
+                      bypassed: false,
+                      plugin: {
+                        path: pluginPath,
+                        parameterValues: [],
+                        stateData: undefined,
+                        disabledPlaceholder: false,
+                      },
+                    },
+                  ],
+                },
+          ),
+        };
+        this.emitRigState();
+        return Promise.resolve(this.rigState);
+      }
+      case 'removeRigEffect': {
+        const [rigId, deviceId] = arguments_ as [string, string];
+        this.rigState = {
+          ...this.rigState,
+          rigs: this.rigState.rigs.map((rig) =>
+            rig.id !== rigId
+              ? rig
+              : { ...rig, effects: rig.effects.filter((effect) => effect.id !== deviceId) },
+          ),
+        };
+        this.emitRigState();
+        return Promise.resolve(this.rigState);
+      }
+      case 'moveRigEffect': {
+        const [rigId, orderedDeviceIds] = arguments_ as [string, string[]];
+        this.rigState = {
+          ...this.rigState,
+          rigs: this.rigState.rigs.map((rig) =>
+            rig.id !== rigId
+              ? rig
+              : {
+                  ...rig,
+                  effects: orderedDeviceIds.flatMap((id) =>
+                    rig.effects.filter((effect) => effect.id === id),
+                  ),
+                },
+          ),
+        };
+        this.emitRigState();
+        return Promise.resolve(this.rigState);
+      }
+      case 'setRigEffectBypassed': {
+        const [rigId, deviceId, bypassed] = arguments_ as [string, string, boolean];
+        this.rigState = {
+          ...this.rigState,
+          rigs: this.rigState.rigs.map((rig) =>
+            rig.id !== rigId
+              ? rig
+              : {
+                  ...rig,
+                  effects: rig.effects.map((effect) =>
+                    effect.id === deviceId ? { ...effect, bypassed } : effect,
+                  ),
+                },
+          ),
+        };
+        this.emitRigState();
+        return Promise.resolve(this.rigState);
+      }
+      case 'startRig': {
+        const [rigId] = arguments_ as [string];
+        if (!this.rigState.rigs.some((rig) => rig.id === rigId))
+          return Promise.reject(new Error('rig was not found'));
+        this.rigState = { ...this.rigState, activeRigId: rigId };
+        this.emitRigState();
+        return Promise.resolve(this.rigState);
+      }
+      case 'stopRig':
+        this.rigState = { ...this.rigState, activeRigId: null };
+        this.emitRigState();
+        return Promise.resolve(this.rigState);
+      case 'openRigEditor':
+        return Promise.resolve(undefined);
       case 'getAudioStatus':
         return Promise.resolve(this.audio);
       case 'retryRuntimeProjection':

@@ -1,0 +1,21 @@
+.rig {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.rigName {
+  overflow: hidden;
+  color: var(--color-text-strong);
+  font-size: var(--font-size-small);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rigInput {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-micro);
+  text-align: left;
+}

@@ -12,6 +12,7 @@ import { createJobSlice, type JobSlice } from '@/session/slices/jobs';
 import { createRecordingSlice, type RecordingSlice } from '@/session/slices/recording';
 import { createCatalogSlice, type CatalogSlice } from '@/session/slices/catalog';
 import { createMissingSlice, type MissingSlice } from '@/session/slices/missing';
+import { createRigSlice, type RigSlice } from '@/session/slices/rig';
 import {
   createWorkspaceSlice,
   initialWorkspace,
@@ -40,6 +41,7 @@ export interface SessionState {
   recording: RecordingSlice;
   catalog: CatalogSlice;
   missing: MissingSlice;
+  rig: RigSlice;
   workspace: WorkspaceSlice;
   appUpdate: AppUpdateSlice;
   commit: SessionCommit;
@@ -82,6 +84,7 @@ export function createSessionStore(api: NativeApi): SessionStore {
             get().recording.reset();
             get().catalog.reset();
             get().missing.reset();
+            get().rig.reset();
             get().workspace.reset();
           },
         ),
@@ -102,6 +105,7 @@ export function createSessionStore(api: NativeApi): SessionStore {
           (operation, options) => get().commit(operation, options),
           () => get().catalog.scanPlugins(),
         ),
+        rig: createRigSlice(api, (patch) => set((state) => ({ rig: { ...state.rig, ...patch } }))),
         catalog: createCatalogSlice(
           api,
           () => get().catalog,
