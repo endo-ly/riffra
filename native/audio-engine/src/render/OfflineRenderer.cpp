@@ -96,14 +96,18 @@ bool hostsPlugins(const ExecutionGraph& graph) noexcept {
 
 /// Waits in short slices for the paced loop. Windows' default scheduler tick (~15.6 ms)
 /// stretches every slice, so the wait runs on a high-resolution timer; systems without one keep
-/// the regular tick, which only makes the render slower than wall-clock time. A render owns one
+/// the regular tick, which only makes the render slower than wall-clock time. Only a real-time
+/// render asks for the timer, so an offline render makes no kernel call. A render owns one
 /// waiter, so a timer is never shared with another render pacing in the same process.
 class OfflineRenderer::PacingWaiter final {
 public:
-    PacingWaiter() noexcept {
+    explicit PacingWaiter(const bool createTimer) noexcept {
 #if JUCE_WINDOWS
-        timer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
-                                       TIMER_ALL_ACCESS);
+        if (createTimer)
+            timer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
+                                           TIMER_ALL_ACCESS);
+#else
+        juce::ignoreUnused(createTimer);
 #endif
     }
     ~PacingWaiter() {
@@ -375,7 +379,7 @@ bool OfflineRenderer::render(juce::AudioFormatManager& formats, Result& result,
         // The pacing clock starts immediately before the production loop: the warm-up and the
         // plugin reset would otherwise count as render time and let the first blocks burst.
         const auto pacedStart = std::chrono::steady_clock::now();
-        const PacingWaiter pacingWaiter;
+        const PacingWaiter pacingWaiter{realtimePacing};
         while (position < plan.processingEnd) {
             if (isCancelled()) {
                 error = "Offline Render was cancelled.";
