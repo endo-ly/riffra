@@ -10,6 +10,7 @@ mod data_root;
 mod midi_file;
 mod project;
 mod project_store;
+mod rig_store;
 mod storage;
 
 pub use asset::{
@@ -26,6 +27,7 @@ pub use project::{ProjectExport, export as export_project, import as import_proj
 pub use project_store::{
     ProjectInitialization, ProjectStore, ProjectSummary, WorkspaceState, validate_project_id,
 };
+pub use rig_store::RigStore;
 pub use storage::{
     LoadedSession, RecoveryCandidate, SessionLoadError, SessionStore, now_ms, replace_file,
 };
