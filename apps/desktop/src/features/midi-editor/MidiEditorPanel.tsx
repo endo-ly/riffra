@@ -274,32 +274,6 @@ export const MidiEditorPanel = memo(function MidiEditorPanel() {
         }
       }}
     >
-      {inspection?.instrumentId && (
-        <div className={styles.instrumentMidiInfo} aria-label="Instrument MIDI configuration">
-          <span>
-            Transpose {instrumentSettings!.transposeSemitones > 0 ? '+' : ''}
-            {instrumentSettings!.transposeSemitones} st
-          </span>
-          <span>
-            {instrumentSettings!.playableNotes?.type === 'range'
-              ? `Playable ${midiNoteName(instrumentSettings!.playableNotes.start)}–${midiNoteName(instrumentSettings!.playableNotes.end)}`
-              : instrumentSettings!.playableNotes?.type === 'set'
-                ? `${instrumentSettings!.playableNotes.notes.length} playable notes`
-                : 'All notes playable'}
-          </span>
-          {instrumentSettings!.keyswitches.map((keyswitch) => (
-            <span key={`${keyswitch.note}:${keyswitch.name}`}>
-              {midiNoteName(keyswitch.note)}: {keyswitch.name}
-            </span>
-          ))}
-          {(inspection.warnings.length ?? 0) > 0 && (
-            <strong role="status">
-              {inspection.warnings.length} note warning
-              {inspection.warnings.length === 1 ? '' : 's'}
-            </strong>
-          )}
-        </div>
-      )}
       <MidiEditorToolbar
         clipName={clip.name}
         tool={tool}
