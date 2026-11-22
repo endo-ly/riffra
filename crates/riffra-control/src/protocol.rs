@@ -84,7 +84,7 @@ impl ProtocolError {
 
 /// One command request sent over JSON Lines or a framed local transport.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ControlRequest {
     pub request_id: String,
     pub command: String,
@@ -294,6 +294,15 @@ mod tests {
             request.validate().unwrap_err().code,
             ErrorCode::InvalidRequest
         );
+
+        let unknown_envelope_field = serde_json::json!({
+            "requestId": "request:1",
+            "command": "session.get",
+            "unknownEnvelopeField": true,
+            "params": {},
+        });
+        let error = serde_json::from_value::<ControlRequest>(unknown_envelope_field).unwrap_err();
+        assert!(error.to_string().contains("unknown field"));
     }
 
     #[test]
