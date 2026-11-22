@@ -60,4 +60,27 @@ describe('MidiEditorRuler', () => {
       ),
     ).toEqual([72, 264, 360, 456, 648, 744]);
   });
+
+  it('thins bar labels and drops beat marks when zoomed far out', () => {
+    // A 4/4 bar spans 19.2 px, so labels fall every fourth bar.
+    const farOutLabels = (clipStartTick: number) => {
+      render(
+        <MidiEditorRuler
+          timebase={timebase}
+          clipStartTick={clipStartTick}
+          visibleTicks={8 * 3_840}
+          pixelsPerTick={0.005}
+          playheadRef={createRef()}
+        />,
+      );
+      const ruler = screen.getByLabelText('MIDI editor ruler');
+      expect(ruler.querySelectorAll('span')).toHaveLength(0);
+      return [...ruler.querySelectorAll('strong')].map((label) => label.textContent);
+    };
+
+    expect(farOutLabels(0)).toEqual(['1', '', '', '', '5', '', '', '']);
+    cleanup();
+    // Bar 5 sits half a bar after the 4.3 start label, too close to label.
+    expect(farOutLabels(3 * 3_840 + 2 * 960)).toEqual(['4.3', '', '', '', '', '9', '', '', '']);
+  });
 });

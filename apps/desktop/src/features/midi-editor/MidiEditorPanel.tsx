@@ -1,7 +1,13 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import type { MidiNote } from '@/model/generated';
 import type { MidiGhostNote } from '@/features/midi-editor/model/ghost-notes';
-import { clipGridTicks, snapClipTick, snapGridTicks, type SnapGrid } from '@/model/clip-grid';
+import {
+  clipGridTicks,
+  showsBeatGrid,
+  snapClipTick,
+  snapGridTicks,
+  type SnapGrid,
+} from '@/model/clip-grid';
 import { formatMusicalLength, formatMusicalPosition } from '@/model/time-format';
 import { musicalGridTicks, snapToBar, ticksPerBar, ticksPerBeat } from '@/model/timebase';
 import { resolveTrackColorById } from '@/model/track-color';
@@ -92,6 +98,8 @@ export const MidiEditorPanel = memo(function MidiEditorPanel() {
   } | null>(null);
   const clipId = clip?.id;
   const hasClip = clip !== null;
+  const beatTicks = ticksPerBeat(arrangement.timebase);
+  const barTicks = ticksPerBar(arrangement.timebase);
   const {
     pixelsPerTick,
     rowHeight,
@@ -104,13 +112,11 @@ export const MidiEditorPanel = memo(function MidiEditorPanel() {
     rulerPlayheadRef,
     lanePlayheadRef,
     velocityPlayheadRef,
-  } = useMidiEditorViewport(clip, stoppedTick, playhead, playing);
+  } = useMidiEditorViewport(clip, stoppedTick, playhead, playing, barTicks);
   const laneHeight = (PITCH_HIGH - PITCH_LOW) * rowHeight;
   const velocityLaneHeight = 88;
   const laneWidth = visibleTicks * pixelsPerTick;
   const canvasWidth = LANE_LABEL_WIDTH + laneWidth;
-  const beatTicks = ticksPerBeat(arrangement.timebase);
-  const barTicks = ticksPerBar(arrangement.timebase);
   const snapTicks = snapGridTicks(snap, arrangement.timebase);
   const clipStartTick = clip?.startTick ?? 0;
   const snapLocalTick = (tick: number, start: number, gridTicks: number) =>
@@ -126,12 +132,14 @@ export const MidiEditorPanel = memo(function MidiEditorPanel() {
     'bar',
     arrangement.timebase,
   ).map((tick) => tick - clipStartTick);
-  const beatLineTicks = musicalGridTicks(
-    clipStartTick,
-    clipStartTick + visibleTicks,
-    'beat',
-    arrangement.timebase,
-  ).map((tick) => tick - clipStartTick);
+  const beatLineTicks = showsBeatGrid(beatTicks * pixelsPerTick)
+    ? musicalGridTicks(
+        clipStartTick,
+        clipStartTick + visibleTicks,
+        'beat',
+        arrangement.timebase,
+      ).map((tick) => tick - clipStartTick)
+    : [];
   const subdivisionLineTicks = useMemo(() => {
     if (snapTicks <= 0) return [];
     const pixelsPerSubdivision = snapTicks * pixelsPerTick;

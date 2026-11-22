@@ -1,4 +1,5 @@
-import { musicalGridTicks, tickToBarBeat } from '@/model/timebase';
+import { musicalGridTicks, tickToBarBeat, ticksPerBar, ticksPerBeat } from '@/model/timebase';
+import { barLabelInterval, MIN_BAR_LABEL_PIXELS, showsBeatGrid } from '@/model/clip-grid';
 import type { Ref } from 'react';
 import type { ProjectTimebase } from '@/model/generated';
 import { formatMusicalPosition } from '@/model/time-format';
@@ -38,6 +39,14 @@ export function MidiEditorRuler(props: MidiEditorRulerProps) {
             .filter((tick) => tick > 0),
         ]
       : [];
+  const showBeats = showsBeatGrid(ticksPerBeat(props.timebase) * props.pixelsPerTick);
+  const labelEveryBars = barLabelInterval(ticksPerBar(props.timebase) * props.pixelsPerTick);
+  // The clip start is always labelled; later bars follow the ruler interval and
+  // keep clear of the start label.
+  const labelled = (tick: number, index: number) =>
+    index === 0 ||
+    (tick * props.pixelsPerTick >= MIN_BAR_LABEL_PIXELS &&
+      (tickToBarBeat(props.clipStartTick + tick, props.timebase).bar - 1) % labelEveryBars === 0);
 
   return (
     <div
@@ -54,25 +63,29 @@ export function MidiEditorRuler(props: MidiEditorRulerProps) {
       }}
     >
       {barStarts.map((tick, index) => {
-        const beatMarks = [];
         const sectionEnd = barStarts[index + 1] ?? props.visibleTicks;
-        for (const offset of musicalGridTicks(
-          props.clipStartTick + tick,
-          props.clipStartTick + sectionEnd,
-          'beat',
-          props.timebase,
-        ).map((absolute) => absolute - props.clipStartTick - tick)) {
-          if (offset === 0) continue;
-          beatMarks.push(<span key={offset} style={{ left: offset * props.pixelsPerTick }} />);
-        }
+        const beatOffsets = showBeats
+          ? musicalGridTicks(
+              props.clipStartTick + tick,
+              props.clipStartTick + sectionEnd,
+              'beat',
+              props.timebase,
+            )
+              .map((absolute) => absolute - props.clipStartTick - tick)
+              .filter((offset) => offset !== 0)
+          : [];
         return (
           <i
             key={tick}
             className={styles.editorBarMark}
             style={{ left: tick * props.pixelsPerTick }}
           >
-            <strong>{barLabel(props.clipStartTick + tick, props.timebase)}</strong>
-            {beatMarks}
+            <strong>
+              {labelled(tick, index) ? barLabel(props.clipStartTick + tick, props.timebase) : null}
+            </strong>
+            {beatOffsets.map((offset) => (
+              <span key={offset} style={{ left: offset * props.pixelsPerTick }} />
+            ))}
           </i>
         );
       })}

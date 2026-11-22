@@ -45,6 +45,7 @@ describe('arrange timeline layout', () => {
       subdivisionTicks: 480,
       labelEveryBars: 1,
     });
+    expect(timelineGridDensity(timebase, 0.003).labelEveryBars).toBe(8);
     expect(timelineGridDensity(timebase, 0.1).subdivisionTicks).toBe(240);
     expect(timelineGridDensity(timebase, 0.2).subdivisionTicks).toBe(240);
   });

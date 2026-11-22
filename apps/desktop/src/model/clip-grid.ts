@@ -84,3 +84,17 @@ export function countOffGridNotes(
     (note) => snapClipTick(note.startTick, clipStartTick, gridTicks) !== note.startTick,
   ).length;
 }
+
+/** Narrowest beat spacing, in pixels, that still draws beat lines. */
+const MIN_BEAT_PIXELS = 18;
+/** Narrowest spacing, in pixels, between two bar labels on a ruler. */
+export const MIN_BAR_LABEL_PIXELS = 56;
+
+export function showsBeatGrid(beatPixels: number) {
+  return beatPixels >= MIN_BEAT_PIXELS;
+}
+
+/** Bars between ruler labels: the smallest power of two that keeps labels apart. */
+export function barLabelInterval(barPixels: number) {
+  return 2 ** Math.max(0, Math.ceil(Math.log2(MIN_BAR_LABEL_PIXELS / Math.max(1, barPixels))));
+}

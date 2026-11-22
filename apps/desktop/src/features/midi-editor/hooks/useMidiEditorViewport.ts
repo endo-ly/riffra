@@ -1,14 +1,27 @@
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react';
 import type { MidiClip } from '@/model/generated';
 import { LANE_LABEL_WIDTH, PITCH_HIGH } from '@/features/midi-editor/model/pitch-grid';
+import { scrollWheelVertically } from '@/shared/input';
 
 const ZOOM_STEP = 1.25;
+// The minimum fits a few minutes of clip on one screen.
+const MIN_PIXELS_PER_TICK = 0.0025;
+const MAX_PIXELS_PER_TICK = 1;
+const FIT_MARGIN = 16;
+/** Longest span, in bars, an opened clip is fitted to; longer clips open at their start. */
+const FIT_MAX_BARS = 4;
+const WHEEL_ROWS_PER_NOTCH = 2;
+
+function boundPixelsPerTick(value: number) {
+  return Math.min(MAX_PIXELS_PER_TICK, Math.max(MIN_PIXELS_PER_TICK, value));
+}
 
 export function useMidiEditorViewport(
   clip: MidiClip | null,
   playheadTick: number | null,
   playheadTickRef: MutableRefObject<number>,
   playing: boolean,
+  barTicks: number,
 ) {
   const [pixelsPerTick, setPixelsPerTick] = useState(0.18);
   const [rowHeight, setRowHeight] = useState(12);
@@ -20,7 +33,7 @@ export function useMidiEditorViewport(
   const velocityPlayheadRef = useRef<HTMLElement>(null);
   const programmaticScrollRef = useRef(false);
   const followPausedRef = useRef(false);
-  const centeredClipIdRef = useRef<string | undefined>(undefined);
+  const framedClipIdRef = useRef<string | undefined>(undefined);
   const previousPlayheadTickRef = useRef<number | null>(null);
   const clipId = clip?.id;
   const hasClip = clip !== null;
@@ -31,7 +44,7 @@ export function useMidiEditorViewport(
   const clipStartTick = clip?.startTick ?? 0;
   const applyHorizontalZoom = useCallback(
     (next: number, clientX?: number) => {
-      const bounded = Math.min(1, Math.max(0.05, next));
+      const bounded = boundPixelsPerTick(next);
       const viewport = laneViewportRef.current;
       if (!viewport) {
         setPixelsPerTick(bounded);
@@ -137,9 +150,9 @@ export function useMidiEditorViewport(
     };
   }, [hasClip, syncScrollContent]);
 
-  // Ctrl+wheel zooms time around the cursor and Alt+wheel zooms pitch; a plain
-  // wheel keeps scrolling. The listener is not passive so the WebView's own
-  // page zoom never takes Ctrl+wheel.
+  // Ctrl+wheel zooms time around the cursor, Alt+wheel zooms pitch, and a plain
+  // vertical wheel scrolls a couple of pitch rows per notch. The listener is not
+  // passive so the WebView's own page zoom never takes Ctrl+wheel.
   useEffect(() => {
     const viewport = laneViewportRef.current;
     if (!viewport) return;
@@ -151,11 +164,13 @@ export function useMidiEditorViewport(
       } else if (event.altKey) {
         event.preventDefault();
         stepVerticalZoom(direction);
+      } else {
+        scrollWheelVertically(viewport, event, WHEEL_ROWS_PER_NOTCH * rowHeight);
       }
     };
     viewport.addEventListener('wheel', onWheel, { passive: false });
     return () => viewport.removeEventListener('wheel', onWheel);
-  }, [hasClip, stepHorizontalZoom, stepVerticalZoom]);
+  }, [hasClip, rowHeight, stepHorizontalZoom, stepVerticalZoom]);
 
   // Follow the playhead during playback: once the playhead crosses the follow
   // line the view scrolls continuously to keep it there. A manual scroll pauses
@@ -223,21 +238,29 @@ export function useMidiEditorViewport(
     }
   }, [clipStartTick, pixelsPerTick, playheadTickInClip, playing, visibleTicks]);
 
+  // Frame a newly opened clip: fit its length, up to a few bars, to the
+  // measured lane width and center the pitch view on its notes.
   useEffect(() => {
     if (!hasClip || clipId === undefined) {
-      centeredClipIdRef.current = undefined;
+      framedClipIdRef.current = undefined;
       return;
     }
-    if (centeredClipIdRef.current === clipId) return;
-    centeredClipIdRef.current = clipId;
+    if (framedClipIdRef.current === clipId) return;
+    framedClipIdRef.current = clipId;
     const viewport = laneViewportRef.current;
     if (!viewport) return;
+    const usableWidth = viewport.clientWidth - LANE_LABEL_WIDTH - FIT_MARGIN;
     programmaticScrollRef.current = true;
+    if (usableWidth > 0) {
+      const fitTicks = Math.min(visibleTicks, barTicks * FIT_MAX_BARS);
+      setPixelsPerTick(boundPixelsPerTick(usableWidth / fitTicks));
+      viewport.scrollLeft = 0;
+    }
     viewport.scrollTop = Math.max(
       0,
       (PITCH_HIGH - 1 - clipNoteCenter) * rowHeight - viewport.clientHeight / 2,
     );
-  }, [clipId, clipNoteCenter, hasClip, rowHeight]);
+  }, [barTicks, clipId, clipNoteCenter, hasClip, rowHeight, visibleTicks]);
 
   return {
     pixelsPerTick,

@@ -8,6 +8,7 @@ import { TRACK_COLOR_PALETTE } from '@/model/track-color';
 import type { MidiClip } from '@/model/generated';
 import { canonicalState, defaultSession } from '@/native/preview/fixtures';
 import { MidiEditorPanel } from '@/features/midi-editor/MidiEditorPanel';
+import { LANE_LABEL_WIDTH } from '@/features/midi-editor/model/pitch-grid';
 import type { NoteLane } from '@/features/midi-editor/NoteLane';
 import { createFakeNativeApi, type FakeNativeApi } from '@/test/support/fake-native-api';
 import { createTestSessionStore, renderWithSession } from '@/test/support/session-provider';
@@ -51,7 +52,11 @@ function midiClip(id: string, startTick: number, lyric?: string): MidiClip {
   };
 }
 
-function setup(startTick: number, lyric?: string, additionalClipIds: string[] = []) {
+function setup(
+  startTick: number,
+  lyric?: string,
+  additionalClips: (Pick<MidiClip, 'id'> & Partial<MidiClip>)[] = [],
+) {
   const clip = midiClip('clip:1', startTick, lyric);
   const session = defaultSession();
   session.arrangement.tracks.push({
@@ -69,7 +74,10 @@ function setup(startTick: number, lyric?: string, additionalClipIds: string[] = 
     midiInput: {},
     effects: [],
   });
-  session.arrangement.midiClips = [clip, ...additionalClipIds.map((id) => midiClip(id, startTick))];
+  session.arrangement.midiClips = [
+    clip,
+    ...additionalClips.map((overrides) => ({ ...midiClip(overrides.id, startTick), ...overrides })),
+  ];
   const api = createFakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
   api.setResponse('getInstrumentMidiSettings', null);
   const addMidiNote = vi.fn(api.addMidiNote);
@@ -107,7 +115,7 @@ function positions(root: Element, selector: string) {
 
 describe('MidiEditorPanel', () => {
   it('cancels a velocity drag when the edited clip changes', async () => {
-    const { store, updateMidiNotes } = setup(0, undefined, ['clip:other']);
+    const { store, updateMidiNotes } = setup(0, undefined, [{ id: 'clip:other' }]);
     const velocityLane = document.querySelector<HTMLElement>('[data-velocity-lane]')!;
     vi.spyOn(velocityLane, 'getBoundingClientRect').mockReturnValue({ height: 88 } as DOMRect);
     const bar = velocityLane.querySelector<HTMLElement>('[data-velocity-note-id]')!;
@@ -122,13 +130,31 @@ describe('MidiEditorPanel', () => {
     expect(screen.getByLabelText('C4 velocity 96')).toBeInTheDocument();
   });
 
-  it('widens and narrows the time axis and the pitch rows from the toolbar steppers', () => {
+  it('fits an opened clip of up to four bars to the lane width, then steps the zoom', () => {
     // Arrange
-    const { lane } = setup(0);
+    const { store } = setup(0, undefined, [
+      { id: 'clip:other' },
+      { id: 'clip:long', durationTicks: 8 * 3840 },
+    ]);
+    const viewport = document.querySelector<HTMLElement>('[data-midi-pitch-viewport]')!;
+    Object.defineProperty(viewport, 'clientWidth', { configurable: true, value: 1000 });
     const clipEnd = () =>
-      Number.parseFloat(lane.querySelector<HTMLElement>('[class*="clipEnd"]')!.style.left);
+      Number.parseFloat(document.querySelector<HTMLElement>('[class*="clipEnd"]')!.style.left);
     const rowHeight = () =>
-      Number.parseFloat(lane.querySelector<HTMLElement>('[data-note-id]')!.style.height);
+      Number.parseFloat(document.querySelector<HTMLElement>('[data-note-id]')!.style.height);
+
+    // Act
+    act(() => store.getState().workspace.openMidiEditor('clip:other'));
+
+    // Assert: the whole clip spans the lane width minus the key labels and margin.
+    const usableWidth = 1000 - LANE_LABEL_WIDTH - 16;
+    expect(clipEnd()).toBeCloseTo(usableWidth);
+
+    // Act
+    act(() => store.getState().workspace.openMidiEditor('clip:long'));
+
+    // Assert: an eight-bar clip opens with its first four bars in view.
+    expect(clipEnd()).toBeCloseTo(usableWidth * 2);
     const timeBefore = clipEnd();
     const rowBefore = rowHeight();
 
@@ -177,6 +203,21 @@ describe('MidiEditorPanel', () => {
       }
     },
   );
+
+  it('scrolls two pitch rows per mouse-wheel notch', () => {
+    // Arrange
+    setup(0);
+    const viewport = document.querySelector<HTMLElement>('[data-midi-pitch-viewport]')!;
+    viewport.scrollTop = 0;
+
+    // Act
+    const wheel = new WheelEvent('wheel', { deltaY: 100, cancelable: true });
+    viewport.dispatchEvent(wheel);
+
+    // Assert: the wheel moves two of the default 12 px pitch rows.
+    expect(wheel.defaultPrevented).toBe(true);
+    expect(viewport.scrollTop).toBe(24);
+  });
 
   it('selects the notes identified by the committed edit', async () => {
     // Arrange

@@ -406,8 +406,22 @@ describe('TimelineView', () => {
     expect(api.calls).toContain('seekTimeline');
   });
 
+  it('scrolls the tracks a small fixed distance per mouse-wheel notch', () => {
+    // Arrange
+    const { container } = renderWorkspace(createFakeNativeApi());
+    const scroller = container.querySelector('[class*="scroller"]') as HTMLDivElement;
+
+    // Act
+    const wheel = new WheelEvent('wheel', { deltaY: 100, cancelable: true, bubbles: true });
+    scroller.dispatchEvent(wheel);
+
+    // Assert
+    expect(wheel.defaultPrevented).toBe(true);
+    expect(scroller.scrollTop).toBe(40);
+  });
+
   it('keeps the timeline view following the playhead during playback', async () => {
-    // At 120 bpm / ppq 960 the playhead advances 1,920 ticks (192 px at 0.1
+    // At 120 bpm / ppq 960 the playhead advances 1,920 ticks (48 px at 0.025
     // px/tick) per second; with an 800 px viewport the follow line sits at 256 px.
     vi.useFakeTimers({ toFake: ['requestAnimationFrame', 'performance'] });
     try {
@@ -417,7 +431,7 @@ describe('TimelineView', () => {
       Object.defineProperty(scroller, 'clientWidth', { configurable: true, value: 800 });
 
       await act(async () => {
-        api.emitTransportStatus({ state: 'playing', timelineTick: 2_000, discontinuity: 1 });
+        api.emitTransportStatus({ state: 'playing', timelineTick: 8_000, discontinuity: 1 });
       });
       await act(async () => {
         await vi.advanceTimersByTimeAsync(500);
@@ -439,7 +453,7 @@ describe('TimelineView', () => {
 
       // Once the playhead leaves the viewport the follow resumes automatically.
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(4_000);
+        await vi.advanceTimersByTimeAsync(8_000);
       });
       expect(scroller.scrollLeft).toBeGreaterThan(0);
     } finally {
@@ -831,14 +845,14 @@ describe('TimelineView', () => {
     fireEvent.pointerUp(window, { clientX: 100 });
 
     const loopRange = screen.getByText('LOOP').parentElement!;
-    await waitFor(() => expect(loopRange).toHaveStyle({ left: '96px' }));
+    await waitFor(() => expect(loopRange).toHaveStyle({ left: '24px' }));
 
     const endHandle = screen.getByRole('slider', { name: 'Loop end' });
     fireEvent.pointerDown(endHandle, { clientX: 0 });
     fireEvent.pointerMove(window, { clientX: -100 });
     fireEvent.pointerUp(window, { clientX: -100 });
 
-    await waitFor(() => expect(loopRange).toHaveStyle({ width: '288px' }));
+    await waitFor(() => expect(loopRange).toHaveStyle({ width: '72px' }));
     expect(api.calls.filter((call) => call === 'updateTimelineLoopRange')).toHaveLength(2);
 
     const ruler = screen.getByLabelText('Timeline ruler');
@@ -852,7 +866,7 @@ describe('TimelineView', () => {
     fireEvent.pointerMove(window, { clientX: 100 });
     fireEvent.pointerUp(window, { clientX: 100 });
 
-    await waitFor(() => expect(punchEnd.parentElement!).toHaveStyle({ width: '288px' }));
+    await waitFor(() => expect(punchEnd.parentElement!).toHaveStyle({ width: '72px' }));
   });
 
   it('fits the timeline view to the time selection or to the clip extent', async () => {
@@ -900,15 +914,15 @@ describe('TimelineView', () => {
     fireEvent.pointerUp(window, { clientX: 124 });
     fireEvent.keyDown(window, { key: 'z' });
 
-    // Assert: 960..1260 ticks fitted into 1184 usable px needs zoom > 4, so it clamps to 4.
-    expect(zoom.textContent).toBe('400%');
+    // Assert: the short selection needs more than the 1600% maximum, so it clamps there.
+    expect(zoom.textContent).toBe('1600%');
 
     // Act: the clip extent fits the whole arrangement.
     fireEvent.keyDown(window, { key: 'f' });
 
     // Assert: 0..3840 ticks fitted into the usable width.
     const usableWidth = 1408 - TRACK_HEADER_WIDTH - 32;
-    expect(zoom.textContent).toBe(`${Math.round((usableWidth / 3840) * 10 * 100)}%`);
+    expect(zoom.textContent).toBe(`${Math.round((usableWidth / 3840) * 40 * 100)}%`);
   });
 
   it('adds, renames, and removes a marker through the Arrange timeline', async () => {

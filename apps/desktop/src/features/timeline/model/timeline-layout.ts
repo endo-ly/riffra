@@ -2,10 +2,12 @@ import type { Arrangement, AudioClip, MidiClip, ProjectTimebase } from '@/model/
 import type { TrackClips } from '@/model/session-read-model';
 import { timelineObjectEndTick } from '@/model/clip-time';
 import { ticksPerBeat, ticksPerBar } from '@/model/timebase';
+import { barLabelInterval, showsBeatGrid } from '@/model/clip-grid';
 
 /** Header column width, shared between the timeline geometry math and the CSS layout. */
 export const TRACK_HEADER_WIDTH = 224;
-export const BASE_PIXELS_PER_QUARTER = 96;
+/** Quarter-note width at 100% zoom: a 4/4 bar spans 96 px, so a dozen bars fit on screen. */
+export const BASE_PIXELS_PER_QUARTER = 24;
 
 export type TimelineTool = 'select' | 'split';
 export type TrackSize = 'compact' | 'normal' | 'large';
@@ -49,9 +51,9 @@ export function timelineGridDensity(
   const barPixels = ticksPerBar(timebase) * pixelsPerTick;
 
   return {
-    showBeats: beatPixels >= 18,
+    showBeats: showsBeatGrid(beatPixels),
     subdivisionTicks: beatPixels >= 72 ? beatTicks / 4 : beatPixels >= 36 ? beatTicks / 2 : null,
-    labelEveryBars: Math.max(1, Math.ceil(56 / Math.max(1, barPixels))),
+    labelEveryBars: barLabelInterval(barPixels),
   };
 }
 

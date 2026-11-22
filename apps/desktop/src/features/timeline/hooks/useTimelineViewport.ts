@@ -5,6 +5,7 @@ import {
   TRACK_HEADER_WIDTH,
   BASE_PIXELS_PER_QUARTER,
 } from '@/features/timeline/model/timeline-layout';
+import { scrollWheelVertically } from '@/shared/input';
 
 interface UseTimelineViewportOptions {
   timebase: ProjectTimebase;
@@ -12,9 +13,11 @@ interface UseTimelineViewportOptions {
   displayTickRef: MutableRefObject<number>;
 }
 
-const MIN_ZOOM = 0.35;
-const MAX_ZOOM = 4;
+// 10% fits a few minutes of song on one screen; 1600% gives a quarter note 384 px.
+const MIN_ZOOM = 0.1;
+const MAX_ZOOM = 16;
 const FOLLOW_LINE_RATIO = 0.32;
+const WHEEL_PIXELS_PER_NOTCH = 40;
 
 export function useTimelineViewport({
   timebase,
@@ -77,6 +80,17 @@ export function useTimelineViewport({
     return () => {
       scroller.removeEventListener('scroll', onScroll);
     };
+  }, []);
+
+  // A plain vertical wheel scrolls the tracks a fixed small distance per notch.
+  // The listener is not passive so it can replace the WebView's scroll.
+  useEffect(() => {
+    const scroller = scrollerRef.current;
+    if (!scroller) return;
+    const onWheel = (event: WheelEvent) =>
+      scrollWheelVertically(scroller, event, WHEEL_PIXELS_PER_NOTCH);
+    scroller.addEventListener('wheel', onWheel, { passive: false });
+    return () => scroller.removeEventListener('wheel', onWheel);
   }, []);
 
   // Follow the playhead during playback: once the playhead crosses the follow

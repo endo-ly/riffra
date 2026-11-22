@@ -132,9 +132,9 @@ describe('EditorWorkspace', () => {
       value: () => ({ left: 0, width: 2_400, top: 0, bottom: 30, right: 2_400, height: 30 }),
     });
 
-    fireEvent.pointerDown(ruler, { clientX: 96 });
-    fireEvent.pointerMove(window, { clientX: 192 });
-    fireEvent.pointerUp(window, { clientX: 192 });
+    fireEvent.pointerDown(ruler, { clientX: 24 });
+    fireEvent.pointerMove(window, { clientX: 48 });
+    fireEvent.pointerUp(window, { clientX: 48 });
 
     const lane = container.querySelector(`[data-track-id="${track.id}"] > div[class*="lane_"]`)!;
     Object.defineProperty(lane, 'getBoundingClientRect', {
