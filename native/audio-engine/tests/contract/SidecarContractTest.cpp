@@ -93,6 +93,31 @@ TEST(SidecarContractTest, RejectsRepresentativeMalformedCommands) {
     expectRejected("invalid nested snapshot type", invalidSnapshot);
 }
 
+TEST(SidecarContractTest, RejectsInvalidRigProjections) {
+    const auto fixture = commandFixture("openRig");
+    const auto expectRejected = [](const juce::var& value) {
+        juce::String error;
+        EXPECT_FALSE(decodes(value, error));
+        EXPECT_TRUE(error.isNotEmpty());
+    };
+
+    auto emptyId = cloneJson(fixture);
+    setValue(emptyId, {"command", "projection", "rigId"}, "");
+    expectRejected(emptyId);
+
+    auto unknown = withUnknownKey(fixture, {"command", "projection"});
+    expectRejected(unknown);
+
+    auto duplicate = cloneJson(fixture);
+    const auto effect = juce::JSON::parse(
+        R"({"id":"effect:1","path":"effect.vst3","state":{"stateData":null,"parameterValues":[],"bypassed":false}})");
+    juce::Array<juce::var> effects;
+    effects.add(effect);
+    effects.add(effect);
+    setValue(duplicate, {"command", "projection", "effects"}, effects);
+    expectRejected(duplicate);
+}
+
 TEST(SidecarContractTest, RejectsMalformedMidiBytes) {
     const auto fixture = commandFixture("sendTrackMidi");
     const std::vector<juce::Array<juce::var>> invalidBytes{

@@ -317,10 +317,12 @@ std::optional<PluginStateSpec> TimelineEngine::devicePersistedState(
         return std::nullopt;
     }
     if (!synchronizeDeviceParameters(*target, error)) return std::nullopt;
+    // The device may have left the graph while its parameters were applied, so
+    // the capture reads the rack it finds on the Message Thread.
     return juce::MessageManager::callSync([&]() -> std::optional<PluginStateSpec> {
                const auto* rack = findDevice(deviceOwner, deviceId);
                if (rack == nullptr) return std::nullopt;
-               return rack->persistedState(error);
+               return capturePersistedState(*rack, error);
            })
         .value_or(std::nullopt);
 }

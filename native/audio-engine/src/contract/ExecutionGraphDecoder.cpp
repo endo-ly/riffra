@@ -988,6 +988,39 @@ bool decodePluginState(const juce::var& value, PluginStateSpec& output, juce::St
     return decodePluginStateValue(value, "pluginState", output, error);
 }
 
+bool decodeRigProjection(const juce::var& value, RigProjectionSpec& output, juce::String& error) {
+    constexpr int kMaximumRigEffects = 256;
+    ContractReader reader(value, "projection",
+                          {"rigId", "revision", "audioInputChannel", "gainDb", "effects"}, error);
+    juce::Array<juce::var> effects;
+    std::uint32_t audioInputChannel = 0;
+    if (!reader.string("rigId", output.rigId) ||
+        !reader.unsignedInteger("revision", output.revision) ||
+        !reader.unsigned32("audioInputChannel", audioInputChannel) ||
+        !reader.number("gainDb", output.gainDb) || !reader.array("effects", effects) ||
+        !reader.finish())
+        return false;
+    if (output.rigId.isEmpty()) return fail(error, "projection.rigId", "must not be empty");
+    if (!std::isfinite(output.gainDb)) return fail(error, "projection.gainDb", "must be finite");
+    output.audioInputChannel = audioInputChannel;
+    if (effects.size() > kMaximumRigEffects)
+        return fail(error, "projection.effects", "contains too many effects");
+    std::set<juce::String> deviceIds;
+    output.effects.clear();
+    output.effects.reserve(static_cast<std::size_t>(effects.size()));
+    for (int index = 0; index < effects.size(); ++index) {
+        const auto path = element("projection.effects", index);
+        PluginDeviceSpec device;
+        if (!decodePluginDevice(effects.getReference(index), path, device, error)) return false;
+        if (device.id.isEmpty() || device.path.isEmpty())
+            return fail(error, path, "requires non-empty id and path");
+        if (!deviceIds.insert(device.id).second)
+            return fail(error, child(path, "id"), "must be unique inside the rig");
+        output.effects.push_back(std::move(device));
+    }
+    return true;
+}
+
 bool decodeTimelineSnapshot(const juce::var& value, TimelineSnapshotSpec& output,
                             juce::String& error) {
     ContractReader reader(value, "snapshot", {"projectId", "revision", "graph"}, error);

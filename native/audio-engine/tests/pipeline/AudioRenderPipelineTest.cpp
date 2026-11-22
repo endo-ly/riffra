@@ -11,6 +11,7 @@
 #include "pipeline/AudioRenderPipeline.h"
 #include "preview/PreviewEngine.h"
 #include "recording/ArrangeRecordingSession.h"
+#include "support/AudioRenderPipelineTestPeer.h"
 #include "support/TestAudioProcessor.h"
 #include "support/TimelineTestSupport.h"
 #include "timeline/TimelineEngine.h"
@@ -183,6 +184,94 @@ TEST(AudioRenderPipelineTest, ReleasingFeedbackProtectionClearsItsMuteReason) {
 
     EXPECT_FALSE(callback.isMuted());
     EXPECT_FALSE(callback.isFeedbackSuspected());
+}
+
+TEST(AudioRenderPipelineTest, MixesTheRigAfterMasterGain) {
+    // Arrange
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine timeline;
+    juce::String error;
+    auto snapshot = makeAudioTrackSnapshot(1, true, false);
+    snapshot.graph.masterGainDb = -6.0;
+    ASSERT_TRUE(loadTestSnapshot(timeline, snapshot, formats, 48'000.0, kBlockSize, error));
+    ProcessorTrace trackTrace;
+    ASSERT_TRUE(TimelineEngineTestPeer::installTrackChainDevice(
+        timeline, "track:live", "effect:track", std::make_unique<TestProcessor>(trackTrace),
+        48'000.0, kBlockSize, error))
+        << error;
+    AudioRenderPipeline callback(timeline);
+    AudioRenderPipelineTestPeer::prepare(callback, 48'000.0, kBlockSize);
+    const RigProjectionSpec projection{
+        "rig-1",
+        1,
+        0,
+        0.0,
+        {PluginDeviceSpec{"effect:rig", RIFFRA_TEST_EFFECT_BUNDLE_PATH, PluginStateSpec{}}}};
+    std::array<float, kBlockSize> input{};
+    for (int sample = 0; sample < kBlockSize; ++sample)
+        input[static_cast<std::size_t>(sample)] = sample % 2 == 0 ? 0.1f : -0.1f;
+    std::array<float, kBlockSize> output{};
+    const std::array<const float*, 1> inputs{input.data()};
+    const std::array<float*, 1> outputs{output.data()};
+    const juce::AudioIODeviceCallbackContext context{};
+
+    // Act: the same arrangement and master gain with and without the rig.
+    for (int block = 0; block < 200; ++block)
+        callback.processBlock(inputs.data(), 1, outputs.data(), 1, kBlockSize, context);
+    const auto baseline = output[0];
+    ASSERT_TRUE(callback.rig().install(projection, 48'000.0, kBlockSize, error)) << error;
+    for (int block = 0; block < 200; ++block)
+        callback.processBlock(inputs.data(), 1, outputs.data(), 1, kBlockSize, context);
+
+    // Assert: the rig adds its own effect output, unaffected by master gain.
+    EXPECT_NEAR(output[0] - baseline, 0.05f, 1e-3f);
+    EXPECT_NEAR(output[kBlockSize - 2] - baseline, 0.05f, 1e-3f);
+
+    // Act: a rig gain whose output exceeds the ceiling on its own.
+    RigProjectionSpec loud = projection;
+    loud.revision = 2;
+    loud.gainDb = 30.0;
+    ASSERT_TRUE(callback.rig().install(loud, 48'000.0, kBlockSize, error)) << error;
+    for (int block = 0; block < 200; ++block)
+        callback.processBlock(inputs.data(), 1, outputs.data(), 1, kBlockSize, context);
+
+    // Assert: the rig enters the mix before the safety processing, which holds
+    // the summed output at the limiter ceiling.
+    const auto rigLevel = 0.05f * 10.0f * std::sqrt(10.0f);
+    EXPECT_GT(rigLevel, AudioRenderPipelineTestPeer::limiterCeiling());
+    EXPECT_LE(std::abs(output[0]), AudioRenderPipelineTestPeer::limiterCeiling());
+    EXPECT_GT(std::abs(output[0]), 0.9f * AudioRenderPipelineTestPeer::limiterCeiling());
+}
+
+TEST(AudioRenderPipelineTest, DetectsFeedbackOnTheRigInput) {
+    // Arrange
+    TimelineEngine timeline;
+    AudioRenderPipeline callback(timeline);
+    AudioRenderPipelineTestPeer::prepare(callback, 48'000.0, kBlockSize);
+    const RigProjectionSpec projection{
+        "rig-1",
+        1,
+        0,
+        0.0,
+        {PluginDeviceSpec{"effect:rig", RIFFRA_TEST_EFFECT_BUNDLE_PATH, PluginStateSpec{}}}};
+    juce::String error;
+    ASSERT_TRUE(callback.rig().install(projection, 48'000.0, kBlockSize, error)) << error;
+    callback.setUserEmergencyMute(false);
+    std::array<float, kBlockSize> input{};
+    input.fill(0.99f);
+    std::array<float, kBlockSize> output{};
+    const std::array<const float*, 1> inputs{input.data()};
+    const std::array<float*, 1> outputs{output.data()};
+    const juce::AudioIODeviceCallbackContext context{};
+
+    // Act
+    for (int block = 0; block < 400; ++block)
+        callback.processBlock(inputs.data(), 1, outputs.data(), 1, kBlockSize, context);
+
+    // Assert
+    EXPECT_TRUE(callback.hasMuteReason(MuteReason::FeedbackProtection));
+    EXPECT_TRUE(callback.isFeedbackSuspected());
 }
 
 TEST(AudioRenderPipelineTest, DetectsFeedbackOnEveryMonitoredInputChannel) {

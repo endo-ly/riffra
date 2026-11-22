@@ -334,6 +334,7 @@ juce::var encodeResponseBody(const SidecarResponseSpec& response) {
             [](const MidiAckSpec&) { return typeOnly("midiAck"); },
             [](const MixAckSpec&) { return typeOnly("mixAck"); },
             [](const DeviceAckSpec&) { return typeOnly("deviceAck"); },
+            [](const RigAckSpec&) { return typeOnly("rigAck"); },
             [](const DeviceStatusSpec& status) {
                 return ObjectBuilder{}
                     .set("type", "deviceStatus")
@@ -482,6 +483,18 @@ juce::var encodeEventBody(const SidecarEventSpec& event) {
                     .set("value", changed.value)
                     .build();
             },
+            [](const RigPluginStateChangedSpec& changed) {
+                auto object = ObjectBuilder{};
+                object
+                    .set("type",
+                         changed.finalCapture ? "rigPluginStateFinal" : "rigPluginStateChanged")
+                    .set("rigId", changed.rigId)
+                    .set("deviceId", changed.deviceId)
+                    .set("state", encodePluginState(changed.state))
+                    .set("revision", integer(changed.revision));
+                if (changed.finalCapture) object.set("sourcePluginPath", changed.sourcePluginPath);
+                return object.build();
+            },
             [](const FaultSpec& fault) {
                 return errorFields(fault.error).set("type", "fault").build();
             },
@@ -588,6 +601,8 @@ std::string_view sidecarResponseType(const SidecarResponseSpec& response) noexce
 }
 
 std::string_view sidecarEventType(const SidecarEventSpec& event) noexcept {
+    if (const auto* rig = std::get_if<RigPluginStateChangedSpec>(&event))
+        return rig->finalCapture ? "rigPluginStateFinal" : "rigPluginStateChanged";
     return kSidecarEventTypes[event.index()];
 }
 

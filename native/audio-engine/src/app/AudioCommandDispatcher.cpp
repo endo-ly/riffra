@@ -37,6 +37,7 @@ void AudioCommandDispatcher::closeRuntimeEditors() {
         releaseTrackPluginEditor();
     }
     closePluginAudition();
+    closeRig();
     timelineOperationRunning.store(false, std::memory_order_release);
 }
 

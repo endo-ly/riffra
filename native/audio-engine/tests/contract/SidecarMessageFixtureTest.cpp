@@ -144,6 +144,7 @@ std::vector<SidecarResponseSpec> responses() {
         MidiAckSpec{},
         MixAckSpec{},
         DeviceAckSpec{},
+        RigAckSpec{},
         DeviceStatusSpec{"Test Effect",
                          false,
                          1,
@@ -167,6 +168,8 @@ std::vector<SidecarEventSpec> events() {
         PluginParameterChangedSpec{"project-1",
                                    EffectOwnerSpec{EffectOwnerKindSpec::track, "track-1"},
                                    "device-1", 2, 0.5f},
+        RigPluginStateChangedSpec{"rig-1", "device-1", pluginState(), 3},
+        RigPluginStateChangedSpec{"rig-1", "device-1", pluginState(), 3, true, "Plugin.vst3"},
         FaultSpec{error()},
         TimelineLoadProgressSpec{
             1, {LoadPhase::restoring, "track-1", "device-1", "Plugin.vst3", 1, 2}},

@@ -19,4 +19,7 @@ void writeEvent(const SidecarEventSpec& event);
 /// Writes an editor's final state on the ordered control lane.
 void writeClosingPluginState(const PluginStateChangedSpec& event);
 
+/// Writes a rig editor's final state on the ordered control lane.
+void writeClosingRigPluginState(const RigPluginStateChangedSpec& event);
+
 }  // namespace riffra

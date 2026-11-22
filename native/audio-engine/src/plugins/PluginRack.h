@@ -334,4 +334,9 @@ private:
     mutable std::atomic<bool> staticStateDirty{true};
 };
 
+/// Captures the persisted state of one prepared rack on the Message Thread,
+/// where VST3 state serialization must run.
+[[nodiscard]] std::optional<PluginStateSpec> capturePersistedState(const PluginRack& rack,
+                                                                   juce::String& error);
+
 }  // namespace riffra

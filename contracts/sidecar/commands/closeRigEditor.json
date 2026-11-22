@@ -1,0 +1,7 @@
+{
+  "requestId": 1,
+  "command": {
+    "type": "closeRigEditor",
+    "timeoutMs": 30000
+  }
+}

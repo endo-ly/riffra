@@ -1,0 +1,13 @@
+{
+  "requestId": 1,
+  "command": {
+    "type": "openRig",
+    "projection": {
+      "rigId": "rig-1",
+      "revision": 1,
+      "audioInputChannel": 0,
+      "gainDb": -3.0,
+      "effects": []
+    }
+  }
+}

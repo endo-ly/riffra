@@ -60,7 +60,6 @@ public:
     bool setBypassed(const juce::String& deviceId, bool bypassed) noexcept;
     bool setParameter(const juce::String& deviceId, int parameterIndex, float value,
                       juce::String& error) noexcept;
-    bool applyState(const std::vector<PluginDeviceSpec>& devices, juce::String& error) noexcept;
     [[nodiscard]] std::optional<PluginStateSpec> persistedState(const juce::String& deviceId,
                                                                 juce::String& error) const;
     [[nodiscard]] int latencySamples() const noexcept;

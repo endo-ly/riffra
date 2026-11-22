@@ -167,6 +167,24 @@ struct OpenPluginAuditionCommand final {
     juce::String path;
 };
 
+/// Replaces the whole playing rig.
+struct OpenRigCommand final {
+    RigProjectionSpec projection;
+};
+
+/// Stops the playing rig and closes its editor.
+struct CloseRigCommand final {};
+
+/// Opens the editor of one effect in the playing rig.
+struct OpenRigEditorCommand final {
+    juce::String deviceId;
+};
+
+/// Captures the closing state of the playing rig's editor.
+struct CloseRigEditorCommand final {
+    std::uint64_t timeoutMs = 0;
+};
+
 struct StartTakeComparisonCommand final {
     juce::String rawPath;
     juce::String processedPath;
@@ -211,7 +229,8 @@ using SidecarCommandSpec = std::variant<
     SetDeviceParameterCommand, PreviewAutomationValueCommand, GetDeviceCommand,
     SetPluginStateCommand, SetDeviceProgramCommand, OpenPluginEditorCommand,
     ClosePluginEditorCommand, PreviewSampleCommand, PreviewInstrumentCommand, StopPreviewCommand,
-    StopInstrumentPreviewCommand, OpenPluginAuditionCommand, StartTakeComparisonCommand,
+    StopInstrumentPreviewCommand, OpenPluginAuditionCommand, OpenRigCommand, CloseRigCommand,
+    OpenRigEditorCommand, CloseRigEditorCommand, StartTakeComparisonCommand,
     SwitchTakeComparisonVariantCommand, StopTakeComparisonCommand, RecoverAudioDeviceCommand,
     SetAudioDriverCommand, StartArrangeRecordingCommand, StopArrangeRecordingCommand>;
 
@@ -222,7 +241,7 @@ struct SidecarRequestSpec final {
 };
 
 /// Every command `type` accepted on stdin.
-inline constexpr std::array<std::string_view, 46> kSidecarCommandTypes{
+inline constexpr std::array<std::string_view, 50> kSidecarCommandTypes{
     "status",
     "setEmergencyMute",
     "setFeedbackProtection",
@@ -262,6 +281,10 @@ inline constexpr std::array<std::string_view, 46> kSidecarCommandTypes{
     "stopPreview",
     "stopInstrumentPreview",
     "openPluginAudition",
+    "openRig",
+    "closeRig",
+    "openRigEditor",
+    "closeRigEditor",
     "startTakeComparison",
     "switchTakeComparisonVariant",
     "stopTakeComparison",

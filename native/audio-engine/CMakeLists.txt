@@ -165,6 +165,8 @@ target_sources(riffra-engine-core PRIVATE
   src/preview/PluginAudition.h
   src/preview/PreviewEngine.cpp
   src/preview/PreviewEngine.h
+  src/rig/RigEngine.cpp
+  src/rig/RigEngine.h
 )
 
 target_sources(riffra-serve-core PRIVATE
@@ -195,6 +197,7 @@ target_sources(riffra-serve-core PRIVATE
   src/app/commands/DeviceCommands.cpp
   src/app/commands/MidiCommands.cpp
   src/app/commands/PreviewCommands.cpp
+  src/app/commands/RigCommands.cpp
   src/app/commands/RecordingCommands.cpp
   src/app/commands/TimelineCommands.cpp
   src/app/commands/TrackDeviceCommands.cpp
@@ -535,6 +538,7 @@ if(BUILD_TESTING)
     tests/preview/InstrumentPreviewSessionTest.cpp
     tests/preview/PluginAuditionTest.cpp
     tests/preview/PreviewEngineTest.cpp
+    tests/rig/RigEngineTest.cpp
     tests/protocol/AudioProtocolTest.cpp
     tests/protocol/CommandResponderTest.cpp
     tests/recording/ArrangeRecordingSessionTest.cpp

@@ -13,5 +13,7 @@ namespace riffra {
                                               juce::String& error);
 [[nodiscard]] bool decodePluginState(const juce::var& value, PluginStateSpec& output,
                                      juce::String& error);
+[[nodiscard]] bool decodeRigProjection(const juce::var& value, RigProjectionSpec& output,
+                                       juce::String& error);
 
 }  // namespace riffra

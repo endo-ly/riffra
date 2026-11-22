@@ -11,6 +11,7 @@
 #include "RecordingController.h"
 #include "preview/PluginAudition.h"
 #include "preview/PreviewEngine.h"
+#include "rig/RigEngine.h"
 
 namespace riffra {
 
@@ -89,6 +90,7 @@ public:
     [[nodiscard]] const AudioMetrics& metrics() const noexcept { return audioMetrics; }
     [[nodiscard]] PreviewEngine& preview() noexcept { return previewEngine; }
     [[nodiscard]] PluginAudition& audition() noexcept { return pluginAudition; }
+    [[nodiscard]] RigEngine& rig() noexcept { return rigEngine; }
     [[nodiscard]] RecordingController& recording() noexcept { return recordingController; }
 
     bool startInstrumentPreview(const juce::String& definitionJson,
@@ -110,6 +112,8 @@ public:
     void deviceStopped();
 
 private:
+    friend class AudioRenderPipelineTestPeer;
+
     static constexpr float kMinimumGainDb = -90.0f;
     static constexpr float kMaximumGainDb = 0.0f;
     static constexpr float kLimiterCeiling = 0.98f;
@@ -124,6 +128,7 @@ private:
     AudioMetrics audioMetrics;
     PreviewEngine previewEngine;
     PluginAudition pluginAudition;
+    RigEngine rigEngine;
     RecordingController recordingController;
 
     std::atomic<std::uint32_t> muteReasons{0};

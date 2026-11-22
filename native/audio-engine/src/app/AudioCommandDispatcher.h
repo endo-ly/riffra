@@ -3,6 +3,7 @@
 #include <JuceHeader.h>
 
 #include <atomic>
+#include <chrono>
 #include <istream>
 #include <memory>
 
@@ -68,6 +69,18 @@ private:
     /// Closes the auditioned plug-in's editor and destroys the plug-in.
     /// Lifecycle thread only.
     void closePluginAudition();
+    /// Closes the rig editor and destroys the playing rig. Lifecycle thread only.
+    void closeRig();
+    /// Closes the rig editor without waiting for its final state.
+    /// Lifecycle thread only.
+    void closeRigEditor();
+    /// Closes the rig editor and waits for its closing state. Command thread
+    /// only, and only while no lifecycle task runs.
+    [[nodiscard]] bool closeRigEditorAndWait(std::chrono::milliseconds timeout,
+                                             juce::String& error);
+    /// Forgets the rig editor once it is closed. Lifecycle thread, or the
+    /// command thread while the lifecycle executor is idle.
+    void releaseRigEditor();
     /// Forgets the Track Device editor once it is closed. Lifecycle thread, or
     /// the command thread while the lifecycle executor is idle.
     void releaseTrackPluginEditor();
@@ -104,6 +117,12 @@ private:
     /// Shows the editor of the plug-in at `path`, loading it unless it is
     /// already the auditioned one. Lifecycle thread only.
     [[nodiscard]] bool openPluginAudition(const juce::String& path, juce::String& error);
+    void handle(const OpenRigCommand& command, CommandResponder responder);
+    void handle(const CloseRigCommand&, CommandResponder responder);
+    void handle(const OpenRigEditorCommand& command, CommandResponder responder);
+    void handle(const CloseRigEditorCommand& command, CommandResponder responder);
+    /// Publishes a new rig projection. Lifecycle thread only.
+    [[nodiscard]] bool openRig(const RigProjectionSpec& projection, juce::String& error);
     void handle(const StartTakeComparisonCommand& command, CommandResponder responder);
     void handle(const SwitchTakeComparisonVariantCommand& command, CommandResponder responder);
     void handle(const StopTakeComparisonCommand&, CommandResponder responder);
@@ -120,6 +139,11 @@ private:
     /// while a lifecycle task owns the editor.
     std::atomic<bool> trackPluginEditorOpen{false};
     std::shared_ptr<PluginEditorHost> auditionEditor;
+    std::shared_ptr<PluginEditorHost> rigEditor;
+    std::shared_ptr<PluginRack> rigEditorRack;
+    /// Whether `rigEditor` exists, readable from the command thread while a
+    /// lifecycle task owns the editor.
+    std::atomic<bool> rigEditorOpen{false};
     juce::AudioBuffer<float> comparisonRaw;
     juce::AudioBuffer<float> comparisonProcessed;
     std::atomic<bool> timelineOperationRunning{false};

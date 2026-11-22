@@ -167,6 +167,16 @@ void AudioRenderPipeline::processBlock(const float* const* inputChannelData,
         monitoringActive = true;
         monitoredInputPeak = std::max(monitoredInputPeak, rawInputPeak);
     }
+    // A rig monitors its own physical input, which may differ from the selected one.
+    if (rigEngine.monitorsInput()) {
+        const auto rigChannel = rigEngine.inputChannel();
+        if (inputChannelData != nullptr && rigChannel < numInputChannels) {
+            monitoringActive = true;
+            monitoredInputPeak = std::max(
+                monitoredInputPeak, peakForInput(inputChannelData[rigChannel],
+                                                 inputChannelData[rigChannel] != selectedInput));
+        }
+    }
     if (invalidInputSamples > 0)
         audioMetrics.recordBlock(projectEpoch, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0,
                                  invalidInputSamples);
@@ -232,6 +242,8 @@ void AudioRenderPipeline::processBlock(const float* const* inputChannelData,
     dcBlocker.processBlock(outputChannelData, numOutputChannels, numSamples);
     timelineEngine.applyMasterGain(outputChannelData, numOutputChannels, numSamples,
                                    getMasterGainDb());
+    rigEngine.mix(inputChannelData, numInputChannels, outputChannelData, numOutputChannels,
+                  numSamples, activeSampleRate.load(std::memory_order_acquire));
 
     for (int sample = 0; sample < numSamples; ++sample) {
         if (currentGainLinear < target)

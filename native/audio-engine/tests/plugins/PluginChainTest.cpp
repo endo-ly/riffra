@@ -177,10 +177,9 @@ TEST(PluginChainTest, MirrorsPersistedStateAndQueuedParameters) {
     process(playbackState);
     const auto captured = playbackState.persistedState("device-state", error);
     ASSERT_TRUE(captured.has_value()) << error;
-    const std::vector<PluginDeviceSpec> persistedDevices{
-        {"device-state", "test-device.vst3", *captured}};
-
-    ASSERT_TRUE(liveState.applyState(persistedDevices, error)) << error;
+    auto* liveDevice = liveState.findDevice("device-state");
+    ASSERT_NE(liveDevice, nullptr);
+    ASSERT_TRUE(liveDevice->applyPersistedState(*captured, error)) << error;
     process(liveState);
     const auto liveCaptured = liveState.persistedState("device-state", error);
     ASSERT_TRUE(liveCaptured.has_value()) << error;

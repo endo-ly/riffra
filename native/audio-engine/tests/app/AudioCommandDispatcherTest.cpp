@@ -4,11 +4,13 @@
 #include <chrono>
 #include <memory>
 #include <thread>
+#include <vector>
 
 #include "app/AudioCommandDispatcher.h"
 #include "device/AudioDeviceController.h"
 #include "device/MidiInputService.h"
 #include "plugins/PluginEditorHost.h"
+#include "support/AudioRenderPipelineTestPeer.h"
 #include "support/TimelineTestSupport.h"
 
 namespace riffra {
@@ -34,7 +36,33 @@ public:
                                             const bool running) {
         dispatcher.timelineOperationRunning.store(running, std::memory_order_release);
     }
+
+    static void setRigEditor(AudioCommandDispatcher& dispatcher,
+                             std::shared_ptr<PluginEditorHost> editor) {
+        dispatcher.rigEditor = std::move(editor);
+        dispatcher.rigEditorOpen.store(dispatcher.rigEditor != nullptr, std::memory_order_release);
+    }
+
+    [[nodiscard]] static std::shared_ptr<PluginEditorHost> rigEditor(
+        const AudioCommandDispatcher& dispatcher) {
+        return dispatcher.rigEditor;
+    }
 };
+
+namespace {
+
+std::vector<PluginDeviceSpec> rigEffects(const bool bypassed) {
+    PluginStateSpec state;
+    state.bypassed = bypassed;
+    return {PluginDeviceSpec{"effect:1", RIFFRA_TEST_EFFECT_BUNDLE_PATH, std::move(state)}};
+}
+
+RigProjectionSpec rigProjection(std::vector<PluginDeviceSpec> effects,
+                                const std::uint64_t revision) {
+    return RigProjectionSpec{"rig-1", revision, 0, 0.0, std::move(effects)};
+}
+
+}  // namespace
 
 TEST(AudioCommandDispatcherTest, CommitAcknowledgesAndRetainsDeferredEditorUntilIdle) {
     juce::ScopedJuceInitialiser_GUI initialiser;
@@ -94,6 +122,65 @@ TEST(AudioCommandDispatcherTest, CommitAcknowledgesAndRetainsDeferredEditorUntil
     EXPECT_EQ(secondWaitKind, "response");
     EXPECT_TRUE(captured.load());
     EXPECT_EQ(AudioCommandDispatcherTestPeer::trackPluginEditor(dispatcher), nullptr);
+}
+
+TEST(AudioCommandDispatcherTest, BypassingARigEffectKeepsTheInstanceAndItsEditor) {
+    // Arrange
+    juce::ScopedJuceInitialiser_GUI initialiser;
+    juce::AudioFormatManager formats;
+    TimelineEngine timeline;
+    AudioRenderPipeline pipeline(timeline);
+    AudioDeviceController deviceController(pipeline);
+    MidiInputService midiInputs(pipeline.preview(), pipeline.audition(), timeline);
+    RuntimeLifecycleExecutor lifecycle;
+    AudioRenderPipelineTestPeer::prepare(pipeline, 48'000.0, 32);
+    AudioCommandDispatcher dispatcher(
+        {formats, timeline, pipeline, deviceController, midiInputs, lifecycle});
+    std::uint64_t requestId = 0;
+    std::atomic<bool> answered{false};
+    std::shared_ptr<PluginRack> prepared;
+    bool bypassKeptInstanceAndEditor = false;
+    bool rebuildReleasedEditor = false;
+    std::thread commands([&] {
+        const auto send = [&](SidecarCommandSpec command) {
+            const auto id = ++requestId;
+            juce::String kind;
+            juce::WaitableEvent done;
+            dispatcher.dispatch({id, std::move(command)},
+                                CommandResponder(id, [&](const juce::var& reply) {
+                                    kind = reply.getProperty("kind", {}).toString();
+                                    done.signal();
+                                }));
+            return done.wait(10'000) && kind == "response";
+        };
+        if (!send(OpenRigCommand{rigProjection(rigEffects(false), 1)})) return;
+        prepared = pipeline.rig().findRack("effect:1");
+        if (prepared == nullptr) return;
+        AudioCommandDispatcherTestPeer::setRigEditor(dispatcher,
+                                                     std::make_shared<PluginEditorHost>(*prepared));
+        // A bypass change keeps the prepared chain and the editor it belongs to.
+        if (!send(OpenRigCommand{rigProjection(rigEffects(true), 2)})) return;
+        answered.store(true, std::memory_order_release);
+        bypassKeptInstanceAndEditor =
+            AudioCommandDispatcherTestPeer::rigEditor(dispatcher) != nullptr &&
+            pipeline.rig().findRack("effect:1") == prepared &&
+            pipeline.rig().findRack("effect:1")->status().bypassed;
+        // A new chain replaces the instances, so the editor is closed.
+        auto reordered = rigEffects(false);
+        reordered.push_back(
+            PluginDeviceSpec{"effect:2", RIFFRA_TEST_EFFECT_BUNDLE_PATH, PluginStateSpec{}});
+        if (!send(OpenRigCommand{rigProjection(std::move(reordered), 3)})) return;
+        rebuildReleasedEditor = AudioCommandDispatcherTestPeer::rigEditor(dispatcher) == nullptr;
+        juce::MessageManager::callAsync(
+            [] { juce::MessageManager::getInstance()->stopDispatchLoop(); });
+    });
+    juce::MessageManager::getInstance()->runDispatchLoop();
+    commands.join();
+
+    // Assert
+    EXPECT_TRUE(answered.load());
+    EXPECT_TRUE(bypassKeptInstanceAndEditor);
+    EXPECT_TRUE(rebuildReleasedEditor);
 }
 
 TEST(AudioCommandDispatcherTest, ClosingWithoutAnEditorDoesNotWaitForARunningGraphLoad) {
