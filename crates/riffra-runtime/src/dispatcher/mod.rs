@@ -253,7 +253,6 @@ pub struct DispatchResult {
 
 fn validate_dispatch_preconditions(
     scope: CommandScope,
-    expected_sequence: Option<u64>,
     expected_project_id: Option<&str>,
     canonical: &riffra_core::CanonicalState,
 ) -> Result<(), DispatchError> {
@@ -263,14 +262,6 @@ fn validate_dispatch_preconditions(
         return Err(DispatchError::ProjectConflict {
             expected_project_id: expected_project_id.to_owned(),
             current_project_id: canonical.project_id.clone(),
-        });
-    }
-    if let Some(expected_sequence) = expected_sequence
-        && expected_sequence != canonical.sequence
-    {
-        return Err(DispatchError::Conflict {
-            expected_sequence,
-            current_sequence: canonical.sequence,
         });
     }
     Ok(())
@@ -328,29 +319,20 @@ impl<'a> HostDispatcher<'a> {
             .validate()
             .map_err(|error| DispatchError::invalid_request(error.message))?;
         let command = ControlCommand::decode(&request.command, request.params)?;
-        self.dispatch_checked(
-            command,
-            request.expected_sequence,
-            request.expected_project_id.as_deref(),
-        )
+        self.dispatch_checked(command, request.expected_project_id.as_deref())
     }
 
     /// Executes a standalone command.
     ///
     /// # Errors
     /// Returns an error for failed preconditions or execution failure.
-    pub fn dispatch(
-        &self,
-        command: ControlCommand,
-        expected_sequence: Option<u64>,
-    ) -> Result<DispatchResult, DispatchError> {
-        self.dispatch_checked(command, expected_sequence, None)
+    pub fn dispatch(&self, command: ControlCommand) -> Result<DispatchResult, DispatchError> {
+        self.dispatch_checked(command, None)
     }
 
     fn dispatch_checked(
         &self,
         command: ControlCommand,
-        expected_sequence: Option<u64>,
         expected_project_id: Option<&str>,
     ) -> Result<DispatchResult, DispatchError> {
         let policy = command.policy();
@@ -366,7 +348,6 @@ impl<'a> HostDispatcher<'a> {
                 let snapshot = self.core.cell().read();
                 validate_dispatch_preconditions(
                     policy.scope,
-                    expected_sequence,
                     expected_project_id,
                     &snapshot.canonical,
                 )?;
@@ -380,12 +361,7 @@ impl<'a> HostDispatcher<'a> {
             || self.core.cell().read().canonical.clone(),
             |writer| writer.project().core.canonical_state(),
         );
-        validate_dispatch_preconditions(
-            policy.scope,
-            expected_sequence,
-            expected_project_id,
-            &canonical,
-        )?;
+        validate_dispatch_preconditions(policy.scope, expected_project_id, &canonical)?;
         match command {
             ControlCommand::Canonical(command) if command.access() == CanonicalAccess::Read => {
                 self.execute_read_canonical(command, &canonical)
@@ -579,18 +555,18 @@ mod tests {
         // Arrange
         let (dispatcher, root) = open("score-rebuild");
         let before = dispatcher
-            .dispatch(command("session.get", json!({})), None)
+            .dispatch(command("session.get", json!({})))
             .unwrap();
 
         // Act
         let error = dispatcher
-            .dispatch(command("project.rebuild-score", json!({})), None)
+            .dispatch(command("project.rebuild-score", json!({})))
             .expect_err("an unlinked Project cannot rebuild a Score");
 
         // Assert
         assert!(error.to_string().contains("not linked to a Score"));
         let after = dispatcher
-            .dispatch(command("session.get", json!({})), None)
+            .dispatch(command("session.get", json!({})))
             .unwrap();
         assert_eq!(after.sequence, before.sequence);
         assert!(!root.join("projects").read_dir().unwrap().next().is_none());
@@ -771,7 +747,7 @@ mod tests {
                 .policy()
                 .executor;
             let error = dispatcher
-                .dispatch_request(ControlRequest::new(name, name, params, None))
+                .dispatch_request(ControlRequest::new(name, name, params))
                 .unwrap_err()
                 .protocol_error();
 
@@ -789,10 +765,7 @@ mod tests {
 
         // Act
         let result = dispatcher
-            .dispatch(
-                command("audio.master-gain.set", json!({"gainDb": -6.0})),
-                None,
-            )
+            .dispatch(command("audio.master-gain.set", json!({"gainDb": -6.0})))
             .unwrap();
 
         // Assert
@@ -805,20 +778,17 @@ mod tests {
     fn track_and_midi_note_edits_share_core_and_persist() {
         let (dispatcher, root) = open("persist");
         let track = dispatcher
-            .dispatch(
-                command("track.add", json!({"name":"Keys","kind":"instrument"})),
-                None,
-            )
+            .dispatch(command(
+                "track.add",
+                json!({"name":"Keys","kind":"instrument"}),
+            ))
             .unwrap();
         let track_id = mutated_session(&track).arrangement.tracks[0].id.clone();
         dispatcher
-            .dispatch(
-                command(
-                    "clip.midi.create",
-                    json!({"trackId":track_id,"startTick":0,"durationTicks":3840}),
-                ),
-                None,
-            )
+            .dispatch(command(
+                "clip.midi.create",
+                json!({"trackId":track_id,"startTick":0,"durationTicks":3840}),
+            ))
             .unwrap();
         drop(dispatcher);
 
@@ -829,7 +799,7 @@ mod tests {
         .unwrap();
         let session = output_value(
             &reopened
-                .dispatch(command("session.get", json!({})), None)
+                .dispatch(command("session.get", json!({})))
                 .unwrap(),
         );
         assert_eq!(
@@ -847,7 +817,7 @@ mod tests {
         let (dispatcher, root) = open("invalid");
         let projects = output_value(
             &dispatcher
-                .dispatch(command("project.list", json!({})), None)
+                .dispatch(command("project.list", json!({})))
                 .unwrap(),
         );
         let project_id = projects["activeProjectId"].as_str().unwrap();
@@ -855,10 +825,7 @@ mod tests {
         let before = fs::read(&current).unwrap();
         assert!(
             dispatcher
-                .dispatch(
-                    command("track.remove", json!({"trackId":"track:missing"})),
-                    None
-                )
+                .dispatch(command("track.remove", json!({"trackId":"track:missing"})))
                 .is_err()
         );
         assert_eq!(fs::read(current).unwrap(), before);

@@ -907,14 +907,6 @@ fn expectation_properties() -> Map<String, Value> {
             "description": "Require the command to run against this Project."
         }),
     );
-    properties.insert(
-        "expectedSequence".into(),
-        json!({
-            "type": "integer",
-            "minimum": 0,
-            "description": "Require the Project to be at this canonical sequence."
-        }),
-    );
     properties
 }
 

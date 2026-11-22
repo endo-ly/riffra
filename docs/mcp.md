@@ -51,14 +51,13 @@ MCPツールは操作対象ごとにグループ化され、複数のControl Com
     "clipId": "midi-clip:01...",
     "notes": [{ "pitch": "C4", "position": "1:1", "duration": "1/8" }]
   },
-  "expectedProjectId": "project:01...",
-  "expectedSequence": 42
+  "expectedProjectId": "project:01..."
 }
 ```
 
 JSON値を持つフィールド `<field>` は、`<field>File`（例: `notesFile`）へJSONファイルのパスを渡すこともできる。MCPサーバーは検証の前にファイルを読み、値を `<field>` として展開するため、大きな値を要求本文へ埋め込まずに済む。`<field>` と `<field>File` は同時に指定できず、相対パスはMCPサーバーの作業ディレクトリを基準に解決する。`session_edit` の `apply` では、各operationの `params` にも同じ規則が適用される。
 
-`expectedProjectId` と `expectedSequence` は要求の事前条件であり、`params` には含めない。Projectに属する命令で `expectedProjectId` を省略すると、Hostの現在のactive Projectがその要求だけに適用される。複数の操作で同じProjectを編集する場合は、応答のsequenceを次の `expectedSequence` へ渡し、必要ならProject IDも引き回す。競合が返った場合は自動再送しない。
+`expectedProjectId` は要求の事前条件であり、`params` には含めない。Projectに属する命令で `expectedProjectId` を省略すると、Hostの現在のactive Projectがその要求だけに適用される。応答の `sequence` はその結果の正準シーケンスを表す。`conflict` は `expectedProjectId` が現在のactive Projectと一致しない場合、または実行中の状態変化により長期命令を安全に確定できない場合に返る。競合が返った場合は自動再送しない。
 
 複数の変更を一度に確定する場合は `session_edit` の `apply` を使う。`operations` にはControl Command名とその `params` を並べ、TrackとClipは `trackName`/`clipName`、Deviceは `bind`/`@name` で参照できる。`operations[].command` に指定できるのは `session.apply` がバッチ実行できるCommandだけで、入力Schemaの `enum` に列挙される。全operationが成功したときだけ1回の変更として適用される。
 
@@ -87,13 +86,13 @@ JSON値を持つフィールド `<field>` は、`<field>File`（例: `notesFile`
 
 失敗時は `isError: true` とし、`structuredContent.error` にHostの `code`、`message`、`details` をそのまま残す。主なコードは次のとおり。
 
-| code                 | 意味                                      |
-| -------------------- | ----------------------------------------- |
-| `invalidRequest`     | 入力または要求が不正                      |
-| `conflict`           | Projectまたはsequenceが要求時から変化した |
-| `commandFailed`      | コマンドの実行に失敗した                  |
-| `runtimeUnavailable` | Safe ModeなどでRuntime機能が使えない      |
-| `hostUnavailable`    | Hostへ接続できない、またはHostが終了した  |
+| code                 | 意味                                                |
+| -------------------- | --------------------------------------------------- |
+| `invalidRequest`     | 入力または要求が不正                                |
+| `conflict`           | Projectの前提または実行中の状態が要求時から変化した |
+| `commandFailed`      | コマンドの実行に失敗した                            |
+| `runtimeUnavailable` | Safe ModeなどでRuntime機能が使えない                |
+| `hostUnavailable`    | Hostへ接続できない、またはHostが終了した            |
 
 存在しないツール名など、要求をツールへ振り分けられない失敗はJSON-RPCのプロトコルエラーになる。ツールが見つかった後の入力不正や実行失敗はツール結果のエラーになる。
 

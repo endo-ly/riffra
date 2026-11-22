@@ -329,14 +329,13 @@ riffra --data-root ./data --interactive
 riffra --attach --interactive
 ```
 
-- 要求は `command` と `params` を持ち、`requestId` は応答へそのまま返す。`expectedSequence` 付き要求は正準シーケンス一致時のみ実行する
-- Project-bound requestには `expectedProjectId`(`project.list` / `host.bootstrap` で取得)を付ける。Live Hostは `expectedProjectId` を必須とし、欠落・不一致はConflictで返す。Standaloneは自Active Projectで補完する
+- 要求は `command` と `params` を持ち、`requestId` は応答へそのまま返す。未知のエンベロープフィールドは `invalidRequest` として拒否する
+- Project-bound requestには `expectedProjectId`(`project.list` / `host.bootstrap` で取得)を付ける。Live Hostは `expectedProjectId` を必須とし、欠落は `invalidRequest`、不一致は `conflict` で返す。Standaloneは自Active Projectで補完する
 
 ```json
 {
   "requestId": "42",
   "command": "track.add",
-  "expectedSequence": 18,
   "expectedProjectId": "550e8400-e29b-41d4-a716-446655440000",
   "params": { "name": "Bass", "kind": "instrument" }
 }
@@ -362,7 +361,7 @@ riffra --attach --interactive
 | -------------------- | ---------------------------------------------------------------------------------------------- |
 | `invalidRequest`     | 入力形式、`params`、型、未知のコマンド、Project-bound requestの `expectedProjectId` 欠落が不正 |
 | `commandFailed`      | Core、Host、保存処理が失敗                                                                     |
-| `conflict`           | `expectedSequence` または `expectedProjectId` が現在の状態と不一致                             |
+| `conflict`           | `expectedProjectId` が現在のactive Projectと不一致、または長期命令の実行中に正準状態が変化     |
 | `hostUnavailable`    | Attached CLIがHostへ接続できない                                                               |
 | `runtimeUnavailable` | Safe Mode中など、要求されたRuntimeを利用できない                                               |
 
@@ -372,14 +371,15 @@ riffra --attach --interactive
 {
   "requestId": "42",
   "ok": false,
-  "sequence": 20,
   "error": {
     "code": "conflict",
-    "message": "canonical state changed",
-    "details": { "expectedSequence": 18, "currentSequence": 20 }
+    "message": "active project changed",
+    "details": { "expectedProjectId": "project:a", "currentProjectId": "project:b" }
   }
 }
 ```
+
+VST3ロードなど書き込み権を一時解放する長期命令では、実行中に正準状態が変化すると `conflict` で中止し、`details` に `expectedSequence` と `currentSequence` を返す。
 
 `history.undo` / `history.redo` の履歴は、Standaloneが自プロセスのもの、serve / Attachedが接続先Hostのものを共有する。Mixerの一時プレビューはHostの現行sequenceを応答へ含めるが、Canonical sequence、履歴、保存、Projectの世代は進まない。所有者と値の契約はサイドカー命令の節(§4.4)を参照する。
 
@@ -432,7 +432,7 @@ DesktopのTauri command境界とLive HostのControl Serverの機能分担は次�
 | Render管理          | `render.export` は完了済みRenderを指定先へコピー、`render.list` / `render.delete` は管理対象の一覧と、ほかから参照されていないものだけの削除(外部Export済みファイルは残す)。`render.json` は所有ファイル(Asset ID・パス)と基本情報だけを根拠とし、測定形式が合わない `measurements` は空にして `diagnostics` で知らせる。状態照会と停止は `job get` / `job cancel`              |
 | 解析                | `analysis.inspect` は波形・RMS等を同期的に返し、`analysis.measure` は保存済みWAVの区間測定を非同期Jobで実行する(進捗・中止はJob契約)                                                                                                                                                                                                                                            |
 | Instrument MIDI     | `instrument.midi.get` はMIDI設定と現在のClip Noteへの警告を返し、`set` はBatch・Undo・Redoで扱える。演奏可能音域外でもMIDI 0〜127内のNoteは再生し、範囲外は送信しない                                                                                                                                                                                                           |
-| 同時実行制御        | `expectedSequence` は `render.start`、`render.stems`、`history.undo`、`history.redo` にも適用し、Conflict時は再Inspectしてやり直す。Revision tokenは同一 `AppCore` の有効期間内でのみ有効                                                                                                                                                                                       |
+| 同時実行制御        | 正準状態の書き込みはHostのProject書き込み権で直列化する。VST3ロードなど書き込み権を一時解放する長期命令は、準備時のsequenceとコミット時のsequenceを照合し、不一致を `conflict` で中止する。Project-bound要求は `expectedProjectId` でactive Projectを固定する                                                                                                                   |
 
 ---
 

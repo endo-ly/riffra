@@ -814,7 +814,7 @@ impl HostConnectionManager {
         let response = client
             .request(
                 &ControlCommand::from(RuntimeCommand::HostBootstrap(EmptyParams {}))
-                    .into_request(format!("desktop-bootstrap-{}", new_instance_id()), None),
+                    .into_request(format!("desktop-bootstrap-{}", new_instance_id())),
             )
             .map_err(|error| BootstrapRequestError::Connection(error.to_string()))?;
         match response_output(response) {
@@ -843,7 +843,7 @@ impl HostConnectionManager {
                     .registry
                     .discover(|registration| {
                         ControlCommand::from(RuntimeCommand::HostStatus(EmptyParams::default()))
-                            .into_request(format!("discovery-{}", registration.instance_id), None)
+                            .into_request(format!("discovery-{}", registration.instance_id))
                     })
                     .map_err(|error| format!("Local Host discovery failed: {error}"))?
                     .into_iter()
@@ -892,7 +892,7 @@ impl HostConnectionManager {
             .registry
             .discover(|registration| {
                 ControlCommand::from(RuntimeCommand::HostStatus(EmptyParams::default()))
-                    .into_request(format!("discovery-{}", registration.instance_id), None)
+                    .into_request(format!("discovery-{}", registration.instance_id))
             })
             .map_err(|error| format!("Local Host discovery failed: {error}"))?;
         let mut hosts = Vec::new();
@@ -989,8 +989,7 @@ impl HostConnectionManager {
             NativeCommandError::command_failed("Host operation barrier was poisoned")
         })?;
         let scope = command.policy().scope;
-        let mut request =
-            command.into_request(format!("desktop-command-{}", new_instance_id()), None);
+        let mut request = command.into_request(format!("desktop-command-{}", new_instance_id()));
         if scope != CommandScope::Host {
             let project_id = self.router.active_project().ok_or_else(|| {
                 NativeCommandError::invalid_request("active Project is not available")
@@ -1206,10 +1205,8 @@ fn ensure_no_active_recording(recording_active: bool) -> Result<(), String> {
 fn attached_recording_active(client: &LocalHostClient) -> bool {
     let project_id = client
         .request(
-            &ControlCommand::from(ProjectCommand::ProjectList(EmptyParams {})).into_request(
-                format!("desktop-recording-project-{}", new_instance_id()),
-                None,
-            ),
+            &ControlCommand::from(ProjectCommand::ProjectList(EmptyParams {}))
+                .into_request(format!("desktop-recording-project-{}", new_instance_id())),
         )
         .ok()
         .and_then(|response| match response_output(response) {
@@ -1217,10 +1214,7 @@ fn attached_recording_active(client: &LocalHostClient) -> bool {
             _ => None,
         });
     let mut request = ControlCommand::from(RuntimeCommand::RecordStatus(EmptyParams {}))
-        .into_request(
-            format!("desktop-recording-status-{}", new_instance_id()),
-            None,
-        );
+        .into_request(format!("desktop-recording-status-{}", new_instance_id()));
     request.expected_project_id = project_id;
     client
         .request(&request)
@@ -1238,7 +1232,7 @@ fn host_info(discovery: LocalHostDiscovery) -> Result<LocalHostInfo, String> {
         .client
         .request(
             &ControlCommand::from(RuntimeCommand::HostInfo(EmptyParams {}))
-                .into_request(format!("desktop-info-{}", new_instance_id()), None),
+                .into_request(format!("desktop-info-{}", new_instance_id())),
         )
         .map_err(|error| error.to_string())?;
     let info: HostInfo = match response_output(response)? {
@@ -1493,7 +1487,6 @@ mod tests {
                     format!("status-{}", new_instance_id()),
                     "host.status",
                     json!({}),
-                    None,
                 ))
             })
             .map(|response| response.ok)
@@ -1760,7 +1753,6 @@ mod tests {
                     "external-project-create",
                     "project.create",
                     json!({"name": "From CLI"}),
-                    None,
                 )
                 .with_expected_project_id(initial_project_id.clone()),
             )
@@ -1813,11 +1805,8 @@ mod tests {
         let response = LocalHostClient::connect_data_root(host.data_root())
             .unwrap()
             .request(
-                &add_track("Expected sequence 0")
-                    .into_request(
-                        "lower-sequence-mutation",
-                        Some(switched.bootstrap.canonical.sequence),
-                    )
+                &add_track("After the switch")
+                    .into_request("lower-sequence-mutation")
                     .with_expected_project_id(switched.bootstrap.project_state.active_project_id),
             )
             .unwrap();

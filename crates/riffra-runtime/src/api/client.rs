@@ -312,7 +312,7 @@ mod tests {
 
         for (name, params, pointer, relative) in cases {
             let command = decode_client_command(name, params).unwrap();
-            let request = command.into_request("test", None);
+            let request = command.into_request("test");
 
             assert_eq!(
                 Path::new(request.params.pointer(pointer).unwrap().as_str().unwrap()),
@@ -335,7 +335,7 @@ mod tests {
 
         let result = decode_client_command("session.apply", params);
         std::fs::remove_file(&state_file).unwrap();
-        let request = result.unwrap().into_request("test", None);
+        let request = result.unwrap().into_request("test");
 
         let operations = &request.params["operations"];
         let plugin_path = std::env::current_dir()
@@ -362,7 +362,7 @@ mod tests {
             json!({"clipId":"midi-clip:1","notesFile":notes_file}),
         );
         std::fs::remove_file(&notes_file).unwrap();
-        let request = result.unwrap().into_request("test", None);
+        let request = result.unwrap().into_request("test");
         assert_eq!(request.params["notes"][0]["pitch"], "C4");
         assert!(request.params.get("notesFile").is_none());
 

@@ -428,7 +428,6 @@ mod tests {
                 "track-add",
                 "track.add",
                 serde_json::json!({"name": "Synth", "kind": "instrument"}),
-                Some(0),
             )
             .with_expected_project_id(expected_project_id),
         );
@@ -491,8 +490,7 @@ mod tests {
             host.dispatch_control(ControlRequest::new(
                 "before",
                 "host.status",
-                serde_json::json!({}),
-                None
+                serde_json::json!({})
             ))
             .ok
         );
@@ -501,7 +499,6 @@ mod tests {
             "after",
             "host.status",
             serde_json::json!({}),
-            None,
         ));
         assert_eq!(response.error.unwrap().code, ErrorCode::HostUnavailable);
 

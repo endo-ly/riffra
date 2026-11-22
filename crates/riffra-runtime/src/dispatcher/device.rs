@@ -290,30 +290,24 @@ mod tests {
         let instrument_path = r"C:\Plugins\Synth.vst3";
         let effect_path = r"C:\Plugins\Reverb.vst3";
         let track = dispatcher
-            .dispatch(
-                request("track.add", json!({"name":"Lead","kind":"instrument"})),
-                None,
-            )
+            .dispatch(request(
+                "track.add",
+                json!({"name":"Lead","kind":"instrument"}),
+            ))
             .unwrap();
         let session = mutated_session(&track);
         let track_id = session.arrangement.tracks[0].id.clone();
         dispatcher
-            .dispatch(
-                request(
-                    "instrument.vst3.set",
-                    json!({"trackId":track_id,"pluginPath":instrument_path}),
-                ),
-                None,
-            )
+            .dispatch(request(
+                "instrument.vst3.set",
+                json!({"trackId":track_id,"pluginPath":instrument_path}),
+            ))
             .unwrap();
         dispatcher
-            .dispatch(
-                request(
-                    "effect.add",
-                    json!({"owner":{"kind":"track","id":track_id},"pluginPath":effect_path}),
-                ),
-                None,
-            )
+            .dispatch(request(
+                "effect.add",
+                json!({"owner":{"kind":"track","id":track_id},"pluginPath":effect_path}),
+            ))
             .unwrap();
 
         let session = dispatcher.core.cell().read().canonical.clone().session;
@@ -328,17 +322,14 @@ mod tests {
         let effect_id = track.effects[0].id.clone();
         let owner = json!({"kind":"track","id":track_id});
         dispatcher
-            .dispatch(
-                request(
-                    "device.bypass",
-                    json!({"owner":owner,"deviceId":effect_id,"bypassed":true}),
-                ),
-                None,
-            )
+            .dispatch(request(
+                "device.bypass",
+                json!({"owner":owner,"deviceId":effect_id,"bypassed":true}),
+            ))
             .unwrap();
         dispatcher.dispatch(request("plugin.state.import", json!({"owner":owner,"deviceId":effect_id,"state":{
             "schemaVersion":2,"pluginIdentifier":"reverb-class","pluginPath":effect_path,"parameterValues":[0.75],"stateData":"c3RhdGU="
-        }})), None).unwrap();
+        }}))).unwrap();
 
         let imported = dispatcher.core.cell().read().canonical.clone().session;
         let effect = &imported.arrangement.tracks[0].effects[0];

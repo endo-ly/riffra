@@ -73,26 +73,23 @@ mod tests {
         )
         .unwrap();
         let track = dispatcher
-            .dispatch(
-                request("track.add", json!({"name":"Keys","kind":"instrument"})),
-                None,
-            )
+            .dispatch(request(
+                "track.add",
+                json!({"name":"Keys","kind":"instrument"}),
+            ))
             .unwrap();
         let session = mutated_session(&track);
         let track_id = session.arrangement.tracks[0].id.clone();
         let created = dispatcher
-            .dispatch(
-                request(
-                    "music.midi-clip.create",
-                    json!({
-                        "trackId": track_id,
-                        "start": "5:1",
-                        "end": "13:1",
-                        "name": "Piano"
-                    }),
-                ),
-                None,
-            )
+            .dispatch(request(
+                "music.midi-clip.create",
+                json!({
+                    "trackId": track_id,
+                    "start": "5:1",
+                    "end": "13:1",
+                    "name": "Piano"
+                }),
+            ))
             .unwrap();
         let session = mutated_session(&created);
         let clip_id = session.arrangement.midi_clips[0].id.clone();
@@ -106,7 +103,6 @@ mod tests {
                         {"pitch":"C4","position":"1:1","duration":"1/8","velocity":null}
                     ]
                 }),
-                None,
             ))
             .unwrap_err()
             .protocol_error();
@@ -116,32 +112,26 @@ mod tests {
         assert_eq!(details["index"], 0);
         assert!(details["value"].is_null());
         let region = dispatcher
-            .dispatch(
-                request(
-                    "music.region.add",
-                    json!({"name":"A'","start":"5:1","end":"13:1"}),
-                ),
-                None,
-            )
+            .dispatch(request(
+                "music.region.add",
+                json!({"name":"A'","start":"5:1","end":"13:1"}),
+            ))
             .unwrap();
         let session = mutated_session(&region);
         assert_eq!(session.arrangement.regions[0].name, "A'");
         let inserted = dispatcher
-            .dispatch(
-                request(
-                    "music.note.insert",
-                    json!({
-                        "clipId": clip_id,
-                        "notes": [
-                            {"pitch":"C4","position":"5:1","duration":"1/8"},
-                            {"pitch":"E4","position":"5:1+1/2","duration":"1/8"},
-                            {"pitch":"G4","position":"5:2","duration":"1/2","velocity":92},
-                            {"pitch":"Bb4","position":"6:3+1/3","duration":"1/12"}
-                        ]
-                    }),
-                ),
-                None,
-            )
+            .dispatch(request(
+                "music.note.insert",
+                json!({
+                    "clipId": clip_id,
+                    "notes": [
+                        {"pitch":"C4","position":"5:1","duration":"1/8"},
+                        {"pitch":"E4","position":"5:1+1/2","duration":"1/8"},
+                        {"pitch":"G4","position":"5:2","duration":"1/2","velocity":92},
+                        {"pitch":"Bb4","position":"6:3+1/3","duration":"1/12"}
+                    ]
+                }),
+            ))
             .unwrap();
         let session = mutated_session(&inserted);
         let clip = &session.arrangement.midi_clips[0];
@@ -158,17 +148,14 @@ mod tests {
 
         let note_id = clip.notes[0].id.clone();
         let listed = dispatcher
-            .dispatch(
-                request(
-                    "music.note.list",
-                    json!({
-                        "clipId": clip_id,
-                        "start": "5:1",
-                        "end": "5:1+1/4"
-                    }),
-                ),
-                None,
-            )
+            .dispatch(request(
+                "music.note.list",
+                json!({
+                    "clipId": clip_id,
+                    "start": "5:1",
+                    "end": "5:1+1/4"
+                }),
+            ))
             .unwrap();
         assert_eq!(output_type(&listed), "musicNotes");
         assert_eq!(output_value(&listed)["count"], 1);
@@ -190,13 +177,10 @@ mod tests {
         );
 
         let raw = dispatcher
-            .dispatch(
-                request(
-                    "music.note.list",
-                    json!({"clipId":clip_id,"raw":true,"includeIds":true}),
-                ),
-                None,
-            )
+            .dispatch(request(
+                "music.note.list",
+                json!({"clipId":clip_id,"raw":true,"includeIds":true}),
+            ))
             .unwrap();
         assert_eq!(output_value(&raw)["clips"][0]["startTick"], 15_360);
         assert_eq!(output_value(&raw)["clips"][0]["notes"][0]["startTick"], 0);
@@ -206,93 +190,72 @@ mod tests {
         );
 
         let fetched = dispatcher
-            .dispatch(
-                request(
-                    "music.note.get",
-                    json!({"clipId": clip_id, "noteId": note_id}),
-                ),
-                None,
-            )
+            .dispatch(request(
+                "music.note.get",
+                json!({"clipId": clip_id, "noteId": note_id}),
+            ))
             .unwrap();
         assert_eq!(output_type(&fetched), "musicNote");
         assert_eq!(output_value(&fetched)["position"], "5:1");
 
         dispatcher
-            .dispatch(
-                request(
-                    "music.note.update",
-                    json!({
-                        "clipId": clip_id,
-                        "noteId": note_id,
-                        "position": "5:2",
-                        "duration": "1/4"
-                    }),
-                ),
-                None,
-            )
+            .dispatch(request(
+                "music.note.update",
+                json!({
+                    "clipId": clip_id,
+                    "noteId": note_id,
+                    "position": "5:2",
+                    "duration": "1/4"
+                }),
+            ))
             .unwrap();
         let updated = dispatcher
-            .dispatch(
-                request(
-                    "music.note.get",
-                    json!({"clipId": clip_id, "noteId": note_id}),
-                ),
-                None,
-            )
+            .dispatch(request(
+                "music.note.get",
+                json!({"clipId": clip_id, "noteId": note_id}),
+            ))
             .unwrap();
         assert_eq!(output_value(&updated)["position"], "5:2");
         assert_eq!(output_value(&updated)["duration"], "1/4");
 
         let transformed = dispatcher
-            .dispatch(
-                request(
-                    "music.note.transform",
-                    json!({
-                        "clipId": clip_id,
-                        "start": "5:1",
-                        "end": "5:2",
-                        "pitch": "E4",
-                        "velocityOffset": 4
-                    }),
-                ),
-                None,
-            )
+            .dispatch(request(
+                "music.note.transform",
+                json!({
+                    "clipId": clip_id,
+                    "start": "5:1",
+                    "end": "5:2",
+                    "pitch": "E4",
+                    "velocityOffset": 4
+                }),
+            ))
             .unwrap();
         let transformed = mutated_session(&transformed);
         assert_eq!(transformed.arrangement.midi_clips[0].notes[1].velocity, 104);
 
         dispatcher
-            .dispatch(
-                request(
-                    "music.midi-clip.resize",
-                    json!({"clipId": clip_id, "end": "12:1"}),
-                ),
-                None,
-            )
+            .dispatch(request(
+                "music.midi-clip.resize",
+                json!({"clipId": clip_id, "end": "12:1"}),
+            ))
             .unwrap();
         dispatcher
-            .dispatch(
-                request(
-                    "music.note.remove",
-                    json!({"clipId": clip_id, "noteId": note_id}),
-                ),
-                None,
-            )
+            .dispatch(request(
+                "music.note.remove",
+                json!({"clipId": clip_id, "noteId": note_id}),
+            ))
             .unwrap();
         assert!(
             dispatcher
-                .dispatch(
-                    request(
-                        "music.note.get",
-                        json!({"clipId": clip_id, "noteId": note_id}),
-                    ),
-                    None
-                )
+                .dispatch(request(
+                    "music.note.get",
+                    json!({"clipId": clip_id, "noteId": note_id}),
+                ))
                 .is_err()
         );
 
         let listed = dispatcher
-            .dispatch(request("music.region.list", json!({})), None)
+            .dispatch(request("music.region.list", json!({})))
             .unwrap();
         assert_eq!(output_type(&listed), "regions");
         assert_eq!(output_value(&listed).as_array().unwrap().len(), 1);
@@ -308,33 +271,30 @@ mod tests {
         )
         .unwrap();
         let track = dispatcher
-            .dispatch(
-                request("track.add", json!({"name":"Keys","kind":"instrument"})),
-                None,
-            )
+            .dispatch(request(
+                "track.add",
+                json!({"name":"Keys","kind":"instrument"}),
+            ))
             .unwrap();
         let session = mutated_session(&track);
         let clip = dispatcher
-            .dispatch(
-                request(
-                    "music.midi-clip.create",
-                    json!({
-                        "trackId": session.arrangement.tracks[0].id,
-                        "start": "1:1",
-                        "end": "3:1"
-                    }),
-                ),
-                None,
-            )
+            .dispatch(request(
+                "music.midi-clip.create",
+                json!({
+                    "trackId": session.arrangement.tracks[0].id,
+                    "start": "1:1",
+                    "end": "3:1"
+                }),
+            ))
             .unwrap();
         let session = mutated_session(&clip);
         let clip_id = session.arrangement.midi_clips[0].id.clone();
 
         let resolved = dispatcher
-            .dispatch(
-                request("music.harmony.resolve", json!({"chord":"G7(b9,#11)/F"})),
-                None,
-            )
+            .dispatch(request(
+                "music.harmony.resolve",
+                json!({"chord":"G7(b9,#11)/F"}),
+            ))
             .unwrap();
         assert_eq!(output_type(&resolved), "harmonyChord");
         assert_eq!(output_value(&resolved)["root"], "G");
@@ -345,7 +305,7 @@ mod tests {
         );
 
         let invalid_harmony = dispatcher
-            .dispatch(request("music.harmony.resolve", json!({"chord":""})), None)
+            .dispatch(request("music.harmony.resolve", json!({"chord":""})))
             .unwrap_err()
             .protocol_error();
         assert_eq!(
@@ -366,7 +326,7 @@ mod tests {
                         {"start":"2:1","end":"3:1","pitches":["Bb","C","E"],"bass":"F","label":"cluster"}
                     ]
                 }),
-            ), None)
+            ))
             .unwrap();
         let session = mutated_session(&inserted);
         let harmony_ids = session
@@ -378,52 +338,43 @@ mod tests {
         assert_eq!(harmony_ids.len(), 2);
 
         let listed = dispatcher
-            .dispatch(request("music.harmony.list", json!({})), None)
+            .dispatch(request("music.harmony.list", json!({})))
             .unwrap();
         assert_eq!(output_type(&listed), "harmonyEvents");
         assert_eq!(output_value(&listed)[0]["start"], "1:1");
         assert!(output_value(&listed)[0].get("startTick").is_none());
 
         dispatcher
-            .dispatch(
-                request(
-                    "music.harmony.realize",
-                    json!({"clipId":clip_id,"start":"1:1","end":"3:1"}),
-                ),
-                None,
-            )
+            .dispatch(request(
+                "music.harmony.realize",
+                json!({"clipId":clip_id,"start":"1:1","end":"3:1"}),
+            ))
             .unwrap();
         let updated = dispatcher
-            .dispatch(
-                request(
-                    "music.harmony.update",
-                    json!({"eventId": harmony_ids[0], "chord":"Dm9"}),
-                ),
-                None,
-            )
+            .dispatch(request(
+                "music.harmony.update",
+                json!({"eventId": harmony_ids[0], "chord":"Dm9"}),
+            ))
             .unwrap();
         let session = mutated_session(&updated);
         assert_eq!(session.arrangement.harmony_events[0].chord.name, "Dm9");
 
         let phrase = dispatcher
-            .dispatch(
-                request(
-                    "music.phrase.preview",
-                    json!({
-                        "clipId": clip_id,
-                        "pattern": {
-                            "length":"1/4",
-                            "notes":[
-                                {"offset":"0/1","duration":"1/8","semitones":0},
-                                {"offset":"1/8","duration":"1/8","semitones":2}
-                            ]
-                        },
-                        "placements":[{"position":"1:1","anchor":"C4","repeats":1}],
-                        "includeNotes": true
-                    }),
-                ),
-                None,
-            )
+            .dispatch(request(
+                "music.phrase.preview",
+                json!({
+                    "clipId": clip_id,
+                    "pattern": {
+                        "length":"1/4",
+                        "notes":[
+                            {"offset":"0/1","duration":"1/8","semitones":0},
+                            {"offset":"1/8","duration":"1/8","semitones":2}
+                        ]
+                    },
+                    "placements":[{"position":"1:1","anchor":"C4","repeats":1}],
+                    "includeNotes": true
+                }),
+            ))
             .unwrap();
         assert_eq!(output_type(&phrase), "phrasePreview");
         assert_eq!(output_value(&phrase)["noteCount"], 2);
@@ -432,22 +383,19 @@ mod tests {
         assert_eq!(output_value(&phrase)["notes"][0]["pitch"], "C4");
 
         let invalid_phrase = dispatcher
-            .dispatch(
-                request(
-                    "music.phrase.preview",
-                    json!({
-                        "clipId":"missing",
-                        "pattern": {
-                            "length":"1/4",
-                            "notes":[
-                                {"offset":"0/1","duration":"1/8","semitones":0}
-                            ]
-                        },
-                        "placements":[{"position":"1:1","anchor":"C4","repeats":1}]
-                    }),
-                ),
-                None,
-            )
+            .dispatch(request(
+                "music.phrase.preview",
+                json!({
+                    "clipId":"missing",
+                    "pattern": {
+                        "length":"1/4",
+                        "notes":[
+                            {"offset":"0/1","duration":"1/8","semitones":0}
+                        ]
+                    },
+                    "placements":[{"position":"1:1","anchor":"C4","repeats":1}]
+                }),
+            ))
             .unwrap_err()
             .protocol_error();
         assert_eq!(
@@ -460,38 +408,32 @@ mod tests {
         );
 
         let phrase = dispatcher
-            .dispatch(
-                request(
-                    "music.phrase.insert",
-                    json!({
-                        "clipId": clip_id,
-                        "pattern": {
-                            "length":"1/4",
-                            "notes":[
-                                {"offset":"0/1","duration":"1/8","semitones":0},
-                                {"offset":"1/8","duration":"1/8","semitones":2}
-                            ]
-                        },
-                        "placements":[{"position":"1:1","anchor":"C4","repeats":1}]
-                    }),
-                ),
-                None,
-            )
+            .dispatch(request(
+                "music.phrase.insert",
+                json!({
+                    "clipId": clip_id,
+                    "pattern": {
+                        "length":"1/4",
+                        "notes":[
+                            {"offset":"0/1","duration":"1/8","semitones":0},
+                            {"offset":"1/8","duration":"1/8","semitones":2}
+                        ]
+                    },
+                    "placements":[{"position":"1:1","anchor":"C4","repeats":1}]
+                }),
+            ))
             .unwrap();
         let session = mutated_session(&phrase);
         assert_eq!(session.arrangement.midi_clips[0].notes.len(), 9);
 
         dispatcher
-            .dispatch(
-                request(
-                    "music.harmony.remove",
-                    json!({"eventIds":[harmony_ids[0], harmony_ids[1]]}),
-                ),
-                None,
-            )
+            .dispatch(request(
+                "music.harmony.remove",
+                json!({"eventIds":[harmony_ids[0], harmony_ids[1]]}),
+            ))
             .unwrap();
         let listed = dispatcher
-            .dispatch(request("music.harmony.list", json!({})), None)
+            .dispatch(request("music.harmony.list", json!({})))
             .unwrap();
         assert!(output_value(&listed).as_array().unwrap().is_empty());
         let _ = fs::remove_dir_all(root);

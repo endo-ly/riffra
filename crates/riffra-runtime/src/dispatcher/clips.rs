@@ -124,17 +124,14 @@ mod tests {
         )
         .unwrap();
         let imported = dispatcher
-            .dispatch(command("asset.import-midi", json!({"path":path})), None)
+            .dispatch(command("asset.import-midi", json!({"path":path})))
             .unwrap();
         let asset_id = output_value(&imported);
         let placed = dispatcher
-            .dispatch(
-                command(
-                    "clip.midi.add-asset",
-                    json!({"assetId":asset_id,"name":"Voice"}),
-                ),
-                None,
-            )
+            .dispatch(command(
+                "clip.midi.add-asset",
+                json!({"assetId":asset_id,"name":"Voice"}),
+            ))
             .unwrap();
         let session = mutated_session(&placed);
         let clip = &session.arrangement.midi_clips[0];
@@ -160,52 +157,43 @@ mod tests {
         )
         .unwrap();
         let track = dispatcher
-            .dispatch(
-                command("track.add", json!({"name":"Keys","kind":"instrument"})),
-                None,
-            )
+            .dispatch(command(
+                "track.add",
+                json!({"name":"Keys","kind":"instrument"}),
+            ))
             .unwrap();
         let track_id = mutated_session(&track).arrangement.tracks[0].id.clone();
         let created = dispatcher
-            .dispatch(
-                command(
-                    "clip.midi.create",
-                    json!({
-                        "trackId": track_id,
-                        "startTick": 480,
-                        "durationTicks": 1920,
-                        "name": "Lead"
-                    }),
-                ),
-                None,
-            )
+            .dispatch(command(
+                "clip.midi.create",
+                json!({
+                    "trackId": track_id,
+                    "startTick": 480,
+                    "durationTicks": 1920,
+                    "name": "Lead"
+                }),
+            ))
             .unwrap();
         let original_clip = mutated_session(&created).arrangement.midi_clips[0].clone();
         let clip_id = original_clip.id.clone();
         dispatcher
-            .dispatch(
-                command(
-                    "clip.midi.note.insert",
-                    json!({
-                        "clipId": clip_id,
-                        "notes": [{
-                            "pitch": 60,
-                            "startTick": 0,
-                            "durationTicks": 480,
-                            "velocity": 100,
-                            "channel": 1
-                        }]
-                    }),
-                ),
-                None,
-            )
+            .dispatch(command(
+                "clip.midi.note.insert",
+                json!({
+                    "clipId": clip_id,
+                    "notes": [{
+                        "pitch": 60,
+                        "startTick": 0,
+                        "durationTicks": 480,
+                        "velocity": 100,
+                        "channel": 1
+                    }]
+                }),
+            ))
             .unwrap();
 
         let cleared = dispatcher
-            .dispatch(
-                command("clip.midi.note.clear", json!({"clipId": clip_id})),
-                None,
-            )
+            .dispatch(command("clip.midi.note.clear", json!({"clipId": clip_id})))
             .unwrap();
         let session = mutated_session(&cleared);
         let cleared_clip = &session.arrangement.midi_clips[0];
@@ -216,7 +204,7 @@ mod tests {
         assert_eq!(cleared_clip.duration_ticks, original_clip.duration_ticks);
 
         let undone = dispatcher
-            .dispatch(command("history.undo", json!({})), None)
+            .dispatch(command("history.undo", json!({})))
             .unwrap();
         assert_eq!(
             mutated_session(&undone).arrangement.midi_clips[0]
@@ -225,30 +213,24 @@ mod tests {
             1
         );
         let pasted = dispatcher
-            .dispatch(
-                command(
-                    "clip.paste",
-                    json!({"midiClipIds":[clip_id], "startTick":3840}),
-                ),
-                None,
-            )
+            .dispatch(command(
+                "clip.paste",
+                json!({"midiClipIds":[clip_id], "startTick":3840}),
+            ))
             .unwrap();
         assert_eq!(mutated_session(&pasted).arrangement.midi_clips.len(), 2);
         let removed = dispatcher
-            .dispatch(
-                command("clip.remove", json!({"midiClipIds":[clip_id]})),
-                None,
-            )
+            .dispatch(command("clip.remove", json!({"midiClipIds":[clip_id]})))
             .unwrap();
         assert_eq!(mutated_session(&removed).arrangement.midi_clips.len(), 1);
         assert!(
             dispatcher
-                .dispatch(command("clip.remove", json!({})), None)
+                .dispatch(command("clip.remove", json!({})))
                 .is_err()
         );
         assert!(
             dispatcher
-                .dispatch(command("clip.paste", json!({"startTick":0})), None)
+                .dispatch(command("clip.paste", json!({"startTick":0})))
                 .is_err()
         );
         let _ = fs::remove_dir_all(root);

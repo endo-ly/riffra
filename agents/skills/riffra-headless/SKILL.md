@@ -34,7 +34,7 @@ description: >-
 | Live Host               | `riffra --data-root <path> serve [--safe-mode]` | フォアグラウンド常駐し Audio Runtime 提供 |
 | Attached                | `riffra --attach <command>`                     | current-user registryから選んだHostへ接続 |
 
-正準状態は操作ごとに DataRoot へ永続化されるため、編集はプロセスを跨いで引き継がれる。Undo / Redo 履歴と `expectedSequence` はプロセス(Host)の寿命に紐づく。
+正準状態は操作ごとに DataRoot へ永続化されるため、編集はプロセスを跨いで引き継がれる。Undo / Redo 履歴はプロセス(Host)の寿命に紐づく。
 
 そのため、音声を伴わない編集は Standalone で行い、連続操作や Undo / Redo には `--interactive` を使う。Audio Runtime を伴う操作は `serve` + `--attach` で行う。
 
@@ -77,21 +77,19 @@ MCPクライアントの設定とツールの一覧は [docs/mcp.md](../../../do
 {
   "requestId": "42",
   "command": "track.add",
-  "expectedSequence": 18,
   "params": { "name": "Bass", "kind": "instrument" }
 }
 ```
 
 - `requestId`: 任意の文字列。応答へそのまま返る
 - `command`: 操作名
-- `expectedSequence`: 任意。指定すると正準シーケンスが一致するときだけ実行する。ワンショットでは `--expected-sequence <n>` フラグ
 - `params`: コマンドごとの引数。キー名は camelCase
 
-`session inspect`、Mutation、`render start`、`history undo`、`history redo` は `expectedSequence` を検証する。interactiveで操作を連鎖させるときは、応答を受け取ってから次の要求を組み立て、`expectedSequence` に直前応答の `sequence` を渡す。
+interactiveで操作を連鎖させるときは、応答を受け取ってから次の要求を組み立て、生成IDは応答の `createdEntityIds` から取る。
 
 ### 応答の読み方
 
-成功応答は次の形で、`sequence` がその結果の正準シーケンスであり、次の操作の `expectedSequence` に使える:
+成功応答は次の形で、`sequence` がその結果の正準シーケンスである:
 
 ```json
 {
@@ -112,8 +110,8 @@ Mutationでは `result.value.createdEntityIds` に、そのMutationで生成さ�
   "ok": false,
   "error": {
     "code": "conflict",
-    "message": "canonical state changed",
-    "details": { "expectedSequence": 18, "currentSequence": 20 }
+    "message": "active project changed",
+    "details": { "expectedProjectId": "project:a", "currentProjectId": "project:b" }
   }
 }
 ```
@@ -122,13 +120,13 @@ Mutationでは `result.value.createdEntityIds` に、そのMutationで生成さ�
 
 分岐は必ず `error.code` で判定する。
 
-| code                 | 意味                                          | 対処                                           |
-| -------------------- | --------------------------------------------- | ---------------------------------------------- |
-| `invalidRequest`     | 要求形式・params・未知のコマンドが不正        | params のキー名(camelCase)と型を見直す         |
-| `commandFailed`      | Core / Host / 保存処理の失敗(ID 不存在など)   | message の内容に対処する                       |
-| `conflict`           | `expectedSequence` が現在のシーケンスと不一致 | Inspectし直して編集内容を決め直す              |
-| `hostUnavailable`    | Attached が Host へ接続できない               | `riffra host list` で登録とhandshake状態を確認 |
-| `runtimeUnavailable` | Runtime を利用できない(Safe Mode、Standalone) | `serve` + `--attach` に切り替える              |
+| code                 | 意味                                                                                | 対処                                           |
+| -------------------- | ----------------------------------------------------------------------------------- | ---------------------------------------------- |
+| `invalidRequest`     | 要求形式・params・未知のコマンドが不正                                              | params のキー名(camelCase)と型を見直す         |
+| `commandFailed`      | Core / Host / 保存処理の失敗(ID 不存在など)                                         | message の内容に対処する                       |
+| `conflict`           | `expectedProjectId` が現在のProjectと不一致、または長期命令の実行中に状態が変化した | Inspectし直して編集内容を決め直す              |
+| `hostUnavailable`    | Attached が Host へ接続できない                                                     | `riffra host list` で登録とhandshake状態を確認 |
+| `runtimeUnavailable` | Runtime を利用できない(Safe Mode、Standalone)                                       | `serve` + `--attach` に切り替える              |
 
 ## 3. 楽曲を組み立てる
 
@@ -136,14 +134,14 @@ Mutationでは `result.value.createdEntityIds` に、そのMutationで生成さ�
 
 現在の構造と `sequence` は `session inspect` で照会する。`session get` はNote全件・録音詳細を含むフルスナップショットなので、Inspectにない詳細が必要なときだけ使う。
 
-編集には直前の `sequence` を `expectedSequence` に渡し、編集後は同じ範囲をInspectして確認する。取り消しは変更後の `sequence` を指定した `history undo` で行う。
+編集後は同じ範囲をInspectして確認する。取り消しは `history undo` で行う。
 
 ```powershell
-# 応答の sequence を次の --expected-sequence に渡し、生成IDは createdEntityIds から取る
+# 生成IDは createdEntityIds から取る
 riffra --attach session inspect
-riffra --attach --expected-sequence 0 track add --name Drums --kind audio
-riffra --attach --expected-sequence 1 music midi-clip create --track-id track:01j... --start 5:1 --end 13:1 --name Piano
-riffra --attach --expected-sequence 2 music note insert --clip-id midi-clip:01j... --notes-json '[{"pitch":"C4","position":"5:1","duration":"1/8"}]'
+riffra --attach track add --name Drums --kind audio
+riffra --attach music midi-clip create --track-id track:01j... --start 5:1 --end 13:1 --name Piano
+riffra --attach music note insert --clip-id midi-clip:01j... --notes-json '[{"pitch":"C4","position":"5:1","duration":"1/8"}]'
 ```
 
 ### 一括適用(session apply)
@@ -153,7 +151,7 @@ riffra --attach --expected-sequence 2 music note insert --clip-id midi-clip:01j.
 JSONLでは `trackName` / `clipName` / `busName` / `returnBusName`、ownerの `owner.name` で名前解決でき、同じBatch内で追加したTrack・Bus・Clipを参照できる。`--replace` はSessionを初期状態に戻してからJSONLを適用する。Projectの同一性は保たれ、録音素材ファイルも残る。
 
 ```powershell
-riffra --data-root ./riffra-data --expected-sequence 42 session apply --file ./song.jsonl
+riffra --data-root ./riffra-data session apply --file ./song.jsonl
 riffra --attach session apply --file ./song.jsonl --include-created-ids
 ```
 
@@ -220,7 +218,7 @@ Noteの取得は `music note list` で範囲を絞って行う。一括調整は
 各Noteの `lyric` は `music note update --lyric` / `--clear-lyric` で変更・削除し、一括変更は `clip midi note update-many` のpatchの `lyric`(`null` で削除)で扱う。
 
 ```powershell
-riffra --attach --expected-sequence 20 music note transform `
+riffra --attach music note transform `
   --track-id track:drums --start 5:1 --end 13:1 `
   --pitch D2 --timing-offset +1/48 --velocity-offset 4
 ```
@@ -363,7 +361,7 @@ Processed Variantに必要な制御信号を録音から再利用できない場
 
 ### 書き出しと測定
 
-音声の書き出しは `render start` で行う。`--expected-sequence` はRender対象の正準スナップショットを固定し、Conflictになった場合はInspectし直してからRenderし直す。ワンショットでは `render start --wait` / `render stems --wait` で完了結果を待てる。
+音声の書き出しは `render start` で行う。ワンショットでは `render start --wait` / `render stems --wait` で完了結果を待てる。
 
 応答は `type: "job"` のジョブIDである。ワンショットは `job wait JOB_ID`、interactiveは `job get` の繰り返しで追跡し、`job cancel` で停止する。待機のタイムアウトは `job wait --timeout-ms` で指定し、無指定なら終了まで待つ。`plugin scan --background` と `analysis measure` も同じ非同期ジョブである。`ok: true` は要求の受付成功を表すので、Job自体の成功は `state: "completed"` で判断する。出力はDataRootの `renders/` 配下へ書き出される。
 

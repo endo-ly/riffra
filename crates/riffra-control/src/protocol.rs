@@ -84,12 +84,10 @@ impl ProtocolError {
 
 /// One command request sent over JSON Lines or a framed local transport.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ControlRequest {
     pub request_id: String,
     pub command: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub expected_sequence: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_project_id: Option<String>,
     pub params: Value,
@@ -97,16 +95,10 @@ pub struct ControlRequest {
 
 impl ControlRequest {
     /// Creates a request for one backend command.
-    pub fn new(
-        request_id: impl Into<String>,
-        command: impl Into<String>,
-        params: Value,
-        expected_sequence: Option<u64>,
-    ) -> Self {
+    pub fn new(request_id: impl Into<String>, command: impl Into<String>, params: Value) -> Self {
         Self {
             request_id: request_id.into(),
             command: command.into(),
-            expected_sequence,
             expected_project_id: None,
             params,
         }
@@ -294,7 +286,6 @@ mod tests {
         let request = ControlRequest {
             request_id: String::new(),
             command: String::new(),
-            expected_sequence: None,
             expected_project_id: None,
             params: Value::Null,
         };
@@ -303,6 +294,15 @@ mod tests {
             request.validate().unwrap_err().code,
             ErrorCode::InvalidRequest
         );
+
+        let unknown_envelope_field = serde_json::json!({
+            "requestId": "request:1",
+            "command": "session.get",
+            "unknownEnvelopeField": true,
+            "params": {},
+        });
+        let error = serde_json::from_value::<ControlRequest>(unknown_envelope_field).unwrap_err();
+        assert!(error.to_string().contains("unknown field"));
     }
 
     #[test]

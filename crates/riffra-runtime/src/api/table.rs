@@ -243,14 +243,10 @@ pub enum ControlCommand {
 
 impl ControlCommand {
     /// Wraps this command in a request envelope.
-    pub fn into_request(
-        self,
-        request_id: impl Into<String>,
-        expected_sequence: Option<u64>,
-    ) -> ControlRequest {
+    pub fn into_request(self, request_id: impl Into<String>) -> ControlRequest {
         let name = self.name();
         let mut wire = serde_json::to_value(self).expect("control commands serialize");
-        ControlRequest::new(request_id, name, wire["params"].take(), expected_sequence)
+        ControlRequest::new(request_id, name, wire["params"].take())
     }
 }
 

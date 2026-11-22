@@ -99,7 +99,7 @@ mod tests {
     #[test]
     fn json_lines_preserve_request_ids_and_physical_line_numbers() {
         // Arrange
-        let valid = ControlRequest::new("valid", "session.get", serde_json::json!({}), None);
+        let valid = ControlRequest::new("valid", "session.get", serde_json::json!({}));
         let invalid = serde_json::json!({"requestId":"invalid","command":"","params":{}});
         let input = format!(
             "\n{}\n{}\n{{\n",

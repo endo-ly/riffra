@@ -326,7 +326,7 @@ mod tests {
 
     fn session(dispatcher: &Dispatcher) -> riffra_core::CreativeSession {
         let state = dispatcher
-            .dispatch(request("session.get", json!({})), None)
+            .dispatch(request("session.get", json!({})))
             .unwrap();
         match state.output {
             crate::api::ControlOutput::Session(session) => session,
@@ -348,23 +348,17 @@ mod tests {
         )
         .unwrap();
         let created = dispatcher
-            .dispatch(
-                request("track.add", json!({"name":"Take","kind":"audio"})),
-                None,
-            )
+            .dispatch(request("track.add", json!({"name":"Take","kind":"audio"})))
             .unwrap();
         let before = mutated_session(&created);
         let track = before.arrangement.tracks[0].clone();
 
         let folder = root.join("song");
         let link = dispatcher
-            .dispatch(
-                request(
-                    "project.export-score",
-                    json!({"path": folder, "link": true}),
-                ),
-                None,
-            )
+            .dispatch(request(
+                "project.export-score",
+                json!({"path": folder, "link": true}),
+            ))
             .unwrap();
 
         assert_eq!(output_type(&link), "scoreExport");
@@ -378,13 +372,10 @@ mod tests {
         assert_eq!(linked.arrangement.tracks[0].name, track.name);
         assert!(linked.score_source.as_ref().unwrap().path.is_some());
 
-        let again = dispatcher.dispatch(
-            request(
-                "project.export-score",
-                json!({"path": root.join("second"), "link": true}),
-            ),
-            None,
-        );
+        let again = dispatcher.dispatch(request(
+            "project.export-score",
+            json!({"path": root.join("second"), "link": true}),
+        ));
         assert!(again.is_err(), "a linked Project owns its Score file");
         assert!(!root.join("second").exists());
     }
@@ -403,17 +394,11 @@ mod tests {
         )
         .unwrap();
         dispatcher
-            .dispatch(
-                request("track.add", json!({"name":"Take","kind":"audio"})),
-                None,
-            )
+            .dispatch(request("track.add", json!({"name":"Take","kind":"audio"})))
             .unwrap();
         let folder = root.join("song");
         let exported = dispatcher
-            .dispatch(
-                request("project.export-score", json!({"path": folder})),
-                None,
-            )
+            .dispatch(request("project.export-score", json!({"path": folder})))
             .unwrap();
         assert_eq!(output_type(&exported), "scoreExport");
         assert!(folder.join("score.yaml").is_file());
@@ -440,63 +425,49 @@ mod tests {
         .unwrap();
         let dispatcher = Dispatcher::open(root.clone(), resources).unwrap();
         dispatcher
-            .dispatch(
-                request("track.add", json!({"name":"Keys","kind":"instrument"})),
-                None,
-            )
+            .dispatch(request(
+                "track.add",
+                json!({"name":"Keys","kind":"instrument"}),
+            ))
             .unwrap();
         let track_id = session(&dispatcher).arrangement.tracks[0].id.clone();
         dispatcher
-            .dispatch(
-                request(
-                    "instrument.apply",
-                    json!({"trackId":track_id,"instrumentId":"builtin:01-keys"}),
-                ),
-                None,
-            )
+            .dispatch(request(
+                "instrument.apply",
+                json!({"trackId":track_id,"instrumentId":"builtin:01-keys"}),
+            ))
             .unwrap();
         dispatcher
-            .dispatch(
-                request(
-                    "clip.midi.create",
-                    json!({"trackId":track_id,"startTick":0,"durationTicks":1920,"name":"Keys"}),
-                ),
-                None,
-            )
+            .dispatch(request(
+                "clip.midi.create",
+                json!({"trackId":track_id,"startTick":0,"durationTicks":1920,"name":"Keys"}),
+            ))
             .unwrap();
         let clip_id = session(&dispatcher).arrangement.midi_clips[0].id.clone();
         dispatcher
-            .dispatch(
-                request(
-                    "clip.midi.instrument-event.add",
-                    json!({
-                        "clipId": clip_id,
-                        "tick": 480,
-                        "kind": {"type":"keySwitch","note":24,"mode":"latch","down":true},
-                    }),
-                ),
-                None,
-            )
+            .dispatch(request(
+                "clip.midi.instrument-event.add",
+                json!({
+                    "clipId": clip_id,
+                    "tick": 480,
+                    "kind": {"type":"keySwitch","note":24,"mode":"latch","down":true},
+                }),
+            ))
             .unwrap();
         dispatcher
             .dispatch(
                 request(
                     "clip.midi.note.add",
                     json!({"clipId":clip_id,"pitch":60,"startTick":0,"durationTicks":480,"velocity":100,"channel":10}),
-                ),
-                None,
-            )
+                ))
             .unwrap();
         let before = session(&dispatcher);
         let folder = root.join("song");
         let error = dispatcher
-            .dispatch(
-                request(
-                    "project.export-score",
-                    json!({"path": folder, "link": true}),
-                ),
-                None,
-            )
+            .dispatch(request(
+                "project.export-score",
+                json!({"path": folder, "link": true}),
+            ))
             .unwrap_err();
         let crate::dispatcher::DispatchError::InvalidRequest {
             details: Some(details),
@@ -584,10 +555,7 @@ mod tests {
         )
         .unwrap();
         dispatcher
-            .dispatch(
-                request("project.import-score", json!({"path": score})),
-                None,
-            )
+            .dispatch(request("project.import-score", json!({"path": score})))
             .unwrap();
         let mut canonical = session(&dispatcher);
         canonical.score_source = None;
@@ -609,13 +577,10 @@ mod tests {
         let before = session(dispatcher);
         let folder = root.join("song");
         let error = dispatcher
-            .dispatch(
-                request(
-                    "project.export-score",
-                    json!({"path": folder, "link": true}),
-                ),
-                None,
-            )
+            .dispatch(request(
+                "project.export-score",
+                json!({"path": folder, "link": true}),
+            ))
             .unwrap_err();
         let crate::dispatcher::DispatchError::InvalidRequest {
             details: Some(details),
@@ -720,23 +685,20 @@ mod tests {
         )
         .unwrap();
         let track = dispatcher
-            .dispatch(
-                request("track.add", json!({"name":"Voice","kind":"instrument"})),
-                None,
-            )
+            .dispatch(request(
+                "track.add",
+                json!({"name":"Voice","kind":"instrument"}),
+            ))
             .unwrap();
         let track_id = mutated_session(&track).arrangement.tracks[0].id.clone();
         let clip = dispatcher
-            .dispatch(
-                request(
-                    "clip.midi.create",
-                    json!({"trackId":track_id,"startTick":960,"durationTicks":1920,"name":"Voice"}),
-                ),
-                None,
-            )
+            .dispatch(request(
+                "clip.midi.create",
+                json!({"trackId":track_id,"startTick":960,"durationTicks":1920,"name":"Voice"}),
+            ))
             .unwrap();
         let clip_id = mutated_session(&clip).arrangement.midi_clips[0].id.clone();
-        dispatcher.dispatch(request("clip.midi.note.add", json!({"clipId":clip_id,"pitch":60,"startTick":240,"durationTicks":480,"velocity":100,"channel":1,"lyric":"き"})), None).unwrap();
+        dispatcher.dispatch(request("clip.midi.note.add", json!({"clipId":clip_id,"pitch":60,"startTick":240,"durationTicks":480,"velocity":100,"channel":1,"lyric":"き"}))).unwrap();
         for (scope, expected) in [
             (json!({"clipId":clip_id}), 240),
             (json!({"trackId":track_id}), 1200),
@@ -745,7 +707,7 @@ mod tests {
             let mut params = scope;
             params["output"] = json!(path);
             let output = dispatcher
-                .dispatch(request("music.export-midi", params), None)
+                .dispatch(request("music.export-midi", params))
                 .unwrap();
             assert_eq!(output_value(&output)["noteCount"], 1);
             let (_, notes, _) =
@@ -753,29 +715,31 @@ mod tests {
             assert_eq!(notes[0].start_tick.0, expected);
             assert_eq!(notes[0].lyric.as_deref(), Some("き"));
         }
-        let second = dispatcher.dispatch(request("clip.midi.create", json!({"trackId":track_id,"startTick":1200,"durationTicks":1920,"name":"Second"})), None).unwrap();
+        let second = dispatcher
+            .dispatch(request(
+                "clip.midi.create",
+                json!({"trackId":track_id,"startTick":1200,"durationTicks":1920,"name":"Second"}),
+            ))
+            .unwrap();
         let second_id = mutated_session(&second).arrangement.midi_clips[1]
             .id
             .clone();
-        dispatcher.dispatch(request("clip.midi.note.add", json!({"clipId":second_id,"pitch":60,"startTick":100,"durationTicks":240,"velocity":100,"channel":1})), None).unwrap();
+        dispatcher.dispatch(request("clip.midi.note.add", json!({"clipId":second_id,"pitch":60,"startTick":100,"durationTicks":240,"velocity":100,"channel":1}))).unwrap();
         let path = root.join("1200.mid");
         let existing = std::fs::read(&path).unwrap();
-        let result = dispatcher.dispatch(
-            request(
-                "music.export-midi",
-                json!({"trackId":track_id,"output":path}),
-            ),
-            None,
-        );
+        let result = dispatcher.dispatch(request(
+            "music.export-midi",
+            json!({"trackId":track_id,"output":path}),
+        ));
         assert!(result.is_err());
         assert_eq!(std::fs::read(&path).unwrap(), existing);
 
-        dispatcher.dispatch(request("clip.midi.note.add", json!({"clipId":clip_id,"pitch":60,"startTick":300,"durationTicks":240,"velocity":100,"channel":1})), None).unwrap();
+        dispatcher.dispatch(request("clip.midi.note.add", json!({"clipId":clip_id,"pitch":60,"startTick":300,"durationTicks":240,"velocity":100,"channel":1}))).unwrap();
         let path = root.join("overlap.mid");
-        let result = dispatcher.dispatch(
-            request("music.export-midi", json!({"clipId":clip_id,"output":path})),
-            None,
-        );
+        let result = dispatcher.dispatch(request(
+            "music.export-midi",
+            json!({"clipId":clip_id,"output":path}),
+        ));
         assert!(result.is_err());
         assert!(!path.exists());
         drop(dispatcher);
@@ -795,7 +759,7 @@ mod tests {
         .unwrap();
 
         let initial = dispatcher
-            .dispatch(request("project.list", json!({})), None)
+            .dispatch(request("project.list", json!({})))
             .unwrap();
         let initial_id = output_value(&initial)["activeProjectId"]
             .as_str()
@@ -803,7 +767,7 @@ mod tests {
             .to_owned();
 
         let created = dispatcher
-            .dispatch(request("project.create", json!({"name": "Second"})), None)
+            .dispatch(request("project.create", json!({"name": "Second"})))
             .unwrap();
         let second_id = output_value(&created)["projectState"]["activeProjectId"]
             .as_str()
@@ -812,21 +776,18 @@ mod tests {
         assert_ne!(second_id, initial_id);
         assert_eq!(
             dispatcher
-                .dispatch(request("session.get", json!({})), None)
+                .dispatch(request("session.get", json!({})))
                 .map(|result| output_value(&result))
                 .unwrap()["projectName"],
             "Second"
         );
 
         dispatcher
-            .dispatch(
-                request("project.open", json!({"projectId": initial_id})),
-                None,
-            )
+            .dispatch(request("project.open", json!({"projectId": initial_id})))
             .unwrap();
         assert_eq!(
             dispatcher
-                .dispatch(request("session.get", json!({})), None)
+                .dispatch(request("session.get", json!({})))
                 .map(|result| output_value(&result))
                 .unwrap()["projectName"],
             Value::Null
@@ -853,25 +814,22 @@ mod tests {
         )
         .unwrap();
         let initial_id = dispatcher
-            .dispatch(request("project.list", json!({})), None)
+            .dispatch(request("project.list", json!({})))
             .map(|result| output_value(&result))
             .unwrap()["activeProjectId"]
             .as_str()
             .unwrap()
             .to_owned();
         dispatcher
-            .dispatch(request("project.rename", json!({"name": "Source"})), None)
+            .dispatch(request("project.rename", json!({"name": "Source"})))
             .unwrap();
         let export_path = root.join("source.riffra");
         let exported = dispatcher
-            .dispatch(
-                request("project.export", json!({"output": export_path})),
-                None,
-            )
+            .dispatch(request("project.export", json!({"output": export_path})))
             .unwrap();
         let manifest = output_value(&exported)["path"].as_str().unwrap().to_owned();
         let before = dispatcher
-            .dispatch(request("project.list", json!({})), None)
+            .dispatch(request("project.list", json!({})))
             .map(|result| output_value(&result))
             .unwrap()["projects"]
             .as_array()
@@ -879,7 +837,7 @@ mod tests {
             .len();
 
         let imported = dispatcher
-            .dispatch(request("project.import", json!({"path": manifest})), None)
+            .dispatch(request("project.import", json!({"path": manifest})))
             .unwrap();
         let imported = output_value(&imported);
         let imported_id = imported["projectState"]["activeProjectId"]
@@ -902,20 +860,17 @@ mod tests {
         );
         assert_eq!(
             dispatcher
-                .dispatch(request("session.get", json!({})), None)
+                .dispatch(request("session.get", json!({})))
                 .map(|result| output_value(&result))
                 .unwrap()["projectName"],
             "Source"
         );
         dispatcher
-            .dispatch(
-                request("project.open", json!({"projectId": initial_id})),
-                None,
-            )
+            .dispatch(request("project.open", json!({"projectId": initial_id})))
             .unwrap();
         assert_eq!(
             dispatcher
-                .dispatch(request("session.get", json!({})), None)
+                .dispatch(request("session.get", json!({})))
                 .map(|result| output_value(&result))
                 .unwrap()["projectName"],
             "Source"
@@ -936,17 +891,14 @@ mod tests {
         )
         .unwrap();
         let initial_id = dispatcher
-            .dispatch(request("project.list", json!({})), None)
+            .dispatch(request("project.list", json!({})))
             .map(|result| output_value(&result))
             .unwrap()["activeProjectId"]
             .as_str()
             .unwrap()
             .to_owned();
         let created = dispatcher
-            .dispatch(
-                request("project.create", json!({"name": "Recovered"})),
-                None,
-            )
+            .dispatch(request("project.create", json!({"name": "Recovered"})))
             .unwrap();
         let recovered_id = output_value(&created)["projectState"]["activeProjectId"]
             .as_str()
@@ -967,10 +919,7 @@ mod tests {
         .unwrap();
 
         let recovered = dispatcher
-            .dispatch(
-                request("project.open", json!({"projectId": recovered_id})),
-                None,
-            )
+            .dispatch(request("project.open", json!({"projectId": recovered_id})))
             .unwrap();
         assert_eq!(
             output_value(&recovered)["recovery"]["recoveredFromGeneration"],
@@ -982,10 +931,7 @@ mod tests {
         );
 
         let normal = dispatcher
-            .dispatch(
-                request("project.open", json!({"projectId": initial_id})),
-                None,
-            )
+            .dispatch(request("project.open", json!({"projectId": initial_id})))
             .unwrap();
         assert_eq!(
             output_value(&normal)["recovery"]["recoveredFromGeneration"],

@@ -38,7 +38,6 @@ impl AttachedBackend {
         &self,
         request_id: String,
         command: ControlCommand,
-        expected_sequence: Option<u64>,
         expected_project_id: Option<String>,
     ) -> Result<ControlResponse, String> {
         let expected_project_id = match (command.policy().scope, expected_project_id) {
@@ -46,7 +45,7 @@ impl AttachedBackend {
             (CommandScope::Project { .. }, None) => Some(self.active_project_id()?),
             (CommandScope::Host, None) => None,
         };
-        let mut request = command.into_request(request_id, expected_sequence);
+        let mut request = command.into_request(request_id);
         request.expected_project_id = expected_project_id;
         self.send(&request)
     }
@@ -71,7 +70,6 @@ impl AttachedBackend {
                     id: job_id.to_owned(),
                 })
                 .into(),
-                None,
                 None,
             )?;
             if !response.ok {
@@ -117,7 +115,7 @@ impl AttachedBackend {
     fn active_project_id(&self) -> Result<String, String> {
         let response = self.send(
             &ControlCommand::from(ProjectCommand::ProjectList(EmptyParams {}))
-                .into_request(format!("cli-project-state-{}", new_instance_id()), None),
+                .into_request(format!("cli-project-state-{}", new_instance_id())),
         )?;
         if !response.ok {
             let error = response
@@ -140,7 +138,6 @@ impl AttachedBackend {
             |request, command, _| match self.request(
                 request.request_id.clone(),
                 command,
-                request.expected_sequence,
                 request.expected_project_id,
             ) {
                 Ok(response) => compact_agent_response(response),
