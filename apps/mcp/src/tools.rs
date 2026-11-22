@@ -600,7 +600,7 @@ pub(crate) const TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "render",
-        description: "Start a Render or stem job, export or list completed renders, or delete one managed Render.",
+        description: "Start a Render or stem job, export or list completed renders, or delete one managed Render. Renders default to renderMode offline, which processes as fast as possible. Tracks hosting asynchronous synthesizers such as Synthesizer V need renderMode realtime (1.0x pacing) together with pluginWarmUpSeconds of 10 to 30 seconds, and rendering only the vocal Track (trackId) in realtime is the recommended workflow.",
         actions: &[
             action("start", "render.start"),
             action("stems", "render.stems"),
@@ -614,7 +614,7 @@ pub(crate) const TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "render_settings",
-        description: "Read or replace the active Project's render settings. set takes the complete MixdownSettings object from get.",
+        description: "Read or replace the active Project's render settings. set takes the complete MixdownSettings object from get. renderMode is offline (default, as fast as possible) or realtime (1.0x pacing for asynchronous synthesizers such as Synthesizer V, which also need pluginWarmUpSeconds of 10 to 30 seconds).",
         actions: &[
             action("get", "render.settings.get"),
             action("set", "render.settings.set"),
@@ -624,7 +624,7 @@ pub(crate) const TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "job",
-        description: "Read or cancel a background job. Wait polls job.get until a terminal state or a timeout without cancelling the job.",
+        description: "Read or cancel a background job. Wait polls job.get until a terminal state or a timeout without cancelling the job. A realtime render takes at least the duration of its rendered range, so an explicit timeout must allow for it.",
         actions: &[
             action("get", "job.get"),
             action("cancel", "job.cancel"),
@@ -1381,6 +1381,114 @@ mod tests {
         );
         resolved.unwrap();
         assert!(validator.is_valid(&input), "{input}");
+    }
+
+    #[test]
+    fn render_schemas_publish_and_forward_the_render_mode() {
+        // Arrange
+        let tools = build_tools().unwrap();
+        let render = tools
+            .iter()
+            .find(|tool| tool.tool.name == "render")
+            .unwrap();
+        let settings = tools
+            .iter()
+            .find(|tool| tool.tool.name == "render_settings")
+            .unwrap();
+        let edit = tools
+            .iter()
+            .find(|tool| tool.tool.name == "session_edit")
+            .unwrap();
+        let start = json!({
+            "action": "start",
+            "params": {
+                "options": {
+                    "range": {"kind": "entireArrangement"},
+                    "normalize": false,
+                    "trackId": null,
+                    "renderMode": "realtime",
+                    "outputPath": null
+                }
+            }
+        });
+        let mixdown = json!({
+            "musicalEndTick": 0,
+            "tailSeconds": 0.0,
+            "fadeOutSeconds": 0.0,
+            "renderMode": "realtime",
+            "mastering": null,
+            "sampleRate": null,
+            "blockSize": null
+        });
+        let save = json!({"action": "set", "params": mixdown.clone()});
+        let update = json!({"action": "settings_update", "params": {"mixdown": mixdown}});
+
+        // Act
+        let command =
+            client::decode_client_command("render.start", start["params"].clone()).unwrap();
+        let encoded = serde_json::to_value(command).unwrap();
+        let updated = serde_json::to_value(
+            client::decode_client_command("session.settings.update", update["params"].clone())
+                .unwrap(),
+        )
+        .unwrap();
+        let modes = |tool: &ToolSpec| {
+            let schema = Value::Object((*tool.tool.input_schema).clone());
+            schema
+                .pointer("/$defs/RenderMode/oneOf")
+                .and_then(Value::as_array)
+                .map(|variants| {
+                    variants
+                        .iter()
+                        .filter_map(|variant| variant["const"].as_str().map(str::to_owned))
+                        .collect::<Vec<_>>()
+                })
+        };
+
+        // Assert
+        for tool in [render, settings, edit] {
+            assert_eq!(
+                modes(tool),
+                Some(vec!["offline".to_owned(), "realtime".to_owned()]),
+                "{}",
+                tool.tool.name
+            );
+        }
+        assert!(
+            render
+                .action_validator(Some("start"))
+                .unwrap()
+                .is_valid(&start)
+        );
+        assert!(
+            settings
+                .action_validator(Some("set"))
+                .unwrap()
+                .is_valid(&save)
+        );
+        assert!(
+            edit.action_validator(Some("settings_update"))
+                .unwrap()
+                .is_valid(&update)
+        );
+        assert_eq!(encoded["params"]["options"]["renderMode"], "realtime");
+        assert_eq!(updated["params"]["mixdown"]["renderMode"], "realtime");
+        let mut fast = start.clone();
+        fast["params"]["options"]["renderMode"] = json!("fast");
+        assert!(
+            !render
+                .action_validator(Some("start"))
+                .unwrap()
+                .is_valid(&fast)
+        );
+        let mut unsupported = update.clone();
+        unsupported["params"]["mixdown"]["renderMode"] = json!("fast");
+        assert!(
+            !edit
+                .action_validator(Some("settings_update"))
+                .unwrap()
+                .is_valid(&unsupported)
+        );
     }
 
     #[test]

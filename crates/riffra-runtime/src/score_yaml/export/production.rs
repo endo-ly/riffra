@@ -90,6 +90,7 @@ fn meta(export: &mut Export<'_>, document: &mut Map<String, Value>) {
         || session.settings.mixdown.sample_rate.is_some()
         || session.settings.mixdown.block_size.is_some()
         || session.settings.mixdown.plugin_warm_up_seconds != 2.0
+        || session.settings.mixdown.render_mode != riffra_core::RenderMode::Offline
     {
         omit(
             &mut export.omissions,

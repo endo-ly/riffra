@@ -3136,6 +3136,31 @@ mod tests {
     }
 
     #[test]
+    fn mixdown_settings_the_score_cannot_express_are_reported() {
+        let root = root("mixdown-omission");
+        catalog(&root);
+        let catalog = crate::test_support::empty_built_in_catalog();
+        let mut session = crate::score_yaml::import::session_from_score(
+            SCORE,
+            &root.join("source"),
+            &root,
+            catalog,
+        );
+        session.settings.mixdown.render_mode = riffra_core::RenderMode::Realtime;
+
+        let exported = exported(&session, &root, catalog);
+
+        assert!(
+            exported
+                .omissions
+                .iter()
+                .any(|omission| omission.subject == "mixdown"),
+            "{:?}",
+            exported.omissions
+        );
+    }
+
+    #[test]
     fn mismatched_regions_fall_back_to_one_song_section() {
         let root = root("regions");
         catalog(&root);

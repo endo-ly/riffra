@@ -104,6 +104,34 @@ TEST(ExecutionGraphContractTest, DecodesRustGeneratedFixtures) {
     EXPECT_EQ(state.parameterValues.size(), 2u);
 }
 
+TEST(ExecutionGraphContractTest, DecodesRenderModeAndDefaultsToOffline) {
+    // Arrange
+    auto request = fixture("offline-render-request.json");
+    juce::String error;
+
+    // Act / Assert: the fixture encodes realtime explicitly.
+    OfflineRenderRequestSpec realtime;
+    ASSERT_TRUE(decodeOfflineRenderRequest(request, realtime, error)) << error;
+    EXPECT_EQ(realtime.renderMode, RenderMode::realtime);
+
+    request.getDynamicObject()->setProperty("renderMode", "offline");
+    OfflineRenderRequestSpec offline;
+    ASSERT_TRUE(decodeOfflineRenderRequest(request, offline, error)) << error;
+    EXPECT_EQ(offline.renderMode, RenderMode::offline);
+
+    // A request written before the field existed stays offline.
+    request.getDynamicObject()->removeProperty("renderMode");
+    OfflineRenderRequestSpec omitted;
+    ASSERT_TRUE(decodeOfflineRenderRequest(request, omitted, error)) << error;
+    EXPECT_EQ(omitted.renderMode, RenderMode::offline);
+
+    request.getDynamicObject()->setProperty("renderMode", "fast");
+    OfflineRenderRequestSpec invalid;
+    error.clear();
+    EXPECT_FALSE(decodeOfflineRenderRequest(request, invalid, error));
+    EXPECT_TRUE(error.contains("request.renderMode")) << error;
+}
+
 TEST(ExecutionGraphContractTest, ValidatesDistinctStemOutputs) {
     auto request = fixture("offline-render-request.json");
     request.getDynamicObject()->setProperty(
