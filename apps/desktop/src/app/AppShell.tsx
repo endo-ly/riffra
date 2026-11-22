@@ -17,7 +17,6 @@ import { NoticeBar } from '@/app/status/NoticeBar';
 import { WorkspaceWait } from '@/app/status/WorkspaceWait';
 import { LeftColumn } from '@/app/layout/LeftColumn';
 import { CommandPalette } from '@/app/layout/CommandPalette';
-import { useAppUpdater } from '@/app/hooks/useAppUpdater';
 import shellStyles from './AppShell.module.css';
 
 export function AppShell() {
@@ -35,7 +34,12 @@ export function AppShell() {
   const hostReason = useSession((state) => state.host.connection.reason);
   const hostConnected = useSession(selectHostReady);
   const { placeAtPlayhead } = usePlaceBrowserItem(commit);
-  const appUpdater = useAppUpdater();
+  const checkForUpdate = useSession((state) => state.appUpdate.checkNow);
+  const checkForUpdateOnStartup = useSession((state) => state.appUpdate.checkOnStartup);
+
+  useEffect(() => {
+    void checkForUpdateOnStartup();
+  }, [checkForUpdateOnStartup]);
 
   useEffect(() => {
     if (!hostConnected) {
@@ -75,7 +79,7 @@ export function AppShell() {
       section: 'SETTINGS',
       label: 'Check for Updates',
       description: 'Check GitHub Releases for a newer Riffra',
-      run: () => void appUpdater.checkNow(),
+      run: () => void checkForUpdate(),
     },
     {
       section: 'SETTINGS',
@@ -96,7 +100,7 @@ export function AppShell() {
         <AudioSettingsDialog onClose={() => setAudioSettingsOpen(false)} />
       )}
 
-      <NoticeBar appUpdater={appUpdater} />
+      <NoticeBar />
 
       <LeftColumn
         browser={<BrowserPanel onApply={(placement) => void placeAtPlayhead(placement)} />}

@@ -22,18 +22,27 @@ function loadingProgress(
 }
 
 /**
- * Describes why editing waits. The reason comes from the Host connection, an
- * opening Project, or the device load, in that order; the device load also
- * reports its progress inside an opening Project, because opening one returns
- * only after its instruments are loaded.
+ * Describes why editing waits. The reason comes from an update install, the
+ * Host connection, an opening Project, or the device load, in that order; the
+ * device load also reports its progress inside an opening Project, because
+ * opening one returns only after its instruments are loaded.
  */
 export function useWorkspaceWait(): WaitCardProps | null {
+  const installingUpdate = useSession((state) => state.appUpdate.installing);
   const host = useSession((state) => state.host);
   const projectSwitching = useSession((state) => state.project.switching);
   const projection = useSession((state) => state.runtime.projection);
   const tracks = useSession(
     (state) => state.project.boot?.canonical.session.arrangement.tracks ?? NO_TRACKS,
   );
+  // Installing shuts the Host down, so the Host states it causes are not
+  // reasons of their own.
+  if (installingUpdate) {
+    return {
+      title: 'Installing update',
+      message: 'Riffra restarts when the update is installed.',
+    };
+  }
   if (host.switching) {
     return {
       title: 'Connecting to Host',

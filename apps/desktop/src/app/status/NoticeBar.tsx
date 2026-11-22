@@ -1,4 +1,3 @@
-import type { useAppUpdater } from '@/app/hooks/useAppUpdater';
 import { BackgroundJobNotice } from './BackgroundJobNotice';
 import { PreviewModeNotice } from './PreviewModeNotice';
 import { PlaybackNotice } from './PlaybackNotice';
@@ -13,7 +12,7 @@ import styles from './NoticeBar.module.css';
  * App-wide conditions that continue alongside editing, docked below the
  * Global Control Bar. The order here is the display order: danger, then warning, then info.
  */
-export function NoticeBar({ appUpdater }: { appUpdater: ReturnType<typeof useAppUpdater> }) {
+export function NoticeBar() {
   return (
     <div className={styles.noticeBar}>
       <ScoreSyncNotice />
@@ -22,7 +21,7 @@ export function NoticeBar({ appUpdater }: { appUpdater: ReturnType<typeof useApp
       <SafeModeNotice />
       <RecoveryNotice />
       <BackgroundJobNotice />
-      <UpdateNotice appUpdater={appUpdater} />
+      <UpdateNotice />
       <PreviewModeNotice />
     </div>
   );

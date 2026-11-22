@@ -19,6 +19,7 @@ import {
   type WorkspaceSlice,
 } from '@/session/slices/workspace';
 import { createProjectSlice, type ProjectSlice } from '@/session/slices/project';
+import { createAppUpdateSlice, type AppUpdateSlice } from '@/session/slices/app-update';
 import { selectStartupRestoreReady } from './selectors';
 
 export interface SessionScope {
@@ -40,6 +41,7 @@ export interface SessionState {
   catalog: CatalogSlice;
   missing: MissingSlice;
   workspace: WorkspaceSlice;
+  appUpdate: AppUpdateSlice;
   commit: SessionCommit;
   readModel: SessionReadModel | null;
 }
@@ -82,6 +84,11 @@ export function createSessionStore(api: NativeApi): SessionStore {
             get().missing.reset();
             get().workspace.reset();
           },
+        ),
+        appUpdate: createAppUpdateSlice(
+          api,
+          () => get().appUpdate,
+          (patch) => set((state) => ({ appUpdate: { ...state.appUpdate, ...patch } })),
         ),
         workspace: createWorkspaceSlice(
           () => get().workspace,
