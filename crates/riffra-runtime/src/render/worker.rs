@@ -9,12 +9,19 @@ use crate::render::{OfflineRenderRequest, OfflineRenderTarget};
 use std::{
     io::{Read, Write},
     path::PathBuf,
-    process::{Output, Stdio},
+    process::{Child, ChildStdin, Output, Stdio},
     sync::atomic::{AtomicBool, Ordering},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use thiserror::Error;
+
+/// How often the parent re-checks a running worker for cancellation and exit.
+const WORKER_POLL_INTERVAL: Duration = Duration::from_millis(25);
+/// How long a cancelled worker may take to observe its closed request pipe before it is
+/// killed. A worker inside third-party plugin code cannot observe the request at all, and
+/// cancellation must still complete.
+const CANCEL_GRACE: Duration = Duration::from_millis(500);
 
 /// Failure reported while invoking the offline render worker.
 #[derive(Debug, Error)]
@@ -79,9 +86,9 @@ impl RenderWorker {
     fn render_with_cancellation(
         &self,
         request: OfflineRenderRequest,
-        cancelled: Option<&AtomicBool>,
+        cancelled: &AtomicBool,
     ) -> Result<Vec<String>, RenderWorkerError> {
-        if cancelled.is_some_and(|flag| flag.load(Ordering::Acquire)) {
+        if cancelled.load(Ordering::Acquire) {
             return Err(RenderWorkerError::Cancelled);
         }
         let payload = OfflineRenderEnvelope::RenderTimelineOffline {
@@ -118,6 +125,7 @@ impl RenderWorker {
                 sample_rate: request.sample_rate,
                 block_size: request.block_size,
                 normalize: request.normalize,
+                render_mode: request.render_mode,
             },
         };
         let encoded = serde_json::to_vec(&payload).map_err(RenderWorkerError::Encode)?;
@@ -128,20 +136,16 @@ impl RenderWorker {
             .stderr(Stdio::piped())
             .spawn()
             .map_err(RenderWorkerError::Spawn)?;
-        let mut input = child.stdin.take().ok_or_else(|| {
+        let mut request_pipe = child.stdin.take().ok_or_else(|| {
             RenderWorkerError::Write(std::io::Error::new(
                 std::io::ErrorKind::BrokenPipe,
                 "render worker standard input is unavailable",
             ))
         })?;
-        input
+        request_pipe
             .write_all(&encoded)
-            .and_then(|()| input.write_all(b"\n"))
+            .and_then(|()| request_pipe.write_all(b"\n"))
             .map_err(RenderWorkerError::Write)?;
-        drop(input);
-        if cancelled.is_none() {
-            return self.handle_output(child.wait_with_output().map_err(RenderWorkerError::Wait)?);
-        }
         let mut stdout = child.stdout.take().ok_or_else(|| {
             RenderWorkerError::Wait(std::io::Error::other(
                 "render worker standard output is unavailable",
@@ -160,20 +164,18 @@ impl RenderWorker {
             let mut bytes = Vec::new();
             stderr.read_to_end(&mut bytes).map(|_| bytes)
         });
-        loop {
-            if cancelled.is_some_and(|flag| flag.load(Ordering::Acquire)) {
-                let _ = child.kill();
-                let _ = child.wait();
+        let status = loop {
+            if cancelled.load(Ordering::Acquire) {
+                Self::stop_child(&mut child, request_pipe);
                 let _ = stdout_reader.join();
                 let _ = stderr_reader.join();
                 return Err(RenderWorkerError::Cancelled);
             }
             match child.try_wait().map_err(RenderWorkerError::Wait)? {
-                Some(_) => break,
-                None => thread::sleep(Duration::from_millis(25)),
+                Some(status) => break status,
+                None => thread::sleep(WORKER_POLL_INTERVAL),
             }
-        }
-        let status = child.wait().map_err(RenderWorkerError::Wait)?;
+        };
         let stdout = stdout_reader
             .join()
             .map_err(|_| RenderWorkerError::Wait(std::io::Error::other("stdout reader panicked")))?
@@ -187,6 +189,22 @@ impl RenderWorker {
             stdout,
             stderr,
         })
+    }
+
+    /// Asks the worker to stop by closing its request pipe, then kills it when it does not
+    /// exit within the grace period.
+    fn stop_child(child: &mut Child, request_pipe: ChildStdin) {
+        drop(request_pipe);
+        let deadline = Instant::now() + CANCEL_GRACE;
+        while Instant::now() < deadline {
+            match child.try_wait() {
+                Ok(Some(_)) => return,
+                Ok(None) => thread::sleep(WORKER_POLL_INTERVAL),
+                Err(_) => break,
+            }
+        }
+        let _ = child.kill();
+        let _ = child.wait();
     }
 
     fn handle_output(&self, output: Output) -> Result<Vec<String>, RenderWorkerError> {
@@ -224,7 +242,7 @@ impl RenderWorker {
         request: OfflineRenderRequest,
         cancelled: &AtomicBool,
     ) -> Result<Vec<String>, String> {
-        self.render_with_cancellation(request, Some(cancelled))
+        self.render_with_cancellation(request, cancelled)
             .map_err(|error| error.to_string())
     }
 }
@@ -276,6 +294,7 @@ mod tests {
             sample_rate: 48_000,
             block_size: 512,
             normalize: false,
+            render_mode: riffra_core::RenderMode::Offline,
         }
     }
 

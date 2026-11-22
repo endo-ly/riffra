@@ -270,6 +270,7 @@ pub(crate) struct OfflineRenderRequest {
     pub(crate) sample_rate: u32,
     pub(crate) block_size: u32,
     pub(crate) normalize: bool,
+    pub(crate) render_mode: riffra_core::RenderMode,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -678,6 +679,7 @@ mod tests {
                     sample_rate: 48_000,
                     block_size: 512,
                     normalize: true,
+                    render_mode: riffra_core::RenderMode::Realtime,
                 })
                 .unwrap(),
             ),
@@ -712,6 +714,7 @@ mod tests {
                     sample_rate: 48_000,
                     block_size: 512,
                     normalize: false,
+                    render_mode: riffra_core::RenderMode::Offline,
                 })
                 .unwrap(),
             ),

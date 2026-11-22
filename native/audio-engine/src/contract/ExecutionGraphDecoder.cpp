@@ -1003,9 +1003,10 @@ bool decodeOfflineRenderRequest(const juce::var& value, OfflineRenderRequestSpec
                                 juce::String& error) {
     ContractReader reader(value, "request",
                           {"graph", "output", "startTick", "endTick", "sampleRate", "blockSize",
-                           "normalize", "tailSeconds", "includeEndEvents"},
+                           "normalize", "tailSeconds", "includeEndEvents", "renderMode"},
                           error);
     juce::var graph, target;
+    juce::String renderMode{"offline"};
     if (!reader.object("graph", graph) || !reader.object("output", target) ||
         !reader.unsignedInteger("startTick", output.startTick) ||
         !reader.unsignedInteger("endTick", output.endTick) ||
@@ -1013,8 +1014,17 @@ bool decodeOfflineRenderRequest(const juce::var& value, OfflineRenderRequestSpec
         !reader.unsigned32("blockSize", output.blockSize) ||
         !reader.number("tailSeconds", output.tailSeconds) ||
         !reader.boolean("includeEndEvents", output.includeEndEvents) ||
-        !reader.boolean("normalize", output.normalize) || !reader.finish())
+        !reader.boolean("normalize", output.normalize) ||
+        (value.hasProperty("renderMode") && !reader.string("renderMode", renderMode)) ||
+        !reader.finish())
         return false;
+    if (renderMode == "offline") {
+        output.renderMode = RenderMode::offline;
+    } else if (renderMode == "realtime") {
+        output.renderMode = RenderMode::realtime;
+    } else {
+        return fail(error, "request.renderMode", unknownValue(renderMode));
+    }
     if (!decodeGraph(graph, "request.graph", output.graph, error)) return false;
     output.destination.clear();
     output.stems.clear();

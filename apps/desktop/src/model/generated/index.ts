@@ -334,6 +334,7 @@ export type { RenderExportResult } from './RenderExportResult';
 export type { RenderFileStatus } from './RenderFileStatus';
 export type { RenderHistoryEntry } from './RenderHistoryEntry';
 export type { RenderKind } from './RenderKind';
+export type { RenderMode } from './RenderMode';
 export type { RenderOptions } from './RenderOptions';
 export type { RenderRange } from './RenderRange';
 export type { RenderResult } from './RenderResult';

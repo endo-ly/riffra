@@ -34,6 +34,7 @@ pub(crate) struct OfflineRenderRequest {
     pub(crate) sample_rate: u32,
     pub(crate) block_size: u32,
     pub(crate) normalize: bool,
+    pub(crate) render_mode: riffra_core::RenderMode,
 }
 
 pub(crate) enum OfflineRenderTarget {
@@ -89,6 +90,7 @@ struct RenderPlan {
     start_tick: u64,
     end_tick: u64,
     sample_rate: u32,
+    render_mode: riffra_core::RenderMode,
     clip_count: usize,
     source_ids: Vec<AssetId>,
     output_path: PathBuf,
@@ -292,6 +294,7 @@ fn render_timeline_pending(
         sample_rate: plan.sample_rate,
         block_size: plan.block_size,
         normalize: options.normalize && session.settings.mixdown.mastering.is_none(),
+        render_mode: plan.render_mode,
     })?;
     if cancelled.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire)) {
         return Err("Timeline render was cancelled.".into());
@@ -706,6 +709,7 @@ fn render_capture_pending(
         range: params.range.clone(),
         normalize: false,
         track_id: None,
+        render_mode: None,
         output_path: None,
     };
     let plan = build_render_plan_with_required(
@@ -783,6 +787,7 @@ fn render_capture_pending(
         sample_rate: plan.sample_rate,
         block_size: plan.block_size,
         normalize: false,
+        render_mode: plan.render_mode,
     })?;
     let mut captures = Vec::with_capacity(outputs.len());
     let mut frames = None;
@@ -989,6 +994,7 @@ fn render_stems_pending(
         range: range.clone(),
         normalize: false,
         track_id: None,
+        render_mode: None,
         output_path: None,
     };
     let plan = build_render_plan_with_required(
@@ -1024,6 +1030,7 @@ fn render_stems_pending(
         sample_rate: plan.sample_rate,
         block_size: plan.block_size,
         normalize: false,
+        render_mode: plan.render_mode,
     })
     .map_err(|e| format!("stem rendering failed: {e}"))?;
     for (index, track) in selected_tracks.into_iter().enumerate() {
@@ -1389,6 +1396,9 @@ fn build_render_plan_with_required(
         start_tick: conditions.start_tick,
         end_tick: conditions.end_tick,
         sample_rate: conditions.sample_rate,
+        render_mode: options
+            .render_mode
+            .unwrap_or(session.settings.mixdown.render_mode),
         clip_count,
         source_ids,
         output_path: data_root
@@ -3271,6 +3281,7 @@ pub(super) mod tests {
         .unwrap();
         assert!(plan.source_ids.is_empty());
         assert_eq!(plan.sample_rate, DEFAULT_OFFLINE_SAMPLE_RATE);
+        assert_eq!(plan.render_mode, riffra_core::RenderMode::Offline);
         assert_eq!(plan.output_path.file_name().unwrap(), "timeline.wav");
         assert!(
             plan.output_path
@@ -3281,6 +3292,41 @@ pub(super) mod tests {
                 .to_string_lossy()
                 .starts_with("render-1-")
         );
+    }
+
+    #[test]
+    fn render_mode_prefers_the_job_override_over_the_project_setting() {
+        // Arrange
+        let root = std::env::temp_dir().join("riffra-render-mode-plan");
+        let mut session = session_with_clips();
+        session.settings.mixdown.render_mode = riffra_core::RenderMode::Realtime;
+
+        // Act
+        let project = build_render_plan(
+            &root,
+            empty_catalog(),
+            &session,
+            1,
+            &RenderOptions::default(),
+            None,
+        )
+        .unwrap();
+        let overridden = build_render_plan(
+            &root,
+            empty_catalog(),
+            &session,
+            1,
+            &RenderOptions {
+                render_mode: Some(riffra_core::RenderMode::Offline),
+                ..RenderOptions::default()
+            },
+            None,
+        )
+        .unwrap();
+
+        // Assert
+        assert_eq!(project.render_mode, riffra_core::RenderMode::Realtime);
+        assert_eq!(overridden.render_mode, riffra_core::RenderMode::Offline);
     }
 
     #[test]

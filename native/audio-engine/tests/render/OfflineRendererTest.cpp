@@ -1,8 +1,41 @@
 #include <gtest/gtest.h>
 
+#include <chrono>
+#include <thread>
+
 #include "support/TimelineTestSupport.h"
 
 namespace riffra {
+namespace {
+
+struct ClockedRender final {
+    bool rendered = false;
+    juce::String error;
+    OfflineRenderer::Result result;
+    std::chrono::steady_clock::duration elapsed{};
+};
+
+ClockedRender renderRange(const ExecutionGraph& graph, juce::AudioFormatManager& formats,
+                          const juce::File& destination, const std::uint64_t startTick,
+                          const std::uint64_t endTick, const RenderMode renderMode) {
+    OfflineRenderRequestSpec request;
+    request.graph = graph;
+    request.destination = destination.getFullPathName();
+    request.startTick = startTick;
+    request.endTick = endTick;
+    request.sampleRate = 48'000;
+    request.blockSize = 512;
+    request.renderMode = renderMode;
+    ClockedRender rendered;
+    const auto renderer = OfflineRenderer::prepare(request, formats, rendered.error);
+    if (renderer == nullptr) return rendered;
+    const auto started = std::chrono::steady_clock::now();
+    rendered.rendered = renderer->render(formats, rendered.result, rendered.error);
+    rendered.elapsed = std::chrono::steady_clock::now() - started;
+    return rendered;
+}
+
+}  // namespace
 
 TEST(OfflineRendererTest, RendersBuiltInAndAutomatedVst3InstrumentsThroughOfflineRenderer) {
     juce::ScopedJuceInitialiser_GUI initialiser;
@@ -172,6 +205,102 @@ TEST(OfflineRendererTest, NormalizesAnOfflineRenderToTheTargetPeak) {
     const auto peak = std::max(rendered.getMagnitude(0, 0, sampleCount),
                                rendered.getMagnitude(1, 0, sampleCount));
     EXPECT_NEAR(peak, 0.98f, 0.02f);
+}
+
+TEST(OfflineRendererTest, OfflineRenderCompletesFasterThanRealTime) {
+    // Arrange: 4 seconds of audio.
+    juce::ScopedJuceInitialiser_GUI initialiser;
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    test::TemporaryDirectory directory;
+    auto snapshot = makeBuiltInInstrumentSnapshot("track:offline-pace");
+
+    // Act
+    const auto render =
+        renderRange(snapshot.graph, formats, directory.get().getChildFile("offline.wav"), 0, 7'680,
+                    RenderMode::offline);
+
+    // Assert
+    ASSERT_TRUE(render.rendered) << render.error;
+    EXPECT_LT(render.elapsed, std::chrono::seconds(2));
+}
+
+TEST(OfflineRendererTest, RealtimeRenderFollowsWallClockPace) {
+    // Arrange: 0.2 seconds of audio at 120 BPM.
+    juce::ScopedJuceInitialiser_GUI initialiser;
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    test::TemporaryDirectory directory;
+    auto snapshot = makeBuiltInInstrumentSnapshot("track:realtime-pace");
+
+    // Act
+    const auto render =
+        renderRange(snapshot.graph, formats, directory.get().getChildFile("realtime.wav"), 0, 384,
+                    RenderMode::realtime);
+
+    // Assert
+    ASSERT_TRUE(render.rendered) << render.error;
+    EXPECT_GE(render.elapsed, std::chrono::milliseconds(200));
+}
+
+TEST(OfflineRendererTest, RealtimeRenderOfALaterRangePacesFromItsFirstBlock) {
+    // Arrange: the range starts 0.5 seconds into the timeline and lasts 0.2 seconds. The engine
+    // processes the graph from the timeline start up to the end tick, so the whole 0.7 seconds
+    // paces; the later start position is not slept a second time.
+    juce::ScopedJuceInitialiser_GUI initialiser;
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    test::TemporaryDirectory directory;
+    auto snapshot = makeBuiltInInstrumentSnapshot("track:range-pace");
+
+    // Act
+    const auto render =
+        renderRange(snapshot.graph, formats, directory.get().getChildFile("range.wav"), 960, 1'344,
+                    RenderMode::realtime);
+
+    // Assert: pacing counts processed samples, not the timeline position, so the render takes
+    // about 0.7 seconds and never the extra 0.5 seconds of the start position.
+    ASSERT_TRUE(render.rendered) << render.error;
+    EXPECT_GE(render.elapsed, std::chrono::milliseconds(700));
+    EXPECT_LT(render.elapsed, std::chrono::seconds(1));
+    EXPECT_EQ(render.result.frames, 9'600u);
+}
+
+TEST(OfflineRendererTest, CancellingARealtimeRenderStopsTheWaitPromptly) {
+    // Arrange: 10 seconds of realtime audio, cancelled while the first blocks are paced.
+    juce::ScopedJuceInitialiser_GUI initialiser;
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    test::TemporaryDirectory directory;
+    auto snapshot = makeBuiltInInstrumentSnapshot("track:cancel");
+    const auto destination = directory.get().getChildFile("cancelled.wav");
+    OfflineRenderRequestSpec request;
+    request.graph = snapshot.graph;
+    request.destination = destination.getFullPathName();
+    request.endTick = 19'200;
+    request.sampleRate = 48'000;
+    request.blockSize = 512;
+    request.renderMode = RenderMode::realtime;
+    juce::String error;
+    const auto renderer = OfflineRenderer::prepare(request, formats, error);
+    ASSERT_NE(renderer, nullptr) << error;
+    OfflineRenderer::Result result;
+    auto rendered = true;
+    std::chrono::steady_clock::time_point cancelledAt;
+
+    // Act
+    std::thread renderThread([&] { rendered = renderer->render(formats, result, error); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    cancelledAt = std::chrono::steady_clock::now();
+    renderer->cancel();
+    renderThread.join();
+
+    // Assert: the wait observes the request instead of running to the end of the range.
+    EXPECT_FALSE(rendered);
+    EXPECT_TRUE(error.containsIgnoreCase("cancelled")) << error;
+    EXPECT_LT(std::chrono::steady_clock::now() - cancelledAt, std::chrono::milliseconds(100));
+    EXPECT_FALSE(destination.existsAsFile());
+    EXPECT_FALSE(destination.getSiblingFile("cancelled.wav.partial").existsAsFile());
 }
 
 }  // namespace riffra

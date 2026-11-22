@@ -44,7 +44,7 @@ pub enum RenderRange {
     },
 }
 
-/// Range, normalization, and Track selection of an offline render.
+/// Range, normalization, Track selection, and pacing of an offline render.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(optional_fields = nullable)]
@@ -54,6 +54,9 @@ pub struct RenderOptions {
     #[serde(default)]
     pub normalize: bool,
     pub track_id: Option<String>,
+    /// Pacing for this job; overrides the Project's Mixdown settings when present.
+    #[serde(default)]
+    pub render_mode: Option<riffra_core::RenderMode>,
     /// Absolute path for a completed WAV copy outside Riffra's render store.
     pub output_path: Option<String>,
 }
