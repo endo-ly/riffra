@@ -1395,6 +1395,10 @@ mod tests {
             .iter()
             .find(|tool| tool.tool.name == "render_settings")
             .unwrap();
+        let edit = tools
+            .iter()
+            .find(|tool| tool.tool.name == "session_edit")
+            .unwrap();
         let start = json!({
             "action": "start",
             "params": {
@@ -1407,23 +1411,27 @@ mod tests {
                 }
             }
         });
-        let save = json!({
-            "action": "set",
-            "params": {
-                "musicalEndTick": 0,
-                "tailSeconds": 0.0,
-                "fadeOutSeconds": 0.0,
-                "renderMode": "realtime",
-                "mastering": null,
-                "sampleRate": null,
-                "blockSize": null
-            }
+        let mixdown = json!({
+            "musicalEndTick": 0,
+            "tailSeconds": 0.0,
+            "fadeOutSeconds": 0.0,
+            "renderMode": "realtime",
+            "mastering": null,
+            "sampleRate": null,
+            "blockSize": null
         });
+        let save = json!({"action": "set", "params": mixdown.clone()});
+        let update = json!({"action": "settings_update", "params": {"mixdown": mixdown}});
 
         // Act
         let command =
             client::decode_client_command("render.start", start["params"].clone()).unwrap();
         let encoded = serde_json::to_value(command).unwrap();
+        let updated = serde_json::to_value(
+            client::decode_client_command("session.settings.update", update["params"].clone())
+                .unwrap(),
+        )
+        .unwrap();
         let modes = |tool: &ToolSpec| {
             let schema = Value::Object((*tool.tool.input_schema).clone());
             schema
@@ -1438,14 +1446,14 @@ mod tests {
         };
 
         // Assert
-        assert_eq!(
-            modes(render),
-            Some(vec!["offline".to_owned(), "realtime".to_owned()])
-        );
-        assert_eq!(
-            modes(settings),
-            Some(vec!["offline".to_owned(), "realtime".to_owned()])
-        );
+        for tool in [render, settings, edit] {
+            assert_eq!(
+                modes(tool),
+                Some(vec!["offline".to_owned(), "realtime".to_owned()]),
+                "{}",
+                tool.tool.name
+            );
+        }
         assert!(
             render
                 .action_validator(Some("start"))
@@ -1458,7 +1466,13 @@ mod tests {
                 .unwrap()
                 .is_valid(&save)
         );
+        assert!(
+            edit.action_validator(Some("settings_update"))
+                .unwrap()
+                .is_valid(&update)
+        );
         assert_eq!(encoded["params"]["options"]["renderMode"], "realtime");
+        assert_eq!(updated["params"]["mixdown"]["renderMode"], "realtime");
         let mut fast = start.clone();
         fast["params"]["options"]["renderMode"] = json!("fast");
         assert!(
@@ -1466,6 +1480,14 @@ mod tests {
                 .action_validator(Some("start"))
                 .unwrap()
                 .is_valid(&fast)
+        );
+        let mut unsupported = update.clone();
+        unsupported["params"]["mixdown"]["renderMode"] = json!("fast");
+        assert!(
+            !edit
+                .action_validator(Some("settings_update"))
+                .unwrap()
+                .is_valid(&unsupported)
         );
     }
 
