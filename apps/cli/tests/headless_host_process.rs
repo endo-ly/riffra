@@ -260,50 +260,6 @@ fn standalone_one_shot_failure_returns_structured_json() {
 }
 
 #[test]
-fn attached_one_shot_conflict_returns_structured_json() {
-    let mut host = RunningHost::start(true);
-    let data_root_string = host.data_root().to_string_lossy().into_owned();
-    let hosts = success_json(host_list(), "host list");
-    let instance_id = hosts
-        .as_array()
-        .expect("host list should return an array")
-        .iter()
-        .find(|entry| {
-            entry.get("dataRoot").and_then(Value::as_str) == Some(data_root_string.as_str())
-        })
-        .and_then(|entry| entry.get("instanceId").and_then(Value::as_str))
-        .expect("the started Host should be discoverable")
-        .to_owned();
-
-    let output = attached(
-        &instance_id,
-        &[
-            "--expected-sequence",
-            "999",
-            "track",
-            "add",
-            "--name",
-            "Conflict",
-            "--kind",
-            "instrument",
-        ],
-    );
-    let body = structured_failure_json(output, "attached track.add conflict");
-    assert_eq!(body["requestId"], "one-shot");
-    assert_eq!(body["ok"], false);
-    assert_eq!(body["error"]["code"], "conflict");
-    assert!(body["error"]["details"]["expectedSequence"].is_number());
-    assert!(body["error"]["details"]["currentSequence"].is_number());
-
-    let shutdown = success_json(
-        attached(&instance_id, &["host", "shutdown"]),
-        "host.shutdown",
-    );
-    assert_eq!(shutdown["result"]["type"], "ok");
-    host.wait_for_shutdown();
-}
-
-#[test]
 fn headless_host_process_covers_lifecycle_and_mode_contracts() {
     let safe_mode = match std::env::var("RIFFRA_HEADLESS_SAFE_MODE").as_deref() {
         Ok("0") => false,
@@ -345,8 +301,6 @@ fn headless_host_process_covers_lifecycle_and_mode_contracts() {
         attached(
             instance_id,
             &[
-                "--expected-sequence",
-                "0",
                 "track",
                 "add",
                 "--name",
@@ -367,13 +321,7 @@ fn headless_host_process_covers_lifecycle_and_mode_contracts() {
     );
     assert!(track["result"]["value"].get("canonical").is_none());
 
-    let undo = success_json(
-        attached(
-            instance_id,
-            &["--expected-sequence", "1", "history", "undo"],
-        ),
-        "undo",
-    );
+    let undo = success_json(attached(instance_id, &["history", "undo"]), "undo");
     assert_eq!(undo["result"]["type"], "mutation");
     assert_eq!(undo["sequence"], 2);
     assert!(undo["result"]["value"].get("canonical").is_none());

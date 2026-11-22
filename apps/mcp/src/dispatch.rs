@@ -45,10 +45,6 @@ pub(crate) async fn execute(
     let expected_project_id = arguments
         .remove("expectedProjectId")
         .and_then(|value| value.as_str().map(str::to_owned));
-    let expected_sequence = match take_expected_sequence(&mut arguments) {
-        Ok(sequence) => sequence,
-        Err(error) => return tool_error(error),
-    };
     if !arguments.is_empty() {
         let unknown = arguments.keys().cloned().collect::<Vec<_>>().join(", ");
         return tool_error(ProtocolError::new(
@@ -66,10 +62,8 @@ pub(crate) async fn execute(
         Err(error) => return tool_error(error),
     };
     let command_name = command.name().to_owned();
-    let response = tokio::task::spawn_blocking(move || {
-        bridge.request(command, expected_project_id, expected_sequence)
-    })
-    .await;
+    let response =
+        tokio::task::spawn_blocking(move || bridge.request(command, expected_project_id)).await;
     match response {
         Ok(Ok(response)) => response_result(&command_name, response),
         Ok(Err(error)) => tool_error(error),
@@ -78,37 +72,6 @@ pub(crate) async fn execute(
             format!("Host request task failed: {error}"),
         )),
     }
-}
-
-fn take_expected_sequence(arguments: &mut JsonObject) -> Result<Option<u64>, ProtocolError> {
-    let Some(value) = arguments.remove("expectedSequence") else {
-        return Ok(None);
-    };
-    let Some(number) = value.as_number() else {
-        return Err(invalid_expected_sequence());
-    };
-    if let Some(sequence) = number.as_u64() {
-        return Ok(Some(sequence));
-    }
-    let Some(sequence) = number.as_f64() else {
-        return Err(invalid_expected_sequence());
-    };
-    if !sequence.is_finite()
-        || sequence.fract() != 0.0
-        || sequence < 0.0
-        || sequence >= 18_446_744_073_709_551_616.0
-    {
-        return Err(invalid_expected_sequence());
-    }
-    Ok(Some(sequence as u64))
-}
-
-fn invalid_expected_sequence() -> ProtocolError {
-    ProtocolError::new(
-        ErrorCode::InvalidRequest,
-        "expectedSequence must be a non-negative integer",
-    )
-    .with_details(json!({ "path": "/expectedSequence" }))
 }
 
 async fn wait_for_job(
@@ -127,11 +90,7 @@ async fn wait_for_job(
         let job_id = params.id.clone();
         let bridge_for_request = Arc::clone(&bridge);
         let response = tokio::task::spawn_blocking(move || {
-            bridge_for_request.request(
-                RuntimeCommand::JobGet(IdParams { id: job_id }).into(),
-                None,
-                None,
-            )
+            bridge_for_request.request(RuntimeCommand::JobGet(IdParams { id: job_id }).into(), None)
         })
         .await;
         let response = match response {
@@ -286,52 +245,6 @@ impl BackgroundJobStatusState for BackgroundJobStatus {
             | Self::RenderCapture { state, .. }
             | Self::AnalysisLevels { state, .. }
             | Self::AnalysisMeasure { state, .. } => *state,
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn expected_sequence_accepts_integral_json_numbers() {
-        // Arrange
-        let mut integer = json!({ "expectedSequence": 42 })
-            .as_object()
-            .unwrap()
-            .clone();
-        let mut float = json!({ "expectedSequence": 42.0 })
-            .as_object()
-            .unwrap()
-            .clone();
-        let mut missing = JsonObject::new();
-
-        // Act / Assert
-        assert_eq!(take_expected_sequence(&mut integer).unwrap(), Some(42));
-        assert_eq!(take_expected_sequence(&mut float).unwrap(), Some(42));
-        assert_eq!(take_expected_sequence(&mut missing).unwrap(), None);
-    }
-
-    #[test]
-    fn expected_sequence_rejects_values_that_cannot_be_converted() {
-        // Arrange
-        let invalid = [
-            json!(42.5),
-            json!("42"),
-            json!(-1),
-            json!(18_446_744_073_709_551_616.0),
-        ];
-
-        // Act / Assert
-        for value in invalid {
-            let mut arguments = json!({ "expectedSequence": value })
-                .as_object()
-                .unwrap()
-                .clone();
-            let error = take_expected_sequence(&mut arguments).unwrap_err();
-            assert_eq!(error.code, ErrorCode::InvalidRequest);
-            assert_eq!(error.details.unwrap()["path"], "/expectedSequence");
         }
     }
 }

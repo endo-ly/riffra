@@ -27,7 +27,6 @@ pub(crate) fn connect(requested: Option<&str>) -> Result<HostSelection, String> 
                 format!("riffra-mcp-discovery-{}", registration.instance_id),
                 "host.status",
                 json!({}),
-                None,
             )
         })
         .map_err(|error| format!("Riffra Host discovery failed: {error}"))?;
@@ -112,7 +111,6 @@ impl HostBridge {
         &self,
         command: ControlCommand,
         expected_project_id: Option<String>,
-        expected_sequence: Option<u64>,
     ) -> Result<ControlResponse, ProtocolError> {
         let expected_project_id = match (command.policy().scope, expected_project_id) {
             (_, Some(project_id)) => Some(project_id),
@@ -120,7 +118,7 @@ impl HostBridge {
             (CommandScope::Host, None) => None,
         };
         let command_name = command.name().to_owned();
-        let mut request = command.into_request(self.request_id(), expected_sequence);
+        let mut request = command.into_request(self.request_id());
         request.expected_project_id = expected_project_id;
         tracing::debug!(
             command = command_name,
@@ -134,7 +132,7 @@ impl HostBridge {
         let mut request = ControlCommand::from(riffra_runtime::api::ProjectCommand::ProjectList(
             EmptyParams {},
         ))
-        .into_request(self.request_id(), None);
+        .into_request(self.request_id());
         request.expected_project_id = None;
         let response = self.client.request(&request).map_err(host_error)?;
         if !response.ok {

@@ -76,10 +76,6 @@ fn main() {
             eprintln!("riffra: instrument passthrough cannot be combined with --host");
             std::process::exit(1);
         }
-        if cli.expected_sequence.is_some() {
-            eprintln!("riffra: instrument passthrough cannot be combined with --expected-sequence");
-            std::process::exit(1);
-        }
         if let Err(error) = instrument::run(command, cli.data_root.as_deref()) {
             if !error.message.is_empty() {
                 eprintln!("riffra: {}", error.message);
@@ -114,7 +110,6 @@ fn run(cli: Cli) -> Result<(), RunFailure> {
     let plugin_state_read_output = cli.plugin_state_read_output();
     let audio_diagnostics_options = cli.audio_diagnostics_options();
     let host_id = cli.host.clone();
-    let expected_sequence = cli.expected_sequence;
     let batch_operation_lines = cli.batch_operation_lines()?;
     let is_host_list = matches!(
         cli.command.as_ref(),
@@ -159,9 +154,6 @@ fn run(cli: Cli) -> Result<(), RunFailure> {
         if data_root.is_some() {
             return Err("host list does not use --data-root".into());
         }
-        if expected_sequence.is_some() {
-            return Err("host list cannot be combined with --expected-sequence".into());
-        }
         return list_hosts().map_err(RunFailure::Local);
     }
     if let Some(CliCommand::Serve(args)) = cli.command.as_ref() {
@@ -170,9 +162,6 @@ fn run(cli: Cli) -> Result<(), RunFailure> {
         }
         if interactive {
             return Err("serve cannot be combined with --interactive".into());
-        }
-        if expected_sequence.is_some() {
-            return Err("serve cannot be combined with --expected-sequence".into());
         }
         if host_id.is_some() {
             return Err("--host can only be used with --attach".into());
@@ -193,16 +182,10 @@ fn run(cli: Cli) -> Result<(), RunFailure> {
         if data_root.is_some() {
             return Err("job wait cannot be combined with --data-root".into());
         }
-        if expected_sequence.is_some() {
-            return Err("job wait cannot be combined with --expected-sequence".into());
-        }
         let attached = AttachedBackend::from_discovery(select_host(host_id.as_deref())?);
         return wait_and_write_job(&attached, &job_id, timeout_ms);
     }
     let command = if interactive {
-        if expected_sequence.is_some() {
-            return Err("--expected-sequence cannot be combined with --interactive".into());
-        }
         None
     } else {
         let command = cli.request()?;
@@ -230,7 +213,6 @@ fn run(cli: Cli) -> Result<(), RunFailure> {
         let response = attached.request(
             ONE_SHOT_REQUEST_ID.into(),
             command.expect("one-shot command is present"),
-            expected_sequence,
             None,
         )?;
         if job_auto_wait && response.ok {
@@ -275,7 +257,7 @@ fn run(cli: Cli) -> Result<(), RunFailure> {
         return run_interactive(&dispatcher).map_err(RunFailure::Local);
     }
     let command = command.expect("one-shot command is present");
-    let dispatched = match dispatcher.dispatch(command, expected_sequence) {
+    let dispatched = match dispatcher.dispatch(command) {
         Ok(dispatched) => dispatched,
         Err(error) => {
             let response = annotate_batch_error(
@@ -411,7 +393,7 @@ fn select_host(instance_id: Option<&str>) -> Result<LocalHostDiscovery, String> 
     for attempt in 0..MAX_ATTEMPTS {
         let discovered = match registry.discover(|registration| {
             ControlCommand::from(RuntimeCommand::HostStatus(EmptyParams::default()))
-                .into_request(format!("discovery-{}", registration.instance_id), None)
+                .into_request(format!("discovery-{}", registration.instance_id))
         }) {
             Ok(discovered) => discovered,
             Err(error) if attempt + 1 < MAX_ATTEMPTS => {
@@ -455,7 +437,7 @@ fn list_hosts() -> Result<(), String> {
     let hosts = LocalHostRegistry::current_user()
         .discover(|registration| {
             ControlCommand::from(RuntimeCommand::HostStatus(EmptyParams::default()))
-                .into_request(format!("discovery-{}", registration.instance_id), None)
+                .into_request(format!("discovery-{}", registration.instance_id))
         })
         .map_err(|error| format!("Host discovery failed: {error}"))?;
     let entries = hosts
@@ -498,8 +480,7 @@ fn execute_interactive(
     command: ControlCommand,
     input_line: Option<usize>,
 ) -> ControlResponse {
-    let mut normalized =
-        command.into_request(request.request_id.clone(), request.expected_sequence);
+    let mut normalized = command.into_request(request.request_id.clone());
     normalized.expected_project_id = request.expected_project_id;
     match dispatcher.dispatch_request(normalized) {
         Ok(result) => compact_agent_response(ControlResponse::success(
@@ -553,7 +534,7 @@ mod tests {
         let dispatcher = open_test_dispatcher(root.clone());
         let response = handle_request(
             &dispatcher,
-            r#"{"requestId":"mutation","command":"track.add","expectedSequence":0,"params":{"name":"Bass","kind":"instrument"}}"#,
+            r#"{"requestId":"mutation","command":"track.add","params":{"name":"Bass","kind":"instrument"}}"#,
         );
 
         assert!(response.ok);
@@ -579,7 +560,6 @@ mod tests {
             &json!({
                 "requestId": "track",
                 "command": "track.add",
-                "expectedSequence": 0,
                 "params": {"name": "Keys", "kind": "instrument"}
             })
             .to_string(),
@@ -592,7 +572,6 @@ mod tests {
             &json!({
                 "requestId": "clip",
                 "command": "clip.midi.create",
-                "expectedSequence": 1,
                 "params": {
                     "trackId": track_id,
                     "startTick": 0,
@@ -610,7 +589,6 @@ mod tests {
             &json!({
                 "requestId": "note-1",
                 "command": "clip.midi.note.add",
-                "expectedSequence": 2,
                 "params": {
                     "clipId": clip_id,
                     "pitch": 60,
@@ -632,7 +610,6 @@ mod tests {
             &json!({
                 "requestId": "note-2",
                 "command": "clip.midi.note.add",
-                "expectedSequence": 3,
                 "params": {
                     "clipId": clip_id,
                     "pitch": 64,
@@ -655,7 +632,6 @@ mod tests {
             &json!({
                 "requestId": "duplicate",
                 "command": "clip.midi.note.duplicate",
-                "expectedSequence": 4,
                 "params": {
                     "clipId": clip_id,
                     "noteIds": [first_note_id, second_note_id],
@@ -682,7 +658,6 @@ mod tests {
             &json!({
                 "requestId": "invalid-duplicate",
                 "command": "clip.midi.note.duplicate",
-                "expectedSequence": 5,
                 "params": {
                     "clipId": clip_id,
                     "noteIds": [first_note_id, "note:missing"],
@@ -709,29 +684,6 @@ mod tests {
         );
         assert_eq!(current.sequence, Some(5));
 
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn interactive_undo_requires_the_current_expected_sequence() {
-        let root =
-            std::env::temp_dir().join(format!("riffra-cli-undo-sequence-{}", std::process::id()));
-        let dispatcher = open_test_dispatcher(root.clone());
-        let mutation = handle_request(
-            &dispatcher,
-            r#"{"requestId":"mutation","command":"track.add","expectedSequence":0,"params":{"name":"Bass","kind":"instrument"}}"#,
-        );
-        assert_eq!(mutation.sequence, Some(1));
-
-        let response = handle_request(
-            &dispatcher,
-            r#"{"requestId":"undo","command":"history.undo","expectedSequence":0,"params":{}}"#,
-        );
-        assert!(!response.ok);
-        assert_eq!(
-            response.error.as_ref().map(|error| error.code),
-            Some(ErrorCode::Conflict)
-        );
         let _ = fs::remove_dir_all(root);
     }
 
@@ -806,15 +758,15 @@ mod tests {
 
         let lead = handle_request(
             &dispatcher,
-            r#"{"requestId":"lead","command":"track.add","expectedSequence":0,"params":{"name":"Lead","kind":"instrument"}}"#,
+            r#"{"requestId":"lead","command":"track.add","params":{"name":"Lead","kind":"instrument"}}"#,
         );
         let pad = handle_request(
             &dispatcher,
-            r#"{"requestId":"pad","command":"track.add","expectedSequence":1,"params":{"name":"Pad","kind":"instrument"}}"#,
+            r#"{"requestId":"pad","command":"track.add","params":{"name":"Pad","kind":"instrument"}}"#,
         );
         let drums = handle_request(
             &dispatcher,
-            r#"{"requestId":"drums","command":"track.add","expectedSequence":2,"params":{"name":"Drums","kind":"instrument"}}"#,
+            r#"{"requestId":"drums","command":"track.add","params":{"name":"Drums","kind":"instrument"}}"#,
         );
         assert!(lead.ok && pad.ok && drums.ok);
         let lead_id = lead.result.as_ref().unwrap().value["createdEntityIds"]["tracks"][0]
@@ -835,7 +787,6 @@ mod tests {
             &json!({
                 "requestId":"instrument",
                 "command":"instrument.apply",
-                "expectedSequence":3,
                 "params":{"trackId":drums_id,"instrumentId":"builtin:drum-kit"}
             })
             .to_string(),
@@ -851,7 +802,6 @@ mod tests {
             &json!({
                 "requestId":"update",
                 "command":"track.update",
-                "expectedSequence":4,
                 "params":{"trackId":drums_id,"gainDb":-12.0,"pan":-0.5}
             })
             .to_string(),
@@ -873,24 +823,6 @@ mod tests {
         assert_eq!(drums["pan"], -0.5);
         assert_eq!(drums["instrument"]["source"], "internal");
         assert_eq!(drums["instrument"]["presetId"], "drum-kit");
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn stale_expected_sequence_returns_conflict_details() {
-        let root = std::env::temp_dir().join(format!(
-            "riffra-cli-protocol-conflict-{}",
-            std::process::id()
-        ));
-        let dispatcher = open_test_dispatcher(root.clone());
-        let response = handle_request(
-            &dispatcher,
-            r#"{"requestId":"45","command":"track.list","expectedSequence":1,"params":{}}"#,
-        );
-        assert!(!response.ok);
-        let error = response.error.as_ref().unwrap();
-        assert_eq!(error.code, ErrorCode::Conflict);
-        assert_eq!(error.details.as_ref().unwrap()["currentSequence"], 0);
         let _ = fs::remove_dir_all(root);
     }
 

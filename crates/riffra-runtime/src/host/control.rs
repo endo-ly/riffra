@@ -83,7 +83,6 @@ impl HostState {
         let ControlRequest {
             request_id,
             command,
-            expected_sequence,
             expected_project_id,
             params,
         } = request;
@@ -100,14 +99,6 @@ impl HostState {
             {
                 let snapshot = self.project.read();
                 let canonical = &snapshot.canonical;
-                if let Some(expected_sequence) = expected_sequence
-                    && expected_sequence != canonical.sequence
-                {
-                    return Self::failure(
-                        request_id,
-                        ProtocolError::conflict(expected_sequence, canonical.sequence),
-                    );
-                }
                 if let Err(error) = crate::dispatcher::validate_project_precondition(
                     scope,
                     expected_project_id.as_deref(),
@@ -147,14 +138,6 @@ impl HostState {
             || self.project.read().canonical.clone(),
             |writer| writer.project().core.canonical_state(),
         );
-        if let Some(expected_sequence) = expected_sequence
-            && expected_sequence != current.sequence
-        {
-            return Self::failure(
-                request_id,
-                ProtocolError::conflict(expected_sequence, current.sequence),
-            );
-        }
         if let Err(error) = crate::dispatcher::validate_project_precondition(
             scope,
             expected_project_id.as_deref(),
@@ -193,7 +176,6 @@ impl HostState {
             self.publish_commit(committed).0
         };
         let mut context = self.session_context(writer, current.clone(), &publish)?;
-        let sequence = Some(current.sequence);
         let mutation = match command {
             CanonicalCommand::TrackAudioInputSet(params) => session_adapter::set_track_audio_input(
                 &mut context,
@@ -227,11 +209,10 @@ impl HostState {
                     crate::api::output::PluginRole::Instrument,
                 )
                 .map_err(super::control::command_error)?;
-                session_adapter::set_track_vst3_instrument_with_expected_sequence(
+                session_adapter::set_track_vst3_instrument(
                     &mut context,
                     &params.track_id,
                     &path.to_string_lossy(),
-                    sequence,
                 )
             }
             CanonicalCommand::InstrumentClear(params) => {
@@ -245,12 +226,7 @@ impl HostState {
                     crate::api::output::PluginRole::Effect,
                 )
                 .map_err(super::control::command_error)?;
-                session_adapter::add_effect_with_expected_sequence(
-                    &mut context,
-                    &params.owner,
-                    &path.to_string_lossy(),
-                    sequence,
-                )
+                session_adapter::add_effect(&mut context, &params.owner, &path.to_string_lossy())
             }
             CanonicalCommand::EffectRemove(params) => {
                 session_adapter::remove_effect(&mut context, &params.owner, &params.device_id)
@@ -289,11 +265,10 @@ impl HostState {
                 session_adapter::disable_missing_plugin(&mut context, &params.device_id)
             }
             CanonicalCommand::MissingReplacePlugin(params) => {
-                session_adapter::replace_missing_track_plugin_with_expected_sequence(
+                session_adapter::replace_missing_track_plugin(
                     &mut context,
                     &params.device_id,
                     &params.new_path,
-                    sequence,
                 )
             }
             CanonicalCommand::Undo(_) => session_adapter::undo(&mut context),
@@ -2107,8 +2082,7 @@ mod tests {
         let before = host.canonical_state().unwrap();
 
         let dispatch = |command: &str, params: serde_json::Value| {
-            let response =
-                host.dispatch_control(ControlRequest::new(command, command, params, Some(0)));
+            let response = host.dispatch_control(ControlRequest::new(command, command, params));
             assert!(response.ok, "{command}: {:?}", response.error);
             assert_eq!(response.sequence, Some(0), "{command}");
             response.result.unwrap().value
@@ -2131,7 +2105,6 @@ mod tests {
             "library.instrument.category.set",
             "library.instrument.category.set",
             serde_json::json!({"instrumentId":"builtin:01-bass","category":"Lead"}),
-            Some(0),
         ));
         assert!(!fixed_category.ok);
 
@@ -2217,7 +2190,6 @@ mod tests {
             "missing-project-id",
             "track.add",
             serde_json::json!({"name": "Rejected", "kind": "instrument"}),
-            Some(0),
         ));
 
         assert!(!response.ok);
@@ -2270,7 +2242,6 @@ mod tests {
             "history",
             "render.list",
             serde_json::json!({}),
-            None,
         ));
         assert!(history.ok);
         let ControlOutput::RenderList(renders) =
@@ -2289,7 +2260,7 @@ mod tests {
 
             transport::write_frame(
                 &mut stream,
-                &ControlRequest::new("session-get", "session.get", serde_json::json!({}), Some(0))
+                &ControlRequest::new("session-get", "session.get", serde_json::json!({}))
                     .with_expected_project_id(expected_project_id.clone()),
             )
             .unwrap();
@@ -2308,7 +2279,6 @@ mod tests {
                 "host-test",
                 "track.add",
                 serde_json::json!({"name": "Synth", "kind": "instrument"}),
-                Some(0),
             )
             .with_expected_project_id(expected_project_id);
             transport::write_frame(&mut stream, &request).unwrap();
@@ -2323,71 +2293,6 @@ mod tests {
         );
         host.shutdown();
         assert!(!endpoint_path(&data_root).exists());
-        drop(host);
-        let _ = std::fs::remove_dir_all(data_root);
-    }
-
-    #[test]
-    fn stale_render_and_undo_requests_are_rejected_by_the_canonical_sequence() {
-        let data_root = std::env::temp_dir().join(format!(
-            "riffra-runtime-sequence-guard-{}-{}",
-            std::process::id(),
-            new_instance_id()
-        ));
-        let config = HostConfig {
-            data_root: data_root.clone(),
-            built_in_instruments_root: crate::test_support::prepare_built_in_resource_root(
-                &data_root,
-            ),
-            safe_mode: true,
-            binaries: RuntimeBinaries::new(
-                data_root.join("riffra-audio"),
-                data_root.join("riffra-plugin-scan"),
-                data_root.join("riffra-render"),
-                data_root.join("sonalloy"),
-            ),
-        };
-        let host = DawHost::open(config, Arc::new(crate::NoopHostEventSink)).unwrap();
-        let expected_project_id = host.bootstrap().unwrap().project_state.active_project_id;
-
-        let mutation = host.dispatch_control(
-            ControlRequest::new(
-                "track-add",
-                "track.add",
-                serde_json::json!({"name": "Synth", "kind": "instrument"}),
-                Some(0),
-            )
-            .with_expected_project_id(expected_project_id.clone()),
-        );
-        assert!(mutation.ok);
-        assert_eq!(mutation.sequence, Some(1));
-
-        let undo = host.dispatch_control(
-            ControlRequest::new("stale-undo", "history.undo", serde_json::json!({}), Some(0))
-                .with_expected_project_id(expected_project_id.clone()),
-        );
-        assert!(!undo.ok);
-        assert_eq!(
-            undo.error.as_ref().map(|error| error.code),
-            Some(ErrorCode::Conflict)
-        );
-
-        let render = host.dispatch_control(
-            ControlRequest::new(
-                "stale-render",
-                "render.start",
-                serde_json::json!({}),
-                Some(0),
-            )
-            .with_expected_project_id(expected_project_id),
-        );
-        assert!(!render.ok);
-        assert_eq!(
-            render.error.as_ref().map(|error| error.code),
-            Some(ErrorCode::Conflict)
-        );
-
-        host.shutdown();
         drop(host);
         let _ = std::fs::remove_dir_all(data_root);
     }
@@ -2420,7 +2325,6 @@ mod tests {
                 "info",
                 "host.info",
                 serde_json::json!({}),
-                None,
             ))
             .unwrap();
 
@@ -2467,7 +2371,6 @@ mod tests {
                 "bootstrap",
                 "host.bootstrap",
                 serde_json::json!({}),
-                Some(0),
             ))
             .unwrap();
         assert!(bootstrap.ok);
@@ -2482,7 +2385,6 @@ mod tests {
                     "track-add",
                     "track.add",
                     serde_json::json!({"name": "Synth", "kind": "instrument"}),
-                    Some(0),
                 )
                 .with_expected_project_id(expected_project_id),
             )
@@ -2511,7 +2413,7 @@ mod tests {
                 crate::api::ControlCommand::from(crate::api::RuntimeCommand::HostStatus(
                     crate::api::params::EmptyParams::default(),
                 ))
-                .into_request(format!("discovery-{}", registration.instance_id), None)
+                .into_request(format!("discovery-{}", registration.instance_id))
             })
             .unwrap()
             .into_iter()
@@ -2553,12 +2455,7 @@ mod tests {
 
         transport::write_frame(
             &mut stream,
-            &ControlRequest::new(
-                "shutdown-request",
-                "host.shutdown",
-                serde_json::json!({}),
-                Some(0),
-            ),
+            &ControlRequest::new("shutdown-request", "host.shutdown", serde_json::json!({})),
         )
         .unwrap();
         let shutdown_response: ControlResponse = transport::read_frame(&mut stream).unwrap();
@@ -2569,7 +2466,6 @@ mod tests {
                 "after-shutdown",
                 "track.add",
                 serde_json::json!({"name": "Rejected", "kind": "audio"}),
-                Some(0),
             ),
         )
         .unwrap();
@@ -2617,7 +2513,6 @@ mod tests {
                 "track-add",
                 "track.add",
                 serde_json::json!({"name": "Synth", "kind": "instrument"}),
-                Some(0),
             )
             .with_expected_project_id(expected_project_id.clone()),
         );
@@ -2644,7 +2539,6 @@ mod tests {
                 "marker-add",
                 "music.marker.add",
                 serde_json::json!({"name": "Verse", "position": "1:1"}),
-                Some(1),
             )
             .with_expected_project_id(expected_project_id.clone()),
         );
@@ -2669,7 +2563,6 @@ mod tests {
                 "session-settings-update",
                 "session.settings.update",
                 serde_json::json!({"note": "authoring note"}),
-                Some(2),
             )
             .with_expected_project_id(expected_project_id),
         );
@@ -2727,7 +2620,6 @@ mod tests {
                 "master-gain-set",
                 "audio.master-gain.set",
                 serde_json::json!({"gainDb": -9.0}),
-                Some(0),
             )
             .with_expected_project_id(expected_project_id),
         );
@@ -2798,7 +2690,6 @@ mod tests {
                 "track-add",
                 "track.add",
                 serde_json::json!({"name": "Lead", "kind": "instrument"}),
-                Some(0),
             )
             .with_expected_project_id(expected_project_id.clone()),
         );
@@ -2815,7 +2706,6 @@ mod tests {
                 "instrument-apply",
                 "instrument.apply",
                 serde_json::json!({"trackId": track_id, "instrumentId": user_id}),
-                Some(1),
             )
             .with_expected_project_id(expected_project_id),
         );

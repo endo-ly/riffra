@@ -49,9 +49,6 @@ pub struct Cli {
     /// Route commands to a running Riffra Host instead of opening the project directory directly.
     #[arg(long)]
     pub attach: bool,
-    /// Require a specific sequence for a one-shot command so it only runs when the project state is at that sequence; reported as a conflict failure otherwise.
-    #[arg(long)]
-    pub expected_sequence: Option<u64>,
     #[command(subcommand)]
     pub command: Option<CliCommand>,
 }
@@ -60,8 +57,8 @@ pub struct Cli {
 pub enum CliCommand {
     /// Start one foreground live Host and publish its local control endpoint.
     ///
-    /// Runs the process modes of the Riffra Host and cannot be combined with --attach, --interactive,
-    /// or --expected-sequence. Requires --data-root.
+    /// Runs the process modes of the Riffra Host and cannot be combined with --attach or --interactive.
+    /// Requires --data-root.
     Serve(ServeArgs),
     /// Discover, inspect, and shut down running Riffra Host instances.
     Host {
@@ -217,11 +214,10 @@ pub enum SessionCommand {
     Inspect(SessionInspectArgs),
     /// Apply a batch of operations from a JSON Lines file as one atomic mutation.
     ///
-    /// Each operation holds `command`, `params`, and an optional `bind`; requestId and expectedSequence are not operation fields.
+    /// Each operation holds `command`, `params`, and an optional `bind`; requestId is not an operation field.
     ///
     /// Operations run in order, and the project changes only if all succeed.
     /// Later operations can reference Tracks and Clips created earlier in the batch.
-    /// `--expected-sequence` applies to the whole batch.
     ///
     /// Batch operations may resolve `trackName` instead of `trackId`, and `clipName` instead of
     /// `clipId`. Specifying both forms fails. Zero matches or multiple matches fail. `clipName`
@@ -2759,9 +2755,8 @@ pub enum RenderCommand {
     /// --range selects `entire-arrangement` (default) or `loop-range`. Supplying --start and --end
     /// together performs a time-selection render of that arrangement-absolute musical range and
     /// cannot be combined with `loop-range`; --start and --end must be provided together. --track-id
-    /// renders only that Track as a stem. --normalize applies peak normalization. --expected-sequence
-    /// is the sequence precondition for the project state being rendered. Success returns a Job;
-    /// use --wait to return its terminal state, or `job wait` to follow it later. `job wait`
+    /// renders only that Track as a stem. --normalize applies peak normalization. Success returns
+    /// a Job; use --wait to return its terminal state, or `job wait` to follow it later. `job wait`
     /// without --timeout-ms waits until a terminal state.
     /// --output-path copies the completed WAV to an absolute path without replacing an existing file.
     Start(RenderStartArgs),
@@ -2894,7 +2889,7 @@ pub enum JobCommand {
     Get(JobLookupArgs),
     /// Cancel one background Job by id; requires a running Riffra Host accessed with --attach.
     Cancel(JobIdArgs),
-    /// Poll a background Job until it reaches a terminal state; requires --attach and cannot be combined with --data-root or --expected-sequence.
+    /// Poll a background Job until it reaches a terminal state; requires --attach and cannot be combined with --data-root.
     ///
     /// Without --timeout-ms the wait continues until the Job is completed, failed, or cancelled.
     /// A terminal Host failure is returned as structured JSON on stdout with a non-zero exit status.
@@ -6396,36 +6391,29 @@ mod tests {
 
     #[test]
     fn session_apply_rejects_request_envelope_fields_in_operations() {
-        for (suffix, field) in [
-            ("request-id", "requestId"),
-            ("sequence", "expectedSequence"),
-        ] {
-            let path = std::env::temp_dir().join(format!(
-                "riffra-cli-session-apply-{}-{suffix}.jsonl",
-                std::process::id()
-            ));
-            std::fs::write(
-                &path,
-                format!(
-                    r#"{{"command":"track.add","{field}":1,"params":{{"name":"Lead","kind":"instrument"}}}}"#
-                ),
-            )
-            .unwrap();
-            let cli = Cli::try_parse_from([
-                "riffra",
-                "session",
-                "apply",
-                "--file",
-                path.to_str().unwrap(),
-            ])
-            .unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "riffra-cli-session-apply-request-id-{}.jsonl",
+            std::process::id()
+        ));
+        std::fs::write(
+            &path,
+            r#"{"command":"track.add","requestId":"op","params":{"name":"Lead","kind":"instrument"}}"#,
+        )
+        .unwrap();
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "session",
+            "apply",
+            "--file",
+            path.to_str().unwrap(),
+        ])
+        .unwrap();
 
-            let RequestError::Usage(error) = cli.request().unwrap_err() else {
-                panic!("an invalid operation line is a usage error");
-            };
-            assert!(error.contains("unknown field"));
-            let _ = std::fs::remove_file(path);
-        }
+        let RequestError::Usage(error) = cli.request().unwrap_err() else {
+            panic!("an invalid operation line is a usage error");
+        };
+        assert!(error.contains("unknown field"));
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]

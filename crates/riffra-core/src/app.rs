@@ -72,13 +72,6 @@ impl PreparedSession {
     pub fn sequence(&self) -> u64 {
         self.expected_sequence
     }
-
-    /// Rebinds the candidate to a caller-provided optimistic-concurrency
-    /// revision before an external runtime validates it.
-    pub fn with_expected_sequence(mut self, expected_sequence: u64) -> Self {
-        self.expected_sequence = expected_sequence;
-        self
-    }
 }
 
 /// Read-only history capabilities exposed to a host UI.

@@ -42,7 +42,6 @@ impl TestHost {
                         format!("riffra-mcp-test-{}", registration.instance_id),
                         "host.status",
                         json!({}),
-                        None,
                     )
                 })
                 .is_ok_and(|hosts| {
@@ -375,14 +374,6 @@ fn stdio_tools_share_the_live_host_and_preserve_control_results() {
     );
     let tracks_after_failed_batch = mcp.tool("track", json!({"action": "list"}));
 
-    let conflict = mcp.tool(
-        "track",
-        json!({
-            "action": "add",
-            "params": {"name": "Stale", "kind": "audio"},
-            "expectedSequence": 0.0
-        }),
-    );
     let created_project = mcp.tool(
         "project",
         json!({"action": "create", "params": {"name": "Other"}}),
@@ -406,14 +397,6 @@ fn stdio_tools_share_the_live_host_and_preserve_control_results() {
         json!({
             "action": "update",
             "params": {"clipId": "clip:1", "patch": {"muted": "yes"}}
-        }),
-    );
-    let invalid_sequence = mcp.tool(
-        "track",
-        json!({
-            "action": "add",
-            "params": {"name": "Overflow", "kind": "audio"},
-            "expectedSequence": 1e20
         }),
     );
     let unknown = mcp.request("tools/call", json!({"name": "not_a_tool", "arguments": {}}));
@@ -459,15 +442,9 @@ fn stdio_tools_share_the_live_host_and_preserve_control_results() {
         project_conflict["details"]["expectedProjectId"],
         original_project
     );
-    let conflict = tool_error(&conflict);
-    assert_eq!(conflict["code"], "conflict");
-    assert!(conflict["details"]["currentSequence"].is_u64());
     let invalid = tool_error(&invalid);
     assert_eq!(invalid["code"], "invalidRequest");
     assert_eq!(invalid["details"]["path"], "/params/patch/muted");
-    let invalid_sequence = tool_error(&invalid_sequence);
-    assert_eq!(invalid_sequence["code"], "invalidRequest");
-    assert_eq!(invalid_sequence["details"]["path"], "/expectedSequence");
     assert!(unknown.get("error").is_some(), "{unknown}");
 
     // Act

@@ -477,7 +477,6 @@ mod tests {
                         format!("test-{}", registration.instance_id),
                         String::new(),
                         serde_json::json!({}),
-                        None,
                     )
                 })
                 .unwrap()

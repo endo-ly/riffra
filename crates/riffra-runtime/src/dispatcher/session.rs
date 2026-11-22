@@ -577,7 +577,7 @@ mod tests {
     use crate::api::output::{PluginEntry, PluginFormat, PluginRole, PluginScanState, ScanReport};
     use crate::dispatcher::Dispatcher;
     use crate::test_support::{command, mutated_session, output_type, output_value};
-    use riffra_control::{ControlRequest, ErrorCode, new_instance_id};
+    use riffra_control::{ErrorCode, new_instance_id};
     use riffra_host::{ProjectStore, now_ms};
     use serde_json::json;
     use std::collections::BTreeMap;
@@ -623,27 +623,27 @@ mod tests {
         )
         .unwrap();
         let before = dispatcher
-            .dispatch(command("session.get", json!({})), None)
+            .dispatch(command("session.get", json!({})))
             .unwrap();
 
-        let failed = dispatcher.dispatch(command("instrument.track.create", json!({
-            "name": "Keys", "source": {"kind": "library", "instrumentId": "builtin:missing"},
-        })), None);
+        let failed = dispatcher.dispatch(command(
+            "instrument.track.create",
+            json!({
+                "name": "Keys", "source": {"kind": "library", "instrumentId": "builtin:missing"},
+            }),
+        ));
 
         assert!(failed.is_err());
         let unchanged = dispatcher
-            .dispatch(command("session.get", json!({})), None)
+            .dispatch(command("session.get", json!({})))
             .unwrap();
         assert_eq!(unchanged.sequence, before.sequence);
         assert_eq!(output_value(&unchanged), output_value(&before));
         let created = dispatcher
-            .dispatch(
-                command(
-                    "instrument.track.create",
-                    json!({"name":"Keys", "source": {"kind":"vst3", "pluginPath":"Keys.vst3"}}),
-                ),
-                None,
-            )
+            .dispatch(command(
+                "instrument.track.create",
+                json!({"name":"Keys", "source": {"kind":"vst3", "pluginPath":"Keys.vst3"}}),
+            ))
             .unwrap();
         assert_eq!(created.sequence, before.sequence + 1);
         let session = mutated_session(&created);
@@ -662,11 +662,11 @@ mod tests {
                 .id
         );
         let undone = dispatcher
-            .dispatch(command("history.undo", json!({})), None)
+            .dispatch(command("history.undo", json!({})))
             .unwrap();
         assert!(mutated_session(&undone).arrangement.tracks.is_empty());
         let redone = dispatcher
-            .dispatch(command("history.redo", json!({})), None)
+            .dispatch(command("history.redo", json!({})))
             .unwrap();
         assert_eq!(
             mutated_session(&redone).arrangement.tracks,
@@ -700,27 +700,24 @@ mod tests {
             .unwrap();
             let before = output_value(
                 &dispatcher
-                    .dispatch(command("music.timebase.get-map", json!({})), None)
+                    .dispatch(command("music.timebase.get-map", json!({})))
                     .unwrap(),
             );
             assert_eq!(before["ppq"], ppq);
 
             dispatcher
-                .dispatch(
-                    command(
-                        "music.timebase.set-map",
-                        json!({
-                            "tempoChanges":[{"tick":0,"bpm":120},{"tick":tempo_tick,"bpm":bpm}],
-                            "timeSignatureChanges":[{"tick":0,"numerator":4,"denominator":4}]
-                        }),
-                    ),
-                    None,
-                )
+                .dispatch(command(
+                    "music.timebase.set-map",
+                    json!({
+                        "tempoChanges":[{"tick":0,"bpm":120},{"tick":tempo_tick,"bpm":bpm}],
+                        "timeSignatureChanges":[{"tick":0,"numerator":4,"denominator":4}]
+                    }),
+                ))
                 .unwrap();
 
             let map = output_value(
                 &dispatcher
-                    .dispatch(command("music.timebase.get-map", json!({})), None)
+                    .dispatch(command("music.timebase.get-map", json!({})))
                     .unwrap(),
             );
             assert_eq!(map["ppq"], ppq);
@@ -743,41 +740,35 @@ mod tests {
         )
         .unwrap();
         let track = dispatcher
-            .dispatch(
-                command("track.add", json!({"name":"Keys","kind":"instrument"})),
-                None,
-            )
+            .dispatch(command(
+                "track.add",
+                json!({"name":"Keys","kind":"instrument"}),
+            ))
             .unwrap();
         let session = mutated_session(&track);
         let track_id = session.arrangement.tracks[0].id.clone();
         let clip = dispatcher
-            .dispatch(
-                command(
-                    "music.midi-clip.create",
-                    json!({"trackId":track_id,"start":"1:1","end":"5:1"}),
-                ),
-                None,
-            )
+            .dispatch(command(
+                "music.midi-clip.create",
+                json!({"trackId":track_id,"start":"1:1","end":"5:1"}),
+            ))
             .unwrap();
         let session = mutated_session(&clip);
         let clip_id = session.arrangement.midi_clips[0].id.clone();
         dispatcher
-            .dispatch(
-                command(
-                    "music.note.insert",
-                    json!({
-                        "clipId":clip_id,
-                        "notes":[{"pitch":"C4","position":"2:1","duration":"1/4"}]
-                    }),
-                ),
-                None,
-            )
+            .dispatch(command(
+                "music.note.insert",
+                json!({
+                    "clipId":clip_id,
+                    "notes":[{"pitch":"C4","position":"2:1","duration":"1/4"}]
+                }),
+            ))
             .unwrap();
         let before = dispatcher
-            .dispatch(command("session.get", json!({})), None)
+            .dispatch(command("session.get", json!({})))
             .unwrap();
         let inspected = dispatcher
-            .dispatch(command("session.inspect", json!({})), None)
+            .dispatch(command("session.inspect", json!({})))
             .unwrap();
 
         assert_eq!(output_type(&inspected), "sessionInspection");
@@ -808,13 +799,10 @@ mod tests {
         }
 
         let focused = dispatcher
-            .dispatch(
-                command(
-                    "session.inspect",
-                    json!({"start":"3:1","end":"4:1","trackId":track_id}),
-                ),
-                None,
-            )
+            .dispatch(command(
+                "session.inspect",
+                json!({"start":"3:1","end":"4:1","trackId":track_id}),
+            ))
             .unwrap();
         assert_eq!(output_value(&focused)["selection"]["start"], "3:1");
         assert_eq!(output_value(&focused)["selection"]["end"], "4:1");
@@ -826,7 +814,7 @@ mod tests {
         );
 
         let after = dispatcher
-            .dispatch(command("session.get", json!({})), None)
+            .dispatch(command("session.get", json!({})))
             .unwrap();
         assert_eq!(after.sequence, before.sequence);
         assert_eq!(output_value(&after), output_value(&before));
@@ -842,14 +830,14 @@ mod tests {
         )
         .unwrap();
         dispatcher
-            .dispatch(
-                command("track.add", json!({"name":"Keys","kind":"instrument"})),
-                None,
-            )
+            .dispatch(command(
+                "track.add",
+                json!({"name":"Keys","kind":"instrument"}),
+            ))
             .unwrap();
 
         let undone = dispatcher
-            .dispatch(command("history.undo", json!({})), None)
+            .dispatch(command("history.undo", json!({})))
             .unwrap();
         assert_eq!(output_type(&undone), "arrangementMutation");
         assert_eq!(
@@ -861,7 +849,7 @@ mod tests {
         );
 
         let redone = dispatcher
-            .dispatch(command("history.redo", json!({})), None)
+            .dispatch(command("history.redo", json!({})))
             .unwrap();
         assert_eq!(output_type(&redone), "arrangementMutation");
         assert_eq!(
@@ -892,28 +880,25 @@ mod tests {
         let dispatcher = Dispatcher::open(root.clone(), resources).unwrap();
 
         let listed = dispatcher
-            .dispatch(command("instrument.list", json!({})), None)
+            .dispatch(command("instrument.list", json!({})))
             .unwrap();
         assert_eq!(output_type(&listed), "instrumentLibrary");
         assert_eq!(output_value(&listed)[0]["id"], "builtin:01-clean-sub-bass");
         assert_eq!(output_value(&listed)[0]["name"], "Clean Sub Bass");
 
         let track = dispatcher
-            .dispatch(
-                command("track.add", json!({"name":"Keys","kind":"instrument"})),
-                None,
-            )
+            .dispatch(command(
+                "track.add",
+                json!({"name":"Keys","kind":"instrument"}),
+            ))
             .unwrap();
         let session = mutated_session(&track);
         let track_id = session.arrangement.tracks[0].id.clone();
         let assigned = dispatcher
-            .dispatch(
-                command(
-                    "instrument.apply",
-                    json!({"trackId":track_id,"instrumentId":"builtin:01-clean-sub-bass"}),
-                ),
-                None,
-            )
+            .dispatch(command(
+                "instrument.apply",
+                json!({"trackId":track_id,"instrumentId":"builtin:01-clean-sub-bass"}),
+            ))
             .unwrap();
         assert_eq!(output_type(&assigned), "arrangementMutation");
         assert_eq!(
@@ -929,7 +914,7 @@ mod tests {
 
         let created = dispatcher.dispatch(command("instrument.track.create", json!({
             "name":"Keys", "source":{"kind":"library", "instrumentId":"builtin:01-clean-sub-bass"},
-        })), None).unwrap();
+        }))).unwrap();
         assert_eq!(mutated_session(&created).arrangement.tracks.len(), 2);
         assert!(
             mutated_session(&created).arrangement.tracks[1]
@@ -941,7 +926,7 @@ mod tests {
             mutated_session(&created).arrangement.tracks[1].id
         );
         let undone = dispatcher
-            .dispatch(command("history.undo", json!({})), None)
+            .dispatch(command("history.undo", json!({})))
             .unwrap();
         assert_eq!(
             mutated_session(&undone).arrangement.tracks,
@@ -949,18 +934,15 @@ mod tests {
         );
 
         let before = dispatcher
-            .dispatch(command("session.get", json!({})), None)
+            .dispatch(command("session.get", json!({})))
             .unwrap();
-        let unknown = dispatcher.dispatch(
-            command(
-                "instrument.apply",
-                json!({"trackId":track_id,"instrumentId":"builtin:99-unknown"}),
-            ),
-            None,
-        );
+        let unknown = dispatcher.dispatch(command(
+            "instrument.apply",
+            json!({"trackId":track_id,"instrumentId":"builtin:99-unknown"}),
+        ));
         assert!(unknown.is_err());
         let after = dispatcher
-            .dispatch(command("session.get", json!({})), None)
+            .dispatch(command("session.get", json!({})))
             .unwrap();
         assert_eq!(after.sequence, before.sequence);
         assert_eq!(output_value(&after), output_value(&before));
@@ -996,21 +978,18 @@ mod tests {
         let dispatcher = Dispatcher::open(root.clone(), resources).unwrap();
 
         let first_track = dispatcher
-            .dispatch(
-                command("track.add", json!({"name":"First","kind":"instrument"})),
-                None,
-            )
+            .dispatch(command(
+                "track.add",
+                json!({"name":"First","kind":"instrument"}),
+            ))
             .unwrap();
         let first_session = mutated_session(&first_track);
         let first_track_id = first_session.arrangement.tracks[0].id.clone();
         let first = dispatcher
-            .dispatch(
-                command(
-                    "instrument.apply",
-                    json!({"trackId":first_track_id,"instrumentId":user_id.clone()}),
-                ),
-                None,
-            )
+            .dispatch(command(
+                "instrument.apply",
+                json!({"trackId":first_track_id,"instrumentId":user_id.clone()}),
+            ))
             .unwrap();
         let first_instrument =
             &output_value(&first)["canonical"]["session"]["arrangement"]["tracks"][0]["instrument"];
@@ -1049,21 +1028,18 @@ mod tests {
         .unwrap();
         fs::write(package.join("samples/attack.wav"), b"v2").unwrap();
         let second_track = dispatcher
-            .dispatch(
-                command("track.add", json!({"name":"Second","kind":"instrument"})),
-                None,
-            )
+            .dispatch(command(
+                "track.add",
+                json!({"name":"Second","kind":"instrument"}),
+            ))
             .unwrap();
         let second_session = mutated_session(&second_track);
         let second_track_id = second_session.arrangement.tracks[1].id.clone();
         let second = dispatcher
-            .dispatch(
-                command(
-                    "instrument.apply",
-                    json!({"trackId":second_track_id,"instrumentId":user_id}),
-                ),
-                None,
-            )
+            .dispatch(command(
+                "instrument.apply",
+                json!({"trackId":second_track_id,"instrumentId":user_id}),
+            ))
             .unwrap();
         let second = output_value(&second);
         let tracks = second["canonical"]["session"]["arrangement"]["tracks"]
@@ -1131,7 +1107,7 @@ mod tests {
                         {"command":"effect.add","params":{"owner":{"kind":"master"},"pluginPath":"Master.vst3"}}
                     ]
                 }),
-            ), None)
+            ))
             .unwrap();
 
         assert_eq!(output_type(&result), "batchMutation");
@@ -1139,7 +1115,7 @@ mod tests {
         assert_eq!(output_value(&result)["createdEntityCounts"]["buses"], 2);
         assert_eq!(output_value(&result)["createdEntityCounts"]["sends"], 1);
         let state = dispatcher
-            .dispatch(command("session.get", json!({})), None)
+            .dispatch(command("session.get", json!({})))
             .unwrap();
         let arrangement = &output_value(&state)["arrangement"];
         assert_eq!(
@@ -1187,7 +1163,7 @@ mod tests {
         assert_eq!(result.sequence, 1);
 
         let undone = dispatcher
-            .dispatch(command("history.undo", json!({})), None)
+            .dispatch(command("history.undo", json!({})))
             .unwrap();
         assert_eq!(
             output_value(&undone)["canonical"]["session"]["arrangement"]["tracks"]
@@ -1212,20 +1188,17 @@ mod tests {
         )
         .unwrap();
         let created = dispatcher
-            .dispatch(
-                command("track.add", json!({"name":"Lead","kind":"instrument"})),
-                None,
-            )
+            .dispatch(command(
+                "track.add",
+                json!({"name":"Lead","kind":"instrument"}),
+            ))
             .unwrap();
         let track_id = mutated_session(&created).arrangement.tracks[0].id.clone();
         let created = dispatcher
-            .dispatch(
-                command(
-                    "music.midi-clip.create",
-                    json!({"trackId":track_id,"name":"Verse","start":"1:1","end":"5:1"}),
-                ),
-                None,
-            )
+            .dispatch(command(
+                "music.midi-clip.create",
+                json!({"trackId":track_id,"name":"Verse","start":"1:1","end":"5:1"}),
+            ))
             .unwrap();
         let clip_id = mutated_session(&created).arrangement.midi_clips[0]
             .id
@@ -1235,12 +1208,10 @@ mod tests {
                 command(
                     "music.note.insert",
                     json!({"clipId":clip_id,"notes":[{"pitch":"C4","position":"1:1","duration":"1/4"}]}),
-                ),
-                None,
-            )
+                ))
             .unwrap();
         let before = dispatcher
-            .dispatch(command("session.get", json!({})), None)
+            .dispatch(command("session.get", json!({})))
             .unwrap();
         let original_clip_id = output_value(&before)["arrangement"]["midiClips"][0]["id"]
             .as_str()
@@ -1260,13 +1231,11 @@ mod tests {
                             ]}}
                         ]
                     }),
-                ),
-                None,
-            )
+                ))
             .unwrap();
         assert_eq!(replaced.sequence, before.sequence + 1);
         let replaced_state = dispatcher
-            .dispatch(command("session.get", json!({})), None)
+            .dispatch(command("session.get", json!({})))
             .unwrap();
         let clip = &output_value(&replaced_state)["arrangement"]["midiClips"][0];
         assert_eq!(clip["id"], original_clip_id);
@@ -1291,12 +1260,10 @@ mod tests {
                         ]}}
                     ]
                 }),
-            ),
-            None,
-        );
+            ));
         assert!(failed.is_err());
         let after_failure = dispatcher
-            .dispatch(command("session.get", json!({})), None)
+            .dispatch(command("session.get", json!({})))
             .unwrap();
         assert_eq!(after_failure.sequence, replaced_state.sequence);
         assert_eq!(output_value(&after_failure), output_value(&replaced_state));
@@ -1311,7 +1278,7 @@ mod tests {
             )
         };
         let error = dispatcher
-            .dispatch(batch(false), None)
+            .dispatch(batch(false))
             .unwrap_err()
             .protocol_error();
         assert_eq!(error.details.as_ref().unwrap()["operationIndex"], 1);
@@ -1322,12 +1289,12 @@ mod tests {
                 .contains("end exceeds the clip")
         );
         let unchanged = dispatcher
-            .dispatch(command("session.get", json!({})), None)
+            .dispatch(command("session.get", json!({})))
             .unwrap();
         assert_eq!(output_value(&unchanged), output_value(&replaced_state));
-        dispatcher.dispatch(batch(true), None).unwrap();
+        dispatcher.dispatch(batch(true)).unwrap();
         let clipped = dispatcher
-            .dispatch(command("session.get", json!({})), None)
+            .dispatch(command("session.get", json!({})))
             .unwrap();
         assert_eq!(
             output_value(&clipped)["arrangement"]["midiClips"][0]["notes"][0]["durationTicks"],
@@ -1357,9 +1324,7 @@ mod tests {
                             {"command":"instrument.vst3.set","params":{"trackName":"Lead","pluginPath":"C:\\Plugins\\Synth.vst3"}}
                         ]
                     }),
-                ),
-                None,
-            )
+                ))
             .unwrap();
         assert_eq!(output_value(&result)["createdEntityCounts"]["devices"], 1);
         let result_value = output_value(&result);
@@ -1368,7 +1333,7 @@ mod tests {
             .unwrap()
             .to_owned();
         let state = dispatcher
-            .dispatch(command("session.get", json!({})), None)
+            .dispatch(command("session.get", json!({})))
             .unwrap();
         let instrument = &output_value(&state)["arrangement"]["tracks"][0]["instrument"];
         assert_eq!(instrument["id"], device_id);
@@ -1418,13 +1383,11 @@ mod tests {
                             {"command":"instrument.apply","params":{"trackName":"Lead","instrumentId":user_id.clone()}}
                         ]
                     }),
-                ),
-                None,
-            )
+                ))
             .unwrap();
         assert_eq!(output_value(&applied)["createdEntityCounts"]["devices"], 1);
         let state = dispatcher
-            .dispatch(command("session.get", json!({})), None)
+            .dispatch(command("session.get", json!({})))
             .unwrap();
         let snapshot_id = output_value(&state)["arrangement"]["tracks"][0]["instrument"]["source"]
             ["resource"]["snapshotId"]
@@ -1447,12 +1410,10 @@ mod tests {
                         {"command":"render.start","params":{}}
                     ]
                 }),
-            ),
-            None,
-        );
+            ));
         assert!(failed.is_err());
         let after_failure = dispatcher
-            .dispatch(command("session.get", json!({})), None)
+            .dispatch(command("session.get", json!({})))
             .unwrap();
         assert_eq!(after_failure.sequence, state.sequence);
         assert_eq!(output_value(&after_failure), output_value(&state));
@@ -1513,12 +1474,10 @@ mod tests {
                             {"command":"music.marker.add","params":{"name":"Old","position":"1:1"}}
                         ]
                     }),
-                ),
-                None,
-            )
+                ))
             .unwrap();
         let initial = dispatcher
-            .dispatch(command("session.get", json!({})), None)
+            .dispatch(command("session.get", json!({})))
             .unwrap();
         let initial_value = output_value(&initial);
         let lead_id = initial_value["arrangement"]["tracks"][0]["id"]
@@ -1538,50 +1497,41 @@ mod tests {
             .unwrap()
             .to_owned();
         let sidechain = dispatcher
-            .dispatch(
-                command(
-                    "mixer.sidechain.add",
-                    json!({
-                        "sourceTrackId":lead_id.clone(),
-                        "targetDeviceId":drums_effect_id,
-                        "levelDb":-9
-                    }),
-                ),
-                None,
-            )
+            .dispatch(command(
+                "mixer.sidechain.add",
+                json!({
+                    "sourceTrackId":lead_id.clone(),
+                    "targetDeviceId":drums_effect_id,
+                    "levelDb":-9
+                }),
+            ))
             .unwrap();
         let sidechain_id = output_value(&sidechain)["createdEntityIds"]["sidechainSends"][0]
             .as_str()
             .unwrap()
             .to_owned();
         dispatcher
-            .dispatch(
-                command(
-                    "automation.set",
-                    json!({
-                        "target":{"kind":"trackMix","trackId":lead_id.clone(),"parameter":"volume"},
-                        "interpolation":"linear",
-                        "points":[{"id":"point:lead","tick":0,"value":-3}]
-                    }),
-                ),
-                None,
-            )
+            .dispatch(command(
+                "automation.set",
+                json!({
+                    "target":{"kind":"trackMix","trackId":lead_id.clone(),"parameter":"volume"},
+                    "interpolation":"linear",
+                    "points":[{"id":"point:lead","tick":0,"value":-3}]
+                }),
+            ))
             .unwrap();
         dispatcher
-            .dispatch(
-                command(
-                    "automation.set",
-                    json!({
-                        "target":{"kind":"sidechainSendLevel","sidechainSendId":sidechain_id},
-                        "interpolation":"linear",
-                        "points":[{"id":"point:sidechain","tick":0,"value":-6}]
-                    }),
-                ),
-                None,
-            )
+            .dispatch(command(
+                "automation.set",
+                json!({
+                    "target":{"kind":"sidechainSendLevel","sidechainSendId":sidechain_id},
+                    "interpolation":"linear",
+                    "points":[{"id":"point:sidechain","tick":0,"value":-6}]
+                }),
+            ))
             .unwrap();
         let before_rebuild = dispatcher
-            .dispatch(command("session.get", json!({})), None)
+            .dispatch(command("session.get", json!({})))
             .unwrap();
 
         let operations = json!([
@@ -1601,13 +1551,10 @@ mod tests {
         ]);
         let mut failed_operations = operations.as_array().unwrap().clone();
         failed_operations.push(json!({"command":"plugin.state.import","params":{"owner":{"kind":"track","name":"Drums"},"state":{"schemaVersion":2,"pluginIdentifier":"other-class","pluginPath":"C:\\Plugins\\NewDrums.vst3","parameterValues":[]}}}));
-        let failed = dispatcher.dispatch(
-            command(
-                "session.apply",
-                json!({"replace":true,"operations":failed_operations}),
-            ),
-            None,
-        );
+        let failed = dispatcher.dispatch(command(
+            "session.apply",
+            json!({"replace":true,"operations":failed_operations}),
+        ));
         assert!(
             failed.unwrap_err().protocol_error().details.unwrap()["cause"]
                 .as_str()
@@ -1615,19 +1562,16 @@ mod tests {
                 .contains("different VST3")
         );
         let after_failure = dispatcher
-            .dispatch(command("session.get", json!({})), None)
+            .dispatch(command("session.get", json!({})))
             .unwrap();
         assert_eq!(after_failure.sequence, before_rebuild.sequence);
         assert_eq!(output_value(&after_failure), output_value(&before_rebuild));
 
         let rebuilt = dispatcher
-            .dispatch(
-                command(
-                    "session.apply",
-                    json!({"replace":true,"includeCreatedIds":true,"operations":operations}),
-                ),
-                None,
-            )
+            .dispatch(command(
+                "session.apply",
+                json!({"replace":true,"includeCreatedIds":true,"operations":operations}),
+            ))
             .unwrap();
         assert_eq!(rebuilt.sequence, before_rebuild.sequence + 1);
         assert_eq!(output_value(&rebuilt)["createdEntityCounts"]["tracks"], 2);
@@ -1644,7 +1588,7 @@ mod tests {
         assert_eq!(output_value(&rebuilt)["createdEntityCounts"]["devices"], 3);
 
         let final_state = dispatcher
-            .dispatch(command("session.get", json!({})), None)
+            .dispatch(command("session.get", json!({})))
             .unwrap();
         let final_state_value = output_value(&final_state);
         let final_arrangement = &final_state_value["arrangement"];
@@ -1702,7 +1646,7 @@ mod tests {
         assert_eq!(final_arrangement["markers"], json!([]));
         assert_eq!(final_arrangement["mixer"]["masterEffects"], json!([]));
         let undone = dispatcher
-            .dispatch(command("history.undo", json!({})), None)
+            .dispatch(command("history.undo", json!({})))
             .unwrap();
         let restored = &output_value(&undone)["canonical"]["session"];
         let mut expected = output_value(&before_rebuild);
@@ -1754,16 +1698,14 @@ mod tests {
                                 ]}}
                         ]
                     }),
-                ),
-                None,
-            )
+                ))
             .unwrap();
 
         let created = output_value(&applied)["createdEntityIds"].clone();
         let track_id = created["tracks"][0].as_str().unwrap().to_owned();
         let bus_id = created["buses"][0].as_str().unwrap().to_owned();
         let session_structure = dispatcher
-            .dispatch(command("session.get", json!({})), None)
+            .dispatch(command("session.get", json!({})))
             .unwrap();
         let lanes = output_value(&session_structure)["arrangement"]["automationLanes"]
             .as_array()
@@ -1797,24 +1739,21 @@ mod tests {
             ])
         );
 
-        let failed = dispatcher.dispatch(
-            command(
-                "session.apply",
-                json!({
-                    "operations":[
-                        {"command":"automation.set","params":{
-                            "target":{"kind":"trackMix","trackId":track_id,"parameter":"pan"},
-                            "interpolation":"linear",
-                            "points":[{"id":"point:both","tick":0,"position":"1:1","value":0}]}
-                        }
-                    ]
-                }),
-            ),
-            None,
-        );
+        let failed = dispatcher.dispatch(command(
+            "session.apply",
+            json!({
+                "operations":[
+                    {"command":"automation.set","params":{
+                        "target":{"kind":"trackMix","trackId":track_id,"parameter":"pan"},
+                        "interpolation":"linear",
+                        "points":[{"id":"point:both","tick":0,"position":"1:1","value":0}]}
+                    }
+                ]
+            }),
+        ));
         assert!(failed.is_err());
         let survived = dispatcher
-            .dispatch(command("session.get", json!({})), None)
+            .dispatch(command("session.get", json!({})))
             .unwrap();
         assert_eq!(survived.sequence, session_structure.sequence);
         assert_eq!(output_value(&survived), output_value(&session_structure));
@@ -1833,31 +1772,25 @@ mod tests {
         .unwrap();
 
         let counts = dispatcher
-            .dispatch(
-                command(
-                    "session.apply",
-                    json!({
-                        "operations": [
-                            {"command":"track.add","params":{"name":"Lead","kind":"instrument"}}
-                        ]
-                    }),
-                ),
-                None,
-            )
+            .dispatch(command(
+                "session.apply",
+                json!({
+                    "operations": [
+                        {"command":"track.add","params":{"name":"Lead","kind":"instrument"}}
+                    ]
+                }),
+            ))
             .unwrap();
         let with_ids = dispatcher
-            .dispatch(
-                command(
-                    "session.apply",
-                    json!({
-                        "operations": [
-                            {"command":"track.add","params":{"name":"Keys","kind":"instrument"}}
-                        ],
-                        "includeCreatedIds": true
-                    }),
-                ),
-                None,
-            )
+            .dispatch(command(
+                "session.apply",
+                json!({
+                    "operations": [
+                        {"command":"track.add","params":{"name":"Keys","kind":"instrument"}}
+                    ],
+                    "includeCreatedIds": true
+                }),
+            ))
             .unwrap();
 
         let compact = output_value(&counts);
@@ -1955,7 +1888,7 @@ mod tests {
 
         for (params, operation_index, name, message) in cases {
             let error = dispatcher
-                .dispatch(command("session.apply", params), None)
+                .dispatch(command("session.apply", params))
                 .unwrap_err()
                 .protocol_error();
             assert_eq!(error.code, ErrorCode::InvalidRequest);
@@ -1985,21 +1918,18 @@ mod tests {
         )
         .unwrap();
         let track = dispatcher
-            .dispatch(
-                command("track.add", json!({"name":"Lead","kind":"instrument"})),
-                None,
-            )
+            .dispatch(command(
+                "track.add",
+                json!({"name":"Lead","kind":"instrument"}),
+            ))
             .unwrap();
         let session = mutated_session(&track);
         let track_id = session.arrangement.tracks[0].id.clone();
         dispatcher
-            .dispatch(
-                command(
-                    "effect.add",
-                    json!({"owner":{"kind":"track","id":track_id},"pluginPath":"existing.vst3"}),
-                ),
-                None,
-            )
+            .dispatch(command(
+                "effect.add",
+                json!({"owner":{"kind":"track","id":track_id},"pluginPath":"existing.vst3"}),
+            ))
             .unwrap();
         let existing_id = dispatcher
             .core
@@ -2023,7 +1953,7 @@ mod tests {
                         {"command":"effect.add","params":{"owner":{"kind":"track","id":track_id},"pluginPath":"second.vst3"}}
                     ]
                 }),
-            ), None)
+            ))
             .unwrap();
         let result = output_value(&result);
         let ids = result["createdEntityIds"]["devices"].as_array().unwrap();
@@ -2054,10 +1984,10 @@ mod tests {
                 reason: None,
             });
         let track = dispatcher
-            .dispatch(
-                command("track.add", json!({"name":"@verb","kind":"instrument"})),
-                None,
-            )
+            .dispatch(command(
+                "track.add",
+                json!({"name":"@verb","kind":"instrument"}),
+            ))
             .unwrap();
         let track_id = mutated_session(&track).arrangement.tracks[0].id.clone();
         let result = dispatcher.dispatch(command("session.apply", json!({"includeCreatedIds":true,"operations":[
@@ -2070,14 +2000,14 @@ mod tests {
             {"command":"device.parameter.set","params":{"owner":{"kind":"bus","name":"FX"},"deviceId":"@verb","parameterIndex":0,"value":0.45}},
             {"command":"mixer.send.add","params":{"trackName":"@verb","returnBusName":"FX","levelDb":-12}},
             {"command":"mixer.sidechain.add","params":{"sourceTrackId":track_id,"targetDeviceId":"@verb","levelDb":-9}}
-        ]})), None).unwrap();
+        ]}))).unwrap();
         let ids = output_value(&result)["createdEntityIds"]["devices"]
             .as_array()
             .unwrap()
             .clone();
         assert_eq!(ids.len(), 3);
         let state = dispatcher
-            .dispatch(command("session.get", json!({})), None)
+            .dispatch(command("session.get", json!({})))
             .unwrap();
         let arrangement = &output_value(&state)["arrangement"];
         let buses = arrangement["mixer"]["buses"].as_array().unwrap();
@@ -2131,10 +2061,7 @@ mod tests {
         ];
         for (operations, index, cause) in cases {
             let error = dispatcher
-                .dispatch(
-                    command("session.apply", json!({"operations":operations})),
-                    None,
-                )
+                .dispatch(command("session.apply", json!({"operations":operations})))
                 .unwrap_err()
                 .protocol_error();
             assert_eq!(error.details.as_ref().unwrap()["operationIndex"], index);
@@ -2146,7 +2073,7 @@ mod tests {
                 "{error:?}"
             );
             let after = dispatcher
-                .dispatch(command("session.get", json!({})), None)
+                .dispatch(command("session.get", json!({})))
                 .unwrap();
             assert_eq!(after.sequence, state.sequence);
             assert_eq!(output_value(&after), output_value(&state));
@@ -2191,7 +2118,7 @@ mod tests {
         )
         .unwrap();
         let before = dispatcher
-            .dispatch(command("session.get", json!({})), None)
+            .dispatch(command("session.get", json!({})))
             .unwrap();
         let error = dispatcher.dispatch(command(
                 "session.apply",
@@ -2201,7 +2128,7 @@ mod tests {
                         {"command":"music.note.insert","params":{"clipId":"midi-clip:missing","notes":[{"pitch":"C4","position":"1:1","duration":"1/8","velocity":null}]}}
                     ]
                 }),
-            ), None)
+            ))
             .unwrap_err()
             .protocol_error();
         assert_eq!(error.code, ErrorCode::InvalidRequest);
@@ -2217,15 +2144,12 @@ mod tests {
         assert!(error.details.as_ref().unwrap()["value"].is_null());
 
         let unknown_operation = dispatcher
-            .dispatch(
-                command(
-                    "session.apply",
-                    serde_json::json!({
-                        "operations": [{"command": "missing.command", "params": {}}]
-                    }),
-                ),
-                None,
-            )
+            .dispatch(command(
+                "session.apply",
+                serde_json::json!({
+                    "operations": [{"command": "missing.command", "params": {}}]
+                }),
+            ))
             .unwrap_err()
             .protocol_error();
         assert_eq!(unknown_operation.code, ErrorCode::InvalidRequest);
@@ -2235,25 +2159,10 @@ mod tests {
         );
 
         let after = dispatcher
-            .dispatch(command("session.get", json!({})), None)
+            .dispatch(command("session.get", json!({})))
             .unwrap();
         assert_eq!(after.sequence, before.sequence);
         assert_eq!(output_value(&after), output_value(&before));
-
-        let conflict = dispatcher
-            .dispatch_request(ControlRequest::new(
-                "apply-conflict",
-                "session.apply",
-                json!({"operations":[{"command":"track.add","params":{"name":"Pad","kind":"instrument"}}]}),
-                Some(1),
-            ))
-            .unwrap_err()
-            .protocol_error();
-        assert_eq!(conflict.code, ErrorCode::Conflict);
-        let unchanged = dispatcher
-            .dispatch(command("session.get", json!({})), None)
-            .unwrap();
-        assert_eq!(output_value(&unchanged), output_value(&before));
         let _ = fs::remove_dir_all(root);
     }
 
@@ -2267,13 +2176,10 @@ mod tests {
         )
         .unwrap();
         let error = dispatcher
-            .dispatch(
-                command(
-                    "session.apply",
-                    json!({"operations":[{"command":"render.start","params":{}}]}),
-                ),
-                None,
-            )
+            .dispatch(command(
+                "session.apply",
+                json!({"operations":[{"command":"render.start","params":{}}]}),
+            ))
             .unwrap_err()
             .protocol_error();
         assert_eq!(error.code, ErrorCode::InvalidRequest);
@@ -2282,18 +2188,15 @@ mod tests {
         assert!(error.message.contains("batch operation failed"));
 
         let user_instrument_error = dispatcher
-            .dispatch(
-                command(
-                    "session.apply",
-                    json!({
-                        "operations":[{
-                            "command":"instrument.apply",
-                            "params":{"trackId":"track:missing","instrumentId":"user:example"}
-                        }]
-                    }),
-                ),
-                None,
-            )
+            .dispatch(command(
+                "session.apply",
+                json!({
+                    "operations":[{
+                        "command":"instrument.apply",
+                        "params":{"trackId":"track:missing","instrumentId":"user:example"}
+                    }]
+                }),
+            ))
             .unwrap_err()
             .protocol_error();
         assert_eq!(
@@ -2314,27 +2217,18 @@ mod tests {
         )
         .unwrap();
         let lead = dispatcher
-            .dispatch(
-                command("track.add", json!({"name":"Lead","kind":"audio"})),
-                None,
-            )
+            .dispatch(command("track.add", json!({"name":"Lead","kind":"audio"})))
             .unwrap();
         let lead_id = mutated_session(&lead).arrangement.tracks[0].id.clone();
         let pad = dispatcher
-            .dispatch(
-                command("track.add", json!({"name":"Pad","kind":"audio"})),
-                None,
-            )
+            .dispatch(command("track.add", json!({"name":"Pad","kind":"audio"})))
             .unwrap();
         let pad_id = mutated_session(&pad).arrangement.tracks[1].id.clone();
         dispatcher
-            .dispatch(
-                command(
-                    "effect.add",
-                    json!({"owner":{"kind":"track","id":pad_id},"pluginPath":"compressor.vst3"}),
-                ),
-                None,
-            )
+            .dispatch(command(
+                "effect.add",
+                json!({"owner":{"kind":"track","id":pad_id},"pluginPath":"compressor.vst3"}),
+            ))
             .unwrap();
         let device_id = dispatcher
             .core
@@ -2359,7 +2253,7 @@ mod tests {
         });
 
         let direct_rejection = dispatcher
-            .dispatch(command("mixer.sidechain.add", add_params.clone()), None)
+            .dispatch(command("mixer.sidechain.add", add_params.clone()))
             .unwrap_err();
         assert!(direct_rejection.to_string().contains("mono or stereo"));
         assert!(
@@ -2380,9 +2274,7 @@ mod tests {
                 command(
                     "session.apply",
                     json!({"operations":[{"command":"mixer.sidechain.add","params":add_params.clone()}]}),
-                ),
-                None,
-            )
+                ))
             .unwrap_err()
             .protocol_error();
         assert_eq!(
@@ -2412,19 +2304,16 @@ mod tests {
 
         // Act
         let added = dispatcher
-            .dispatch(
-                command(
-                    "session.apply",
-                    json!({
-                        "includeCreatedIds": true,
-                        "operations": [{
-                            "command":"mixer.sidechain.add",
-                            "params":add_params
-                        }]
-                    }),
-                ),
-                None,
-            )
+            .dispatch(command(
+                "session.apply",
+                json!({
+                    "includeCreatedIds": true,
+                    "operations": [{
+                        "command":"mixer.sidechain.add",
+                        "params":add_params
+                    }]
+                }),
+            ))
             .unwrap();
         let added = output_value(&added);
         let send_id = added["createdEntityIds"]["sidechainSends"][0]
@@ -2432,43 +2321,37 @@ mod tests {
             .unwrap()
             .to_string();
         let listed = dispatcher
-            .dispatch(command("mixer.sidechain.list", json!({})), None)
+            .dispatch(command("mixer.sidechain.list", json!({})))
             .unwrap();
         dispatcher
-            .dispatch(
-                command(
-                    "mixer.sidechain.update",
-                    json!({
-                        "sidechainSendId":send_id,
-                        "patch":{"levelDb":-12.0,"position":"postFader","enabled":false}
-                    }),
-                ),
-                None,
-            )
+            .dispatch(command(
+                "mixer.sidechain.update",
+                json!({
+                    "sidechainSendId":send_id,
+                    "patch":{"levelDb":-12.0,"position":"postFader","enabled":false}
+                }),
+            ))
             .unwrap();
         let updated = dispatcher
-            .dispatch(command("mixer.sidechain.list", json!({})), None)
+            .dispatch(command("mixer.sidechain.list", json!({})))
             .unwrap();
         dispatcher
-            .dispatch(
-                command("mixer.sidechain.remove", json!({"sidechainSendId":send_id})),
-                None,
-            )
+            .dispatch(command(
+                "mixer.sidechain.remove",
+                json!({"sidechainSendId":send_id}),
+            ))
             .unwrap();
         let removed = dispatcher
-            .dispatch(command("mixer.sidechain.list", json!({})), None)
+            .dispatch(command("mixer.sidechain.list", json!({})))
             .unwrap();
         let unknown_target = dispatcher
-            .dispatch(
-                command(
-                    "mixer.sidechain.add",
-                    json!({
-                        "sourceTrackId":lead_id,"targetDeviceId":"device:missing",
-                        "levelDb":0.0,"position":"postFader"
-                    }),
-                ),
-                None,
-            )
+            .dispatch(command(
+                "mixer.sidechain.add",
+                json!({
+                    "sourceTrackId":lead_id,"targetDeviceId":"device:missing",
+                    "levelDb":0.0,"position":"postFader"
+                }),
+            ))
             .unwrap_err()
             .protocol_error();
 

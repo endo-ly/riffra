@@ -48,23 +48,20 @@ mod tests {
         )
         .unwrap();
         let added = dispatcher
-            .dispatch(
-                command("track.add", json!({"name":"Keys","kind":"instrument"})),
-                None,
-            )
+            .dispatch(command(
+                "track.add",
+                json!({"name":"Keys","kind":"instrument"}),
+            ))
             .unwrap();
         let track_id = mutated_session(&added).arrangement.tracks[0].id.clone();
         let instrument = dispatcher
-            .dispatch(
-                command(
-                    "instrument.vst3.set",
-                    json!({
-                        "trackId": track_id,
-                        "pluginPath": "C:\\Plugins\\Synth.vst3"
-                    }),
-                ),
-                None,
-            )
+            .dispatch(command(
+                "instrument.vst3.set",
+                json!({
+                    "trackId": track_id,
+                    "pluginPath": "C:\\Plugins\\Synth.vst3"
+                }),
+            ))
             .unwrap();
         let device_id = mutated_session(&instrument).arrangement.tracks[0]
             .instrument
@@ -73,31 +70,26 @@ mod tests {
             .id
             .clone();
         dispatcher
-            .dispatch(
-                command(
-                    "session.apply",
-                    json!({"operations":[{"command":"device.parameter.set","params":{
-                        "owner": {"kind":"track","id":track_id},
-                        "deviceId": device_id,
-                        "parameterIndex": 0,
-                        "value": 0.5
-                    }}]}),
-                ),
-                None,
-            )
+            .dispatch(command(
+                "session.apply",
+                json!({"operations":[{"command":"device.parameter.set","params":{
+                    "owner": {"kind":"track","id":track_id},
+                    "deviceId": device_id,
+                    "parameterIndex": 0,
+                    "value": 0.5
+                }}]}),
+            ))
             .unwrap();
         dispatcher
             .dispatch(
                 command(
                     "effect.add",
                     json!({"owner":{"kind":"track","id":track_id}, "pluginPath": "C:/Plugins/Delay.vst3"}),
-                ),
-                None,
-            )
+                ))
             .unwrap();
 
         let session = dispatcher
-            .dispatch(command("session.get", json!({})), None)
+            .dispatch(command("session.get", json!({})))
             .unwrap();
         assert_eq!(
             output_value(&session)["arrangement"]["tracks"][0]["instrument"]["source"]["parameterValues"]
@@ -106,7 +98,7 @@ mod tests {
         );
         let listed = output_value(
             &dispatcher
-                .dispatch(command("track.list", json!({})), None)
+                .dispatch(command("track.list", json!({})))
                 .unwrap(),
         );
         let track = &listed[0];
@@ -129,10 +121,7 @@ mod tests {
 
         // Arrange: only the tempo is patched first.
         let tempo_only = dispatcher
-            .dispatch(
-                command("music.timebase.update", json!({"bpm": 140.0})),
-                None,
-            )
+            .dispatch(command("music.timebase.update", json!({"bpm": 140.0})))
             .unwrap();
 
         assert_eq!(mutated_session(&tempo_only).arrangement.timebase.ppq, 960);
@@ -155,17 +144,14 @@ mod tests {
 
         // Act: the meter is patched while the tempo changes again.
         let patched = dispatcher
-            .dispatch(
-                command(
-                    "music.timebase.update",
-                    json!({
-                        "bpm": 100.0,
-                        "timeSignatureNumerator": 7,
-                        "timeSignatureDenominator": 8
-                    }),
-                ),
-                None,
-            )
+            .dispatch(command(
+                "music.timebase.update",
+                json!({
+                    "bpm": 100.0,
+                    "timeSignatureNumerator": 7,
+                    "timeSignatureDenominator": 8
+                }),
+            ))
             .unwrap();
 
         // Assert
@@ -199,22 +185,16 @@ mod tests {
         .unwrap();
 
         dispatcher
-            .dispatch(
-                command(
-                    "music.timebase.update",
-                    json!({"timeSignatureNumerator":3,"timeSignatureDenominator":4}),
-                ),
-                None,
-            )
+            .dispatch(command(
+                "music.timebase.update",
+                json!({"timeSignatureNumerator":3,"timeSignatureDenominator":4}),
+            ))
             .unwrap();
         let marker = dispatcher
-            .dispatch(
-                command(
-                    "music.marker.add",
-                    json!({"name":"Chorus","position":"5:1"}),
-                ),
-                None,
-            )
+            .dispatch(command(
+                "music.marker.add",
+                json!({"name":"Chorus","position":"5:1"}),
+            ))
             .unwrap();
         assert_eq!(
             mutated_session(&marker).arrangement.markers[0].tick,
@@ -222,26 +202,20 @@ mod tests {
         );
 
         let looped = dispatcher
-            .dispatch(
-                command(
-                    "transport.loop.set",
-                    json!({"enabled":true,"start":"5:1","end":"9:1"}),
-                ),
-                None,
-            )
+            .dispatch(command(
+                "transport.loop.set",
+                json!({"enabled":true,"start":"5:1","end":"9:1"}),
+            ))
             .unwrap();
         let session = mutated_session(&looped);
         assert_eq!(session.arrangement.loop_range.start_tick.0, 4 * 3 * 960);
         assert_eq!(session.arrangement.loop_range.end_tick.0, 8 * 3 * 960);
 
         let punched = dispatcher
-            .dispatch(
-                command(
-                    "record.punch.set",
-                    json!({"enabled":true,"start":"9:1","end":"13:1"}),
-                ),
-                None,
-            )
+            .dispatch(command(
+                "record.punch.set",
+                json!({"enabled":true,"start":"9:1","end":"13:1"}),
+            ))
             .unwrap();
         let punch = mutated_session(&punched).arrangement.punch_range.unwrap();
         assert_eq!(punch.start_tick.0, 8 * 3 * 960);

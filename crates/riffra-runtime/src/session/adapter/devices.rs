@@ -127,11 +127,10 @@ pub fn set_track_midi_input(
     Ok(committed.0)
 }
 
-pub(crate) fn set_track_vst3_instrument_with_expected_sequence<D: RuntimeDriver>(
+pub(crate) fn set_track_vst3_instrument<D: RuntimeDriver>(
     context: &mut SessionContext<'_, D>,
     track_id: &str,
     path: &str,
-    expected_sequence: Option<u64>,
 ) -> Result<crate::api::output::ArrangementMutationResult, AdapterError> {
     if context.safe_mode {
         return Err(AdapterError::runtime(
@@ -164,10 +163,6 @@ pub(crate) fn set_track_vst3_instrument_with_expected_sequence<D: RuntimeDriver>
         .application(&context.storage)
         .prepare_track_instrument(track_id, instrument)
         .map_err(AdapterError::from)?;
-    let prepared = match expected_sequence {
-        Some(sequence) => prepared.with_expected_sequence(sequence),
-        None => prepared,
-    };
     let created_entity_ids = if creates_device {
         std::collections::BTreeMap::from([("devices".into(), vec![id])])
     } else {
@@ -184,11 +179,10 @@ pub fn clear_track_instrument(
     Ok(committed.0)
 }
 
-pub(crate) fn add_effect_with_expected_sequence(
+pub(crate) fn add_effect(
     context: &mut SessionContext<'_>,
     owner: &riffra_core::EffectOwner,
     path: &str,
-    expected_sequence: Option<u64>,
 ) -> Result<crate::api::output::ArrangementMutationResult, AdapterError> {
     if context.safe_mode {
         return Err(AdapterError::runtime(
@@ -205,10 +199,6 @@ pub(crate) fn add_effect_with_expected_sequence(
         .application(&context.storage)
         .prepare_effect_with_created_id(owner, name, validated_path.to_string_lossy().into_owned())
         .map_err(AdapterError::from)?;
-    let prepared = match expected_sequence {
-        Some(sequence) => prepared.with_expected_sequence(sequence),
-        None => prepared,
-    };
     commit_device_arrangement_with_created_ids(
         context,
         prepared,
@@ -492,11 +482,10 @@ pub fn disable_missing_plugin(
 
 /// Replaces an unresolved Track Device in place so its chain position and id
 /// remain stable while the plugin binary and plugin state are refreshed.
-pub(crate) fn replace_missing_track_plugin_with_expected_sequence(
+pub(crate) fn replace_missing_track_plugin(
     context: &mut SessionContext<'_>,
     device_id: &str,
     new_path: &str,
-    expected_sequence: Option<u64>,
 ) -> Result<crate::api::output::ArrangementMutationResult, AdapterError> {
     let path = Path::new(new_path.trim());
     let session = current_session(context).map_err(AdapterError::command)?;
@@ -515,10 +504,6 @@ pub(crate) fn replace_missing_track_plugin_with_expected_sequence(
             validated_path.to_string_lossy().into_owned(),
         )
         .map_err(AdapterError::from)?;
-    let prepared = match expected_sequence {
-        Some(sequence) => prepared.with_expected_sequence(sequence),
-        None => prepared,
-    };
     commit_device_arrangement_with_created_ids(context, prepared, Default::default())
 }
 

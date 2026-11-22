@@ -847,7 +847,7 @@ instruments: {lead: {preset: LEAD/001-analog-saw-lead, voices: 8}}
         .unwrap();
         let request = |command: &str, params| {
             host.dispatch_control(
-                ControlRequest::new("score-test", command, params, None)
+                ControlRequest::new("score-test", command, params)
                     .with_expected_project_id(project_id.clone()),
             )
         };
@@ -898,7 +898,7 @@ instruments: {lead: {preset: LEAD/001-analog-saw-lead, voices: 8}}
         let project_id = host.bootstrap().unwrap().project_state.active_project_id;
         let request = |command: &str, params| {
             host.dispatch_control(
-                ControlRequest::new("export-score-test", command, params, None)
+                ControlRequest::new("export-score-test", command, params)
                     .with_expected_project_id(project_id.clone()),
             )
         };
@@ -931,7 +931,7 @@ instruments: {lead: {preset: LEAD/001-analog-saw-lead, voices: 8}}
         let second_id = host.bootstrap().unwrap().project_state.active_project_id;
         let request = |command: &str, params| {
             host.dispatch_control(
-                ControlRequest::new("export-score-test", command, params, None)
+                ControlRequest::new("export-score-test", command, params)
                     .with_expected_project_id(second_id.clone()),
             )
         };
@@ -1041,7 +1041,6 @@ instruments: {lead: {preset: LEAD/001-analog-saw-lead, voices: 8}}
                 "audio-length-test",
                 "project.export-score",
                 json!({"path": folder, "link": true}),
-                None,
             )
             .with_expected_project_id(project_id.clone()),
         );
@@ -1070,7 +1069,7 @@ instruments: {lead: {preset: LEAD/001-analog-saw-lead, voices: 8}}
         let project_id = host.bootstrap().unwrap().project_state.active_project_id;
         let request = |command: &str, params| {
             host.dispatch_control(
-                ControlRequest::new("midi-test", command, params, None)
+                ControlRequest::new("midi-test", command, params)
                     .with_expected_project_id(project_id.clone()),
             )
         };
@@ -1115,7 +1114,6 @@ instruments: {lead: {preset: LEAD/001-analog-saw-lead, voices: 8}}
                 "project-create",
                 "project.create",
                 json!({"name": "Second"}),
-                Some(0),
             )
             .with_expected_project_id(initial_project_id.clone()),
         );
@@ -1153,7 +1151,6 @@ instruments: {lead: {preset: LEAD/001-analog-saw-lead, voices: 8}}
                 "project-create",
                 "project.create",
                 json!({"name": "Second"}),
-                Some(0),
             )
             .with_expected_project_id(initial_project_id.clone()),
         );
@@ -1162,13 +1159,8 @@ instruments: {lead: {preset: LEAD/001-analog-saw-lead, voices: 8}}
         let active_project_id = activation.project_state.active_project_id;
         let delete = |id: &str, project_id: &str| {
             host.dispatch_control(
-                ControlRequest::new(
-                    id,
-                    "project.delete",
-                    json!({ "projectId": project_id }),
-                    Some(activation.canonical.sequence),
-                )
-                .with_expected_project_id(active_project_id.clone()),
+                ControlRequest::new(id, "project.delete", json!({ "projectId": project_id }))
+                    .with_expected_project_id(active_project_id.clone()),
             )
         };
 
@@ -1200,7 +1192,6 @@ instruments: {lead: {preset: LEAD/001-analog-saw-lead, voices: 8}}
                 "project-create",
                 "project.create",
                 json!({"name": "Second"}),
-                Some(0),
             )
             .with_expected_project_id(initial_project_id.clone()),
         );
@@ -1212,7 +1203,6 @@ instruments: {lead: {preset: LEAD/001-analog-saw-lead, voices: 8}}
                 "stale-project-export",
                 "project.export",
                 json!({"output": stale_export_path}),
-                None,
             )
             .with_expected_project_id(initial_project_id.clone()),
         );
@@ -1224,13 +1214,8 @@ instruments: {lead: {preset: LEAD/001-analog-saw-lead, voices: 8}}
         assert!(!stale_export_path.exists());
 
         let stale_transport = host.dispatch_control(
-            ControlRequest::new(
-                "host-owned-transport-play",
-                "transport.play",
-                json!({}),
-                None,
-            )
-            .with_expected_project_id(initial_project_id.clone()),
+            ControlRequest::new("host-owned-transport-play", "transport.play", json!({}))
+                .with_expected_project_id(initial_project_id.clone()),
         );
         assert!(!stale_transport.ok);
         assert_eq!(
@@ -1243,7 +1228,6 @@ instruments: {lead: {preset: LEAD/001-analog-saw-lead, voices: 8}}
                 "stale-track-add",
                 "track.add",
                 json!({"name": "Rejected", "kind": "instrument"}),
-                None,
             )
             .with_expected_project_id(initial_project_id.clone()),
         );
