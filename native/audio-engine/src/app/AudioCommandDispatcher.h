@@ -68,6 +68,9 @@ private:
     /// Closes the auditioned plug-in's editor and destroys the plug-in.
     /// Lifecycle thread only.
     void closePluginAudition();
+    /// Forgets the Track Device editor once it is closed. Lifecycle thread, or
+    /// the command thread while the lifecycle executor is idle.
+    void releaseTrackPluginEditor();
 
     void handle(const StatusCommand&, CommandResponder responder);
     void handle(const SetEmergencyMuteCommand& command, CommandResponder responder);
@@ -92,6 +95,7 @@ private:
     void handle(const SetPluginStateCommand& command, CommandResponder responder);
     void handle(const SetDeviceProgramCommand& command, CommandResponder responder);
     void handle(const OpenPluginEditorCommand& command, CommandResponder responder);
+    void handle(const ClosePluginEditorCommand& command, CommandResponder responder);
     void handle(const PreviewSampleCommand& command, CommandResponder responder);
     void handle(const PreviewInstrumentCommand& command, CommandResponder responder);
     void handle(const StopPreviewCommand&, CommandResponder responder);
@@ -112,6 +116,9 @@ private:
     std::shared_ptr<PluginEditorHost> trackPluginEditor;
     EffectOwnerSpec pluginEditorOwner;
     juce::String trackPluginEditorDeviceId;
+    /// Whether `trackPluginEditor` exists, readable from the command thread
+    /// while a lifecycle task owns the editor.
+    std::atomic<bool> trackPluginEditorOpen{false};
     std::shared_ptr<PluginEditorHost> auditionEditor;
     juce::AudioBuffer<float> comparisonRaw;
     juce::AudioBuffer<float> comparisonProcessed;

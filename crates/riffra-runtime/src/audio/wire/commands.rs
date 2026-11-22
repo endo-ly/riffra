@@ -34,7 +34,6 @@ pub(crate) enum SidecarCommand {
     DiscardTimelineSnapshot,
     WaitForTimelineIdle {
         timeout_ms: u64,
-        close_editor: bool,
     },
     PlayTimeline,
     PauseTimeline,
@@ -124,6 +123,9 @@ pub(crate) enum SidecarCommand {
         project_id: String,
         owner: riffra_core::EffectOwner,
         device_id: String,
+    },
+    ClosePluginEditor {
+        timeout_ms: u64,
     },
     PreviewSample {
         path: String,
@@ -236,7 +238,8 @@ impl SidecarCommand {
             Self::SetDeviceBypassed { .. }
             | Self::SetDeviceParameter { .. }
             | Self::SetPluginState { .. }
-            | Self::OpenPluginEditor { .. } => ExpectedResponse::DeviceAck,
+            | Self::OpenPluginEditor { .. }
+            | Self::ClosePluginEditor { .. } => ExpectedResponse::DeviceAck,
             Self::GetDeviceStatus { .. } => ExpectedResponse::DeviceStatus,
             Self::GetDeviceParameters { .. }
             | Self::GetDeviceParameterValueForText { .. }

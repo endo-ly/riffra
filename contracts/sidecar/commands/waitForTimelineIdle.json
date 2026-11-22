@@ -2,7 +2,6 @@
   "requestId": 1,
   "command": {
     "type": "waitForTimelineIdle",
-    "timeoutMs": 1500,
-    "closeEditor": false
+    "timeoutMs": 1500
   }
 }

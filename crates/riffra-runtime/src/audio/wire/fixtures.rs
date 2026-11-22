@@ -79,10 +79,7 @@ fn command_samples() -> Vec<SidecarCommand> {
         },
         SidecarCommand::CommitTimelineSnapshot,
         SidecarCommand::DiscardTimelineSnapshot,
-        SidecarCommand::WaitForTimelineIdle {
-            timeout_ms: 1_500,
-            close_editor: false,
-        },
+        SidecarCommand::WaitForTimelineIdle { timeout_ms: 1_500 },
         SidecarCommand::PlayTimeline,
         SidecarCommand::PauseTimeline,
         SidecarCommand::SetTransportStarting,
@@ -171,6 +168,7 @@ fn command_samples() -> Vec<SidecarCommand> {
             owner: riffra_core::EffectOwner::Track { id: track() },
             device_id: device(),
         },
+        SidecarCommand::ClosePluginEditor { timeout_ms: 30_000 },
         SidecarCommand::PreviewSample {
             path: "samples/kick.wav".into(),
             start_ms: 0,

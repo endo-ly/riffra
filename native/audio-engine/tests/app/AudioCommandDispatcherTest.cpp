@@ -21,6 +21,8 @@ public:
         dispatcher.trackPluginEditor = std::move(editor);
         dispatcher.pluginEditorOwner = std::move(owner);
         dispatcher.trackPluginEditorDeviceId = std::move(deviceId);
+        dispatcher.trackPluginEditorOpen.store(dispatcher.trackPluginEditor != nullptr,
+                                               std::memory_order_release);
     }
 
     [[nodiscard]] static std::shared_ptr<PluginEditorHost> trackPluginEditor(
@@ -71,12 +73,12 @@ TEST(AudioCommandDispatcherTest, CommitAcknowledgesAndRetainsDeferredEditorUntil
                                 acknowledged.signal();
                             }));
         if (acknowledged.wait(2000) && lifecycle.waitForIdle(std::chrono::seconds(2))) {
-            dispatcher.dispatch({2, WaitForTimelineIdleCommand{100, true}},
+            dispatcher.dispatch({2, ClosePluginEditorCommand{100}},
                                 CommandResponder(2, [&](const juce::var& reply) {
                                     firstWaitKind = reply.getProperty("kind", {}).toString();
                                 }));
             rack->restoreAutomation();
-            dispatcher.dispatch({3, WaitForTimelineIdleCommand{2000, true}},
+            dispatcher.dispatch({3, ClosePluginEditorCommand{2000}},
                                 CommandResponder(3, [&](const juce::var& reply) {
                                     secondWaitKind = reply.getProperty("kind", {}).toString();
                                 }));
@@ -92,6 +94,39 @@ TEST(AudioCommandDispatcherTest, CommitAcknowledgesAndRetainsDeferredEditorUntil
     EXPECT_EQ(secondWaitKind, "response");
     EXPECT_TRUE(captured.load());
     EXPECT_EQ(AudioCommandDispatcherTestPeer::trackPluginEditor(dispatcher), nullptr);
+}
+
+TEST(AudioCommandDispatcherTest, ClosingWithoutAnEditorDoesNotWaitForARunningGraphLoad) {
+    // Arrange
+    juce::AudioFormatManager formats;
+    TimelineEngine timeline;
+    AudioRenderPipeline pipeline(timeline);
+    AudioDeviceController deviceController(pipeline);
+    MidiInputService midiInputs(pipeline.preview(), pipeline.audition(), timeline);
+    // The load task waits on these events, so they outlive the executor that runs it.
+    juce::WaitableEvent loadStarted;
+    juce::WaitableEvent releaseLoad;
+    RuntimeLifecycleExecutor lifecycle;
+    AudioCommandDispatcher dispatcher(
+        {formats, timeline, pipeline, deviceController, midiInputs, lifecycle});
+    ASSERT_TRUE(lifecycle.submitLoad([&] {
+        loadStarted.signal();
+        releaseLoad.wait(5000);
+    }));
+    ASSERT_TRUE(loadStarted.wait(2000));
+    juce::String kind;
+
+    // Act
+    dispatcher.dispatch({1, ClosePluginEditorCommand{2000}},
+                        CommandResponder(1, [&](const juce::var& reply) {
+                            kind = reply.getProperty("kind", {}).toString();
+                        }));
+    const auto loadStillRunning = lifecycle.isBusy();
+    releaseLoad.signal();
+
+    // Assert
+    EXPECT_EQ(kind, "response");
+    EXPECT_TRUE(loadStillRunning);
 }
 
 TEST(AudioCommandDispatcherTest, QueueFullDoesNotPreventSafetyMutes) {

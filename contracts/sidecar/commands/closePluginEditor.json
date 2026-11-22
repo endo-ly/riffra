@@ -1,0 +1,7 @@
+{
+  "requestId": 1,
+  "command": {
+    "type": "closePluginEditor",
+    "timeoutMs": 30000
+  }
+}

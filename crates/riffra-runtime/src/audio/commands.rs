@@ -185,17 +185,18 @@ impl AudioSupervisor {
         self.request_ack(
             SidecarCommand::WaitForTimelineIdle {
                 timeout_ms: timeout.as_millis().min(u128::from(u64::MAX)) as u64,
-                close_editor: false,
             },
             timeout,
         )
     }
 
+    /// Captures the closing state of an open plugin editor before the sidecar
+    /// stops. Without an open editor the sidecar answers without waiting for a
+    /// running Graph load, whose result shutdown discards.
     pub(crate) fn close_editor_before_shutdown(&self, timeout: Duration) -> NativeAudioResult<()> {
         self.request_during_shutdown(
-            SidecarCommand::WaitForTimelineIdle {
+            SidecarCommand::ClosePluginEditor {
                 timeout_ms: timeout.as_millis().min(u128::from(u64::MAX)) as u64,
-                close_editor: true,
             },
             timeout,
         )
@@ -207,9 +208,8 @@ impl AudioSupervisor {
         timeout: Duration,
     ) -> NativeAudioResult<()> {
         self.request_ack(
-            SidecarCommand::WaitForTimelineIdle {
+            SidecarCommand::ClosePluginEditor {
                 timeout_ms: timeout.as_millis().min(u128::from(u64::MAX)) as u64,
-                close_editor: true,
             },
             timeout,
         )

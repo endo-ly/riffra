@@ -220,11 +220,10 @@ bool decodeCommand(const juce::var& value, SidecarCommandSpec& output, juce::Str
     if (type == "discardTimelineSnapshot")
         return decodeEmpty<DiscardTimelineSnapshotCommand>(value, output, error);
     if (type == "waitForTimelineIdle") {
-        auto fields = reader({"type", "timeoutMs", "closeEditor"});
+        auto fields = reader({"type", "timeoutMs"});
         WaitForTimelineIdleCommand command;
         if (!fields.string("type", ignoredType) ||
-            !fields.unsignedInteger("timeoutMs", command.timeoutMs) ||
-            !fields.boolean("closeEditor", command.closeEditor) || !fields.finish())
+            !fields.unsignedInteger("timeoutMs", command.timeoutMs) || !fields.finish())
             return false;
         if (command.timeoutMs == 0) return fail(error, field("timeoutMs"), "must be positive");
         output = command;
@@ -478,6 +477,16 @@ bool decodeCommand(const juce::var& value, SidecarCommandSpec& output, juce::Str
         if (!fields.string("type", ignoredType) || !fields.string("projectId", command.projectId) ||
             !decodeDevice(fields, command.owner, command.deviceId, error) || !fields.finish())
             return false;
+        output = command;
+        return true;
+    }
+    if (type == "closePluginEditor") {
+        auto fields = reader({"type", "timeoutMs"});
+        ClosePluginEditorCommand command;
+        if (!fields.string("type", ignoredType) ||
+            !fields.unsignedInteger("timeoutMs", command.timeoutMs) || !fields.finish())
+            return false;
+        if (command.timeoutMs == 0) return fail(error, field("timeoutMs"), "must be positive");
         output = command;
         return true;
     }
