@@ -1,7 +1,8 @@
 use clap::{Args, Parser, Subcommand};
 use riffra_core::application::{SessionInspectionQuery, SessionSettingsPatch};
 use riffra_core::{
-    AudioClipPatch, FrameRange, MidiClipPatch, PhrasePattern, PhrasePlacement, TimelineTick,
+    AudioClipPatch, FrameRange, MidiClipPatch, PhrasePattern, PhrasePlacement, RenderMode,
+    TimelineTick,
 };
 use riffra_runtime::api::client;
 use riffra_runtime::api::output::PluginStateValue;
@@ -575,6 +576,8 @@ pub enum MixdownCommand {
     ///
     /// pluginWarmUpSeconds: wall-clock VST3 processing before rendering, excluded from the WAV
     /// (0..=60; omitted = 2). Increase for incomplete asynchronous sample loading; 0 disables it.
+    /// renderMode: `offline` (default, as fast as possible) or `realtime` (1.0x pacing for
+    /// asynchronous synthesizers).
     Set {
         /// Complete settings object from `render settings get`, edited as inline JSON or @file.
         #[arg(long)]
@@ -2759,6 +2762,7 @@ pub enum RenderCommand {
     /// a Job; use --wait to return its terminal state, or `job wait` to follow it later. `job wait`
     /// without --timeout-ms waits until a terminal state.
     /// --output-path copies the completed WAV to an absolute path without replacing an existing file.
+    /// --render-mode overrides the Project's Mixdown setting for this Job only.
     Start(RenderStartArgs),
     /// Render several Tracks to aligned WAV stems under one job and directory.
     ///
@@ -2799,6 +2803,9 @@ pub struct RenderStartArgs {
     /// Apply peak normalization to the rendered audio; defaults to false when omitted.
     #[arg(long)]
     pub normalize: Option<bool>,
+    /// Render pacing for this Job only: `offline` (default) renders as fast as possible, `realtime` renders at 1.0x speed for asynchronous synthesizers such as Synthesizer V; overrides the Project setting.
+    #[arg(long, value_parser = ["offline", "realtime"])]
+    pub render_mode: Option<String>,
     /// Render only this Track as a stem instead of the full mix.
     #[arg(long)]
     pub track_id: Option<String>,
@@ -4226,12 +4233,21 @@ fn render_start(args: RenderStartArgs) -> Result<ControlCommand, RequestError> {
             range,
             normalize: args.normalize.unwrap_or(false),
             track_id: args.track_id,
+            render_mode: args.render_mode.as_deref().map(render_mode).transpose()?,
             output_path: args
                 .output_path
                 .map(|path| path.to_string_lossy().into_owned()),
         }),
     })
     .into())
+}
+
+fn render_mode(mode: &str) -> Result<RenderMode, RequestError> {
+    match mode {
+        "offline" => Ok(RenderMode::Offline),
+        "realtime" => Ok(RenderMode::Realtime),
+        other => Err(format!("unknown render mode: {other}").into()),
+    }
 }
 
 fn render_stems(args: RenderStemsArgs) -> Result<ControlCommand, RequestError> {
@@ -4935,6 +4951,33 @@ mod tests {
         assert_eq!(levels.name, "analysis.levels");
         assert_eq!(levels.params["source"], json!({"kind":"bus","id":"bus:1"}));
         assert_eq!(levels.params["grid"], "1/16");
+    }
+
+    #[test]
+    fn render_start_overrides_the_project_render_mode() {
+        // Arrange
+        let arguments = ["riffra", "render", "start", "--render-mode", "realtime"];
+        let settings = [
+            "riffra",
+            "render",
+            "settings",
+            "set",
+            "--settings-json",
+            r#"{"musicalEndTick":0,"tailSeconds":0.0,"fadeOutSeconds":0.0,"renderMode":"realtime","mastering":null,"sampleRate":null,"blockSize":null}"#,
+        ];
+
+        // Act
+        let render = wire(Cli::try_parse_from(arguments).unwrap());
+        let saved = wire(Cli::try_parse_from(settings).unwrap());
+
+        // Assert
+        assert_eq!(render.name, "render.start");
+        assert_eq!(render.params["options"]["renderMode"], "realtime");
+        assert_eq!(saved.name, "render.settings.set");
+        assert_eq!(saved.params["renderMode"], "realtime");
+        assert!(
+            Cli::try_parse_from(["riffra", "render", "start", "--render-mode", "fast"]).is_err()
+        );
     }
 
     #[test]

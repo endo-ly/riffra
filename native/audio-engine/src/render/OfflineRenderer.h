@@ -2,6 +2,8 @@
 
 #include <JuceHeader.h>
 
+#include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -42,6 +44,10 @@ public:
     [[nodiscard]] bool render(juce::AudioFormatManager& formats, Result& result,
                               juce::String& error);
 
+    /// Asks the render to stop at the next block or pacing slice. `render()` then fails with a
+    /// cancellation error and releases its partial outputs.
+    void cancel() noexcept;
+
 private:
     friend class TimelineEngineTestPeer;
 
@@ -62,14 +68,26 @@ private:
         bool normalize = false;
         bool hostsPlugins = false;
         double pluginWarmUpSeconds = 2.0;
+        RenderMode renderMode = RenderMode::offline;
         std::int64_t latencySamples = 0;
         std::vector<juce::String> automationWarnings;
     };
 
     OfflineRenderer(Plan renderPlan, std::unique_ptr<TimelineEngine> timelineEngine) noexcept;
 
+    /// Processes the graph in silence at realtime pace so lazily prepared plugins finish
+    /// loading. Returns false when a cancellation request stopped the warm-up.
+    bool warmUpPlugins();
+
+    /// Waits until the processed sample count reaches the wall-clock target. Returns false
+    /// when a cancellation request stopped the wait.
+    bool waitForPacing(std::chrono::steady_clock::time_point start, std::int64_t processedSamples);
+
+    [[nodiscard]] bool isCancelled() const noexcept;
+
     const Plan plan;
     const std::unique_ptr<TimelineEngine> engine;
+    std::atomic<bool> cancelRequested{false};
 };
 
 }  // namespace riffra

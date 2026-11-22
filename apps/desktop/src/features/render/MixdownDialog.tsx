@@ -3,6 +3,7 @@ import type {
   CreativeSession,
   LoudnessMastering,
   MixdownSettings,
+  RenderMode,
   RenderRange,
 } from '@/model/generated';
 import { chooseRenderDirectory, saveRenderWav } from '@/native/dialog';
@@ -70,6 +71,11 @@ const OUTPUTS: readonly [boolean, string][] = [
   [true, 'Aligned Track stems'],
 ];
 
+const RENDER_MODES: readonly [RenderMode, string][] = [
+  ['offline', 'Offline (Fast)'],
+  ['realtime', 'Real-time (1x)'],
+];
+
 export function MixdownDialog(props: Props) {
   const { api, commit: sessionCommit } = useSessionContext();
   const canonical = props.session.settings.mixdown;
@@ -80,6 +86,7 @@ export function MixdownDialog(props: Props) {
   const [tail, setTail] = useState(canonical.tailSeconds);
   const [fade, setFade] = useState(canonical.fadeOutSeconds);
   const [warmUp, setWarmUp] = useState(canonical.pluginWarmUpSeconds);
+  const [renderMode, setRenderMode] = useState(canonical.renderMode);
   const [range, setRange] = useState<RenderRange['kind']>('entireArrangement');
   const [trackId, setTrackId] = useState('');
   const [stems, setStems] = useState(false);
@@ -101,6 +108,7 @@ export function MixdownDialog(props: Props) {
     setTail(canonical.tailSeconds);
     setFade(canonical.fadeOutSeconds);
     setWarmUp(canonical.pluginWarmUpSeconds);
+    setRenderMode(canonical.renderMode);
   }, [canonical]);
   const active = Boolean(job && ['queued', 'running', 'cancelling'].includes(job.state));
   const busy = saving || Boolean(active);
@@ -148,6 +156,7 @@ export function MixdownDialog(props: Props) {
         tailSeconds: tail,
         fadeOutSeconds: fade,
         pluginWarmUpSeconds: warmUp,
+        renderMode,
         mastering: enabled ? target : null,
       };
       if (!sameMixdownSettings(settings, canonical)) {
@@ -412,6 +421,20 @@ export function MixdownDialog(props: Props) {
             </div>
           </DialogSection>
           <DialogSection title="Plugin preparation">
+            <DialogRow label="Render mode">
+              <div className={controls.segmented} role="group" aria-label="Render mode">
+                {RENDER_MODES.map(([mode, label]) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    aria-pressed={renderMode === mode}
+                    onClick={() => setRenderMode(mode)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </DialogRow>
             <div className={styles.numbers}>
               <NumberField
                 label="Preparation time"
@@ -423,6 +446,10 @@ export function MixdownDialog(props: Props) {
                 onChange={(value) => setWarmUp(value ?? NaN)}
               />
             </div>
+            <p className={controls.hint}>
+              Asynchronous synthesizers such as Synthesizer V need Real-time (1x) together with a
+              preparation time of 10–30 seconds.
+            </p>
           </DialogSection>
         </fieldset>
       </form>

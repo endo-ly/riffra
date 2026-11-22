@@ -208,6 +208,20 @@ impl CreativeSession {
     }
 }
 
+/// Pace at which the offline renderer executes its execution graph.
+#[derive(
+    Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize, TS, schemars::JsonSchema,
+)]
+#[serde(rename_all = "camelCase")]
+pub enum RenderMode {
+    /// Processes the requested range as fast as the machine allows. Default.
+    #[default]
+    Offline,
+    /// Processes the requested range at wall-clock speed so asynchronous synthesizers keep
+    /// their background pipeline fed.
+    Realtime,
+}
+
 /// Project-wide offline render conditions and master mix envelope.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -220,6 +234,9 @@ pub struct MixdownSettings {
     /// leaves the start silent or incomplete; 0 disables warm-up.
     #[serde(default = "default_plugin_warm_up_seconds")]
     pub plugin_warm_up_seconds: f64,
+    /// Pacing of the offline render. Defaults to `offline` when omitted.
+    #[serde(default)]
+    pub render_mode: RenderMode,
     pub mastering: Option<LoudnessMastering>,
     pub sample_rate: Option<u32>,
     pub block_size: Option<u32>,
@@ -236,6 +253,7 @@ impl Default for MixdownSettings {
             tail_seconds: 0.0,
             fade_out_seconds: 0.0,
             plugin_warm_up_seconds: default_plugin_warm_up_seconds(),
+            render_mode: RenderMode::default(),
             mastering: None,
             sample_rate: None,
             block_size: None,
@@ -323,6 +341,36 @@ mod tests {
         for value in [-1.0, 60.1, f64::NAN, f64::INFINITY] {
             settings.plugin_warm_up_seconds = value;
             assert!(settings.validate().is_err());
+        }
+    }
+
+    #[test]
+    fn render_mode_defaults_to_offline_and_round_trips() {
+        // Arrange
+        let mut omitted = serde_json::to_value(MixdownSettings::default()).unwrap();
+        omitted.as_object_mut().unwrap().remove("renderMode");
+
+        // Act
+        let settings: MixdownSettings = serde_json::from_value(omitted).unwrap();
+
+        // Assert
+        assert_eq!(settings.render_mode, RenderMode::Offline);
+        for (mode, encoded) in [
+            (RenderMode::Offline, "offline"),
+            (RenderMode::Realtime, "realtime"),
+        ] {
+            let json = serde_json::to_value(MixdownSettings {
+                render_mode: mode,
+                ..MixdownSettings::default()
+            })
+            .unwrap();
+            assert_eq!(json["renderMode"], encoded);
+            assert_eq!(
+                serde_json::from_value::<MixdownSettings>(json)
+                    .unwrap()
+                    .render_mode,
+                mode
+            );
         }
     }
 

@@ -326,6 +326,9 @@ struct OfflineCaptureOutputSpec final {
     bool operator==(const OfflineCaptureOutputSpec&) const = default;
 };
 
+/// Pacing of the offline render's production loop.
+enum class RenderMode { offline, realtime };
+
 struct OfflineRenderRequestSpec final {
     ExecutionGraph graph;
     juce::String destination;
@@ -338,6 +341,9 @@ struct OfflineRenderRequestSpec final {
     bool includeEndEvents = false;
     std::vector<OfflineStemOutputSpec> stems;
     std::vector<OfflineCaptureOutputSpec> captures;
+    /// Pacing of the production loop. Offline runs without wall-clock constraints; realtime
+    /// runs at 1.0x speed so asynchronous synthesizers keep their pipeline fed.
+    RenderMode renderMode = RenderMode::offline;
     bool operator==(const OfflineRenderRequestSpec&) const = default;
 };
 

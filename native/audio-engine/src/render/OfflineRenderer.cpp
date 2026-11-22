@@ -9,6 +9,13 @@
 #include <utility>
 #include <variant>
 
+#if JUCE_WINDOWS
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 #include "timeline/TimelineEngine.h"
 #include "timeline/TimelineTimebase.h"
 
@@ -85,19 +92,44 @@ bool hostsPlugins(const ExecutionGraph& graph) noexcept {
            });
 }
 
-// Plugins such as disk-streaming samplers keep loading their content after instantiation and
-// report no readiness to the host; they only become audible after being processed for a while
-// with the message thread dispatching. The interval covers such loading with margin.
-void warmUpPlugins(TimelineEngine& engine, const double sampleRate, const int blockSize,
-                   const double seconds) {
-    const auto blockDuration = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-        std::chrono::duration<double>(blockSize / sampleRate));
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::duration<double>(seconds);
-    for (auto next = std::chrono::steady_clock::now(); next < deadline; next += blockDuration) {
-        engine.warmUpPluginDevices(blockSize);
-        std::this_thread::sleep_until(next + blockDuration);
+/// Waits in short slices for the paced loop. Windows' default scheduler tick (~15.6 ms)
+/// stretches every slice, so the wait runs on a high-resolution timer; systems without one keep
+/// the regular tick, which only makes the render slower than wall-clock time.
+class PacingWaiter final {
+public:
+    PacingWaiter() noexcept {
+#if JUCE_WINDOWS
+        timer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
+                                       TIMER_ALL_ACCESS);
+#endif
     }
-}
+    ~PacingWaiter() {
+#if JUCE_WINDOWS
+        if (timer != nullptr) CloseHandle(timer);
+#endif
+    }
+
+    PacingWaiter(const PacingWaiter&) = delete;
+    PacingWaiter& operator=(const PacingWaiter&) = delete;
+
+    void wait(const std::chrono::steady_clock::duration duration) const noexcept {
+#if JUCE_WINDOWS
+        LARGE_INTEGER due{};
+        due.QuadPart = -std::max<std::int64_t>(
+            1, std::chrono::duration_cast<std::chrono::nanoseconds>(duration).count() / 100);
+        if (timer != nullptr && SetWaitableTimerEx(timer, &due, 0, nullptr, nullptr, nullptr, 0)) {
+            WaitForSingleObject(timer, INFINITE);
+            return;
+        }
+#endif
+        std::this_thread::sleep_for(duration);
+    }
+
+private:
+#if JUCE_WINDOWS
+    HANDLE timer = nullptr;
+#endif
+};
 
 }  // namespace
 
@@ -106,6 +138,12 @@ OfflineRenderer::OfflineRenderer(Plan renderPlan,
     : plan(std::move(renderPlan)), engine(std::move(timelineEngine)) {}
 
 OfflineRenderer::~OfflineRenderer() = default;
+
+void OfflineRenderer::cancel() noexcept { cancelRequested.store(true, std::memory_order_release); }
+
+bool OfflineRenderer::isCancelled() const noexcept {
+    return cancelRequested.load(std::memory_order_acquire);
+}
 
 std::unique_ptr<OfflineRenderer> OfflineRenderer::prepare(const OfflineRenderRequestSpec& request,
                                                           juce::AudioFormatManager& formats,
@@ -219,16 +257,54 @@ std::unique_ptr<OfflineRenderer> OfflineRenderer::prepare(const OfflineRenderReq
                     request.normalize,
                     hostsPlugins(request.graph),
                     request.graph.pluginWarmUpSeconds,
+                    request.renderMode,
                     latencySamples,
                     automationWarnings};
     return std::unique_ptr<OfflineRenderer>(
         new OfflineRenderer(std::move(renderPlan), std::move(timelineEngine)));
 }
 
+bool OfflineRenderer::warmUpPlugins() {
+    // Plugins such as disk-streaming samplers keep loading their content after instantiation
+    // and report no readiness; they only become audible after being processed for a while with
+    // the message thread dispatching. The configured interval covers such loading with margin.
+    const auto blockDuration = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+        std::chrono::duration<double>(plan.blockSize / plan.sampleRate));
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::duration<double>(plan.pluginWarmUpSeconds);
+    for (auto next = std::chrono::steady_clock::now(); next < deadline && !isCancelled();
+         next += blockDuration) {
+        engine->warmUpPluginDevices(plan.blockSize);
+        std::this_thread::sleep_until(next + blockDuration);
+    }
+    return !isCancelled();
+}
+
+bool OfflineRenderer::waitForPacing(const std::chrono::steady_clock::time_point start,
+                                    const std::int64_t processedSamples) {
+    // One timer serves every slice of every render in this process.
+    static const PacingWaiter waiter;
+    const auto target =
+        start +
+        std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+            std::chrono::duration<double>(static_cast<double>(processedSamples) / plan.sampleRate));
+    constexpr auto slice = std::chrono::milliseconds(25);
+    while (!isCancelled()) {
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= target) return true;
+        const auto remaining = target - now;
+        waiter.wait(remaining < slice ? remaining : slice);
+    }
+    return false;
+}
+
 bool OfflineRenderer::render(juce::AudioFormatManager& formats, Result& result,
                              juce::String& error) {
     if (plan.hostsPlugins) {
-        warmUpPlugins(*engine, plan.sampleRate, plan.blockSize, plan.pluginWarmUpSeconds);
+        if (!warmUpPlugins()) {
+            error = "Offline Render was cancelled.";
+            return false;
+        }
         // The warm-up advanced the plugins' processing state; rendering starts from reset state.
         if (!juce::MessageManager::callSync([this] { engine->resetPluginDevices(); })) {
             error = "Offline Render could not reset the warmed-up plugins.";
@@ -293,37 +369,57 @@ bool OfflineRenderer::render(juce::AudioFormatManager& formats, Result& result,
     const auto writeEnd = plan.outputEndSample + plan.latencySamples;
     std::uint64_t writtenFrames = 0;
     std::int64_t position = 0;
-    while (position < plan.processingEnd) {
-        const auto count =
-            static_cast<int>(std::min<std::int64_t>(plan.blockSize, plan.processingEnd - position));
-        buffer.clear();
-        engine->mix(buffer.getArrayOfWritePointers(), 2, count);
-        if (plan.stems.empty())
-            engine->applyMasterGain(buffer.getArrayOfWritePointers(), 2, count, plan.masterGainDb);
-        const auto stop = std::min(writeEnd, position + count);
-        if (stop > writeBegin) {
-            const auto from = std::max(writeBegin, position);
-            const auto offsetInBlock = static_cast<int>(from - position);
-            const auto writeCount = static_cast<int>(stop - from);
-            for (std::size_t i = 0; i < outputs.files.size(); ++i) {
-                auto& output = outputs.files[i];
-                const auto master = !plan.captures.empty() &&
-                                    plan.captures[i].target.kind == OfflineCaptureKind::master;
-                const auto& source = master || (plan.stems.empty() && plan.captures.empty())
-                                         ? buffer
-                                         : engine->captureBuffer(i);
-                for (int channel = 0; channel < 2; ++channel)
-                    output.peak = std::max(output.peak,
-                                           source.getMagnitude(channel, offsetInBlock, writeCount));
-                if (!output.writer->writeFromAudioSampleBuffer(source, offsetInBlock, writeCount)) {
-                    error = "Offline Render WAV could not be written: " +
-                            output.destination.getFullPathName();
-                    return false;
-                }
+    {
+        const bool realtimePacing = plan.renderMode == RenderMode::realtime;
+        // The pacing clock starts immediately before the production loop: the warm-up and the
+        // plugin reset would otherwise count as render time and let the first blocks burst.
+        const auto pacedStart = std::chrono::steady_clock::now();
+        std::int64_t pacedSamples = 0;
+        while (position < plan.processingEnd) {
+            if (isCancelled()) {
+                error = "Offline Render was cancelled.";
+                return false;
             }
-            writtenFrames += static_cast<std::uint64_t>(writeCount);
+            const auto count = static_cast<int>(
+                std::min<std::int64_t>(plan.blockSize, plan.processingEnd - position));
+            buffer.clear();
+            engine->mix(buffer.getArrayOfWritePointers(), 2, count);
+            if (plan.stems.empty())
+                engine->applyMasterGain(buffer.getArrayOfWritePointers(), 2, count,
+                                        plan.masterGainDb);
+            const auto stop = std::min(writeEnd, position + count);
+            if (stop > writeBegin) {
+                const auto from = std::max(writeBegin, position);
+                const auto offsetInBlock = static_cast<int>(from - position);
+                const auto writeCount = static_cast<int>(stop - from);
+                for (std::size_t i = 0; i < outputs.files.size(); ++i) {
+                    auto& output = outputs.files[i];
+                    const auto master = !plan.captures.empty() &&
+                                        plan.captures[i].target.kind == OfflineCaptureKind::master;
+                    const auto& source = master || (plan.stems.empty() && plan.captures.empty())
+                                             ? buffer
+                                             : engine->captureBuffer(i);
+                    for (int channel = 0; channel < 2; ++channel)
+                        output.peak = std::max(
+                            output.peak, source.getMagnitude(channel, offsetInBlock, writeCount));
+                    if (!output.writer->writeFromAudioSampleBuffer(source, offsetInBlock,
+                                                                   writeCount)) {
+                        error = "Offline Render WAV could not be written: " +
+                                output.destination.getFullPathName();
+                        return false;
+                    }
+                }
+                writtenFrames += static_cast<std::uint64_t>(writeCount);
+            }
+            position += count;
+            // Pacing is measured by the samples this loop produced, not by the timeline position,
+            // so a range that starts later than zero paces from its first block.
+            pacedSamples += count;
+            if (realtimePacing && !waitForPacing(pacedStart, pacedSamples)) {
+                error = "Offline Render was cancelled.";
+                return false;
+            }
         }
-        position += count;
     }
     for (auto& output : outputs.files) output.writer.reset();
 

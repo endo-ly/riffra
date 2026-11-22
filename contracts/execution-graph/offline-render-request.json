@@ -407,5 +407,6 @@
   "endTick": 7680,
   "sampleRate": 48000,
   "blockSize": 512,
-  "normalize": true
+  "normalize": true,
+  "renderMode": "realtime"
 }
