@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 const RIG_SCHEMA_VERSION: u32 = 1;
+const STATE_SCHEMA_VERSION: u32 = 1;
+const STATE_FILE: &str = "state.json";
 
 /// Reads and writes rigs under `<data-root>/rigs`.
 #[derive(Clone, Debug)]
@@ -26,6 +28,14 @@ struct RigDocument<'a> {
 #[serde(rename_all = "camelCase")]
 struct RigDocumentVersion {
     schema_version: Option<u32>,
+}
+
+/// Rig choices that outlive one Host run, kept beside the rig documents.
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct RigStoreState {
+    schema_version: u32,
+    last_played_rig_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -73,8 +83,9 @@ impl RigStore {
             let entry = entry?;
             let path = entry.path();
             if !path
-                .extension()
-                .is_some_and(|extension| extension.eq_ignore_ascii_case("json"))
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("rig-") && name.ends_with(".json"))
             {
                 continue;
             }
@@ -110,30 +121,72 @@ impl RigStore {
         normalized
             .validate_and_normalize()
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
-        let rigs_dir = self.rigs_dir();
-        fs::create_dir_all(&rigs_dir)?;
         let payload = serde_json::to_vec_pretty(&RigDocument {
             schema_version: RIG_SCHEMA_VERSION,
             rig: &normalized,
         })
         .map_err(io::Error::other)?;
+        self.write_atomically(&self.path(&normalized.id)?, &payload)
+    }
+
+    /// Reads the rig played last, as recorded by [`Self::record_played`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the state document cannot be read.
+    pub fn last_played(&self) -> io::Result<Option<String>> {
+        let payload = match fs::read(self.rigs_dir().join(STATE_FILE)) {
+            Ok(payload) => payload,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        let state = serde_json::from_slice::<RigStoreState>(&payload).map_err(invalid_data)?;
+        if state.schema_version != STATE_SCHEMA_VERSION {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "unsupported rig state schema version: found {}, expected {STATE_SCHEMA_VERSION}",
+                    state.schema_version
+                ),
+            ));
+        }
+        Ok(state.last_played_rig_id)
+    }
+
+    /// Records the rig played last.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an invalid identity or a failed write.
+    pub fn record_played(&self, rig_id: &str) -> io::Result<()> {
+        validate_rig_id(rig_id)?;
+        let payload = serde_json::to_vec_pretty(&RigStoreState {
+            schema_version: STATE_SCHEMA_VERSION,
+            last_played_rig_id: Some(rig_id.to_owned()),
+        })
+        .map_err(io::Error::other)?;
+        self.write_atomically(&self.rigs_dir().join(STATE_FILE), &payload)
+    }
+
+    /// Replaces one document under the rigs directory through a synced temporary file.
+    fn write_atomically(&self, destination: &Path, payload: &[u8]) -> io::Result<()> {
+        let rigs_dir = self.rigs_dir();
+        fs::create_dir_all(&rigs_dir)?;
+        let stem = destination
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .expect("rig store documents have UTF-8 names");
         let temporary = rigs_dir.join(format!(
-            ".{}-{}-{}.tmp",
-            normalized
-                .id
-                .strip_prefix("rig:")
-                .expect("the rig id was validated"),
+            ".{stem}-{}-{}.tmp",
             std::process::id(),
             crate::now_ms()
         ));
         {
             let mut file = File::create(&temporary)?;
-            file.write_all(&payload)?;
+            file.write_all(payload)?;
             file.sync_all()?;
         }
-        let destination = self.path(&normalized.id)?;
-        crate::replace_file(&temporary, &destination)?;
-        Ok(())
+        crate::replace_file(&temporary, destination)
     }
 
     /// Deletes one rig document.
@@ -228,7 +281,7 @@ mod tests {
     }
 
     #[test]
-    fn saves_lists_and_deletes_rigs_as_single_documents() {
+    fn saves_lists_and_deletes_rigs_beside_the_last_played_record() {
         // Arrange
         let root = TempRoot::new("roundtrip");
         let store = RigStore::new(&root.0);
@@ -241,6 +294,7 @@ mod tests {
         // Act
         store.save(&first).unwrap();
         store.save(&second).unwrap();
+        store.record_played(&second.id).unwrap();
         let listed = store.list().unwrap();
         let loaded = store.load(&first.id).unwrap();
         store.delete(&second.id).unwrap();
@@ -251,6 +305,7 @@ mod tests {
             [first.id.as_str(), second.id.as_str()]
         );
         assert_eq!(loaded, first);
+        assert_eq!(store.last_played().unwrap(), Some(second.id.clone()));
         assert_eq!(store.list().unwrap(), [first]);
         assert!(store.load(&second.id).is_err());
     }

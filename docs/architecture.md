@@ -221,7 +221,9 @@ Project単位の書き込み権で競合を防ぐ。取得する範囲は、守�
 ├─ projects/<project-id>/    # Project container(UUID)
 │  ├─ session.json           # 現行の CreativeSession
 │  └─ generations/           # 世代スナップショット
-├─ rigs/rig-<uuid>.json      # Projectに属さないリグ(1リグ1ファイル)
+├─ rigs/                     # Projectに属さないリグ
+│  ├─ rig-<uuid>.json        # 1リグ1ファイル
+│  └─ state.json             # 最後に鳴らしたリグ
 ├─ library/riffra.db         # ライブラリ索引(SQLite 読み取りモデル)
 ├─ recordings/               # 録音テイク(inbox / archive / library)
 ├─ assets/imports/           # 取り込んだ素材

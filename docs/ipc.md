@@ -68,7 +68,7 @@ Hostに頼める操作(Control Command)は、`riffra-runtime` の `api` モジ�
 
 - 要求は最初に `ControlCommand::decode` で型付きの命令になる。未知の命令名、未知のParamsキー、型の不一致は `invalidRequest` となり、`details` にJSON Pointer形式の `path`、配列要素の `index`、小さな値の `value` が付く
 - 正準状態を変える命令は `arrangementMutation`(`session.apply` は `batchMutation`)を返す。結果の `type` は `ControlOutput` のvariant名である
-- `rig.*` はHost所有のリグを扱う `host` scope の `runtime` 命令である。Project IDを取らず、Standaloneでは `runtimeUnavailable` を返す。結果はリグ一覧と演奏中のリグを持つ `rigState` で、`rig.editor.open` だけは `ok` を返す
+- `rig.*` はHost所有のリグを扱う `host` scope の `runtime` 命令である。Project IDを取らず、Standaloneでは `runtimeUnavailable` を返す。結果はリグ一覧、演奏中のリグ、最後に鳴らしたリグを持つ `rigState` で、`rig.editor.open` だけは `ok` を返す
 - TypeScriptの `ControlCommand`(`{ command, params }` のunion)と `ControlCommandResults`(命令名 → 結果型)はRustから生成する(`npm run gen:types`)
 
 ### 2.3 エラー規約
@@ -119,7 +119,7 @@ DesktopのActive Projectは初期bootstrapと `ProjectActivationResult` で確�
 | `project-state-changed`     | `ProjectState`            | Projectの作成・改名・Importによる一覧の変更                                                                                 |
 | `project-activated`         | `ProjectActivationResult` | Project切替の完了。Active Projectの一覧、CanonicalState、RecoveryStateを一括で通知する                                      |
 | `score-sync-status-changed` | `ScoreSyncStatus`         | リンクされたScore YAMLの同期状態(未リンク / 正常 / 読み込み中 / 失敗)、対象Projectとパス、受理したsequence、最新の診断      |
-| `rig-state-changed`         | `RigState`                | Host所有のリグ一覧と演奏中のリグ。Projectの正準状態とは独立して変更される                                                   |
+| `rig-state-changed`         | `RigState`                | Host所有のリグ一覧、演奏中のリグ、最後に鳴らしたリグ。Projectの正準状態とは独立して変更される                               |
 
 `audio-meters` はRuntime投影が属する `projectId`、`outputPeakLeft` / `outputPeakRight`、`trackMeters` と `busMeters`(チャンネルID、左右Peak/RMS)を含む。Desktopは現在のActive Projectと `projectId` が一致するframeだけを採用し、Project切替後は旧Projectの値が描画状態へ戻ることがない。高頻度メーターのTrackデータは、低頻度 `audio-status` の到着でも保持される。
 

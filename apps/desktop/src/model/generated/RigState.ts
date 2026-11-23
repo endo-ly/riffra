@@ -2,6 +2,10 @@
 import type { Rig } from "./Rig";
 
 /**
- * Every Host-owned rig and the one currently playing, if any.
+ * Every Host-owned rig, the one currently playing, and the one played last.
  */
-export type RigState = { rigs: Array<Rig>, activeRigId: string | null, };
+export type RigState = { rigs: Array<Rig>, activeRigId: string | null, 
+/**
+ * The rig started most recently, kept across Host runs and cleared when it is deleted.
+ */
+lastPlayedRigId: string | null, };

@@ -62,9 +62,15 @@ impl RigHost {
             .store
             .list()
             .map_err(|error| command_error(format!("rigs could not be listed: {error}")))?;
+        let last_played_rig_id = self
+            .store
+            .last_played()
+            .map_err(|error| command_error(format!("rig state could not be read: {error}")))?
+            .filter(|rig_id| rigs.iter().any(|rig| &rig.id == rig_id));
         Ok(RigState {
             rigs,
             active_rig_id: self.active.as_ref().map(|active| active.id.clone()),
+            last_played_rig_id,
         })
     }
 
@@ -389,6 +395,10 @@ impl HostState {
         let mut host = self.lock_rig()?;
         let rig = load_rig(&host, &params.rig_id)?;
         self.apply_rig_projection(&mut host, &rig)?;
+        // The rig already plays; losing the record only loses the bar's next suggestion.
+        if let Err(error) = host.store.record_played(&rig.id) {
+            tracing::warn!(rig_id = %rig.id, %error, "the rig played last could not be recorded");
+        }
         let state = host.state()?;
         self.emit_rig_state(&state);
         Ok(ControlOutput::RigState(state))
@@ -592,6 +602,15 @@ mod tests {
             panic!("unexpected stop output");
         };
         assert_eq!(stopped.active_rig_id, None);
+        assert_eq!(stopped.last_played_rig_id, None);
+        store.record_played(&first_id).unwrap();
+        let ControlOutput::RigState(recorded) = state.stop_rig().unwrap() else {
+            panic!("unexpected stop output");
+        };
+        assert_eq!(
+            recorded.last_played_rig_id.as_deref(),
+            Some(first_id.as_str())
+        );
 
         // Act
         let remaining = state
@@ -603,6 +622,7 @@ mod tests {
             panic!("unexpected delete output");
         };
         assert_eq!(remaining.rigs.len(), 1);
+        assert_eq!(remaining.last_played_rig_id, None);
         drop(state);
         let _ = std::fs::remove_dir_all(root);
     }
