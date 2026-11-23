@@ -38,6 +38,7 @@ pub(crate) struct HostState {
     pub(super) shutdown_requested: AtomicBool,
     pub(super) plugin_persistence_commands:
         Mutex<Option<std::sync::mpsc::Sender<super::persistence::PluginPersistenceCommand>>>,
+    pub(super) rig: Mutex<super::rig::RigHost>,
 }
 
 /// Initial Score synchronization state derived from the active Project.
@@ -197,6 +198,7 @@ impl HostState {
             lifecycle: super::lifecycle::HostLifecycle::new(),
             shutdown_requested: AtomicBool::new(false),
             plugin_persistence_commands: Mutex::new(None),
+            rig: Mutex::new(super::rig::RigHost::new(data_root)),
         })
     }
 }

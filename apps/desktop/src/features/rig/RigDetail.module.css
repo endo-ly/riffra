@@ -1,0 +1,119 @@
+.detail {
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3) var(--space-3);
+  overflow-y: auto;
+}
+
+/* The signal path: one line from the input through each effect to the volume. */
+.path {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.path > li {
+  position: relative;
+  min-height: calc(var(--size-control-normal) + var(--space-1-5));
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-left: var(--space-6);
+}
+
+.path > li::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 5px;
+  width: 1px;
+  background: var(--color-border-default);
+}
+
+.detail[data-playing='true'] .path > li::before {
+  background: color-mix(in srgb, var(--color-accent) 50%, var(--color-border-default));
+}
+
+.path > li:first-child::before {
+  top: 50%;
+}
+
+.path > li:last-child::before {
+  bottom: 50%;
+}
+
+.path > li::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 1px;
+  width: 9px;
+  height: 9px;
+  transform: translateY(-50%);
+  background: var(--color-bg-panel);
+  border: 1px solid var(--color-text-muted);
+  border-radius: 50%;
+}
+
+.path > .stage::after {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+.path > .stage[data-bypassed='true']::after {
+  background: var(--color-bg-panel);
+  border-color: var(--color-status-warning);
+}
+
+.path > li.add::after {
+  display: none;
+}
+
+.endpointLabel {
+  width: 52px;
+  flex: 0 0 auto;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-micro);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.input {
+  composes: control from '@/shared/ui/controls.module.css';
+  width: auto;
+  min-width: 88px;
+}
+
+.value {
+  width: 64px;
+  flex: 0 0 auto;
+  color: var(--color-text-primary);
+  font: 500 var(--font-size-small) var(--font-family-mono);
+  text-align: right;
+}
+
+.addEffect {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  padding: var(--space-1) var(--space-1-5);
+  margin-left: calc(var(--space-1-5) * -1);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-small);
+  background: transparent;
+  border-radius: var(--radius-sm);
+}
+
+.addEffect:hover {
+  color: var(--color-text-strong);
+  background: var(--color-bg-surface);
+}
+
+.addEffect svg {
+  width: var(--size-icon-sm);
+  height: var(--size-icon-sm);
+}

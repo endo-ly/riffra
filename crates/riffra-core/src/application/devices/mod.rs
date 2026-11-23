@@ -180,7 +180,8 @@ where
             .map_err(ApplicationError::InvalidCommand)?;
         let session = self.core.commit(self.storage, |session| {
             let effects = session.arrangement.effects_mut(owner)?;
-            effects.push(device);
+            crate::domain::plugin::push_effect(effects, device)
+                .map_err(ApplicationError::InvalidCommand)?;
             session.arrangement.revision = session.arrangement.revision.saturating_add(1);
             Ok(())
         })?;
@@ -205,10 +206,12 @@ where
         let device_id = next_id("device:effect");
         PreparedSession::from_snapshot(&self.core.snapshot(), |session| {
             let effects = session.arrangement.effects_mut(owner)?;
-            effects.push(
+            crate::domain::plugin::push_effect(
+                effects,
                 EffectDevice::new(device_id.clone(), name, path)
                     .map_err(ApplicationError::InvalidCommand)?,
-            );
+            )
+            .map_err(ApplicationError::InvalidCommand)?;
             session.arrangement.revision = session.arrangement.revision.saturating_add(1);
             Ok(())
         })
@@ -226,13 +229,8 @@ where
     ) -> Result<CreativeSession, ApplicationError> {
         self.core.commit(self.storage, |session| {
             let effects = session.arrangement.effects_mut(owner)?;
-            let before = effects.len();
-            effects.retain(|device| device.id != device_id);
-            if before == effects.len() {
-                return Err(ApplicationError::InvalidCommand(
-                    "channel effect is not registered".into(),
-                ));
-            }
+            crate::domain::plugin::remove_effect(effects, device_id)
+                .map_err(ApplicationError::InvalidCommand)?;
             remove_device_automation(&mut session.arrangement.automation_lanes, device_id);
             remove_sidechain_routes(&mut session.arrangement, device_id);
             session.arrangement.revision = session.arrangement.revision.saturating_add(1);
@@ -251,30 +249,8 @@ where
     ) -> Result<CreativeSession, ApplicationError> {
         self.core.commit(self.storage, |session| {
             let effects = session.arrangement.effects_mut(owner)?;
-            let unique_ids = ordered_device_ids
-                .iter()
-                .collect::<std::collections::HashSet<_>>();
-            if ordered_device_ids.len() != effects.len()
-                || unique_ids.len() != ordered_device_ids.len()
-                || ordered_device_ids
-                    .iter()
-                    .any(|id| !effects.iter().any(|device| &device.id == id))
-            {
-                return Err(ApplicationError::InvalidCommand(
-                    "effect order must contain every channel effect exactly once".into(),
-                ));
-            }
-            let mut reordered = Vec::with_capacity(effects.len());
-            for id in ordered_device_ids {
-                let index = effects
-                    .iter()
-                    .position(|device| device.id == id)
-                    .ok_or_else(|| {
-                        ApplicationError::InvalidCommand("channel effect is not registered".into())
-                    })?;
-                reordered.push(effects.remove(index));
-            }
-            *effects = reordered;
+            crate::domain::plugin::reorder_effects(effects, &ordered_device_ids)
+                .map_err(ApplicationError::InvalidCommand)?;
             session.arrangement.revision = session.arrangement.revision.saturating_add(1);
             Ok(())
         })
@@ -386,17 +362,12 @@ where
         state_data: Option<String>,
         bypassed: bool,
     ) -> Result<CreativeSession, ApplicationError> {
-        if parameter_values.iter().any(|value| !value.is_finite()) {
-            return Err(ApplicationError::InvalidCommand(
-                "track plugin editor returned a non-finite parameter value".into(),
-            ));
-        }
         self.core.commit(self.storage, |session| {
             let mut device = find_device_mut(session, owner, device_id)?;
             device.set_bypassed(bypassed);
             let plugin = device.into_plugin("built-in instruments do not expose plugin state")?;
-            plugin.parameter_values = parameter_values;
-            plugin.state_data = state_data.filter(|value| !value.is_empty());
+            crate::domain::plugin::apply_plugin_state(plugin, parameter_values, state_data)
+                .map_err(ApplicationError::InvalidCommand)?;
             session.arrangement.revision = session.arrangement.revision.saturating_add(1);
             Ok(())
         })

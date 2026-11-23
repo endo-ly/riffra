@@ -6,6 +6,7 @@ pub(crate) mod open_project;
 mod persistence;
 mod plugin_scan;
 mod project;
+mod rig;
 mod score_watch;
 mod state;
 

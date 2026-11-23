@@ -184,7 +184,7 @@ export function DeviceChain(props: DeviceChainProps) {
                     <>
                       <button
                         type="button"
-                        className={styles.bypass}
+                        className={controls.bypassButton}
                         aria-pressed={device.bypassed}
                         onClick={() =>
                           props.commit(api.setDeviceBypassed(owner, device.id, !device.bypassed))

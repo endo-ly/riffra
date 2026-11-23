@@ -1,0 +1,153 @@
+.switcher {
+  position: relative;
+  min-width: 0;
+  flex: 1 1 auto;
+  display: grid;
+  justify-items: start;
+  gap: 1px;
+}
+
+/* The name and its `▾` as one button: switching is what the header is for. */
+.trigger {
+  max-width: 100%;
+  height: var(--size-control-dense);
+  display: flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  margin-left: calc(var(--space-1-5) * -1);
+  padding: 0 var(--space-1-5);
+  color: var(--color-text-strong);
+  font-size: var(--font-size-title);
+  font-weight: 600;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+}
+
+.trigger:hover,
+.trigger[aria-expanded='true'] {
+  background: var(--color-bg-surface);
+  border-color: var(--color-border-default);
+}
+
+.nameText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Takes the trigger's place and size while the name is edited. */
+.nameInput {
+  width: 100%;
+  height: var(--size-control-dense);
+  margin-left: calc(var(--space-1-5) * -1);
+  padding: 0 var(--space-1-5);
+  color: var(--color-text-strong);
+  font-size: var(--font-size-title);
+  font-weight: 600;
+  background: var(--color-bg-surface);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 60%, transparent);
+  border-radius: var(--radius-sm);
+}
+
+/* The accent border marks the edit, so the global focus outline would draw it twice. */
+.nameInput:focus-visible {
+  outline: 0;
+}
+
+.chevron {
+  width: var(--size-icon-sm);
+  height: var(--size-icon-sm);
+  color: var(--color-text-muted);
+  transform: rotate(90deg);
+}
+
+.status {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-micro);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.status[data-playing='true'] {
+  color: var(--color-status-success);
+}
+
+.menu {
+  position: absolute;
+  top: calc(100% + var(--space-1));
+  left: calc(var(--space-1-5) * -1);
+  z-index: var(--z-menu);
+  width: 260px;
+  max-height: 320px;
+  display: grid;
+  margin: 0;
+  padding: var(--space-1);
+  overflow-y: auto;
+  list-style: none;
+  background: var(--color-bg-surface-raised);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-popover);
+}
+
+.option {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1-5) var(--space-2);
+  text-align: left;
+  background: transparent;
+  border-radius: var(--radius-sm);
+}
+
+.option:hover,
+.option[aria-selected='true'] {
+  background: var(--color-bg-hover);
+}
+
+.dot {
+  width: var(--size-status-dot);
+  height: var(--size-status-dot);
+  flex: 0 0 auto;
+  border-radius: 50%;
+}
+
+.dot[data-playing='true'] {
+  background: var(--color-status-success);
+}
+
+.optionText {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: grid;
+  gap: 1px;
+}
+
+.optionText strong,
+.optionText small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.optionText strong {
+  color: var(--color-text-strong);
+  font-size: var(--font-size-small);
+  font-weight: 500;
+}
+
+.optionText small {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-micro);
+}
+
+.check {
+  width: var(--size-icon-sm);
+  height: var(--size-icon-sm);
+  flex: 0 0 auto;
+  color: var(--color-accent);
+}

@@ -477,6 +477,19 @@ control_commands! {
         PluginScanStart = "plugin.scan.start" (PluginScanParams) -> Job, host;
         PluginEditorOpen = "plugin.editor.open" (DeviceParams) -> Ok, project;
         PluginAuditionOpen = "plugin.audition.open" (PluginAuditionParams) -> AudioStatus, host;
+
+        RigList = "rig.list" (EmptyParams) -> RigState, host;
+        RigCreate = "rig.create" (RigCreateParams) -> RigState, host;
+        RigUpdate = "rig.update" (RigUpdateParams) -> RigState, host;
+        RigDuplicate = "rig.duplicate" (RigIdParams) -> RigState, host;
+        RigDelete = "rig.delete" (RigIdParams) -> RigState, host;
+        RigEffectAdd = "rig.effect.add" (RigEffectAddParams) -> RigState, host;
+        RigEffectRemove = "rig.effect.remove" (RigDeviceParams) -> RigState, host;
+        RigEffectMove = "rig.effect.move" (RigEffectReorderParams) -> RigState, host;
+        RigEffectUpdate = "rig.effect.update" (RigDeviceBypassParams) -> RigState, host;
+        RigStart = "rig.start" (RigIdParams) -> RigState, host;
+        RigStop = "rig.stop" (EmptyParams) -> RigState, host;
+        RigEditorOpen = "rig.editor.open" (RigDeviceParams) -> Ok, host;
         DeviceInspect = "device.inspect" (DeviceParams) -> DeviceInspection, project;
         DeviceParameterList = "device.parameter.list" (DeviceParams) -> DeviceParameters, project;
         DeviceParameterGet = "device.parameter.get" (DeviceParameterGetParams) -> DeviceParameter, project;
@@ -563,7 +576,7 @@ mod tests {
         let names = command_names();
 
         // Act / Assert
-        assert_eq!(names.len(), 229);
+        assert_eq!(names.len(), 241);
         let unique: std::collections::HashSet<_> = names.iter().copied().collect();
         assert_eq!(unique.len(), names.len());
         for name in names {
@@ -801,7 +814,7 @@ mod tests {
             .filter_map(|line| line.split_once('\'').map(|(name, _)| name))
             .collect();
         let unique: std::collections::HashSet<_> = names.iter().copied().collect();
-        assert_eq!(names.len(), 229);
+        assert_eq!(names.len(), 241);
         assert_eq!(unique.len(), names.len());
 
         for (name, params) in [
@@ -836,6 +849,8 @@ mod tests {
             ("score.inspect", CommandScope::Host),
             ("audio.emergency-mute", CommandScope::Host),
             ("instrument.preview", CommandScope::Host),
+            ("rig.list", CommandScope::Host),
+            ("rig.start", CommandScope::Host),
             (
                 "session.get",
                 CommandScope::Project {
@@ -853,6 +868,7 @@ mod tests {
         let params = |name: &str| match name {
             "audio.emergency-mute" => json!({"muted": true}),
             "instrument.preview" => json!({"instrumentId": "builtin:bass"}),
+            "rig.start" => json!({"rigId": "rig:01900000-0000-7000-8000-000000000001"}),
             "effect.add" => {
                 json!({"owner":{"kind":"track","id":"track:1"}, "pluginPath": "Reverb.vst3"})
             }

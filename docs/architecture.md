@@ -137,6 +137,8 @@ flowchart LR
     CANON["正準状態<br/>CreativeSession"] -->|"投影"| GRAPH["実行グラフ<br/>ExecutionGraph"]
     GRAPH -->|"prepare → commit"| PREP["準備済み実行状態<br/>サイドカー内部"]
     PREP -.->|"ネイティブでの変更は<br/>正準コミットとして反映"| CANON
+    RIG["リグ<br/>RigStore"] -->|"RigProjection"| PREP
+    PREP -.->|"エディタの変更は<br/>RigStoreへ反映"| RIG
 ```
 
 | 層               | 内容                                            | 正本       | 寿命                         |
@@ -144,10 +146,13 @@ flowchart LR
 | 正準状態         | CreativeSession。制作の真実                     | 唯一の正本 | 永続化する                   |
 | 実行グラフ       | 正準状態から生成した実行の設計(audio-engine.md) | 正準状態   | いつでも破棄して再構築する   |
 | 準備済み実行状態 | サイドカーが実行のために保持する状態            | 実行グラフ | サイドカーの世代と共に消える |
+| リグ             | Host所有の演奏用チェーン(RigStore)              | 唯一の正本 | 永続化する                   |
 
 - 下位の層は上位の層を書き換えない。ネイティブ側で生まれた変更は、正準コミットとして上位へ反映する
 - 正準状態が変わると、実行グラフと準備済み状態を順に作り直す。逆に下位の層が消えても、制作状態は失われない
 - TrackInstrumentのMIDI設定は正準状態に保存し、Realtime・Offline Render・Live MIDIで共通に適用する
+- リグはProjectに属さないHost所有の演奏状態であり、リグの編集は `CreativeSession` のrevision・履歴・undo/redoに触れない。プロジェクトを切り替えても鳴り続ける
+- リグの実行投影はProjectの実行グラフとは別に送り、演奏中のリグの変更だけをその投影へ反映する。起動時はどのリグも鳴らさない
 
 ---
 
@@ -201,6 +206,7 @@ Project単位の書き込み権で競合を防ぐ。取得する範囲は、守�
 - 通知は接続の世代に紐づく(境界契約は ipc.md「境界B」)
 - メーターや再生位置のような高頻度の値は正準状態と切り離し、独立したイベントで配信する
 - 正準状態の変更イベントはCoreの確定順序どおりに届く。受け手が順序を組み立て直す必要はない
+- リグの一覧と演奏中のリグは `rig-state-changed` で通知する。リグのプラグイン状態は専用のイベントで受け取り、Projectの正準状態とは別に `RigStore` へ保存する
 
 ---
 
@@ -215,6 +221,9 @@ Project単位の書き込み権で競合を防ぐ。取得する範囲は、守�
 ├─ projects/<project-id>/    # Project container(UUID)
 │  ├─ session.json           # 現行の CreativeSession
 │  └─ generations/           # 世代スナップショット
+├─ rigs/                     # Projectに属さないリグ
+│  ├─ rig-<uuid>.json        # 1リグ1ファイル
+│  └─ state.json             # 最後に鳴らしたリグ
 ├─ library/riffra.db         # ライブラリ索引(SQLite 読み取りモデル)
 ├─ recordings/               # 録音テイク(inbox / archive / library)
 ├─ assets/imports/           # 取り込んだ素材
@@ -222,11 +231,12 @@ Project単位の書き込み権で競合を防ぐ。取得する範囲は、守�
 ```
 
 - ProjectはDataRoot内の制作単位であり、`session.json` に正準状態を保持する。Desktopの既定のDataRootはユーザーの `Music/Riffra` 配下である
+- リグはDataRoot直下の `rigs/` に保存する。索引は持たず、一覧はディレクトリを読んで作る
 - 持ち出し用パッケージ `.riffra` と書き出し成果物は正準状態の外にあり、後者は `renders/` に保存する。パッケージの契約は data-model.md「Project とセッション」を参照する
 
 ### 6.2 保存の保証
 
-- 保存はアトミックである。クラッシュ後も `session.json` は「完全な旧内容か完全な新内容」のどちらか一方として読める
+- 保存はアトミックである。クラッシュ後も `session.json` は「完全な旧内容か完全な新内容」のどちらか一方として読める。リグの文書も同じ原子的な置換で保存する
 - 保存の前に世代ファイルへ現在の内容を残す。これが手動・自動の回復の材料になる
 - 保存の前にProject領域の空き容量を検証し、不足時は保存を拒否する
 - 正準状態は保存に成功した後に進む。ディスク上の内容が正準状態に追いつかないことはない(§5.1)

@@ -34,12 +34,18 @@ AudioCommandDispatcher::~AudioCommandDispatcher() {
 void AudioCommandDispatcher::closeRuntimeEditors() {
     if (trackPluginEditor != nullptr) {
         trackPluginEditor->close();
-        trackPluginEditor.reset();
-        pluginEditorOwner = {};
-        trackPluginEditorDeviceId.clear();
+        releaseTrackPluginEditor();
     }
     closePluginAudition();
+    closeRig();
     timelineOperationRunning.store(false, std::memory_order_release);
+}
+
+void AudioCommandDispatcher::releaseTrackPluginEditor() {
+    trackPluginEditorOpen.store(false, std::memory_order_release);
+    trackPluginEditor.reset();
+    pluginEditorOwner = {};
+    trackPluginEditorDeviceId.clear();
 }
 
 void AudioCommandDispatcher::run(std::istream& input) {

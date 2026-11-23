@@ -27,6 +27,7 @@ type BrowserPreviewReads = Pick<
   | 'listRecordings'
   | 'searchLibrary'
   | 'getMissingDependencies'
+  | 'getRigState'
   | keyof NativeEventApi
 >;
 
@@ -57,6 +58,7 @@ const reads: BrowserPreviewReads = {
   listRecordings: async () => [],
   searchLibrary: async () => [],
   getMissingDependencies: async () => [],
+  getRigState: async () => ({ rigs: [], activeRigId: null, lastPlayedRigId: null }),
   onAudioStatus: noop,
   onAudioMeters: noop,
   onCanonicalStateChanged: noop,
@@ -67,6 +69,7 @@ const reads: BrowserPreviewReads = {
   onRuntimeRestarted: noop,
   onRecordingFinalized: noop,
   onScoreSyncStatusChanged: noop,
+  onRigStateChanged: noop,
 };
 
 export function createBrowserPreviewApi(): NativeApi {

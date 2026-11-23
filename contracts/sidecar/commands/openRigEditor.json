@@ -1,0 +1,7 @@
+{
+  "requestId": 1,
+  "command": {
+    "type": "openRigEditor",
+    "deviceId": "device-1"
+  }
+}

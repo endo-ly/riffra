@@ -184,6 +184,16 @@ input.control[type='number'] {
   background-color: color-mix(in srgb, var(--color-status-danger) 12%, transparent);
 }
 
+/* A device bypass toggle: engaged, it warns that the device is out of the signal path. */
+.bypassButton {
+  composes: smallButton;
+}
+
+.bypassButton[aria-pressed='true'] {
+  color: var(--color-status-warning);
+  background-color: color-mix(in srgb, var(--color-status-warning) 14%, transparent);
+}
+
 /* A select that reads as an accent action: choosing an option performs it. */
 .actionSelect {
   composes: smallButton accent;

@@ -124,6 +124,12 @@ void writeClosingPluginState(const PluginStateChangedSpec& event) {
     outputWriter.enqueueClosingState(line(encodeEvent(closing)));
 }
 
+void writeClosingRigPluginState(const RigPluginStateChangedSpec& event) {
+    auto closing = event;
+    closing.finalCapture = true;
+    outputWriter.enqueueClosingState(line(encodeEvent(closing)));
+}
+
 void writeEvent(const SidecarEventSpec& event) {
     auto encoded = line(encodeEvent(event));
     if (const auto* changed = std::get_if<PluginStateChangedSpec>(&event)) {
@@ -134,6 +140,9 @@ void writeEvent(const SidecarEventSpec& event) {
             "plugin-parameter:" + deviceKey(parameter->projectId, parameter->deviceId) + ":" +
                 std::to_string(parameter->parameterIndex),
             std::move(encoded));
+    } else if (const auto* rig = std::get_if<RigPluginStateChangedSpec>(&event)) {
+        outputWriter.enqueueState("rig-plugin-state:" + deviceKey(rig->rigId, rig->deviceId),
+                                  std::move(encoded));
     } else if (std::holds_alternative<AudioStatusSpec>(event)) {
         outputWriter.enqueueState("audio-status", std::move(encoded));
     } else if (std::holds_alternative<AudioMetersSpec>(event) ||

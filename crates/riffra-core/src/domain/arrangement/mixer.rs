@@ -140,7 +140,7 @@ pub(super) fn normalize_mix(gain_db: &mut f64, pan: &mut f64) -> Result<(), Stri
     Ok(())
 }
 
-fn normalize_gain(gain_db: &mut f64) -> Result<(), String> {
+pub(crate) fn normalize_gain(gain_db: &mut f64) -> Result<(), String> {
     if !gain_db.is_finite() {
         return Err("mix gain must be finite".into());
     }

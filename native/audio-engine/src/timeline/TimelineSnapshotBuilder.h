@@ -9,16 +9,6 @@
 
 namespace riffra {
 
-inline bool sameEffectTopology(const std::vector<PluginDeviceSpec>& left,
-                               const std::vector<PluginDeviceSpec>& right) noexcept {
-    if (left.size() != right.size()) return false;
-    for (std::size_t index = 0; index < left.size(); ++index) {
-        if (left[index].id != right[index].id || left[index].path != right[index].path)
-            return false;
-    }
-    return true;
-}
-
 inline bool sameInstrumentTopology(const std::optional<InstrumentSpec>& left,
                                    const std::optional<InstrumentSpec>& right) noexcept {
     if (left.has_value() != right.has_value()) return false;

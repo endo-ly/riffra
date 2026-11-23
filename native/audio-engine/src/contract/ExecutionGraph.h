@@ -2,6 +2,7 @@
 
 #include <JuceHeader.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <variant>
@@ -107,6 +108,18 @@ struct PluginDeviceSpec final {
     PluginStateSpec state;
     bool operator==(const PluginDeviceSpec&) const = default;
 };
+
+/// Whether two effect projections carry the same devices in the same order.
+/// The persisted state is not part of a device's topology.
+inline bool sameEffectTopology(const std::vector<PluginDeviceSpec>& left,
+                               const std::vector<PluginDeviceSpec>& right) noexcept {
+    if (left.size() != right.size()) return false;
+    for (std::size_t index = 0; index < left.size(); ++index) {
+        if (left[index].id != right[index].id || left[index].path != right[index].path)
+            return false;
+    }
+    return true;
+}
 
 enum class PlayableNotesKindSpec { range, set };
 
@@ -304,6 +317,16 @@ struct TimelineSnapshotSpec final {
     std::uint64_t revision = 0;
     ExecutionGraph graph;
     bool operator==(const TimelineSnapshotSpec&) const = default;
+};
+
+/// One rig played outside the Project: a physical input and an effect chain.
+struct RigProjectionSpec final {
+    juce::String rigId;
+    std::uint64_t revision = 0;
+    std::uint32_t audioInputChannel = 0;
+    double gainDb = 0.0;
+    std::vector<PluginDeviceSpec> effects;
+    bool operator==(const RigProjectionSpec&) const = default;
 };
 
 struct OfflineStemOutputSpec final {

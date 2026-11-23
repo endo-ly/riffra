@@ -12,6 +12,7 @@ import { createJobSlice, type JobSlice } from '@/session/slices/jobs';
 import { createRecordingSlice, type RecordingSlice } from '@/session/slices/recording';
 import { createCatalogSlice, type CatalogSlice } from '@/session/slices/catalog';
 import { createMissingSlice, type MissingSlice } from '@/session/slices/missing';
+import { createRigSlice, type RigSlice } from '@/session/slices/rig';
 import {
   createWorkspaceSlice,
   initialWorkspace,
@@ -19,6 +20,7 @@ import {
   type WorkspaceSlice,
 } from '@/session/slices/workspace';
 import { createProjectSlice, type ProjectSlice } from '@/session/slices/project';
+import { createAppUpdateSlice, type AppUpdateSlice } from '@/session/slices/app-update';
 import { selectStartupRestoreReady } from './selectors';
 
 export interface SessionScope {
@@ -39,7 +41,9 @@ export interface SessionState {
   recording: RecordingSlice;
   catalog: CatalogSlice;
   missing: MissingSlice;
+  rig: RigSlice;
   workspace: WorkspaceSlice;
+  appUpdate: AppUpdateSlice;
   commit: SessionCommit;
   readModel: SessionReadModel | null;
 }
@@ -80,8 +84,14 @@ export function createSessionStore(api: NativeApi): SessionStore {
             get().recording.reset();
             get().catalog.reset();
             get().missing.reset();
+            get().rig.reset();
             get().workspace.reset();
           },
+        ),
+        appUpdate: createAppUpdateSlice(
+          api,
+          () => get().appUpdate,
+          (patch) => set((state) => ({ appUpdate: { ...state.appUpdate, ...patch } })),
         ),
         workspace: createWorkspaceSlice(
           () => get().workspace,
@@ -94,6 +104,11 @@ export function createSessionStore(api: NativeApi): SessionStore {
           (patch) => set((state) => ({ missing: { ...state.missing, ...patch } })),
           (operation, options) => get().commit(operation, options),
           () => get().catalog.scanPlugins(),
+        ),
+        rig: createRigSlice(
+          api,
+          () => get().rig,
+          (patch) => set((state) => ({ rig: { ...state.rig, ...patch } })),
         ),
         catalog: createCatalogSlice(
           api,

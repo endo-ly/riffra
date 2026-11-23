@@ -1,0 +1,68 @@
+/*
+ * A settings surface like a dialog: the panel color keeps the shared controls'
+ * wells and hovers distinct, and the border and shadow lift it above the page.
+ */
+.panel {
+  position: absolute;
+  top: calc(100% + var(--space-1-5));
+  left: 0;
+  z-index: var(--z-popover);
+  width: min(340px, calc(100vw - var(--space-4)));
+  max-height: min(560px, calc(100vh - var(--size-global-control-bar) - var(--space-4)));
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg-panel);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-popover);
+}
+
+.header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2-5);
+  padding: var(--space-3) var(--space-2) var(--space-2) var(--space-3);
+}
+
+/* Quiet like the other controls; only the icon takes the accent while the rig plays. */
+.play {
+  width: var(--size-control-normal);
+  height: var(--size-control-normal);
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  color: var(--color-text-primary);
+  background: var(--color-bg-surface);
+  border-radius: 50%;
+}
+
+.play:hover {
+  color: var(--color-text-strong);
+  background: var(--color-bg-surface-raised);
+}
+
+.play[aria-pressed='true'] {
+  color: var(--color-accent);
+  background: var(--color-control-active);
+}
+
+.play[aria-pressed='true']:hover {
+  background: var(--color-control-active-hover);
+}
+
+.play svg {
+  width: var(--size-icon-sm);
+  height: var(--size-icon-sm);
+}
+
+.empty {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-3);
+}
+
+.empty > button {
+  justify-self: center;
+}

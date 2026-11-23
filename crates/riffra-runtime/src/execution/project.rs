@@ -44,7 +44,7 @@ pub(crate) fn project_graph(
                 .as_ref()
                 .and_then(|instrument| project_instrument(instrument, resources, &mut diagnostics));
 
-            let effects = project_effects(&track.effects, resources, &mut diagnostics);
+            let effects = project_effects(&track.effects, resources, &mut diagnostics, false);
 
             let audio_clips = arrangement
                 .audio_clips
@@ -165,6 +165,7 @@ pub(crate) fn project_graph(
             &arrangement.mixer.master_effects,
             resources,
             &mut diagnostics,
+            false,
         ),
         buses: arrangement
             .mixer
@@ -178,7 +179,7 @@ pub(crate) fn project_graph(
                 pan_law: bus.pan_law,
                 muted: bus.muted,
                 solo: bus.solo,
-                effects: project_effects(&bus.effects, resources, &mut diagnostics),
+                effects: project_effects(&bus.effects, resources, &mut diagnostics, false),
             })
             .collect(),
         sends: arrangement.mixer.sends.clone(),
@@ -318,18 +319,21 @@ fn project_instrument(
     }
 }
 
-fn project_effects(
+/// Projects the effect chain of one channel. A bypassed device is applied by
+/// the native chain itself, so only a channel whose chain must carry it — the
+/// rig, whose prepared chain survives projections — passes `include_bypassed`.
+pub(super) fn project_effects(
     effects: &[riffra_core::EffectDevice],
     resources: &ResolvedResources,
     diagnostics: &mut ProjectionDiagnostics,
+    include_bypassed: bool,
 ) -> Vec<GraphPluginDevice> {
     effects
         .iter()
+        .filter(|device| include_bypassed || !device.bypassed)
         .filter_map(|device| {
-            if device.bypassed {
-                return None;
-            }
-            plugin_state(&device.id, &device.plugin, resources, diagnostics).map(|state| {
+            plugin_state(&device.id, &device.plugin, resources, diagnostics).map(|mut state| {
+                state.bypassed = device.bypassed;
                 GraphPluginDevice {
                     id: device.id.clone(),
                     path: device.plugin.path.clone(),
@@ -370,8 +374,6 @@ fn plugin_state(
     Some(GraphPluginState {
         state_data: plugin.state_data.clone(),
         parameter_values: plugin.parameter_values.clone(),
-        // A bypassed device is never projected, so every projected state
-        // states that the device plays.
         bypassed: false,
     })
 }

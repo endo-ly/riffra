@@ -3,7 +3,7 @@ import type { MixRange } from '@/model/mix';
 import controls from './controls.module.css';
 
 /** The edit lifecycle a slider drives: a value, its preview and one commit. */
-interface ValueControl {
+export interface ValueControl {
   value: number;
   begin(): void;
   change(value: number): void;

@@ -42,17 +42,6 @@ TEST(SidecarContractTest, DecodesEveryCommandFixture) {
     }
 }
 
-TEST(SidecarContractTest, DecodesEditorClosureOnTimelineIdle) {
-    auto fixture = commandFixture("waitForTimelineIdle");
-    setValue(fixture, {"command", "closeEditor"}, true);
-    SidecarRequestSpec request;
-    juce::String error;
-    ASSERT_TRUE(decodeSidecarRequest(fixture, request, error)) << error;
-    const auto* command = std::get_if<WaitForTimelineIdleCommand>(&request.command);
-    ASSERT_NE(command, nullptr);
-    EXPECT_TRUE(command->closeEditor);
-}
-
 TEST(SidecarContractTest, NearestRequiresDisplayAndIsDecoded) {
     auto fixture = commandFixture("setDeviceParameter");
     setValue(fixture, {"command", "nearest"}, true);
@@ -102,6 +91,31 @@ TEST(SidecarContractTest, RejectsRepresentativeMalformedCommands) {
     auto invalidSnapshot = cloneJson(snapshot);
     setValue(invalidSnapshot, {"command", "snapshot"}, "not-an-object");
     expectRejected("invalid nested snapshot type", invalidSnapshot);
+}
+
+TEST(SidecarContractTest, RejectsInvalidRigProjections) {
+    const auto fixture = commandFixture("openRig");
+    const auto expectRejected = [](const juce::var& value) {
+        juce::String error;
+        EXPECT_FALSE(decodes(value, error));
+        EXPECT_TRUE(error.isNotEmpty());
+    };
+
+    auto emptyId = cloneJson(fixture);
+    setValue(emptyId, {"command", "projection", "rigId"}, "");
+    expectRejected(emptyId);
+
+    auto unknown = withUnknownKey(fixture, {"command", "projection"});
+    expectRejected(unknown);
+
+    auto duplicate = cloneJson(fixture);
+    const auto effect = juce::JSON::parse(
+        R"({"id":"effect:1","path":"effect.vst3","state":{"stateData":null,"parameterValues":[],"bypassed":false}})");
+    juce::Array<juce::var> effects;
+    effects.add(effect);
+    effects.add(effect);
+    setValue(duplicate, {"command", "projection", "effects"}, effects);
+    expectRejected(duplicate);
 }
 
 TEST(SidecarContractTest, RejectsMalformedMidiBytes) {

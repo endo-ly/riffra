@@ -11,11 +11,13 @@ export const selectMidiClip = (state: SessionState, id: string | null) =>
 export const selectHostReady = (state: SessionState) =>
   state.host.connection.mode !== 'disconnected' && !state.host.switching;
 /**
- * Whether editing waits: the Host is not ready, a Project is opening, or the
- * Runtime is loading devices. Edits made meanwhile would be lost or would
- * restart the load, so the Workspace Wait pauses the work area.
+ * Whether editing waits: Riffra is restarting to install an update, the Host
+ * is not ready, a Project is opening, or the Runtime is loading devices. Edits
+ * made meanwhile would be lost or would restart the load, so the Workspace
+ * Wait pauses the work area.
  */
 export const selectWorkspaceWaiting = (state: SessionState) =>
+  state.appUpdate.installing ||
   !selectHostReady(state) ||
   state.project.switching ||
   state.runtime.projection.loadProgress != null;

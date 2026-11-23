@@ -105,6 +105,24 @@ pub struct PluginStateChanged {
     pub source_plugin_path: Option<String>,
 }
 
+/// One rig's plugin state captured from its native editor.
+///
+/// Bypass is not part of it: the Host owns bypass and sends it with every
+/// projection.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RigPluginStateChanged {
+    pub rig_id: String,
+    pub device_id: String,
+    pub parameter_values: Vec<f32>,
+    pub state_data: Option<String>,
+    /// Rig projection revision used to capture this snapshot.
+    pub revision: u64,
+    /// Plugin path captured when the editor was opened, for final state events.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_plugin_path: Option<String>,
+}
+
 /// One parameter changed in an open native plugin editor.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]

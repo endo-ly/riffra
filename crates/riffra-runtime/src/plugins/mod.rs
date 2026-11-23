@@ -20,6 +20,15 @@ pub(crate) use validation::{validate_report, validate_report_with_cancel};
 
 const MAX_ENTRIES: usize = 100_000;
 
+/// Returns the file-stem label used for a plugin path.
+pub(crate) fn display_name(path: &Path) -> String {
+    path.file_stem()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("Plugin")
+        .to_owned()
+}
+
 pub fn discover(root: &Path) -> ScanReport {
     discover_with_cancel(root, None).unwrap_or_else(|message| ScanReport {
         root: root.to_string_lossy().into_owned(),

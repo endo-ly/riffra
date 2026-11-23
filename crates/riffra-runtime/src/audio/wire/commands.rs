@@ -1,7 +1,7 @@
 //! Commands sent to `riffra-audio` and the request sent to `riffra-render`.
 
 use crate::api::output::InstrumentPreviewDefinition;
-use crate::execution::{GraphPluginState, OfflineRenderRequest, TimelineSnapshot};
+use crate::execution::{GraphPluginState, OfflineRenderRequest, RigProjection, TimelineSnapshot};
 use serde::Serialize;
 
 /// One command accepted by the realtime sidecar.
@@ -34,7 +34,6 @@ pub(crate) enum SidecarCommand {
     DiscardTimelineSnapshot,
     WaitForTimelineIdle {
         timeout_ms: u64,
-        close_editor: bool,
     },
     PlayTimeline,
     PauseTimeline,
@@ -125,6 +124,9 @@ pub(crate) enum SidecarCommand {
         owner: riffra_core::EffectOwner,
         device_id: String,
     },
+    ClosePluginEditor {
+        timeout_ms: u64,
+    },
     PreviewSample {
         path: String,
         start_ms: u64,
@@ -142,6 +144,16 @@ pub(crate) enum SidecarCommand {
     StopInstrumentPreview,
     OpenPluginAudition {
         path: String,
+    },
+    OpenRig {
+        projection: RigProjection,
+    },
+    CloseRig,
+    OpenRigEditor {
+        device_id: String,
+    },
+    CloseRigEditor {
+        timeout_ms: u64,
     },
     StartTakeComparison {
         raw_path: String,
@@ -189,6 +201,7 @@ pub(crate) enum ExpectedResponse {
     MidiAck,
     MixAck,
     DeviceAck,
+    RigAck,
     DeviceStatus,
     DeviceParameters,
     DevicePrograms,
@@ -236,7 +249,12 @@ impl SidecarCommand {
             Self::SetDeviceBypassed { .. }
             | Self::SetDeviceParameter { .. }
             | Self::SetPluginState { .. }
-            | Self::OpenPluginEditor { .. } => ExpectedResponse::DeviceAck,
+            | Self::OpenPluginEditor { .. }
+            | Self::ClosePluginEditor { .. } => ExpectedResponse::DeviceAck,
+            Self::OpenRig { .. }
+            | Self::CloseRig
+            | Self::OpenRigEditor { .. }
+            | Self::CloseRigEditor { .. } => ExpectedResponse::RigAck,
             Self::GetDeviceStatus { .. } => ExpectedResponse::DeviceStatus,
             Self::GetDeviceParameters { .. }
             | Self::GetDeviceParameterValueForText { .. }

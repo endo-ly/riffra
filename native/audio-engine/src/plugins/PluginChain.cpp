@@ -277,19 +277,6 @@ bool PluginChain::setParameter(const juce::String& deviceId, const int parameter
     return rack->setParameter(parameterIndex, value, error);
 }
 
-bool PluginChain::applyState(const std::vector<PluginDeviceSpec>& values,
-                             juce::String& error) noexcept {
-    for (const auto& value : values) {
-        auto* rack = findDevice(value.id);
-        if (rack == nullptr) {
-            error = "Plugin Chain state references an unknown device.";
-            return false;
-        }
-        if (!rack->applyPersistedState(value.state, error)) return false;
-    }
-    return true;
-}
-
 std::optional<PluginStateSpec> PluginChain::persistedState(const juce::String& deviceId,
                                                            juce::String& error) const {
     const auto* rack = findDevice(deviceId);

@@ -7,8 +7,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import App from '@/app/App';
 import { createSessionStore } from '@/session/store';
 import { bindSessionRuntime } from '@/session/runtime';
-import { useAppUpdater } from '@/app/hooks/useAppUpdater';
-import { TestSessionProvider } from '@/test/support/session-provider';
 import {
   createFakeNativeApi,
   type FakeNativeApi,
@@ -285,7 +283,7 @@ describe('App native boundary', () => {
     expect(screen.getByRole('button', { name: /UNMUTE/ })).toBeInTheDocument();
   });
 
-  it('offers the checked application update again after Later and installs it on demand', async () => {
+  it('offers the checked application update again after Later and pauses editing while it installs', async () => {
     const api = createFakeNativeApi({ responses: { checkForAppUpdate: '9.9.9' } });
 
     await renderApp(api);
@@ -300,32 +298,19 @@ describe('App native boundary', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Update & restart' }));
 
     await waitFor(() => expect(api.calls).toContain('installAppUpdate'));
+    expect(await screen.findByText('Installing update')).toBeInTheDocument();
   });
 
   it('stays silent when the startup check fails and reports a failed manual check', async () => {
     const api = createFakeNativeApi({ failures: { checkForAppUpdate: new Error('offline') } });
-    function UpdateCheckProbe() {
-      const updater = useAppUpdater();
-      return (
-        <>
-          <ToastStack />
-          <button type="button" onClick={() => void updater.checkNow()}>
-            Check now
-          </button>
-        </>
-      );
-    }
-    render(
-      <TestSessionProvider api={api}>
-        <UpdateCheckProbe />
-      </TestSessionProvider>,
-    );
+    const appUpdate = () => createSessionStore(api).getState().appUpdate;
+    render(<ToastStack />);
 
-    await waitFor(() => expect(api.calls).toContain('checkForAppUpdate'));
+    await act(() => appUpdate().checkOnStartup());
     expect(screen.queryByText('Update check failed')).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole('button', { name: 'Check now' }));
+    await act(() => appUpdate().checkNow());
 
-    await waitFor(() => expect(screen.getByText('Update check failed')).toBeInTheDocument());
+    expect(screen.getByText('Update check failed')).toBeInTheDocument();
   });
 });

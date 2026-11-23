@@ -319,7 +319,7 @@ impl<'a> DeviceMut<'a> {
     fn set_bypassed(&mut self, bypassed: bool) {
         match self {
             Self::Instrument(instrument) => instrument.set_bypassed(bypassed),
-            Self::Effect(device) => device.bypassed = bypassed,
+            Self::Effect(device) => device.set_bypassed(bypassed),
         }
     }
 

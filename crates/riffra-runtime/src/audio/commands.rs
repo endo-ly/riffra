@@ -9,7 +9,7 @@ use crate::api::output::{
     DeviceSidechainCapability, PluginPresetInfo,
 };
 use crate::api::params::AudioDriverConfig;
-use crate::execution::{GraphPluginState, TimelineSnapshot};
+use crate::execution::{GraphPluginState, RigProjection, TimelineSnapshot};
 use riffra_core::AudioTakeVariant;
 use serde_json::Value;
 use std::path::Path;
@@ -18,6 +18,8 @@ use std::time::Duration;
 const TRACK_DEVICE_COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
 /// The sidecar's budget for loading a VST3, which is the slowest step of an audition.
 const PLUGIN_AUDITION_TIMEOUT: Duration = Duration::from_secs(45);
+/// The sidecar loads every rig effect before it answers.
+const RIG_TIMEOUT: Duration = Duration::from_secs(45);
 /// The sidecar's queue budget plus its watchdog for a plugin restoring its state; sample-based
 /// instruments load their sounds before returning.
 const PLUGIN_STATE_SET_TIMEOUT: Duration = Duration::from_secs(130);
@@ -185,21 +187,27 @@ impl AudioSupervisor {
         self.request_ack(
             SidecarCommand::WaitForTimelineIdle {
                 timeout_ms: timeout.as_millis().min(u128::from(u64::MAX)) as u64,
-                close_editor: false,
             },
             timeout,
         )
     }
 
+    /// Captures the closing state of an open plugin editor before the sidecar
+    /// stops. Without an open editor the sidecar answers without waiting for a
+    /// running Graph load, whose result shutdown discards.
     pub(crate) fn close_editor_before_shutdown(&self, timeout: Duration) -> NativeAudioResult<()> {
         self.request_during_shutdown(
-            SidecarCommand::WaitForTimelineIdle {
+            SidecarCommand::ClosePluginEditor {
                 timeout_ms: timeout.as_millis().min(u128::from(u64::MAX)) as u64,
-                close_editor: true,
             },
             timeout,
         )
         .map(drop)
+    }
+
+    pub(crate) fn close_rig_before_shutdown(&self) -> NativeAudioResult<()> {
+        self.request_during_shutdown(SidecarCommand::CloseRig, Duration::from_secs(10))
+            .map(drop)
     }
 
     pub(crate) fn close_editor_before_project_switch(
@@ -207,9 +215,8 @@ impl AudioSupervisor {
         timeout: Duration,
     ) -> NativeAudioResult<()> {
         self.request_ack(
-            SidecarCommand::WaitForTimelineIdle {
+            SidecarCommand::ClosePluginEditor {
                 timeout_ms: timeout.as_millis().min(u128::from(u64::MAX)) as u64,
-                close_editor: true,
             },
             timeout,
         )
@@ -642,6 +649,57 @@ impl AudioSupervisor {
             },
             "",
             PLUGIN_AUDITION_TIMEOUT,
+        )
+    }
+
+    /// Replaces the playing rig's realtime chain.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the sidecar cannot prepare the projection.
+    pub(crate) fn open_rig(&self, projection: &RigProjection) -> NativeAudioResult<()> {
+        self.request_ack(
+            SidecarCommand::OpenRig {
+                projection: projection.clone(),
+            },
+            RIG_TIMEOUT,
+        )
+    }
+
+    /// Stops the playing rig and closes its editor.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the sidecar does not acknowledge the stop.
+    pub(crate) fn close_rig(&self) -> NativeAudioResult<()> {
+        self.request_ack(SidecarCommand::CloseRig, TRACK_DEVICE_COMMAND_TIMEOUT)
+    }
+
+    /// Captures the closing state of the playing rig's editor.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the sidecar cannot capture the closing state.
+    pub(crate) fn close_rig_editor(&self, timeout: Duration) -> NativeAudioResult<()> {
+        self.request_ack(
+            SidecarCommand::CloseRigEditor {
+                timeout_ms: timeout.as_millis().min(u128::from(u64::MAX)) as u64,
+            },
+            timeout,
+        )
+    }
+
+    /// Shows the editor of one effect in the playing rig.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the sidecar cannot open the editor.
+    pub(crate) fn open_rig_editor(&self, device_id: &str) -> NativeAudioResult<()> {
+        self.request_ack(
+            SidecarCommand::OpenRigEditor {
+                device_id: device_id.into(),
+            },
+            TRACK_DEVICE_COMMAND_TIMEOUT,
         )
     }
 

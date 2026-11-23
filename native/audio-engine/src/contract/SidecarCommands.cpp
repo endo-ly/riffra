@@ -220,11 +220,10 @@ bool decodeCommand(const juce::var& value, SidecarCommandSpec& output, juce::Str
     if (type == "discardTimelineSnapshot")
         return decodeEmpty<DiscardTimelineSnapshotCommand>(value, output, error);
     if (type == "waitForTimelineIdle") {
-        auto fields = reader({"type", "timeoutMs", "closeEditor"});
+        auto fields = reader({"type", "timeoutMs"});
         WaitForTimelineIdleCommand command;
         if (!fields.string("type", ignoredType) ||
-            !fields.unsignedInteger("timeoutMs", command.timeoutMs) ||
-            !fields.boolean("closeEditor", command.closeEditor) || !fields.finish())
+            !fields.unsignedInteger("timeoutMs", command.timeoutMs) || !fields.finish())
             return false;
         if (command.timeoutMs == 0) return fail(error, field("timeoutMs"), "must be positive");
         output = command;
@@ -481,6 +480,16 @@ bool decodeCommand(const juce::var& value, SidecarCommandSpec& output, juce::Str
         output = command;
         return true;
     }
+    if (type == "closePluginEditor") {
+        auto fields = reader({"type", "timeoutMs"});
+        ClosePluginEditorCommand command;
+        if (!fields.string("type", ignoredType) ||
+            !fields.unsignedInteger("timeoutMs", command.timeoutMs) || !fields.finish())
+            return false;
+        if (command.timeoutMs == 0) return fail(error, field("timeoutMs"), "must be positive");
+        output = command;
+        return true;
+    }
     if (type == "previewSample") {
         auto fields = reader({"type", "path", "startMs", "endMs", "gain", "loop"});
         PreviewSampleCommand command;
@@ -515,6 +524,40 @@ bool decodeCommand(const juce::var& value, SidecarCommandSpec& output, juce::Str
         if (!fields.string("type", ignoredType) || !fields.string("path", command.path) ||
             !fields.finish())
             return false;
+        output = command;
+        return true;
+    }
+    if (type == "openRig") {
+        auto fields = reader({"type", "projection"});
+        OpenRigCommand command;
+        juce::var projection;
+        if (!fields.string("type", ignoredType) || !fields.object("projection", projection) ||
+            !fields.finish())
+            return false;
+        juce::String projectionError;
+        if (!decodeRigProjection(projection, command.projection, projectionError))
+            return fail(error, field("projection"), projectionError);
+        output = std::move(command);
+        return true;
+    }
+    if (type == "closeRig") return decodeEmpty<CloseRigCommand>(value, output, error);
+    if (type == "openRigEditor") {
+        auto fields = reader({"type", "deviceId"});
+        OpenRigEditorCommand command;
+        if (!fields.string("type", ignoredType) || !fields.string("deviceId", command.deviceId) ||
+            !fields.finish())
+            return false;
+        if (command.deviceId.isEmpty()) return fail(error, field("deviceId"), "must not be empty");
+        output = command;
+        return true;
+    }
+    if (type == "closeRigEditor") {
+        auto fields = reader({"type", "timeoutMs"});
+        CloseRigEditorCommand command;
+        if (!fields.string("type", ignoredType) ||
+            !fields.unsignedInteger("timeoutMs", command.timeoutMs) || !fields.finish())
+            return false;
+        if (command.timeoutMs == 0) return fail(error, field("timeoutMs"), "must be positive");
         output = command;
         return true;
     }

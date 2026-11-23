@@ -1,4 +1,6 @@
+#include <algorithm>
 #include <chrono>
+#include <climits>
 #include <memory>
 #include <string>
 
@@ -206,7 +208,7 @@ void AudioCommandDispatcher::handle(const OpenPluginEditorCommand& command,
                                   "track.pluginEditor.open");
                     return;
                 }
-                trackPluginEditor.reset();
+                releaseTrackPluginEditor();
             }
             pluginEditorOwner = command.owner;
             trackPluginEditorDeviceId = command.deviceId;
@@ -270,6 +272,7 @@ void AudioCommandDispatcher::handle(const OpenPluginEditorCommand& command,
                         kTrackDeviceWatchdogTimeout);
                 },
                 PluginEditorHost::ClosedCallback{}, std::move(deviceOwner));
+            trackPluginEditorOpen.store(true, std::memory_order_release);
             juce::String editorError;
             bool opened = false;
             try {
@@ -282,9 +285,7 @@ void AudioCommandDispatcher::handle(const OpenPluginEditorCommand& command,
             }
 
             if (!opened) {
-                trackPluginEditor.reset();
-                pluginEditorOwner = {};
-                trackPluginEditorDeviceId.clear();
+                releaseTrackPluginEditor();
                 pending->fail("pluginEditor", editorError, "track.pluginEditor.open");
                 return;
             }
@@ -296,6 +297,39 @@ void AudioCommandDispatcher::handle(const OpenPluginEditorCommand& command,
         pending->fail("runtimeLifecycle", "The VST lifecycle executor is stopping.",
                       "track.pluginEditor.open");
     }
+}
+
+void AudioCommandDispatcher::handle(const ClosePluginEditorCommand& command,
+                                    CommandResponder responder) {
+    // Only a lifecycle task opens an editor, so without one there is no
+    // closing state to capture and no reason to wait for a running Graph load.
+    if (!trackPluginEditorOpen.load(std::memory_order_acquire)) {
+        responder.respond(DeviceAckSpec{});
+        return;
+    }
+    const auto timeout = std::chrono::milliseconds(static_cast<std::int64_t>(command.timeoutMs));
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    // The editor shares the Message Thread with VST lifecycle tasks; closing
+    // it waits until none of them runs.
+    if (!context.runtimeLifecycle.waitForIdle(timeout)) {
+        responder.fail("runtimeLifecycle",
+                       "The VST lifecycle executor did not become idle in time.",
+                       "track.pluginEditor.close");
+        return;
+    }
+    if (trackPluginEditor != nullptr) {
+        trackPluginEditor->close();
+        const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+            deadline - std::chrono::steady_clock::now());
+        if (!trackPluginEditor->waitForClosingState(
+                static_cast<int>(std::clamp<std::int64_t>(remaining.count(), 0, INT_MAX)))) {
+            responder.fail("trackDevice", "The closing plugin state could not be captured.",
+                           "track.pluginEditor.close");
+            return;
+        }
+        releaseTrackPluginEditor();
+    }
+    responder.respond(DeviceAckSpec{});
 }
 
 }  // namespace riffra

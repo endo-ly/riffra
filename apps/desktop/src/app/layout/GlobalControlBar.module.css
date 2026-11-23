@@ -16,6 +16,7 @@
 }
 
 .disconnected .historyControls,
+.disconnected .rigControls,
 .disconnected .transportControls,
 .disconnected .audioControls {
   opacity: 0.52;
@@ -35,6 +36,18 @@
   margin: 0;
   padding: 0;
   border: 0;
+}
+
+.rigControls {
+  flex: 0 0 auto;
+}
+
+.divider {
+  width: 1px;
+  height: 20px;
+  flex: 0 0 auto;
+  margin: 0 var(--space-1);
+  background: var(--color-border-subtle);
 }
 
 .projectHostBoundControls {

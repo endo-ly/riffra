@@ -7,7 +7,8 @@ use super::wire::{
     SIDECAR_PROTOCOL_VERSION, SidecarError, SidecarEvent, SidecarMessage, SidecarResponse,
     WireAudioMeters, WireAudioState, WireAudioStatus, WireInstrumentFault,
     WirePluginParameterChanged, WirePluginStateChanged, WireRecordingPhase, WireRecoveryStatus,
-    WireTransportState, WireTransportStatus, decode_message, diagnostic_prefix,
+    WireRigPluginStateChanged, WireRigPluginStateFinal, WireTransportState, WireTransportStatus,
+    decode_message, diagnostic_prefix,
 };
 use crate::HostEvent;
 use crate::api::output::{
@@ -15,8 +16,8 @@ use crate::api::output::{
     MidiDeviceInfo, RecordingStatus,
 };
 use crate::model::{
-    AudioMeterFrame, PluginParameterChanged, PluginStateChanged, RecordingPhase, TrackAudioMeter,
-    TransportState, TransportStatus,
+    AudioMeterFrame, PluginParameterChanged, PluginStateChanged, RecordingPhase,
+    RigPluginStateChanged, TrackAudioMeter, TransportState, TransportStatus,
 };
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
@@ -269,6 +270,28 @@ fn plugin_parameter_changed(changed: WirePluginParameterChanged) -> PluginParame
     }
 }
 
+fn rig_plugin_state_changed(changed: WireRigPluginStateChanged) -> RigPluginStateChanged {
+    RigPluginStateChanged {
+        rig_id: changed.rig_id,
+        device_id: changed.device_id,
+        parameter_values: changed.state.parameter_values,
+        state_data: changed.state.state_data,
+        revision: changed.revision,
+        source_plugin_path: None,
+    }
+}
+
+fn rig_plugin_state_final(changed: WireRigPluginStateFinal) -> RigPluginStateChanged {
+    RigPluginStateChanged {
+        rig_id: changed.rig_id,
+        device_id: changed.device_id,
+        parameter_values: changed.state.parameter_values,
+        state_data: changed.state.state_data,
+        revision: changed.revision,
+        source_plugin_path: Some(changed.source_plugin_path),
+    }
+}
+
 fn native_error(error: SidecarError) -> NativeAudioError {
     NativeAudioError::structured(error.kind, error.message, error.operation, error.details)
 }
@@ -361,6 +384,7 @@ impl AudioSupervisor {
             | SidecarResponse::MidiAck {}
             | SidecarResponse::MixAck {}
             | SidecarResponse::DeviceAck {}
+            | SidecarResponse::RigAck {}
             | SidecarResponse::DeviceStatus(_)
             | SidecarResponse::DeviceParameters(_)
             | SidecarResponse::DevicePrograms(_)
@@ -444,6 +468,22 @@ impl AudioSupervisor {
                 if self.process.current_generation() == generation {
                     self.events
                         .emit(HostEvent::PluginParameterChanged(plugin_parameter_changed(
+                            changed,
+                        )));
+                }
+            }
+            SidecarEvent::RigPluginStateChanged(changed) => {
+                if self.process.current_generation() == generation {
+                    self.events
+                        .emit(HostEvent::RigPluginStateChanged(rig_plugin_state_changed(
+                            changed,
+                        )));
+                }
+            }
+            SidecarEvent::RigPluginStateFinal(changed) => {
+                if self.process.current_generation() == generation {
+                    self.events
+                        .emit(HostEvent::RigPluginStateFinal(rig_plugin_state_final(
                             changed,
                         )));
                 }

@@ -19,6 +19,8 @@ export interface NativeEventApi {
   onRuntimeProjectionStatus(callback: (status: RuntimeProjectionStatus) => void): () => void;
   onRuntimeRestarted(callback: (generation: number) => void): () => void;
   onRecordingFinalized(callback: (event: RecordingFinalized) => void): () => void;
+  /** Subscribes to the Host-owned rig list and its playing rig. */
+  onRigStateChanged(callback: (state: RigState) => void): () => void;
 }
 
 import type {
@@ -28,6 +30,7 @@ import type {
   ProjectActivationResult,
   ProjectState,
   RecordingFinalized,
+  RigState,
   RuntimeProjectionStatus,
   RuntimeRestarted,
   ScoreSyncStatus,
@@ -67,4 +70,5 @@ export const eventApi: NativeEventApi = {
     subscribe<RuntimeRestarted>('runtime-restarted', ({ generation }) => callback(generation)),
   onRecordingFinalized: (callback) =>
     subscribe<RecordingFinalized>('recording-finalized', callback),
+  onRigStateChanged: (callback) => subscribe<RigState>('rig-state-changed', callback),
 };

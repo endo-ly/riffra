@@ -28,6 +28,7 @@ pub use midi_clip::{
     InstrumentControlEvent, InstrumentControlEventKind, KeySwitchMode, MidiClip, MidiClipMove,
     MidiClipPatch, MidiEvent, MidiEventKind, MidiNote,
 };
+pub(crate) use mixer::normalize_gain;
 pub use mixer::{
     EffectOwner, MixBus, MixBusKind, MixBusPatch, Mixer, Send, SendPatch, SendPosition,
     SidechainSend, SidechainSendPatch,

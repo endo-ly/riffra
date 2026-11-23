@@ -6,6 +6,7 @@ pub mod instrument;
 pub mod music;
 pub mod plugin;
 pub mod recording;
+pub mod rig;
 pub mod session;
 pub mod timeline;
 
@@ -15,5 +16,6 @@ pub use instrument::*;
 pub use music::*;
 pub use plugin::*;
 pub use recording::*;
+pub use rig::*;
 pub use session::*;
 pub use timeline::*;

@@ -250,6 +250,8 @@ struct MidiAckSpec final {};
 struct MixAckSpec final {};
 /// Completes the Track Device commands that change a device or open its editor.
 struct DeviceAckSpec final {};
+/// Completes the rig commands that change playback or open a rig editor.
+struct RigAckSpec final {};
 
 /// A transport command accepted by the realtime command queue.
 struct TransportAcceptedSpec final {
@@ -323,8 +325,9 @@ struct DeviceProgramChangedSpec final {
 
 using SidecarResponseSpec =
     std::variant<AudioStatusSpec, TransportAcceptedSpec, TimelineAckSpec, TimelineIdleAckSpec,
-                 MidiAckSpec, MixAckSpec, DeviceAckSpec, DeviceStatusSpec, DeviceParametersSpec,
-                 DeviceProgramsSpec, PluginStateResponseSpec, DeviceProgramChangedSpec>;
+                 MidiAckSpec, MixAckSpec, DeviceAckSpec, RigAckSpec, DeviceStatusSpec,
+                 DeviceParametersSpec, DeviceProgramsSpec, PluginStateResponseSpec,
+                 DeviceProgramChangedSpec>;
 
 struct SidecarErrorSpec final {
     juce::String kind;
@@ -362,6 +365,16 @@ struct PluginParameterChangedSpec final {
     float value = 0.0f;
 };
 
+/// Plugin state captured from a rig's native editor.
+struct RigPluginStateChangedSpec final {
+    juce::String rigId;
+    juce::String deviceId;
+    PluginStateSpec state;
+    std::uint64_t revision = 0;
+    bool finalCapture = false;
+    juce::String sourcePluginPath;
+};
+
 struct FaultSpec final {
     SidecarErrorSpec error;
 };
@@ -383,7 +396,7 @@ struct InputChannelDetailsSpec final {
 using SidecarEventSpec =
     std::variant<ReadySpec, AudioStatusSpec, AudioMetersSpec, TransportStatusSpec,
                  RecordingCompleteSpec, PluginStateChangedSpec, PluginParameterChangedSpec,
-                 FaultSpec, TimelineLoadProgressSpec>;
+                 FaultSpec, TimelineLoadProgressSpec, RigPluginStateChangedSpec>;
 
 struct OfflineRenderCompleteSpec final {
     std::uint64_t frames = 0;
@@ -392,15 +405,24 @@ struct OfflineRenderCompleteSpec final {
 };
 
 /// Every response `type` written on stdout.
-inline constexpr std::array<std::string_view, 12> kSidecarResponseTypes{
-    "audioStatus",     "transportAccepted", "timelineAck",
-    "timelineIdleAck", "midiAck",           "mixAck",
-    "deviceAck",       "deviceStatus",      "deviceParameters",
-    "devicePrograms",  "pluginState",       "deviceProgramChanged",
+inline constexpr std::array<std::string_view, 13> kSidecarResponseTypes{
+    "audioStatus",
+    "transportAccepted",
+    "timelineAck",
+    "timelineIdleAck",
+    "midiAck",
+    "mixAck",
+    "deviceAck",
+    "rigAck",
+    "deviceStatus",
+    "deviceParameters",
+    "devicePrograms",
+    "pluginState",
+    "deviceProgramChanged",
 };
 
 /// Every event `type` written on stdout.
-inline constexpr std::array<std::string_view, 9> kSidecarEventTypes{
+inline constexpr std::array<std::string_view, 11> kSidecarEventTypes{
     "ready",
     "audioStatus",
     "audioMeters",
@@ -410,6 +432,8 @@ inline constexpr std::array<std::string_view, 9> kSidecarEventTypes{
     "pluginParameterChanged",
     "fault",
     "timelineLoadProgress",
+    "rigPluginStateChanged",
+    "rigPluginStateFinal",
 };
 
 /// Returns the `type` written for one response.

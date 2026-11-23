@@ -17,7 +17,8 @@ pub(crate) use messages::{
     SidecarMessage, SidecarResponse, WireAudioChannel, WireAudioMeters, WireAudioState,
     WireAudioStatus, WireInstrumentFault, WireMidiDevice, WirePluginParameterChanged,
     WirePluginState, WirePluginStateChanged, WireRecordingComplete, WireRecordingPhase,
-    WireRecoveryStatus, WireTransportState, WireTransportStatus,
+    WireRecoveryStatus, WireRigPluginStateChanged, WireRigPluginStateFinal, WireTransportState,
+    WireTransportStatus,
 };
 
 use serde::{Deserialize, Deserializer, Serialize};

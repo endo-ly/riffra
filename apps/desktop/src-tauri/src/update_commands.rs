@@ -3,6 +3,7 @@
 //! The Windows updater terminates the process right after launching the
 //! installer, so the Embedded Host shutdown is injected through the
 //! `on_before_exit` hook; the installer restarts the application afterwards.
+//! Other platforms install in place and restart through the regular exit path.
 
 use std::sync::Arc;
 
@@ -27,7 +28,8 @@ pub(crate) async fn check_for_app_update(
     Ok(update.map(|update| update.version))
 }
 
-/// Downloads and installs the update published on the release endpoint.
+/// Downloads and installs the update published on the release endpoint, then
+/// restarts the application.
 ///
 /// On Windows this call does not return: the updater runs the Embedded Host
 /// shutdown hook, exits the process, and the installer applies the update and
@@ -56,5 +58,7 @@ pub(crate) async fn install_app_update(app: AppHandle) -> Result<(), NativeComma
     update
         .download_and_install(|_, _| {}, || {})
         .await
-        .map_err(|error| NativeCommandError::command_failed(error.to_string()))
+        .map_err(|error| NativeCommandError::command_failed(error.to_string()))?;
+    app.request_restart();
+    Ok(())
 }

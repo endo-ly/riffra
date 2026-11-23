@@ -823,4 +823,9 @@ bool PluginRack::hasEditor() const noexcept {
     return cachedHasEditor.load(std::memory_order_acquire);
 }
 
+std::optional<PluginStateSpec> capturePersistedState(const PluginRack& rack, juce::String& error) {
+    return juce::MessageManager::callSync([&rack, &error] { return rack.persistedState(error); })
+        .value_or(std::nullopt);
+}
+
 }  // namespace riffra

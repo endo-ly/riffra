@@ -157,7 +157,6 @@ app/
   AppShell.module.css
   hooks/
     useAppShortcuts.ts    どの画面でも効くショートカット（ミュート、コマンドパレット、Undo/Redo）
-    useAppUpdater.ts      アプリの更新確認
   layout/                 骨格を構成する領域
     BootScreen.tsx
     CommandPalette.tsx

@@ -126,6 +126,127 @@ impl EffectDevice {
         self.name = self.name.trim().to_owned();
         self.plugin.validate_and_normalize()
     }
+
+    /// Sets whether this effect plays.
+    pub(crate) fn set_bypassed(&mut self, bypassed: bool) {
+        self.bypassed = bypassed;
+    }
+}
+
+/// Replaces a plugin's persisted state with the state a native editor
+/// captured.
+///
+/// # Errors
+///
+/// Returns a description for a non-finite parameter value.
+pub(crate) fn apply_plugin_state(
+    plugin: &mut Vst3Plugin,
+    parameter_values: Vec<f32>,
+    state_data: Option<String>,
+) -> Result<(), String> {
+    if parameter_values.iter().any(|value| !value.is_finite()) {
+        return Err("a plugin editor returned a non-finite parameter value".into());
+    }
+    plugin.parameter_values = parameter_values
+        .into_iter()
+        .map(|value| value.clamp(0.0, 1.0))
+        .collect();
+    plugin.state_data = state_data.filter(|value| !value.is_empty());
+    Ok(())
+}
+
+/// Replaces one channel effect with the state a native editor captured.
+///
+/// # Errors
+///
+/// Returns a description for an unknown device or a non-finite parameter.
+pub(crate) fn apply_effect_state(
+    effects: &mut [EffectDevice],
+    device_id: &str,
+    parameter_values: Vec<f32>,
+    state_data: Option<String>,
+    bypassed: bool,
+) -> Result<(), String> {
+    let device = find_effect_mut(effects, device_id)?;
+    device.set_bypassed(bypassed);
+    apply_plugin_state(&mut device.plugin, parameter_values, state_data)
+}
+
+/// Returns one effect of a channel chain.
+pub(crate) fn find_effect_mut<'a>(
+    effects: &'a mut [EffectDevice],
+    device_id: &str,
+) -> Result<&'a mut EffectDevice, String> {
+    effects
+        .iter_mut()
+        .find(|device| device.id == device_id)
+        .ok_or_else(|| "channel effect is not registered".to_owned())
+}
+
+/// Appends one effect to a channel chain.
+pub(crate) fn push_effect(
+    effects: &mut Vec<EffectDevice>,
+    device: EffectDevice,
+) -> Result<(), String> {
+    if effects.len() >= MAX_CHANNEL_EFFECTS {
+        return Err(format!(
+            "A channel cannot contain more than {MAX_CHANNEL_EFFECTS} effects."
+        ));
+    }
+    if effects.iter().any(|existing| existing.id == device.id) {
+        return Err(format!("Effect device id '{}' is duplicated.", device.id));
+    }
+    effects.push(device);
+    Ok(())
+}
+
+/// Removes one effect from a channel chain.
+pub(crate) fn remove_effect(
+    effects: &mut Vec<EffectDevice>,
+    device_id: &str,
+) -> Result<(), String> {
+    let before = effects.len();
+    effects.retain(|device| device.id != device_id);
+    if before == effects.len() {
+        return Err("channel effect is not registered".into());
+    }
+    Ok(())
+}
+
+/// Replaces a channel effect order with every current effect exactly once.
+pub(crate) fn reorder_effects(
+    effects: &mut Vec<EffectDevice>,
+    ordered_device_ids: &[String],
+) -> Result<(), String> {
+    let unique_ids = ordered_device_ids.iter().collect::<HashSet<_>>();
+    if ordered_device_ids.len() != effects.len()
+        || unique_ids.len() != ordered_device_ids.len()
+        || ordered_device_ids
+            .iter()
+            .any(|id| !effects.iter().any(|device| &device.id == id))
+    {
+        return Err("effect order must contain every channel effect exactly once".into());
+    }
+    let mut reordered = Vec::with_capacity(effects.len());
+    for id in ordered_device_ids {
+        let index = effects
+            .iter()
+            .position(|device| device.id == *id)
+            .expect("the order was checked against the chain");
+        reordered.push(effects.remove(index));
+    }
+    *effects = reordered;
+    Ok(())
+}
+
+/// Sets one channel effect's bypass state.
+pub(crate) fn set_effect_bypassed(
+    effects: &mut [EffectDevice],
+    device_id: &str,
+    bypassed: bool,
+) -> Result<(), String> {
+    find_effect_mut(effects, device_id)?.set_bypassed(bypassed);
+    Ok(())
 }
 
 /// Validates and normalizes one channel effect chain.
