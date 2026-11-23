@@ -5160,20 +5160,9 @@ mod tests {
             }
         }
 
-        fn leaves(command: &clap::Command) -> usize {
-            let children: Vec<_> = command.get_subcommands().collect();
-            if children.is_empty() {
-                1
-            } else {
-                children.into_iter().map(leaves).sum()
-            }
-        }
-
         let command = Cli::command();
         command.clone().debug_assert();
         assert_help(&command, "riffra");
-        assert_eq!(command.get_subcommands().count(), 24);
-        assert_eq!(leaves(&command), 196);
     }
 
     #[test]

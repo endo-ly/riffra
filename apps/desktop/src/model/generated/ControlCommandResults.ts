@@ -109,6 +109,7 @@ export type ControlCommandResults = {
   'music.region.remove': OutputValue<'arrangementMutation'>;
   'score.validate': OutputValue<'scoreValidation'>;
   'score.inspect': OutputValue<'scoreInspection'>;
+  'score.spec': OutputValue<'scoreSpec'>;
   'asset.import-midi': OutputValue<'assetId'>;
   'instrument.list': OutputValue<'instrumentLibrary'>;
   'instrument.save': OutputValue<'instrumentLibraryItem'>;

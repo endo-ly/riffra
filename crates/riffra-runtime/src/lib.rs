@@ -49,11 +49,9 @@ pub use api::output::{
     ScoreInstrumentInspection, ScoreInstrumentKind, ScoreLaneInspection, ScoreRebuild,
     ScoreSectionInspection, ScoreSendInspection, ScoreSidechainInspection, ScoreSpec,
     ScoreSpecTopicSummary, ScoreSummary, ScoreSyncState, ScoreSyncStatus, ScoreValidation,
-    TrackEffectSummary, TrackInstrumentSummary,
-    TrackInstrumentSummarySource, TrackSummary,
+    TrackEffectSummary, TrackInstrumentSummary, TrackInstrumentSummarySource, TrackSummary,
 };
 pub use api::params::{AudioDriverConfig, ScoreSpecTopic};
-pub use score::spec::get as score_spec;
 pub use audio::{
     AudioDeviceReopenOutcome, AudioSupervisor, NativeAudioError, NativeAudioResult,
     RuntimeRestartHandler,
@@ -75,3 +73,4 @@ pub use preferences::{
 };
 pub use runtime::RuntimeError;
 pub(crate) use runtime::{RuntimeDriver, RuntimeReconciler};
+pub use score::spec::get as score_spec;
