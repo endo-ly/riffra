@@ -324,7 +324,7 @@ pub(crate) enum PerformanceControlKind {
 pub(crate) struct EventSource {
     pub(crate) path: String,
     #[serde(skip_serializing)]
-    trigger: bool,
+    pub(crate) trigger: bool,
     pub(crate) spelling: Option<String>,
     #[serde(skip_serializing)]
     pub(crate) token_offset: Option<usize>,
@@ -542,13 +542,7 @@ pub(crate) fn compile(text: &str) -> Result<ScorePlan> {
                 ));
             }
         }
-        let source_less = sources
-            .keys()
-            .chain(kit_members.keys())
-            .chain(audio_instruments.iter())
-            .cloned()
-            .collect();
-        resolve::validate_structure(&view, &source_less)?;
+        resolve::validate_structure(&view)?;
         for (section, clips) in &audio_clips {
             for (index, clip) in clips.iter().enumerate() {
                 if !audio_instruments.contains(&clip.instrument) {
@@ -1126,10 +1120,13 @@ mod tests {
     fn triggers_require_an_explicit_note_and_rolls_replace_only_pattern_drums() {
         let mut missing_note = document();
         missing_note["sections"]["phrase"] = serde_json::json!({"events":[{"kind":"hit","instrument":"part","at":{"bar":1,"step":1}}]});
-        let error = super::compile(&missing_note.to_string()).expect_err("trigger note required");
-        let message = &error.message;
-        assert!(message.contains("instruments.part.trigger_note_midi"));
-        assert!(message.contains("score quarter 0"));
+        let plan = super::compile(&missing_note.to_string()).expect("default trigger note");
+        assert_eq!(plan.lanes[0].pattern.events.len(), 1);
+        assert!(matches!(
+            plan.lanes[0].pattern.events[0],
+            super::MusicalEvent::Note { note: 60, .. }
+        ));
+        assert!(plan.lanes[0].sources[0].trigger);
 
         let mut doc = document();
         doc["instruments"]["part"]["trigger_note_midi"] = serde_json::json!(36);

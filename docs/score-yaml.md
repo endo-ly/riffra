@@ -493,7 +493,7 @@ instruments:
 - `pan`：`-1.0`（左）〜`1.0`（右）の有限数（省略時 `0.0`）。線形バランス（ステレオ・バランス）方式を適用する。
 - `gate`・`articulations`・`swing`・`timing_offset_steps`：音価倍率（3.3）・奏法記号（3.4）・スウィング（3.6）・タイミングずれ（3.7）。
 - `voicing`・`voicing_floor_midi`・`voicing_ceiling_midi`：和音配置と範囲（4.2、0〜127、上限＞下限）。
-- `trigger_note_midi`：打撃・単発音を鳴らす MIDI ノート（0〜127、打撃系使用時は必須）。
+- `trigger_note_midi`：打撃・単発音を鳴らす MIDI ノート（0〜127）。キット部品では必須。それ以外の楽器で省略すると MIDI ノート 60 で展開する。
 - `bass_floor_midi` / `bass_ceiling_midi`：`register: bass` の配置範囲（省略時 28〜39）。
 - `audio_input: <id>`：入力能力のある内蔵音源のみ許可。対象不存在・自己参照・循環・チャンネル数不一致はエラー。Part Gain のみ適用後の音声を渡す。
 - `effects`：楽器個別の VST3 エフェクトチェイン（7.5）。

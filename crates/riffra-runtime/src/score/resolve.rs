@@ -239,10 +239,7 @@ fn melody_items(
 }
 
 #[allow(clippy::too_many_lines)]
-pub(super) fn validate_structure(
-    doc: &Value,
-    source_less_instruments: &std::collections::BTreeSet<String>,
-) -> Result<()> {
+pub(super) fn validate_structure(doc: &Value) -> Result<()> {
     fields(
         doc,
         &[
@@ -343,7 +340,7 @@ pub(super) fn validate_structure(
     let sections = required(doc, "sections", "")?;
     validate_sections(sections)?;
     validate_part_gains(sections, required(doc, "instruments", "")?)?;
-    validate_instruments(required(doc, "instruments", "")?, source_less_instruments)?;
+    validate_instruments(required(doc, "instruments", "")?)?;
     validate_materials(doc)?;
     if let Some(notes) = doc.get("notes") {
         string(notes, "notes")?;
@@ -812,10 +809,7 @@ fn validate_articulations(v: &Value, path: &str) -> Result<()> {
     Ok(())
 }
 
-fn validate_instruments(
-    instruments: &Value,
-    source_less_instruments: &std::collections::BTreeSet<String>,
-) -> Result<()> {
+fn validate_instruments(instruments: &Value) -> Result<()> {
     if object(instruments, "instruments")?.is_empty() {
         return Err(Error::new(
             "instruments",
@@ -909,13 +903,7 @@ fn validate_instruments(
             .filter(|key| v.get(**key).is_some())
             .count();
         if count == 0 {
-            if source_less_instruments.contains(name) {
-                continue;
-            }
-            return Err(Error::new(
-                format!("instruments.{name}"),
-                "expected exactly one of preset, definition, or external: true",
-            ));
+            continue;
         }
         if count != 1 || v.get("external").is_some_and(|v| v != &Value::Bool(true)) {
             return Err(Error::new(

@@ -169,6 +169,12 @@ fn is_production_instrument(plan: &ScorePlan, id: &str) -> bool {
         || plan.audio_instruments.contains(id)
 }
 
+fn has_builtin_source(spec: &Value) -> bool {
+    spec.get("preset").is_some()
+        || spec.get("definition").is_some()
+        || spec.get("external").is_some()
+}
+
 pub(super) fn local_input_path(base: &Path, input: &str) -> Result<PathBuf, String> {
     let path = Path::new(input);
     if path.components().any(|part| {
@@ -1842,6 +1848,44 @@ fn warnings(plan: &ScorePlan, catalog: &BuiltInInstrumentCatalog) -> Vec<ScoreDi
             }
         })
         .collect::<Vec<_>>();
+    for (id, spec) in &plan.instruments {
+        if !is_production_instrument(plan, id) && !has_builtin_source(spec) {
+            let path = format!("instruments.{id}");
+            let message = format!("instrument `{id}` has no sound source");
+            let detail = plan.source_detail(&path, &message);
+            diagnostics.push(ScoreDiagnostic {
+                severity: ScoreDiagnosticSeverity::Warning,
+                path,
+                line: detail["line"].as_u64().unwrap_or(0) as usize,
+                column: detail["column"].as_u64().unwrap_or(0) as usize,
+                message,
+                detail: Some(detail),
+            });
+        }
+        if spec.get("trigger_note_midi").is_none()
+            && let Some(origin) = plan
+                .lanes
+                .iter()
+                .filter(|lane| lane.id == *id)
+                .flat_map(|lane| &lane.sources)
+                .find(|origin| origin.trigger)
+        {
+            let path = format!("instruments.{id}.trigger_note_midi");
+            let message = format!(
+                "instrument `{id}` has no `{path}`; using MIDI note 60 for trigger at score quarter {}",
+                origin.at_quarters
+            );
+            let detail = plan.source_detail(&path, &message);
+            diagnostics.push(ScoreDiagnostic {
+                severity: ScoreDiagnosticSeverity::Warning,
+                path,
+                line: detail["line"].as_u64().unwrap_or(0) as usize,
+                column: detail["column"].as_u64().unwrap_or(0) as usize,
+                message,
+                detail: Some(detail),
+            });
+        }
+    }
     diagnostics.extend(recommended_range_warnings(plan, catalog));
     diagnostics
 }
@@ -2008,7 +2052,7 @@ fn read_with_probe(
     let mut sources = BTreeMap::new();
     let mut effective = BTreeMap::new();
     for (id, spec) in &plan.instruments {
-        if is_production_instrument(&plan, id) {
+        if is_production_instrument(&plan, id) || !has_builtin_source(spec) {
             continue;
         }
         let field = format!("instruments.{id}");
@@ -2177,7 +2221,7 @@ fn build(
     staged: &mut StagedResources,
     mode: BuildMode,
 ) -> Result<CreativeSession, ImportError> {
-    validate_performance(&document.plan, &document.sources)?;
+    validate_performance(&document.plan, &document.sources, mode)?;
     let ScoreDocument {
         path,
         yaml,
@@ -2243,11 +2287,8 @@ fn build(
         let velocity = resolved.and_then(ResolvedProduction::velocity);
         let instrument = if let Some(ResolvedProduction::Source { plugin, .. }) = resolved {
             let (instrument, _) = vst3_instrument(plugin, claimed)?;
-            instrument
-        } else {
-            let source = sources
-                .get(&lane.id)
-                .ok_or_else(|| format!("instrument '{}' has no resolved source", lane.id))?;
+            Some(instrument)
+        } else if let Some(source) = sources.get(&lane.id) {
             let (mut instrument, reused) = match claimed.and_then(|track| track.instrument.as_ref())
             {
                 Some(existing) if compatible(existing, source, store)? => (existing.clone(), true),
@@ -2259,7 +2300,9 @@ fn build(
             if !reused {
                 instrument.id = format!("score:device:{}", riffra_control::new_instance_id());
             }
-            instrument
+            Some(instrument)
+        } else {
+            None
         };
         let mut track = match claimed {
             Some(previous) => previous.clone(),
@@ -2268,7 +2311,7 @@ fn build(
                 lane.id.clone(),
             ),
         };
-        track.instrument = Some(instrument);
+        track.instrument = instrument;
         track.kind = TrackKind::Instrument;
         track.gain_db = lane.gain_db;
         track.pan = spec["pan"].as_f64().unwrap_or(0.0);
@@ -2287,8 +2330,10 @@ fn build(
         });
         let events = if resolved.is_some() {
             lane.pattern.events.clone()
+        } else if let Some(source) = sources.get(&lane.id) {
+            reset_events(lane, plan, &source.report)?
         } else {
-            reset_events(lane, plan, &sources[&lane.id].report)?
+            reset_events(lane, plan, &Value::Null)?
         };
         let mut clip = midi_clip(
             previous_clip,
@@ -3929,7 +3974,29 @@ fn assigned(
 fn validate_performance(
     plan: &ScorePlan,
     sources: &BTreeMap<String, Source>,
+    mode: BuildMode,
 ) -> Result<(), ImportError> {
+    for (id, spec) in &plan.instruments {
+        if is_production_instrument(plan, id) || sources.contains_key(id) {
+            continue;
+        }
+        if mode == BuildMode::Stage {
+            let field = format!("instruments.{id}");
+            let message =
+                "expected exactly one of preset, definition, or external: true".to_owned();
+            return Err(ImportError {
+                details: plan.source_detail(&field, &message),
+                message,
+            });
+        }
+        if spec.get("audio_input").is_some() {
+            let field = format!("instruments.{id}.audio_input");
+            return Err(ImportError {
+                message: format!("instrument '{id}' audio input does not match its source routes"),
+                details: plan.source_detail(&field, "audio input mismatch"),
+            });
+        }
+    }
     for (id, source) in sources {
         let spec = &plan.instruments[id];
         let required_channels = source.report["external_audio"]["required_input_channels"]
@@ -3947,6 +4014,21 @@ fn validate_performance(
         }
     }
     for lane in &plan.lanes {
+        if mode == BuildMode::Stage
+            && plan.instruments[&lane.id]
+                .get("trigger_note_midi")
+                .is_none()
+            && let Some(origin) = lane.sources.iter().find(|origin| origin.trigger)
+        {
+            let message = format!(
+                "instrument `{}` requires `instruments.{}.trigger_note_midi` (MIDI 0..127) for a trigger at score quarter {}",
+                lane.id, lane.id, origin.at_quarters
+            );
+            return Err(ImportError {
+                details: plan.source_detail(&origin.path, &message),
+                message,
+            });
+        }
         if is_production_instrument(plan, &lane.id) {
             for (index, event) in lane.pattern.events.iter().enumerate() {
                 if matches!(
@@ -3966,7 +4048,24 @@ fn validate_performance(
             }
             continue;
         }
-        let source = &sources[&lane.id];
+        let Some(source) = sources.get(&lane.id) else {
+            for (order, event) in lane.pattern.events.iter().enumerate() {
+                if let MusicalEvent::ParameterChange { parameter, .. }
+                | MusicalEvent::ParameterRamp { parameter, .. } = event
+                {
+                    let path = lane
+                        .sources
+                        .get(order)
+                        .map_or_else(String::new, |source| source.path.clone());
+                    let message = format!("unknown instrument parameter '{parameter}'");
+                    return Err(ImportError {
+                        details: plan.source_detail(&path, &message),
+                        message,
+                    });
+                }
+            }
+            continue;
+        };
         for (order, event) in lane.pattern.events.iter().enumerate() {
             let path = lane
                 .sources
@@ -4625,6 +4724,124 @@ mod tests {
         assert!(warnings[0].message.contains("60..=72"));
         assert!(warnings[0].message.contains("lowest 48"));
         assert!(warnings[0].message.contains("highest 84"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn design_stage_instruments_validate_with_warnings_and_a_default_trigger_note() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-score-design-{}",
+            riffra_control::new_instance_id()
+        ));
+        let score_dir = root.join("music/song");
+        std::fs::create_dir_all(&score_dir).unwrap();
+        let score = json!({
+            "meta":{"title":"Sketch","bpm":120,"meter":"4/4","tuning":"12edo","reference_octave":4,"gate":1},
+            "form":[{"section":"verse","bars":1,"tonic":"C","scale":"ionian"}],
+            "sections":{"verse":{"drums":"beat"}},
+            "drums":{"beat":{"parts":{"kick":"x...|....|....|...."}}},
+            "instruments":{
+                "lead":{"role":"lead","sound":"warm lead"},
+                "kick":{"role":"drums","sound":"tight kick"}
+            }
+        });
+        let path = score_dir.join("score.yaml");
+        std::fs::write(&path, score.to_string()).unwrap();
+        let catalog = crate::test_support::empty_built_in_catalog();
+
+        let validation = validate(
+            &path,
+            &BTreeMap::new(),
+            &root,
+            catalog,
+            Path::new("unused-scanner"),
+            Path::new("unavailable-sonalloy"),
+        );
+
+        assert!(validation.valid, "{:?}", validation.diagnostics);
+        assert_eq!(
+            validation
+                .diagnostics
+                .iter()
+                .map(|diagnostic| (diagnostic.severity, diagnostic.path.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                (ScoreDiagnosticSeverity::Warning, "instruments.lead"),
+                (ScoreDiagnosticSeverity::Warning, "instruments.kick"),
+                (
+                    ScoreDiagnosticSeverity::Warning,
+                    "instruments.kick.trigger_note_midi"
+                ),
+            ]
+        );
+        let inspection = inspect(
+            &path,
+            &BTreeMap::new(),
+            true,
+            &root,
+            catalog,
+            Path::new("unused-scanner"),
+            Path::new("unavailable-sonalloy"),
+        )
+        .expect("design stage score inspects");
+        let kick = inspection
+            .lanes
+            .iter()
+            .find(|lane| lane.id == "kick")
+            .expect("kick lane");
+        assert_eq!(kick.events.len(), 1);
+        assert_eq!(kick.events[0]["event"]["type"], "note");
+        assert_eq!(kick.events[0]["event"]["note"], 60);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn staging_a_design_stage_score_requires_a_source_and_an_explicit_trigger_note() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-score-design-stage-{}",
+            riffra_control::new_instance_id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let store = store(&root);
+        let mut staged = StagedResources::new(&root);
+        let score = json!({
+            "meta":{"title":"Sketch","bpm":120,"meter":"4/4","tuning":"12edo","reference_octave":4,"gate":1},
+            "form":[{"section":"verse","bars":1,"tonic":"C","scale":"ionian"}],
+            "sections":{"verse":{"drums":"beat"}},
+            "drums":{"beat":{"parts":{"kick":"x...|....|....|...."}}},
+            "instruments":{
+                "lead":{"role":"lead","sound":"warm lead"},
+                "kick":{"role":"drums","sound":"tight kick"}
+            }
+        });
+
+        let mut source_less = document(&score.to_string());
+        source_less.sources.clear();
+        let error = build(
+            &mut source_less,
+            None,
+            &store,
+            &mut staged,
+            BuildMode::Stage,
+        )
+        .expect_err("missing sound source");
+        assert_eq!(error.details["path"], "instruments.lead");
+        assert_eq!(
+            error.message,
+            "expected exactly one of preset, definition, or external: true"
+        );
+
+        let mut with_sources = document(&score.to_string());
+        let error = build(
+            &mut with_sources,
+            None,
+            &store,
+            &mut staged,
+            BuildMode::Stage,
+        )
+        .expect_err("missing trigger note");
+        assert!(error.message.contains("instruments.kick.trigger_note_midi"));
+        assert!(error.message.contains("score quarter 0"));
         std::fs::remove_dir_all(root).unwrap();
     }
 

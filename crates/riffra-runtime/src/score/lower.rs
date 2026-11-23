@@ -697,15 +697,7 @@ impl Builder<'_> {
     ) -> Result<()> {
         let instrument_path = format!("instruments.{id}.trigger_note_midi");
         let instrument = self.instrument(id)?;
-        let note = instrument.get("trigger_note_midi").ok_or_else(|| {
-            Error::new(
-                path,
-                format!(
-                    "instrument `{id}` requires `{instrument_path}` (MIDI 0..127) for a trigger at score quarter {at}"
-                ),
-            )
-        })?;
-        let note = integer(note, &instrument_path)?;
+        let note = super::optional_int(instrument, "trigger_note_midi", 60, &instrument_path)?;
         if !(0..=127).contains(&note) {
             return Err(Error::new(
                 path,
