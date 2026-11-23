@@ -10,7 +10,7 @@
 /* The name and its `▾` as one button: switching is what the header is for. */
 .trigger {
   max-width: 100%;
-  height: 26px;
+  height: var(--size-control-dense);
   display: flex;
   align-items: center;
   gap: var(--space-1-5);
@@ -40,7 +40,7 @@
 /* Takes the trigger's place and size while the name is edited. */
 .nameInput {
   width: 100%;
-  height: 26px;
+  height: var(--size-control-dense);
   margin-left: calc(var(--space-1-5) * -1);
   padding: 0 var(--space-1-5);
   color: var(--color-text-strong);

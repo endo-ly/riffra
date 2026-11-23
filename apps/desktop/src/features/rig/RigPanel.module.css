@@ -27,8 +27,8 @@
 
 /* Quiet like the other controls; only the icon takes the accent while the rig plays. */
 .play {
-  width: 30px;
-  height: 30px;
+  width: var(--size-control-normal);
+  height: var(--size-control-normal);
   flex: 0 0 auto;
   display: grid;
   place-items: center;
