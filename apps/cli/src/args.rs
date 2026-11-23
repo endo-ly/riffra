@@ -1817,6 +1817,48 @@ pub enum ScoreCommand {
     Validate(ScoreDocumentArgs),
     /// Expand a Score into its sections, instruments, lanes, notes, and events.
     Inspect(ScoreInspectArgs),
+    /// Print the Score YAML language specification by topic.
+    Spec(ScoreSpecArgs),
+}
+
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
+pub enum CliScoreSpecTopic {
+    Overview,
+    Structure,
+    Pitch,
+    Pattern,
+    Chords,
+    Materials,
+    Sections,
+    Instruments,
+    Events,
+    Mix,
+    Diagnostics,
+}
+
+impl From<CliScoreSpecTopic> for riffra_runtime::ScoreSpecTopic {
+    fn from(topic: CliScoreSpecTopic) -> Self {
+        match topic {
+            CliScoreSpecTopic::Overview => Self::Overview,
+            CliScoreSpecTopic::Structure => Self::Structure,
+            CliScoreSpecTopic::Pitch => Self::Pitch,
+            CliScoreSpecTopic::Pattern => Self::Pattern,
+            CliScoreSpecTopic::Chords => Self::Chords,
+            CliScoreSpecTopic::Materials => Self::Materials,
+            CliScoreSpecTopic::Sections => Self::Sections,
+            CliScoreSpecTopic::Instruments => Self::Instruments,
+            CliScoreSpecTopic::Events => Self::Events,
+            CliScoreSpecTopic::Mix => Self::Mix,
+            CliScoreSpecTopic::Diagnostics => Self::Diagnostics,
+        }
+    }
+}
+
+#[derive(Debug, Args)]
+pub struct ScoreSpecArgs {
+    /// Topic to read; omit for a minimal template and topic index.
+    #[arg(long, value_enum)]
+    pub topic: Option<CliScoreSpecTopic>,
 }
 
 #[derive(Debug, Args)]
@@ -3700,6 +3742,13 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
                     path: args.path,
                     bindings: args.bindings.into_iter().collect(),
                     events: args.events,
+                })
+                .map_err(|error| RequestError::Usage(error.to_string()))?,
+            ),
+            ScoreCommand::Spec(args) => ControlCommand::decode(
+                "score.spec",
+                serde_json::to_value(ScoreSpecParams {
+                    topic: args.topic.map(Into::into),
                 })
                 .map_err(|error| RequestError::Usage(error.to_string()))?,
             ),

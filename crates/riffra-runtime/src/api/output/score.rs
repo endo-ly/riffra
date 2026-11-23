@@ -373,3 +373,21 @@ pub struct ScoreExport {
     #[ts(optional)]
     pub link: Option<ScoreRebuild>,
 }
+
+/// Summary of one Score YAML specification topic.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ScoreSpecTopicSummary {
+    pub topic: String,
+    pub title: String,
+    pub summary: String,
+}
+
+/// Score YAML language specification slice for one topic.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ScoreSpec {
+    pub topic: String,
+    pub available_topics: Vec<ScoreSpecTopicSummary>,
+    pub content: String,
+}

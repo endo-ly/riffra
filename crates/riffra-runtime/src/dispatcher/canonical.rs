@@ -173,6 +173,9 @@ impl HostDispatcher<'_> {
                     DispatchError::invalid_request_with_details(error.message, error.details)
                 })?,
             )),
+            CanonicalCommand::ScoreSpec(params) => {
+                Ok(ControlOutput::ScoreSpec(crate::score::spec::get(params.topic)))
+            }
             CanonicalCommand::InstrumentList(_) => self.list_instruments(),
             CanonicalCommand::InstrumentSave(params) => self.save_instrument(params),
             CanonicalCommand::InstrumentExport(params) => self.export_instrument(params),

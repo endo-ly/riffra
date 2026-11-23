@@ -2,37 +2,17 @@
 
 Score YAML を曲の編集正本とする音楽記述言語の仕様。**このファイルが Riffra における Score YAML の文法・データ契約・意味論の正本である。**
 
-仕様対象は 12 平均律の楽譜と、その演奏・音声構成への一意な展開。共通の楽譜文法に加えて、本番の VST3 音源・キット・エフェクト・ミックス・音声クリップを記述する。
+仕様対象は 12 平均律の楽譜と、その演奏・音声構成への一意な展開。
 
-## 1. 目的と基本原則
+## 1. 全体構造と基本設定
 
-1 つの YAML ファイルで **曲の構成、転調、コード進行、旋律、各楽器の役割、演奏の表情、本番音源・ミックス・音声配置** を記述する。
+1 つの YAML ファイルで **曲の構成、転調、コード進行、旋律、各楽器の役割・音源・エフェクト・ミックス・音声配置** を記述する。
 
 - **「何を鳴らすか」と「どう鳴らすか」を分けて書く。** 音高・リズムはトークン列に、強弱の流れ・奏法の効き方・ノリ・声部配置は構造化されたフィールドとイベントに記述する。
 - **自動で決まる部分は決定的にし、明示した指定が常に勝つ。**
 - **意味を推測して実行しない。** 未定義の語句、欠落した参照、矛盾した編集、自然言語の演奏指示は検証エラーとする。`notes`、`role`、`mark`、`sound` などの表示用項目は演奏に作用しない。
 
-## 2. ファイル構造
-
-トップレベルは次の項目を使用する。`melodies` や `drums` などの辞書は名前付きの再利用可能素材を定義し、出力される音は `sections` の参照で決まる。
-
-| フィールド              | 内容                                                                           | 必須 |
-| ----------------------- | ------------------------------------------------------------------------------ | ---- |
-| `meta`                  | 曲名、テンポ、拍子、調律、音域の基準、音価とマスター設定                       | 必須 |
-| `form`                  | **再生順**と各セクションの長さ・主音・スケール・拍子・テンポ                   | 必須 |
-| `time_changes`          | 曲の途中のテンポ変更・テンポの漸次変化（曲頭からの有理数四分音符位置）         | 任意 |
-| `sections`              | コード、演奏する楽器・素材、音声クリップ、セクションごとのイベント             | 必須 |
-| `melodies`              | 度数による旋律素材（ベースラインを含む）と変奏                                 | 任意 |
-| `scale_definitions`     | 組込み以外のスケール名と度数集合を定義。音高の解釈には使わない                 | 任意 |
-| `drums`                 | 楽器別の打撃パターンと小節条件                                                 | 任意 |
-| `comp`                  | コード伴奏の発音リズム                                                         | 任意 |
-| `arps` / `counters`     | アルペジオ・応答フレーズの生成規則                                             | 任意 |
-| `macros`                | 再利用可能な、構造化された演出処理                                             | 任意 |
-| `instruments`           | 識別子、音源参照（内蔵・VST3・音声）、音量、定位、エフェクト、音域、奏法とノリ | 必須 |
-| `kits`                  | 複数のドラム部品を 1 つの VST3 インスタンスへ集約するキット定義（12 章）       | 任意 |
-| `mix`                   | トラック、バス、センド、サイドチェイン、マスター、オートメーション（12 章）    | 任意 |
-| `transitions` / `notes` | 転調意図・制作ノート。再生に影響しない                                         | 任意 |
-| `lyrics`                | 未実装の拡張（12.8）                                                           | 任意 |
+トップレベルでは `meta`、`form`、`sections`、`instruments` を必須とし、任意で `time_changes`、`melodies`、`scale_definitions`、`drums`、`comp`、`arps`、`counters`、`macros`、`kits`、`mix`、`transitions`、`notes` を記述できる（`lyrics` は未実装拡張）。全フィールドの契約は 10 章を参照。
 
 ```yaml
 meta:
@@ -42,14 +22,17 @@ meta:
   tuning: 12edo
   reference_octave: 4
   gate: 0.92
+  fade_out_seconds: 0
   master: { target_lufs: -12, max_true_peak_db: -1, target_lra_lu: 7 }
 ```
 
 - `bpm`: 四分音符毎分
+- `tuning`: `12edo` のみ受理
 - `reference_octave`: 音符 `1` が属するオクターブ（C4＝MIDI ノート 60）
 - `gate`: 生成音符の基本音価へ掛ける倍率（0 より大きく 1 以下）
-- `master.target_lufs` / `master.max_true_peak_db`: 完成目標のラウドネス・True Peak 上限
-- `master.target_lra_lu`: 任意の測定・比較目標（LRA 目標）
+- `fade_out_seconds`: 楽曲全体のフェードアウト秒数（0 以上、省略時 0）
+- `master`: 記述する場合は `target_lufs`（`-70.0..=-5.0`）と `max_true_peak_db`（`-9.0..=0.0`）が必須。`target_lra_lu`（`>= 0.0`）は任意。これらは完成目標であり、`mix.master`（9 章）とは区別する
+- `sample_rate`、`block_size`、`tail_seconds`、出力先は実行条件であり楽譜には持たせない
 
 `form` の各項目は `{section, bars, tonic}` を必須とし、`scale`、`bpm`、`meter`、`last_bar_quarters`、`swing` を追加できる。テンポと拍子は曲頭で `meta` の値を採用し、`form` で変更した場合は後続セクションにも引き継ぐ。
 
@@ -77,9 +60,9 @@ meta:
 
 Score はほかの Score ファイルを直接参照できず、State と音声ファイルの相対パスだけを Score 所在ディレクトリ基点で参照する。
 
-## 3. 音高とスケール
+## 2. 音高とスケール
 
-### 3.1 度数の意味
+### 2.1 度数の意味
 
 `1`〜`7` は長音階の各度数を表し、12 平均律では主音からの半音数は順に **0、2、4、5、7、9、11**。
 
@@ -99,13 +82,13 @@ Score はほかの Score ファイルを直接参照できず、State と音声�
 
 **実音を決めるのは基準音と音符トークン**であり、`scale` に関わらずスケールに含まれない度数もそのまま発音する。
 
-### 3.2 音域
+### 2.2 音域
 
-ベースなどの低音域は、オクターブ記号を重ねる代わりに `register: bass`（3.3）で配置し、それ以外の音域調整は `transpose`（半音単位）で行う。`voicing_floor_midi` / `voicing_ceiling_midi` は和音配置用の技術的範囲（MIDI ノート番号）であり、旋律の音符記法ではない。
+ベースなどの低音域は、オクターブ記号を重ねる代わりに `register: bass`（2.3）で配置し、それ以外の音域調整は `transpose`（半音単位）で行う。`voicing_floor_midi` / `voicing_ceiling_midi` は和音配置用の技術的範囲（MIDI ノート番号）であり、旋律の音符記法ではない。
 
-### 3.3 基準音・音域の選択・主音の上書き
+### 2.3 基準音・音域の選択・主音の上書き
 
-旋律素材（第 6 章）と `placements` の度数は、**基準音**からの度数として音高になる。
+旋律素材（5 章）と `placements` の度数は、**基準音**からの度数として音高になる。
 
 | 決める項目 | 指定箇所                                          | 値               | 意味                                                                                                                                   |
 | ---------- | ------------------------------------------------- | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
@@ -126,9 +109,9 @@ Score はほかの Score ファイルを直接参照できず、State と音声�
 
 主音の上書きは、調と関係なく鳴る物、転調をまたぐペダル音、別の調で書いた素材の引用に使う。`relative_to: chord_bass` の素材に `tonic` を指定するとエラーとする。`c` トークンとコードは、上書きした主音ではなくセクションの和声に従う。
 
-## 4. 時間とパターン
+## 3. 時間とパターン
 
-### 4.1 共通時間軸
+### 3.1 共通時間軸
 
 演奏イベントの時間は**有理数の四分音符**で計算し、出力段階で Tick へ変換する。標準的な 4/4 では 1 小節 16 ステップ、1 ステップ＝16 分音符。`bar` と `step` は**1 始まり・セクション内相対**とする。`{bar: last}` は末尾の小節、`step: 13` は 4 拍目の先頭。
 
@@ -136,7 +119,7 @@ Score はほかの Score ファイルを直接参照できず、State と音声�
 
 `form` の開始位置を順に足すことで曲全体の小節位置と経過時間が確定する。曲中のテンポ・拍子変更は `form` のセクション開始時点、または途中のテンポだけを扱う `time_changes` へ記述し、音符の四分音符基準の位置は維持する。
 
-### 4.2 パターン文字列の共通文法
+### 3.2 パターン文字列の共通文法
 
 旋律素材の要素、ドラム、コード伴奏（`comp`）、アルペジオの `order` は、すべて同じ時間文法で書く。
 
@@ -148,9 +131,9 @@ Score はほかの Score ファイルを直接参照できず、State と音声�
 
 表明は任意であり、書いた位置が境界でなければエラーとする。トークンの間にだけ置け、文字列の先頭・末尾や連続した表明は書けない。境界は小節の先頭から数え、端数小節の終端も境界である。音がまたがる境界には表明を書かない。
 
-ドラム・`comp`・`order` の 1 文字列は 1 小節を表し、その長さは小節長と一致しなければならない。旋律素材の要素は任意の長さを持てる（第 6 章）。
+ドラム・`comp`・`order` の 1 文字列は 1 小節を表し、その長さは小節長と一致しなければならない。旋律素材の要素は任意の長さを持てる（5 章）。
 
-### 4.3 旋律文字列
+### 3.3 旋律文字列
 
 ```yaml
 melodies:
@@ -164,18 +147,18 @@ melodies:
 <本体> [<奏法記号>...] [@<velocity>] [:<長さ>] [~]
 ```
 
-- **本体**：度数（3.1）、`c` トークン（3.3）、`-`、`.`。
+- **本体**：度数（2.1）、`c` トークン（2.3）、`-`、`.`。
   - 度数・`c` トークン：その位置で新しい音を発音する。同じ度数が隣り合っても発音し直す。
   - `-`：直前の音を継続する。要素の先頭では前の要素から継続していてもよい。継続対象がないときはエラー。
   - `.`：休符。継続中の音を終了する。
   - `-` と `.` は長さだけを持てる。
-- **奏法記号**：`^`（アクセント）、`!`（スタッカート）、`_`（テヌート）。1 つの音に各記号を 1 回まで付けられる。`!` と `_` は同時に使えない（4.4）。
+- **奏法記号**：`^`（アクセント）、`!`（スタッカート）、`_`（テヌート）。1 つの音に各記号を 1 回まで付けられる。`!` と `_` は同時に使えない（3.4）。
 - **Velocity**：`@` の後に整数 1〜127。省略時はセクションの `velocity`（既定 100）。
 - **レガート**：末尾の `~` は次音へのレガート接続。
 
 音符の基本長は、トークンの長さと後続の `-` の合計で決める。Gate は基本音価に一度だけ掛け、値は 0 より大きく 1 以下とし、次順で選ぶ。
 
-1. スタッカート・テヌートの記号があればその奏法の Gate（4.4）
+1. スタッカート・テヌートの記号があればその奏法の Gate（3.4）
 2. 楽器の `gate`
 3. `meta.gate`
 4. 既定値 1
@@ -186,9 +169,7 @@ melodies:
 
 音高遷移の扱いは音源の演奏モードに従う。単音レガート・ポルタメントは音源定義の演奏設定に従い、ポリフォニック音源では音符の重なりとして演奏する。独立した同時発音や精密な音価は `placements` を使う。
 
-### 4.4 奏法
-
-奏法記号は、Gate の選択と Velocity への加算として効く。
+### 3.4 奏法記号
 
 | 記号 | 奏法       | Gate       | Velocity への加算 |
 | ---- | ---------- | ---------- | ----------------- |
@@ -207,9 +188,9 @@ instruments:
     }
 ```
 
-音符の Velocity は「`@` またはセクションの `velocity`」に奏法の加算と `dynamics`（第 10 章）の加算を足した値である。結果が 1〜127 の外になる場合はエラーとし、範囲内へ丸めない。
+音符の Velocity は「`@` またはセクションの `velocity`」に奏法の加算と `dynamics`（8 章）の加算を足した値である。結果が 1〜127 の外になる場合はエラーとし、範囲内へ丸めない。
 
-### 4.5 ドラム文字列
+### 3.5 ドラム文字列
 
 ```yaml
 drums:
@@ -228,7 +209,7 @@ drums:
 - 小節の文字列のリスト: N 個なら N 小節のフレーズとして繰り返す。セクションの小節数が N の倍数でない場合はエラー
 - 楽器ごとに N は異なってよい
 
-### 4.6 スウィング
+### 3.6 スウィング
 
 `meta.swing: {subdivision: 8, ratio: "2/3"}` で 8 分スウィング、`subdivision: 16` で 16 分スウィングを指定する。`ratio` は 0 より大きく 1 より小さい有理数で、`1/2` は均等、`2/3` は 2 対 1。設定箇所は次の順で上書きされる。
 
@@ -249,17 +230,17 @@ drums:
 - 変換後に継続・Gate・レガートを解決する。
 - `placements` と `events` の明示位置・音価は保持する。
 
-### 4.7 タイミングのずれ
+### 3.7 タイミングのずれ
 
 `instruments.<id>.timing_offset_steps` は、その楽器の全イベントを指定ステップだけ前後にずらす（正で後ろ、負で前。符号付きの有理数）。
 
 ずれはセクション・コード参照・リードの休み判定・`silence`・`part_window`・`dynamics` をすべて記譜上の時刻で解決した後に適用する。ずらした開始時刻が曲頭より前、または曲終端以降になる場合はエラーとし、音符の終端が曲終端を越える場合は曲終端で切る。
 
-## 5. コードと伴奏
+## 4. コードと伴奏
 
-### 5.1 コード記法
+### 4.1 コード記法
 
-1 つのコードは `<root>:<quality>[/<bass>]` の形を取る。`root` と `bass` は第 3 章と同じ相対度数で、コードの構成音は `root` からの相対半音数で計算する。`bass` を省略した場合はルート音。`NC` はコードなしであり、コード参照演奏を発音させない。
+1 つのコードは `<root>:<quality>[/<bass>]` の形を取る。`root` と `bass` は第 2 章と同じ相対度数で、コードの構成音は `root` からの相対半音数で計算する。`bass` を省略した場合はルート音。`NC` はコードなしであり、コード参照演奏を発音させない。
 
 | 種類    | 構成音（ルートからの半音数） |
 | ------- | ---------------------------- |
@@ -309,7 +290,7 @@ drums:
 - 食い込んだ時刻が直前のコード変更以前になる場合、曲頭より前になる場合はエラーとする。
 - コードを参照するすべての演奏（コード伴奏、アルペジオ、`chord_bass` 基準の旋律、`c` トークン）は、切り替わった時刻からそのコードを使う。
 
-### 5.2 ボイシング
+### 4.2 ボイシング
 
 和音を音高へ配置する方法は、**明示配置**と**自動配置**の 2 つである。
 
@@ -334,18 +315,18 @@ drums:
 
 和音から生成した各音の `sources[].spelling` には、元のコード表記が入る。
 
-### 5.3 伴奏・アルペジオ・対旋律
+### 4.3 伴奏・アルペジオ・対旋律
 
 - **comp**: `x` は現在のコードをその位置で発音、`-` で保持、`.` で休止。組込みパターン `hold` は各小節頭でその時点のコードを発音して 1 小節持続し、1 小節中にコードが替わった地点で前の和音を終了して新しい和音を発音し直す。食いで小節頭より前に入ったコードは、同じセクションの出現の中であれば、その小節頭で発音し直さずに保持を続ける。`hold` は `comp` での定義・上書きができない予約名である。
-- **arps**: `arps.<name>.order` の各セルは、5.2 のボイシングの構成音を下から並べた音列のインデックス（非負整数）か、`.`（休符）、`-`（直前の音の継続）である。
+- **arps**: `arps.<name>.order` の各セルは、4.2 のボイシングの構成音を下から並べた音列のインデックス（非負整数）か、`.`（休符）、`-`（直前の音の継続）である。
   - `-` は直前に発音した同じ音高の音価を延長し、継続中にコードが変わっても発音済みの音高は変わらない。小節をまたぐ継続も許可し、先行する発音がない `-` はエラーとする。
   - コード音が 4 個未満の場合は構成音を上オクターブへ反復して必要数を作る。
   - `retrigger_each_step` の省略時または `true` では数値セルごとに再発音する（`-` は常に音価を延長）。`false` では隣接する同音の数値セルを結合してから Gate を適用する。`.` はどちらの場合も休符として発音を区切る。Gate は音価が確定した後に一度だけ掛かる。
 - **counters**: `counters.<name>.when: silent_full_beat` は、セクションの `counter.follows` に挙げた旋律パートのどれもその拍の**全期間**に鳴っていない場合だけ、`cell` の各セルをその 1 拍に等分配置する。`cell` は空白区切りの度数・`.`（休符）・`-`（直前の音の継続）で、先行音のない継続はエラー。休みの判定は Note Off・Gate 処理後の音価で行う。
 
-## 6. 素材の参照・反復・変奏
+## 5. 素材の参照・反復・変奏
 
-`melodies` は旋律素材を定義する。素材は**要素**の並びで、各要素は任意の長さのパターン文字列（4.2・4.3）である。素材の長さは全要素の長さの合計で、使う側で検証する。
+`melodies` は旋律素材を定義する。素材は**要素**の並びで、各要素は任意の長さのパターン文字列（3.2・3.3）である。素材の長さは全要素の長さの合計で、使う側で検証する。
 
 ```yaml
 melodies:
@@ -369,7 +350,7 @@ melodies:
 | `items`        | 要素のリスト                                                                                            |
 | `from`         | 継承元の素材。要素と属性を継承し、明示した属性で上書きする。循環参照は禁止                              |
 | `replace`      | `from` と併用し、展開後の要素番号（1 始まり）の要素を文字列で置換する。置換前と同じ長さでなければエラー |
-| `relative_to`  | `tonic`（既定）または `chord_bass`。度数の基準（3.3）                                                   |
+| `relative_to`  | `tonic`（既定）または `chord_bass`。度数の基準（2.3）                                                   |
 | `pickup_steps` | 先頭から指定ステップを弱起として扱う。正の有理数で、素材の長さより短い                                  |
 
 要素のリストには文字列と `{use: verse, items: [1, 2], shift_steps: -2}` を混在できる。`use` は参照先の展開後の要素から指定範囲を抜き出してそのまま要素として挿入し、音符イベントだけ指定ステップ平行移動する。`use` の負方向シフトで挿入位置より前に出るイベントは、出力曲の時刻 0 より前に配置できない。時間移動したイベントが素材の外に出る場合は、配置可能範囲を検証する。
@@ -398,29 +379,9 @@ melodies:
 
 別楽器の変更は共存できるが、**同じ小節・同じ楽器への複数の上書きが同時成立した場合はエラー**とする。
 
-## 7. セクションの構成と配置
+## 6. セクション構成・時間変更・端数小節
 
-### 7.1 セクションの基本フィールド
-
-| フィールド       | 意味                                                                                                        |
-| ---------------- | ----------------------------------------------------------------------------------------------------------- |
-| `chords`         | 小節数と同じ長さのコード列。食いの `<` を含められる                                                         |
-| `chord_changes`  | `{at, chord}` の配列。小節内の任意位置のコード変更                                                          |
-| `lines`          | `{名前: {instrument, melody, ...}}`。旋律素材を楽器で演奏する旋律パート（7.2）                              |
-| `drums`          | `drums` 内のパターン名                                                                                      |
-| `comp`           | `{楽器名: パターン名}` または `{楽器名: {pattern, voicing}}`                                                |
-| `pad`            | `{instrument, pattern, voicing?}`。組込みパターン `hold` を使える                                           |
-| `arp`            | `{instrument, pattern, voicing?}`。`arps` の名前付き規則を参照                                              |
-| `counter`        | `{instrument, pattern, follows}`。`counters` の規則を参照し、`follows` は休み判定に使う旋律パート名のリスト |
-| `placements`     | `{instrument, at, ...}` の配列。特定の音符・コード・切り出しフレーズを指定（7.3）                           |
-| `add_placements` | `placements[]` と同じ要素の配列。継承時に既存の配置リストの末尾へ追記                                       |
-| `audio_clips`    | Audio Track 上に配置する WAV クリップの配列（12.7）                                                         |
-| `events`         | 構造化された演出・制御・マクロの配列（詳細は第 10 章）                                                      |
-| `velocity`       | 旋律・コード等の既定 MIDI Velocity（1〜127）                                                                |
-| `part_gains`     | `{楽器名: dB}`。そのセクション内の楽器別 Gain（楽器 Gain に加算）                                           |
-| `notes`          | 制作メモ用の UTF-8 文字列。演奏に影響しない                                                                 |
-
-### 7.2 旋律パート
+### 6.1 旋律パート (`lines`)
 
 ```yaml
 sections:
@@ -439,15 +400,15 @@ sections:
 | `melody`      | 旋律素材名                                                     | 必須 |
 | `slice_items` | `[start, end]`。素材の展開後の要素から両端を含む範囲だけを使う | 任意 |
 | `loop`        | `true` なら素材を繰り返してセクションを満たす                  | 任意 |
-| `register`    | `melody`（既定）または `bass`（3.3）                           | 任意 |
-| `tonic`       | 主音の上書き（3.3）                                            | 任意 |
+| `register`    | `melody`（既定）または `bass`（2.3）                           | 任意 |
+| `tonic`       | 主音の上書き（2.3）                                            | 任意 |
 | `transpose`   | 半音単位の移調。音高を計算した後に加える                       | 任意 |
-| `gain_db`     | その演奏の追加ゲイン（8.2）                                    | 任意 |
-| `lyrics`      | 未実装の拡張（12.8）                                           | 任意 |
+| `gain_db`     | その演奏の追加ゲイン（7.2）                                    | 任意 |
+| `lyrics`      | 未実装の拡張（10 章）                                          | 任意 |
 
 弱起を除いた素材の長さは、セクションの長さと一致しなければならない。`loop: true` ではセクションの長さが素材の長さの整数倍でなければならず、弱起は最初の 1 回だけ鳴らす。`slice_items` で最初の要素を含めない場合、弱起は使わない。
 
-### 7.3 placements
+### 6.2 個別配置 (`placements`)
 
 各 `placement` は `instrument` と `at: {bar, step}`、および次のいずれか 1 つの演奏対象を持つ。
 
@@ -457,16 +418,64 @@ sections:
 
 追加の `transpose`（半音）、`gain_db`（dB）、`tonic`（主音の上書き）、`mark`（タイムライン表示用の識別子）は許可する。`register` は `melody` と `degree` に指定でき、`degree: "1"` と `register: bass` で楽器のベース音域の主音になる。`duration_steps` は正の有理数として解析する（YAML の数値 `1.5` は 3/2 として扱う）。イベントがセクション境界を越える場合は、明示された長さと出力先の許容範囲で検証する。
 
-## 8. 音源参照・演奏データ境界
+### 6.3 音声クリップ (`audio_clips`)
 
-### 8.1 楽器の定義
+```yaml
+sections:
+  intro:
+    audio_clips:
+      - {
+          id: rain,
+          instrument: ambience,
+          file: audio/rain.wav,
+          at: { bar: 1, step: 1 },
+          offset_seconds: 0.25,
+          duration_seconds: 8,
+          gain_db: -3,
+          fade_in_seconds: 0.2,
+          fade_out_seconds: 0.5,
+        }
+```
 
-`instruments.<id>` は、次のいずれかの形態をとる。
+- `audio_clips[]` は `id`（セクション内一意）、`instrument`（`audio: true` の楽器）、`file`（Score 相対パス、上位ディレクトリ参照やシンボリックリンクによる曲フォルダ外参照は不可）、`at` を必須とし、`offset_seconds`（既定 0）、`duration_seconds`（省略時は残り全体）、`gain_db`（既定 0）、`pan`（既定 0）、`fade_in_seconds` / `fade_out_seconds`（既定 0）を任意に持つ。
+- クリップはセクションの全出現へ配置し、`at` は音楽位置、再生時間・ソースオフセット・フェードは実時間で扱う。ソース範囲外・ゼロ長・負値・長さを超えるフェードはエラー。セクション終端を超えて残るクリップは許可する。
+
+### 6.4 テンポ変更 (`time_changes`)・位置と長さ
+
+```yaml
+time_changes:
+  - { at_quarters: '13/2', bpm: 140 }
+  - { at_quarters: '120', bpm: 72, over_quarters: '8' }
+```
+
+`at_quarters` は曲頭からの四分音符数（非負）。同時刻の重複・`form` 側の同時刻テンポ指定との衝突・曲終端を超える位置はエラー。
+
+`over_quarters` を指定すると、`at_quarters` から `over_quarters` をかけて直前のテンポから `bpm` へ線形変化させる（リタルダンド・アッチェレランド）。`over_quarters` は 1/4 の正の倍数とし、終端は曲終端以下。変化は 1 ステップ（16 分音符）ごとの段階的なテンポ変更として展開し（n ステップ中 k 番目は「直前＋(`bpm`−直前)×(k＋1)/n」）、変化区間内の別テンポ変更はエラー。
+
+- **位置**：`at: {bar: 1, step: 1}` はセクション内・1 始まり、`step` は 16 分音符単位（4/4 は 1〜16、6/8 は 1〜12、`bar: last` 可）。グリッド外は小節頭からの 0 始まり量 `at: {bar: 1, offset_quarters: "1/3"}` を使う。`step` と `offset_quarters` の併用は禁止。
+- **長さ**：`duration_steps`（16 分音符数）と `duration_quarters`（四分音符数）は正の有理数を受理し、両方の指定は禁止。`gate` は自動計算音価のみに掛かり、`placements` や明示ノートの `duration_*` には再適用しない。
+- **比率の解析**：整数・有限小数・`p/q` は丸めず分数として扱う。分母 0 と負の値はエラー。PPQ 上限 32767 を超える細かい分数の組合せはエラー。
+
+### 6.5 部分小節と拍子単位
+
+`form[]` は `last_bar_quarters: "p/q"` を許し、末尾だけ短い端数小節を置ける。
+
+- `bars` は**最後の短い小節を含む正の整数**。最終小節長 `L`、通常小節長 `B=n*4/d` として `0 < L < B`、セクション長は `(bars-1)*B + L`。
+- 最終小節の発音位置は `[0,L)`、明示ノートの終端は曲終端以下。瞬時制御は末尾小節の `offset_quarters: L` でセクション終端にも配置できる。
+- 短い小節の素材は**実際の有効長**を消費し、端数分のトリミングや無音の補填は行わない。
+
+4/4 は 1 区間が四分音符で 4 ステップ、6/8 は 1 区間が八分音符で 2 ステップ。拍子分母は 1, 2, 4, 8, 16, 32, 64, 128 を受理する。分母 32 以上で 16 分ステップを持たない区間では文字列グリッドを使わず、`placements` / 構造化イベントで書く。ドラム・`comp`・`order` の 1 小節文字列は、端数小節では有効長に合わせて短縮したパターンを要求する。
+
+## 7. 楽器・音源・キット
+
+### 7.1 楽器の定義 (`instruments.<id>`)
+
+`instruments.<id>` は次のいずれかの形態をとる。
 
 1. **内蔵音源**：`preset`、`definition`、`external: true` のうち 1 つを指定する。
-2. **本番 VST3 音源**：`source` を指定する（12.1）。`preset` / `definition` / `external` と併記して Sonalloy 互換の試聴指定を保持することも、`source` のみで定義することもできる。
-3. **キット部品**：`kit` を指定して `kits.<id>` に属する（12.2）。部品側には `source`、`effects`、`audio`、`audio_input` を書けない。
-4. **音声トラック**：`audio: true` を指定する（12.7）。`preset`、`definition`、`external`、`source`、`audio_input` と併記できず、音符やドラムトリガーの対象にもできない。
+2. **本番 VST3 音源**：`source` を指定する（7.3）。`preset` / `definition` / `external` と併記して Sonalloy 互換の試聴指定を保持することも、`source` のみで定義することもできる。
+3. **キット部品**：`kit` を指定して `kits.<id>` に属する（7.4）。部品側には `source`、`effects`、`audio`、`audio_input` を書けない。
+4. **音声トラック**：`audio: true` を指定する（6.3）。`preset`、`definition`、`external`、`source`、`audio_input` と併記できず、音符やドラムトリガーの対象にもできない。
 
 ```yaml
 instruments:
@@ -478,135 +487,26 @@ instruments:
 ```
 
 - `preset`：同梱カタログのプリセット ID（`<CATEGORY>/<NNN-kebab-name>`）。存在しない ID はエラー。
-- `definition`：Score 所在ディレクトリを基点に参照。解決先は Instrument Definition JSON。
-- `external: true`：外部からバインディングする未束縛楽器。実行・読み込み時に `--bind <instrument_id>=<definition_path>` で結び付ける（`source` がある楽器は VST3 準備に `--bind` を要求しない）。
-- `gain_db`：楽器全体の固定ゲイン（省略時 0、有限数）。`role` は表示・分類だけに利用。
-- `pan`：楽器単位の左右定位。`-1.0`（左）〜`1.0`（右）の有限数で、`0.0` と省略時は無加工。振った側と反対のチャンネルを段階的に減衰させる線形バランス（ステレオ・バランス）方式を適用する。
-- `gate`・`articulations`：音価の倍率（4.3）と奏法の効き方（4.4）。
-- `swing`・`timing_offset_steps`：楽器ごとのスウィング（4.6）とタイミングのずれ（4.7）。
-- `voicing`・`voicing_floor_midi`・`voicing_ceiling_midi`：和音の明示配置と、自動配置の範囲（5.2）。0〜127 で上限は下限より高い。
-- `trigger_note_midi`：Drum/FX など、音程を指定しない打撃・単発音を鳴らす MIDI ノート（0〜127）。打撃・単発音を生成する場合は必須であり、音源ごとに明示する。
-- `bass_floor_midi` / `bass_ceiling_midi`：`register: bass` の基準音を置く範囲（省略時 28〜39）。
-- `audio_input: <id>`：ほかの楽器のステレオ出力を音声入力として受ける。入力能力のある内蔵音源だけ許可。対象不存在、自己参照、循環、外部入力のチャンネル数不一致はエラー。音源から入力へ渡る音声にはその楽器の Part Gain を適用し、グローバルフェード・マスターを含めない。
-- `effects`：楽器個別の VST3 エフェクトチェイン（12.4）。
-- `sound`：表示用の文字列。演奏に作用しない。
+- `definition`：Score 所在ディレクトリを基点に参照（Instrument Definition JSON）。
+- `external: true`：外部からバインディングする未束縛楽器（`--bind <id>=<path>`。`source` がある楽器は VST3 準備に `--bind` を要求しない）。
+- `gain_db`：楽器全体の固定ゲイン（省略時 0、有限数）。`role`・`sound` は表示・分類用で演奏に作用しない。
+- `pan`：`-1.0`（左）〜`1.0`（右）の有限数（省略時 `0.0`）。線形バランス（ステレオ・バランス）方式を適用する。
+- `gate`・`articulations`・`swing`・`timing_offset_steps`：音価倍率（3.3）・奏法記号（3.4）・スウィング（3.6）・タイミングずれ（3.7）。
+- `voicing`・`voicing_floor_midi`・`voicing_ceiling_midi`：和音配置と範囲（4.2、0〜127、上限＞下限）。
+- `trigger_note_midi`：打撃・単発音を鳴らす MIDI ノート（0〜127、打撃系使用時は必須）。
+- `bass_floor_midi` / `bass_ceiling_midi`：`register: bass` の配置範囲（省略時 28〜39）。
+- `audio_input: <id>`：入力能力のある内蔵音源のみ許可。対象不存在・自己参照・循環・チャンネル数不一致はエラー。Part Gain のみ適用後の音声を渡す。
+- `effects`：楽器個別の VST3 エフェクトチェイン（7.5）。
 - 技術的な `*_midi` は演奏エンジンの MIDI ノート配置用であり、**メロディ・コードの音高を書くための第 2 記法とはしない。**
 
-### 8.2 演奏 Lane と追加ゲイン
+### 7.2 演奏 Lane と追加ゲイン
 
-同じ楽器の複数フレーズは 1 つのイベント列に統合する。`lines.<名前>.gain_db` や `placements[].gain_db` など、特定演奏へ追加ゲインを指定した発音は、同じ音源を参照する別の Lane で鳴る。実効 Gain＝楽器 `gain_db`＋追加 `gain_db`。
+同じ楽器の複数フレーズは 1 つのイベント列に統合する。`lines.<名前>.gain_db` や `placements[].gain_db` など、特定演奏へ追加ゲインを指定した発音は別の Lane で鳴る（実効 Gain＝楽器 `gain_db`＋追加 `gain_db`）。
 
-- 別 Lane は音源の Voice・FX 状態を共有しないため、モノフォニックのレガートやディレイの残響は通常 Lane とつながらない。
-- Sustain・Pitch Bend・Mod Wheel などの制御イベントは基本の Lane だけに作用する。
-- 複数 Lane を持つ楽器の `effects` は所有者が一意にならないためエラーになる。
-- `audio_input`・`mix.tracks`・`mix.automation`・奏法制御での複数 Lane の扱いは 12 章に従う。
+- 別 Lane は Voice・FX 状態を共有せず、Sustain・Pitch Bend・Mod Wheel 等の制御は基本 Lane のみに作用する。
+- 複数 Lane を持つ楽器の `effects` は所有者が一意にならないためエラー。
 
-### 8.3 出力・マスター
-
-`meta.fade_out_seconds` を楽曲全体のフェードアウト（省略時 0）に使用する。`meta.master` は完成目標であり、`mix.master`（12.5）のミキシング値とは区別する。
-
-`sample_rate`、`block_size`、`tail_seconds`、出力先は**実行条件**であり、楽譜には持たせない。
-
-## 9. 詳細時間・端数小節
-
-### 9.1 時間単位と範囲
-
-曲中のテンポ変更は `time_changes` へ記述する。
-
-```yaml
-time_changes:
-  - { at_quarters: '13/2', bpm: 140 }
-  - { at_quarters: '120', bpm: 72, over_quarters: '8' }
-```
-
-`at_quarters` は曲頭からの四分音符数（非負）。同時刻の重複・`form` 側の同時刻テンポ指定との衝突はエラー。曲終端を超える位置もエラー。
-
-`over_quarters` を指定すると、`at_quarters` から `over_quarters` をかけて、直前のテンポから `bpm` へ線形に変化させる（リタルダンド・アッチェレランド）。`over_quarters` は 1/4 の正の倍数とし、変化区間の終端は曲終端以下とする。
-
-- 変化は 1 ステップ（16 分音符）ごとの段階的なテンポ変更として展開し、区間 n ステップのうち k 番目（0 始まり）のテンポは「直前のテンポ＋（`bpm`−直前のテンポ）×（k＋1）/n」とする。
-- 変化区間の内部にほかのテンポ変更（`form` の `bpm` を含む）がある場合はエラー。
-
-**位置**：`at: {bar: 1, step: 1}` はセクション内・1 始まりであり、`step` は 16 分音符単位（4/4 は 1〜16、6/8 は 1〜12）。`at: {bar: last, step: 1}` も許す。グリッドに乗らないイベントは小節頭からの 0 始まり量 `at: {bar: 1, offset_quarters: "1/3"}` を使う。`step` と `offset_quarters` の併用は禁止。
-
-**長さ**：`duration_steps`（16 分音符数）と `duration_quarters`（四分音符数）は正の整数・有限 10 進数・分数文字列を受理し、両方の指定は禁止。`gate` が掛かるのは自動計算音価のみであり、`placements` や明示ノートの `duration_*` には再適用しない。
-
-**比率の解析**：整数・有限小数・`p/q` は丸めずに分数として扱う。分母 0 と負の値はエラー。全イベントを整数 Tick で表す PPQ は自動で決まり、上限 32767 を超える細かい分数の組合せはエラーになる。
-
-### 9.2 部分小節
-
-`form[]` は `last_bar_quarters: "p/q"` を許し、末尾だけ短い端数小節を置ける。
-
-- `bars` は**最後の短い小節を含む正の整数**
-- 最後の小節長を `L`、通常小節長を `B=n*4/d` とすると、`0 < L < B` を要求し、セクション長は `(bars-1)*B + L`
-- 最終小節の発音位置は `[0,L)` であり、明示ノートの終端は曲終端以下とする。Sustain 解除などの瞬時制御は末尾小節の `offset_quarters: L` でセクション終端にも配置できる
-- 短い小節の素材は**実際の有効長**を消費し、端数分のトリミングや無音の補填は行わない
-
-```yaml
-form:
-  - { section: fx_preview, bars: 8, last_bar_quarters: '2', tonic: C, scale: ionian } # 7.5 小節
-```
-
-### 9.3 記法の単位と連符
-
-4/4 は 1 区間が四分音符で 4 ステップ、6/8 は 1 区間が八分音符で 2 ステップ。1/4 より短い分母単位の拍子でも、16 分以上の長さを持つ区間には正確なステップ数を割り当てる。分母が 32 以上で 16 分ステップを持たない区間では文字列グリッドを使わず、`placements` / 構造化イベントで書く。拍子の分母として 1, 2, 4, 8, 16, 32, 64, 128 を受理する。
-
-ドラム・`comp`・`order` の 1 小節の文字列は、端数小節ではその有効長に合わせて短縮したパターンを要求する。16 分境界以外の最終切断では構造化配置で厳密に指定する。
-
-## 10. 演奏イベント・マクロ・優先規則
-
-### 10.1 イベント形式
-
-セクションの `events` は構造化された演奏イベントのマップのリスト。`kind` は組込み種別であり利用者は追加できない。`macro: <name>` はトップレベル `macros` で宣言された名前を参照し、`kind` と `macro` の同時指定はエラーとする。全イベントは対象音源を含めてセクション内座標を解決する。
-
-| `kind`             | 必須フィールド（共通 `at` は省略）                                                                                                | 意味                                                                                                         |
-| ------------------ | --------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `hit`              | `instrument`                                                                                                                      | 指定 Trigger Note を 1 回発音。Velocity 既定はセクションの `velocity`（省略時 100）、長さ既定は 1 ステップ。 |
-| `hits`             | `instruments`                                                                                                                     | 指定音源群への `hit` と同値。順序はリスト順。                                                                |
-| `degree`           | `instrument`, `degree`                                                                                                            | その度数の 1 音。マクロ本体にも指定可。                                                                      |
-| `silence`          | `duration_steps` または `duration_quarters`; `except_instruments` は任意                                                          | 指定範囲の対象 Note を抑制・切断。明示の例外は抑制しない。                                                   |
-| `part_window`      | `instrument`, `bars: [start,end]`                                                                                                 | 対象楽器の演奏をその小節範囲だけ有効にする。                                                                 |
-| `dynamics`         | `instrument`, `from`, `to`, `duration_steps` または `duration_quarters`                                                           | 指定範囲で始まる音符の Velocity に、`from` から `to` へ線形に変わる値を加算する。                            |
-| `step_roll`        | `instrument`, `bar`, `from_step`, `through_step`, `velocity_from`, `velocity_to`                                                  | 両端を含む 16 分連続打撃を線形 Velocity で生成。                                                             |
-| `drum_roll`        | `instrument`, `bars`, `early_hits_per_beat`, `final_hits_per_beat`, `last_bar_end_beat`, `velocity_from`, `velocity_to`, `riser?` | 対象末尾小節で密度が変わるロール。                                                                           |
-| `sustain_pedal`    | `instrument`, `down`                                                                                                              | MIDI CC64 相当（内蔵音源専用）。                                                                             |
-| `pitch_bend`       | `instrument`, `value`                                                                                                             | −1〜1（内蔵音源専用）。                                                                                      |
-| `mod_wheel`        | `instrument`, `value`                                                                                                             | 0〜1（内蔵音源専用）。                                                                                       |
-| `aftertouch`       | `instrument`, `value`                                                                                                             | 0〜1（内蔵音源専用）。                                                                                       |
-| `parameter_change` | `instrument`, `parameter`, `native_value`                                                                                         | 音源 Parameter の Native 値に設定（内蔵音源専用）。                                                          |
-| `articulation`     | `instrument`, `name`, `duration_steps` または `duration_quarters`                                                                 | `source.articulations` で宣言した奏法の区間。VST3 へキースイッチまたは CC を送る（12.3）。                   |
-| `cc`               | `instrument`, `number`, `value`                                                                                                   | VST3 へ送る単発の MIDI Control Change。`number` と `value` は 0〜127（12.3）。                               |
-| `automation`       | `instrument`, `parameter` または `control`, `from_value`, `to_value`, `duration_steps` または `duration_quarters`                 | 音源 Parameter または演奏コントロールの線形変化。                                                            |
-
-- `silence` は指定区間の Note On を抑制し、境界にまたがる Note の音価を切断する。演奏制御と Parameter Ramp には作用しない。
-- `part_window` の `bars: [start, end]` は 1 始まりの両端を含む小節番号（`last` 可、端数小節も 1 小節と数える）で、開始小節頭から終了小節末までの半開区間 `[start, end)` を表す。
-  - そのセクション内で始まる Note On と点の演奏制御を `[start, end)` に限定する（前セクションから持続する Note は変更しない）。終端を越える Note は境界で切断し、区間開始・終端では状態をニュートラル値または Parameter 定義の既定値へ戻す。
-  - 窓をまたぐ Parameter Ramp は許可区間との交差部分へ切り詰め、両端値を元の線形 Ramp から補間する。窓が空の場合は制御を残さない。複数指定時は許可区間の共通部分を使う。
-- `dynamics` は区間 `[at, at+長さ)` で始まる対象楽器の全音符（全 Lane、ドラム・ロールを含む）に、`from`〜`to`（-126〜126 の整数）を線形補間した値を加算する（`round half away from zero`）。音符ごとの Velocity 差は保たれ、加算後が 1〜127 外ならエラー。区間はセクション内に収め、同一楽器の重複はエラー。
-- `automation` は `parameter`（既存 Parameter Ramp と同じ正規化空間で線形補間）または `control`（`mod_wheel`・`aftertouch`: 0〜1、`pitch_bend`: −1〜1、`cc:N`: N・値とも 0〜127 の整数）を指定する。`at` から 1/64 四分音符ごとと終端に点を生成し、整数丸め後の同値連続送信は省く。`cc:N` は VST3 音源・キット専用、他は内蔵音源専用。区間内に同一楽器・同一コントロールの別制御があればエラー。
-- 同一楽器・同時刻の `drum_roll` / `step_roll` と通常ドラム打撃が衝突すればロールが勝つ。**ロール同士**、同一 Parameter への異なる値・重複矛盾、複数の同一楽器 Override が重なればエラー。
-- 同時刻イベントはソース定義順を保持し、Note Off→Control→Note On の基本優先順位を適用する。
-- 展開順序：パターン・旋律・配置・イベントの生成 → ロール優先 → `silence` と `part_window` → `dynamics` → `timing_offset_steps`。
-- `drum_roll` の `bars: all` は全小節、正整数は末尾 N 小節。発音順 Velocity を指定両端間で線形補間（`round half away from zero`）し、`riser` がある場合はロール開始時に 1 回打撃する。
-- `macro: name` に付いた上書きフィールドはマクロ本体の同名フィールドを置換し、展開結果をイベント型として検証する。循環参照はエラー。
-- `drums`、`hit` / `hits`、`step_roll`、`drum_roll`、およびそれらを含む Macro は対象楽器の `trigger_note_midi`（0〜127）を必須とする。`recommended_range` は音域の目安であり、Trigger Note の許容範囲ではない。音声処理専用の楽器（外部音声の受のみ）も許可し、ダミー Note は生成しない。
-
-### 10.2 音源能力と演奏制御
-
-- MIDI Note は 0〜127、Velocity は 1〜127。内蔵音源は Generator の Key / Velocity Trigger と照合し、発音可能な Layer がなければエラーにする。VST3 はプラグイン自体が発音範囲を決める。
-- 内蔵音源に対する `parameter_change` / `automation` の Parameter ID はその音源定義に存在し、Native 値は範囲内の有限数とする。
-- `sustain_pedal`、`pitch_bend`、`mod_wheel`、`aftertouch`、`parameter_change`、および `control` が `mod_wheel`・`aftertouch`・`pitch_bend` の `automation` は内蔵音源の演奏制御であり、VST3 音源・キットではエラーにする。VST3 には `articulation`、`cc`、`automation.control: "cc:N"` だけを送る。
-
-## 11. 解析・診断
-
-1. **構文**：YAML 1.2 相当。重複キー・未知フィールド・カスタム Tag・YAML エイリアス・マージキー・非文字列 Key・曖昧な暗黙キャストはエラーとする。分数は `"p/q"` で記述し、`1'` や `#4` のように YAML の型解釈やコメント記号と衝突する値は引用文字列にする。
-2. **参照**：`form.section`、楽器 ID、素材、`from`、`macro`、`definition`、`preset`、`audio_input`、`counter.follows`、VST3 プラグイン・State・キット・バス・センド・サイドチェイン・オートメーション対象・音声ファイルの存在と循環を検証する。`key`、`mode`、`chord_type` のような別名や自然言語の演奏指示は受理しない。楽器 ID は 1〜64 文字の ASCII 英数字・`.`・`_`・`-` で構成して英数字で始め、大文字小文字だけが異なる ID や Windows の予約名（`con` など）はエラーとする。
-3. **診断**：診断は `path`（Score YAML 上の階層）、`section`、`bar` / `step`、入力行/列、`actual`、`expected`、根拠のファイルを持ち、`warning` と `error` を区別する。Error があれば展開・構築を行わない。通常 VST3 の楽器で追加ゲインレーンが増える場合は warning を出し、演奏は止めない。
-
-## 12. Sonalloy が解釈しない項目（Riffra 拡張・未実装拡張）
-
-Sonalloy は共通の楽譜だけを解釈し、本節の項目を読み飛ばす。Riffra では 12.1〜12.7 を本番制作の仕様として解釈し、12.8 を未実装の拡張として明示的に拒否する。
-
-### 12.1 本番音源 (`instruments.<id>.source`)
+### 7.3 本番 VST3 音源 (`source`)
 
 ```yaml
 instruments:
@@ -623,17 +523,17 @@ instruments:
       velocity: [[1, 18], [64, 68], [127, 120]]
 ```
 
-`source` の有効フィールドは `vst3`、`velocity`、`articulations`。`vst3` は必須の `plugin` と、任意の `identifier`、`state`、`patch`、`params` を持つ。
+`source` の有効フィールドは `vst3`、`velocity`、`articulations`（`voisona` は未実装拡張）。`vst3` は必須の `plugin` と任意の `identifier`、`state`、`patch`、`params` を持つ。
 
-- `plugin` は検証済み VST3 カタログ上の正確なプラグイン名。`identifier` は同じ VST3 クラスへ絞り込む。
-- `state` は `PluginStateSnapshot` 形式の JSON（Score 所在ディレクトリからの相対パス）。`schemaVersion: 2`、`pluginIdentifier`、`pluginPath`、`parameterValues`、`stateData` を持ち、識別は `pluginIdentifier` で行う。
-- `patch` は `state` で得た状態文書への編集操作（`op: set | setTree | setXml`、`path`、`value` / `tree` / `values`）。`state` がない `patch` はエラー。
-- `params` の値は `0..=1` の数値、または `{display: <文字列>}`（数値文字列は display 値として扱わない）。名前重複時は `<名前>#<0始まり index>` で指定する。
-- 適用順序は `state` → `patch` → `params`。`params` 指定時は復元後の全パラメーター配列から指定分だけを上書きし、未指定をゼロで埋めない。
-- `velocity` は `[[入力, 出力], ...]` の折れ線（始点 `1`・終点 `127`、入力は単調増加）。1〜127 の整数を線形補間・四捨五入して 1〜127 に収め、MIDI Note 生成時に一度だけ適用する。
-- `source` のある楽器は Riffra で本番音源を鳴らし、VST3 不足・不一致・壊れた State を内蔵音源へ黙って切り替えない。`preset` / `definition` / `external` は Sonalloy 用として保持でき、`source` だけの楽器も有効。
+- `plugin` は検証済み VST3 カタログ上の正確なプラグイン名、`identifier` は同じ VST3 クラスへの絞り込み。
+- `state` は `PluginStateSnapshot` 形式の JSON（Score 相対パス、`schemaVersion: 2`、`pluginIdentifier` で識別）。
+- `patch` は `state` への編集操作（`op: set | setTree | setXml`、`path`、`value` / `tree` / `values`）。`state` なしの `patch` はエラー。
+- `params` の値は `0..=1` の数値、または `{display: <文字列>}`（数値文字列は不可）。名前重複時は `<名前>#<0始まり index>`。
+- 適用順は `state` → `patch` → `params`（指定パラメーターのみ上書きし、未指定はゼロ埋めしない）。
+- `velocity` は `[[入力, 出力], ...]` の折れ線（始点 `1`・終点 `127`、入力は単調増加）。1〜127 を線形補間・四捨五入し、MIDI Note 生成時に一度だけ適用する。
+- `source` がある楽器は VST3 不足・不一致・壊れた State を内蔵音源へ黙って切り替えない。
 
-### 12.2 キット (`kits.<id>` / `instruments.<id>.kit`)
+### 7.4 キット (`kits.<id>` / `instruments.<id>.kit`)
 
 ```yaml
 instruments:
@@ -645,14 +545,57 @@ kits:
     effects: [{ id: drum-eq, vst3: { plugin: Surge XT Effects } }]
 ```
 
-- `kits.<id>` の有効フィールドは `source`（VST3 必須）と `effects`。
-- 各部品の `kit` は存在するキットを参照し、部品側には `source`、`effects`、`audio`、`audio_input` を書けない。キットと楽器の ID は衝突せず、メンバーを持たないキットとキットによるキット参照はエラー。
-- 部品の演奏は 1 つの Kit Track・1 つの MIDI クリップ・1 つの VST3 インスタンスへ集約する。部品には `trigger_note_midi` によるトリガー由来 Note だけを書け、音高付き旋律・和音や制御イベントはエラー。複数部品が同じトリガー番号を使うことは許容する。
-- 部品の `gain_db` / `pan` は Sonalloy 用に残し、Riffra の個別音量には適用しない。キット全体のゲイン・パンは `mix.tracks.<kit>` に書く。部品ごとの追加ゲインレーン（`part_gains`、`lines.*.gain_db`、`placements[].gain_db` など）はエラー。キットの `source.velocity` は集約後のノートへ共通適用する。
+- `kits.<id>` の有効フィールドは `source`（VST3 必須）と `effects`。キットと楽器の ID は衝突せず、メンバーなし・キットによるキット参照はエラー。
+- 部品の演奏は 1 つの Kit Track・1 つの MIDI クリップ・1 つの VST3 インスタンスへ集約する。部品には `trigger_note_midi` のトリガー由来 Note だけを書け、音高付き旋律・和音・制御イベントはエラー。複数部品が同じトリガー番号を使うことは許容する。
+- 部品の `gain_db` / `pan` は Sonalloy 用に残し、Riffra の個別音量には適用しない。キット全体のゲイン・パンは `mix.tracks.<kit>` に書く。部品ごとの追加ゲインレーン（`part_gains`、`lines.*.gain_db`、`placements[].gain_db` 等）はエラー。キットの `source.velocity` は集約後のノートへ共通適用する。
 
-### 12.3 奏法制御 (`source.articulations` / `articulation` / `cc` / `cc:N`)
+### 7.5 エフェクト (`effects`)
 
-本番音源の `source.articulations` は、Score 上の奏法名を 1 つの VST3 制御へ対応付ける（`instruments.<id>.articulations` の記号調整とは別）。
+`effects[]` は必須の `id`（チェイン内一意）と `vst3`、任意の `bypassed`（既定 `false`）からなる。Instrument Track・Audio Track・Kit Track・Bus・Master に付けられる。
+
+## 8. 演奏イベント・マクロ・奏法制御
+
+### 8.1 イベント形式 (`events`)
+
+セクションの `events` は構造化された演奏イベントのマップのリスト。`kind` は組込み種別であり利用者は追加できない。`macro: <name>` はトップレベル `macros` で宣言された名前を参照し、`kind` と `macro` の同時指定はエラー。全イベントは対象音源を含めてセクション内座標を解決する。
+
+| `kind`             | 必須フィールド（共通 `at` は省略）                                                                                                | 意味                                                                                                         |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `hit`              | `instrument`                                                                                                                      | 指定 Trigger Note を 1 回発音。Velocity 既定はセクションの `velocity`（省略時 100）、長さ既定は 1 ステップ。 |
+| `hits`             | `instruments`                                                                                                                     | 指定音源群への `hit` と同値。順序はリスト順。                                                                |
+| `degree`           | `instrument`, `degree`                                                                                                            | その度数の 1 音。マクロ本体にも指定可。                                                                      |
+| `silence`          | `duration_steps` または `duration_quarters`; `except_instruments` は任意                                                          | 指定範囲の対象 Note を抑制・切断。明示の例外は抑制しない。                                                   |
+| `part_window`      | `instrument`, `bars: [start,end]`                                                                                                 | 対象楽器の演奏をその小節範囲だけ有効にする。                                                                 |
+| `dynamics`         | `instrument`, `from`, `to`, `duration_steps` または `duration_quarters`                                                           | 指定範囲で始まる音符の Velocity に、`from` から `to` へ線形に変わる値を加算する。                            |
+| `step_roll`        | `instrument`, `bar`, `from_step`, `through_step`, `velocity_from`, `velocity_to`                                                  | 両端を含む 16 分連続打撃を線形 Velocity で生成。                                                             |
+| `drum_roll`        | `instrument`, `bars`, `early_hits_per_beat`, `final_hits_per_beat`, `last_bar_end_beat`, `velocity_from`, `velocity_to`, `riser?` | 対象末尾小節で密度が変わるロール。                                                                           |
+| `sustain_pedal`    | `instrument`, `down`                                                                                                              | MIDI CC64 相当（内蔵音源専用）。                                                                             |
+| `pitch_bend`       | `instrument`, `value`                                                                                                             | −1〜1（内蔵音源専用）。                                                                                      |
+| `mod_wheel`        | `instrument`, `value`                                                                                                             | 0〜1（内蔵音源専用）。                                                                                       |
+| `aftertouch`       | `instrument`, `value`                                                                                                             | 0〜1（内蔵音源専用）。                                                                                       |
+| `parameter_change` | `instrument`, `parameter`, `native_value`                                                                                         | 音源 Parameter の Native 値に設定（内蔵音源専用）。                                                          |
+| `articulation`     | `instrument`, `name`, `duration_steps` または `duration_quarters`                                                                 | `source.articulations` で宣言した奏法の区間。VST3 へキースイッチまたは CC を送る（8.3）。                    |
+| `cc`               | `instrument`, `number`, `value`                                                                                                   | VST3 へ送る単発の MIDI Control Change。`number` と `value` は 0〜127（8.3）。                                |
+| `automation`       | `instrument`, `parameter` または `control`, `from_value`, `to_value`, `duration_steps` または `duration_quarters`                 | 音源 Parameter または演奏コントロールの線形変化。                                                            |
+
+- `silence` は指定区間の Note On を抑制し、境界にまたがる Note の音価を切断する。演奏制御と Parameter Ramp には作用しない。
+- `part_window` の `bars: [start, end]` は 1 始まりの両端を含む小節番号（`last` 可、端数小節も 1 小節）で、半開区間 `[start, end)` を表す。そのセクション内で始まる Note On と点の演奏制御を `[start, end)` に限定し、終端を越える Note は境界で切断する。区間開始・終端では状態をニュートラル値または既定値へ戻し、窓をまたぐ Parameter Ramp は許可区間へ切り詰めて補間する。複数指定時は共通部分を使う。
+- `dynamics` は `[at, at+長さ)` で始まる対象楽器の全音符（全 Lane、ロール含む）に `from`〜`to`（-126〜126 の整数）を線形補間した値を加算する（`round half away from zero`）。加算後が 1〜127 外ならエラー。区間はセクション内に収め、同一楽器の重複はエラー。
+- `automation` は `parameter`（正規化空間で線形補間）または `control`（`mod_wheel`・`aftertouch`: 0〜1、`pitch_bend`: −1〜1、`cc:N`: N・値とも 0〜127 の整数）を指定する。`at` から 1/64 四分音符ごとと終端に点を生成し、整数丸め後の同値連続送信は省く。区間内に同一楽器・同一コントロールの別制御があればエラー。
+- 同一楽器・同時刻のロールと通常ドラム打撃が衝突すればロールが勝つ。**ロール同士**、同一 Parameter への矛盾、複数の同一楽器 Override の重複はエラー。
+- 同時刻イベントはソース定義順を保持し、Note Off→Control→Note On の優先順位を適用する。
+- 展開順序：パターン・旋律・配置・イベント生成 → ロール優先 → `silence` と `part_window` → `dynamics` → `timing_offset_steps`。
+- `drum_roll` の `bars: all` は全小節、正整数は末尾 N 小節。発音順 Velocity を線形補間（`round half away from zero`）し、`riser` がある場合はロール開始時に 1 回打撃する。
+- `macro: name` に付いた上書きフィールドはマクロ本体の同名フィールドを置換し、展開結果をイベント型として検証する。循環参照はエラー。
+- `drums`、`hit` / `hits`、`step_roll`、`drum_roll`、およびそれらを含む Macro は対象楽器の `trigger_note_midi`（0〜127）を必須とする。音声処理専用の楽器（外部音声の受のみ）はダミー Note を生成しない。
+
+### 8.2 音源能力と制御境界
+
+- MIDI Note は 0〜127、Velocity は 1〜127。内蔵音源は Generator の Key / Velocity Trigger と照合し、発音可能な Layer がなければエラー。VST3 はプラグイン自体が発音範囲を決める。
+- 内蔵音源の `parameter_change` / `automation` の Parameter ID は音源定義に存在し、Native 値は範囲内の有限数とする。
+- `sustain_pedal`、`pitch_bend`、`mod_wheel`、`aftertouch`、`parameter_change`、および `control` が `mod_wheel`・`aftertouch`・`pitch_bend` の `automation` は内蔵音源専用であり、VST3 音源・キットではエラー。VST3 には `articulation`、`cc`、`automation.control: "cc:N"` だけを送る。
+
+### 8.3 奏法制御 (`source.articulations` / `articulation` / `cc` / `cc:N`)
 
 ```yaml
 instruments:
@@ -688,23 +631,9 @@ sections:
 - 音声トラック、内蔵音源だけの楽器、キット部品への `articulation`・`cc`・`control: "cc:N"`、およびキット部品への `mod_wheel`・`sustain_pedal` 等の従来制御はエラー。
 - `latch` 使用音源は曲頭で別キースイッチが始まらない限り `default` を選択して開始し、曲末と終端が一致する場合は後続演奏のない `default` パルスを省略する。
 
-### 12.4 エフェクト (`effects`)
+## 9. ミックスとオートメーション
 
-```yaml
-instruments:
-  bass:
-    effects:
-      - { id: eq, vst3: { plugin: Surge XT Effects } }
-      - {
-          id: duck,
-          vst3: { plugin: Example Compressor, params: { Threshold: 0.45 } },
-          bypassed: false,
-        }
-```
-
-`effects[]` は必須の `id` と `vst3`、任意の `bypassed`（既定 `false`）からなる。`id` はチェイン内で一意で、Instrument Track・Audio Track・Kit Track・Bus・Master に付けられる。複数ゲインレーンを持つ楽器の `effects` はエラー。
-
-### 12.5 ミックス (`mix`)
+### 9.1 ミックス (`mix`)
 
 ```yaml
 mix:
@@ -733,9 +662,7 @@ mix:
 - `mix.sidechain[]` は `{from, to, level_db, position, enabled}`。`from` は楽器またはキット、`to` は `{instrument, effect}` / `{kit, effect}` / `{bus, effect}` / `{master: true, effect}`。宛先が sidechain 非対応、または送り元と宛先が同一トラックの場合はエラー。
 - `mix.master.gain_db` は `-90..=0` dB。`mix.master.effects` はマスターのエフェクトチェイン。
 
-### 12.6 オートメーション (`mix.automation`)
-
-`mix.automation` の `target` は次の表記をとる。
+### 9.2 オートメーション (`mix.automation`)
 
 | 対象               | YAML `target` の例                                                 | 種別                 |
 | ------------------ | ------------------------------------------------------------------ | -------------------- |
@@ -764,38 +691,15 @@ mix:
 - `part_gains` がある楽器への Track 音量オートメーションはエラー。なければ明示的音量オートメーションを優先する。
 - 複数ゲインレーンでは Track Mix・Send・Sidechain を全レーンへ適用する。宛先エフェクトが一意に選べない場合はエラー。
 
-### 12.7 音声クリップ (`audio: true` / `sections.<name>.audio_clips`)
+## 10. 解析・診断・フィールド契約
 
-```yaml
-instruments:
-  ambience:
-    {
-      audio: true,
-      gain_db: -5,
-      pan: 0,
-      effects: [{ id: filter, vst3: { plugin: Surge XT Effects } }],
-    }
-sections:
-  intro:
-    audio_clips:
-      - {
-          id: rain,
-          instrument: ambience,
-          file: audio/rain.wav,
-          at: { bar: 1, step: 1 },
-          offset_seconds: 0.25,
-          duration_seconds: 8,
-          gain_db: -3,
-          fade_in_seconds: 0.2,
-          fade_out_seconds: 0.5,
-        }
-```
+### 10.1 構文・参照・診断
 
-- `audio: true` は Audio Track を 1 本作る。`preset`、`definition`、`external`、`source`、`audio_input` と併記できず、音符やドラムトリガーの対象にもできない。
-- `audio_clips[]` は `id`（セクション内一意）、`instrument`、`file`（Score 相対パス、上位ディレクトリ参照やシンボリックリンクによる曲フォルダ外参照は不可）、`at` を必須とし、`offset_seconds`（既定 0）、`duration_seconds`（省略時は残り全体）、`gain_db`（既定 0）、`pan`（既定 0）、`fade_in_seconds` / `fade_out_seconds`（既定 0）を任意に持つ。
-- クリップはセクションの全出現へ配置し、`at` は音楽位置、再生時間・ソースオフセット・フェードは実時間で扱う。ソース範囲外・ゼロ長・負値・長さを超えるフェードはエラー。セクション終端を超えて残るクリップは許可する。
+1. **構文**：YAML 1.2 相当。重複キー・未知フィールド・カスタム Tag・YAML エイリアス・マージキー・非文字列 Key・曖昧な暗黙キャストはエラー。分数は `"p/q"` で記述し、`1'` や `#4` のように YAML の型解釈やコメント記号と衝突する値は引用文字列にする。
+2. **参照**：`form.section`、楽器 ID、素材、`from`、`macro`、`definition`、`preset`、`audio_input`、`counter.follows`、VST3 プラグイン・State・キット・バス・センド・サイドチェイン・オートメーション対象・音声ファイルの存在と循環を検証する。`key`、`mode`、`chord_type` のような別名や自然言語の演奏指示は受理しない。楽器 ID は 1〜64 文字の ASCII 英数字・`.`・`_`・`-` で構成して英数字で始め、大文字小文字だけが異なる ID や Windows の予約名（`con` 等）はエラー。
+3. **診断**：診断は `path`（Score YAML 上の階層）、`section`、`bar` / `step`、入力行/列、`actual`、`expected`、根拠のファイルを持ち、`warning` と `error` を区別する。Error があれば展開・構築を行わない。通常 VST3 楽器で追加ゲインレーンが増える場合は warning を出し、演奏は止めない。
 
-### 12.8 未実装の拡張
+### 10.2 未実装の拡張
 
 次の指定は既知の拡張として明示的に拒否する（`notImplemented` 診断）。未知のキーや未知のイベント種別は文法エラーになる。
 
@@ -805,38 +709,38 @@ sections:
 | `source.voisona`                                           | VoiSona の歌声制御 |
 | イベント `breath` / `voice_dynamics` / `voice_style`       | 歌の表現           |
 
-## 13. フィールド契約・文法一覧
+### 10.3 フィールド契約・文法一覧
 
-| 場所                                                     | 許可された主要キー                                                                                                                                                                                                                                                                      | 解釈                                                                                              |
-| -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| ルート                                                   | `meta,form,time_changes,sections,melodies,scale_definitions,drums,comp,arps,counters,macros,instruments,kits,mix,transitions,notes,lyrics`                                                                                                                                              | 全て定義済み、追加は禁止。`lyrics` は未実装拡張                                                   |
-| `meta`                                                   | `title,bpm,meter,tuning,reference_octave,gate,swing,master,fade_out_seconds`                                                                                                                                                                                                            | `tuning: 12edo` だけ受理                                                                          |
-| `meta.swing` / `form[].swing` / `instruments.<id>.swing` | `subdivision,ratio`                                                                                                                                                                                                                                                                     | グリッドのスウィング                                                                              |
-| `meta.master`                                            | `target_lufs,max_true_peak_db,target_lra_lu`                                                                                                                                                                                                                                            | Master / 計測目標の設定                                                                           |
-| `form[]`                                                 | `section,bars,tonic,scale,bpm,meter,last_bar_quarters,swing`                                                                                                                                                                                                                            | 曲中の出現と時間正本。`section`,`bars`,`tonic` は必須で、`scale` は任意（省略時はスケール未指定） |
-| `time_changes[]`                                         | `at_quarters,bpm,over_quarters`                                                                                                                                                                                                                                                         | 曲頭からのテンポ変更と漸次変化                                                                    |
-| `sections.<name>`                                        | `from,chords,chord_changes,lines,drums,comp,pad,arp,counter,placements,add_placements,audio_clips,events,velocity,part_gains,notes`                                                                                                                                                     | 1 セクションの演奏・音声宣言。`notes` は表示用の文字列                                            |
-| `sections.<name>.lines.<line>`                           | `instrument,melody,slice_items,loop,register,tonic,transpose,gain_db,lyrics`                                                                                                                                                                                                            | 旋律パート。`lyrics` は未実装拡張                                                                 |
-| `sections.<name>.counter`                                | `instrument,pattern,follows`                                                                                                                                                                                                                                                            | 対旋律の演奏                                                                                      |
-| `sections.<name>.part_gains`                             | `instrument_id: number`                                                                                                                                                                                                                                                                 | セクション内の楽器別 Gain（dB。楽器 Gain に加算）                                                 |
-| `sections.<name>.audio_clips[]`                          | `id,instrument,file,at,offset_seconds,duration_seconds,gain_db,pan,fade_in_seconds,fade_out_seconds`                                                                                                                                                                                    | Audio Track 上の WAV クリップ                                                                     |
-| `melodies`                                               | 要素のリスト、`{items\|from, replace, relative_to, pickup_steps}`、名前空間辞書                                                                                                                                                                                                         | 相対度数と再利用                                                                                  |
-| `melodies` の要素                                        | 文字列、`{use,items,shift_steps}`                                                                                                                                                                                                                                                       | パターン文字列と参照挿入                                                                          |
-| `drums.<name>`                                           | `from,parts,overrides`                                                                                                                                                                                                                                                                  | パートは 1 小節の文字列または N 小節のリスト                                                      |
-| `drums.overrides[]`                                      | `when,parts`                                                                                                                                                                                                                                                                            | 小節条件を満たしたパートへ 1 小節を置換                                                           |
-| `when`                                                   | `odd,even,every,bars` のいずれか 1 つ                                                                                                                                                                                                                                                   | 小節条件                                                                                          |
-| `arps.<name>`                                            | `order,voicing_floor_midi,retrigger_each_step`                                                                                                                                                                                                                                          | 和音の声部を音域配置して Arp。`order` のセルは非負整数、`.`（休符）、`-`（継続）                  |
-| `counters.<name>`                                        | `when,cell`                                                                                                                                                                                                                                                                             | 無音拍に置く対旋律。`when` は `silent_full_beat`                                                  |
-| `instruments.<id>`                                       | `preset / definition / external`, `source,kit,audio,effects,gain_db,pan,role,sound,gate,articulations,swing,timing_offset_steps,voicing,voicing_floor_midi,voicing_ceiling_midi,trigger_note_midi,bass_floor_midi,bass_ceiling_midi,audio_input`                                        | 音源・音声・キット部品と演奏音域・定位・奏法・ノリ・エフェクト                                    |
-| `instruments.<id>.source`                                | `vst3{plugin,identifier,state,patch,params},velocity,articulations,voisona`                                                                                                                                                                                                             | 本番 VST3 音源と奏法・Velocity 補正。`voisona` は未実装拡張                                       |
-| `instruments.<id>.articulations`                         | `accent{velocity}`, `staccato{gate,velocity}`, `tenuto{gate,velocity}`                                                                                                                                                                                                                  | 奏法記号の効き方                                                                                  |
-| `kits.<id>`                                              | `source,effects`                                                                                                                                                                                                                                                                        | ドラム部品を集約する VST3 キット                                                                  |
-| `effects[]`                                              | `id,vst3,bypassed`                                                                                                                                                                                                                                                                      | Track / Bus / Master / Kit の VST3 エフェクト                                                     |
-| `mix`                                                    | `tracks,buses,sidechain,master,automation`                                                                                                                                                                                                                                              | ミキシングとオートメーション                                                                      |
-| `placements[]`                                           | `instrument,at,melody/degree/chord,velocity,duration_steps,duration_quarters,transpose,gain_db,tonic,register,mark,slice_steps,take_notes,voicing,voicing_floor_midi,add_root_degree`                                                                                                   | 明示的発音                                                                                        |
-| `add_placements[]`                                       | `placements[]` と同じ                                                                                                                                                                                                                                                                   | 継承時に配置リストの末尾へ追記                                                                    |
-| `events[] / macros.<name>`                               | `kind/macro,at,instrument,instruments,duration_*,parameter,control,name,number,native_value,from_value,to_value,from,to,down,value,degree,except_instruments,bars,bar,from_step,through_step,velocity_from,velocity_to,early_hits_per_beat,final_hits_per_beat,last_bar_end_beat,riser` | 演奏・制御・演出。`breath,voice_dynamics,voice_style` は未実装拡張                                |
-| `transitions[]`                                          | `from,to,method,description`                                                                                                                                                                                                                                                            | 解説専用                                                                                          |
-| `notes`                                                  | UTF-8 文字列                                                                                                                                                                                                                                                                            | 制作ノート、演奏に影響しない                                                                      |
+| 場所                                                     | 許可された主要キー                                                                                                                                                                                                                                                                               | 解釈                                                                 |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------- |
+| ルート                                                   | `meta,form,time_changes,sections,melodies,scale_definitions,drums,comp,arps,counters,macros,instruments,kits,mix,transitions,notes,lyrics`                                                                                                                                                       | 全て定義済み、追加は禁止。`lyrics` は未実装拡張                      |
+| `meta`                                                   | `title,bpm,meter,tuning,reference_octave,gate,swing,master,fade_out_seconds`                                                                                                                                                                                                                     | `tuning: 12edo` のみ受理                                             |
+| `meta.swing` / `form[].swing` / `instruments.<id>.swing` | `subdivision,ratio`                                                                                                                                                                                                                                                                              | グリッドのスウィング                                                 |
+| `meta.master`                                            | `target_lufs,max_true_peak_db,target_lra_lu`                                                                                                                                                                                                                                                     | 完成目標（`target_lufs`, `max_true_peak_db` 必須）                   |
+| `form[]`                                                 | `section,bars,tonic,scale,bpm,meter,last_bar_quarters,swing`                                                                                                                                                                                                                                     | 曲中の出現と時間正本（`section,bars,tonic` 必須）                    |
+| `time_changes[]`                                         | `at_quarters,bpm,over_quarters`                                                                                                                                                                                                                                                                  | 曲頭からのテンポ変更と漸次変化                                       |
+| `sections.<name>`                                        | `from,chords,chord_changes,lines,drums,comp,pad,arp,counter,placements,add_placements,audio_clips,events,velocity,part_gains,notes`                                                                                                                                                              | 1 セクションの演奏・音声宣言                                         |
+| `sections.<name>.lines.<line>`                           | `instrument,melody,slice_items,loop,register,tonic,transpose,gain_db,lyrics`                                                                                                                                                                                                                     | 旋律パート（`lyrics` は未実装拡張）                                  |
+| `sections.<name>.counter`                                | `instrument,pattern,follows`                                                                                                                                                                                                                                                                     | 対旋律の演奏                                                         |
+| `sections.<name>.part_gains`                             | `instrument_id: number`                                                                                                                                                                                                                                                                          | セクション内の楽器別 Gain（dB）                                      |
+| `sections.<name>.audio_clips[]`                          | `id,instrument,file,at,offset_seconds,duration_seconds,gain_db,pan,fade_in_seconds,fade_out_seconds`                                                                                                                                                                                             | Audio Track 上の WAV クリップ                                        |
+| `melodies`                                               | 要素のリスト、`{items\|from, replace, relative_to, pickup_steps}`、名前空間辞書                                                                                                                                                                                                                  | 相対度数と再利用                                                     |
+| `melodies` の要素                                        | 文字列、`{use,items,shift_steps}`                                                                                                                                                                                                                                                                | パターン文字列と参照挿入                                             |
+| `drums.<name>`                                           | `from,parts,overrides`                                                                                                                                                                                                                                                                           | パートは 1 小節の文字列または N 小節のリスト                         |
+| `drums.overrides[]`                                      | `when,parts`                                                                                                                                                                                                                                                                                     | 小節条件を満たしたパートへ 1 小節を置換                              |
+| `when`                                                   | `odd,even,every,bars` のいずれか 1 つ                                                                                                                                                                                                                                                            | 小節条件                                                             |
+| `arps.<name>`                                            | `order,voicing_floor_midi,retrigger_each_step`                                                                                                                                                                                                                                                   | 和音アルペジオ（`order` セルは非負整数、`.`、`-`）                   |
+| `counters.<name>`                                        | `when,cell`                                                                                                                                                                                                                                                                                      | 無音拍の対旋律（`when: silent_full_beat`）                           |
+| `instruments.<id>`                                       | `preset / definition / external`, `source,kit,audio,effects,gain_db,pan,role,sound,gate,articulations,swing,timing_offset_steps,voicing,voicing_floor_midi,voicing_ceiling_midi,trigger_note_midi,bass_floor_midi,bass_ceiling_midi,audio_input`                                                 | 音源・音声・キット部品・演奏設定                                     |
+| `instruments.<id>.source`                                | `vst3{plugin,identifier,state,patch,params},velocity,articulations,voisona`                                                                                                                                                                                                                      | 本番 VST3 音源（`voisona` は未実装拡張）                             |
+| `instruments.<id>.articulations`                         | `accent{velocity}`, `staccato{gate,velocity}`, `tenuto{gate,velocity}`                                                                                                                                                                                                                           | 奏法記号の効き方                                                     |
+| `kits.<id>`                                              | `source,effects`                                                                                                                                                                                                                                                                                 | ドラム部品を集約する VST3 キット                                     |
+| `effects[]`                                              | `id,vst3,bypassed`                                                                                                                                                                                                                                                                               | Track / Bus / Master / Kit の VST3 エフェクト                        |
+| `mix`                                                    | `tracks,buses,sidechain,master,automation`                                                                                                                                                                                                                                                       | ミキシングとオートメーション                                         |
+| `placements[]`                                           | `instrument,at,melody/degree/chord,velocity,duration_steps,duration_quarters,transpose,gain_db,tonic,register,mark,slice_steps,take_notes,voicing,voicing_floor_midi,add_root_degree`                                                                                                            | 明示的発音                                                           |
+| `add_placements[]`                                       | `placements[]` と同じ                                                                                                                                                                                                                                                                            | 継承時に配置リスト末尾へ追記                                         |
+| `events[] / macros.<name>`                               | `kind/macro,at,instrument,instruments,duration_*,parameter,control,name,number,native_value,from_value,to_value,from,to,down,value,velocity,degree,except_instruments,bars,bar,from_step,through_step,velocity_from,velocity_to,early_hits_per_beat,final_hits_per_beat,last_bar_end_beat,riser` | 演奏・制御・演出（`breath,voice_dynamics,voice_style` は未実装拡張） |
+| `transitions[]`                                          | `from,to,method,description`                                                                                                                                                                                                                                                                     | 解説専用                                                             |
+| `notes`                                                  | UTF-8 文字列                                                                                                                                                                                                                                                                                     | 制作ノート（再生に影響しない）                                       |
 
 上表はフィールドの所在一覧であり、組合せと排他関係は各章の定義に従う。

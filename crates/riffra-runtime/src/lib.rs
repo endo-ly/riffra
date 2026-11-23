@@ -47,11 +47,13 @@ pub use api::output::{
     RuntimeProjectionStatus, ScoreAudioClipInspection, ScoreBusInspection, ScoreChordInspection,
     ScoreDiagnostic, ScoreDiagnosticSeverity, ScoreExport, ScoreExportOmission, ScoreInspection,
     ScoreInstrumentInspection, ScoreInstrumentKind, ScoreLaneInspection, ScoreRebuild,
-    ScoreSectionInspection, ScoreSendInspection, ScoreSidechainInspection, ScoreSummary,
-    ScoreSyncState, ScoreSyncStatus, ScoreValidation, TrackEffectSummary, TrackInstrumentSummary,
+    ScoreSectionInspection, ScoreSendInspection, ScoreSidechainInspection, ScoreSpec,
+    ScoreSpecTopicSummary, ScoreSummary, ScoreSyncState, ScoreSyncStatus, ScoreValidation,
+    TrackEffectSummary, TrackInstrumentSummary,
     TrackInstrumentSummarySource, TrackSummary,
 };
-pub use api::params::AudioDriverConfig;
+pub use api::params::{AudioDriverConfig, ScoreSpecTopic};
+pub use score::spec::get as score_spec;
 pub use audio::{
     AudioDeviceReopenOutcome, AudioSupervisor, NativeAudioError, NativeAudioResult,
     RuntimeRestartHandler,

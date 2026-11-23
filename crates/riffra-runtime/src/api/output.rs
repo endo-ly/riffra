@@ -76,6 +76,7 @@ pub enum ControlOutput {
     ScoreExport(ScoreExport),
     ScoreValidation(ScoreValidation),
     ScoreInspection(ScoreInspection),
+    ScoreSpec(ScoreSpec),
     MidiExport(MidiExport),
     InstrumentLibrary(Vec<InstrumentLibraryItem>),
     InstrumentLibraryItem(InstrumentLibraryItem),

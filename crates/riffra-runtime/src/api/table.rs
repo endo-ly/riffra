@@ -398,6 +398,7 @@ control_commands! {
 
         ScoreValidate = "score.validate" (ScoreDocumentParams) -> ScoreValidation, read, host;
         ScoreInspect = "score.inspect" (ScoreInspectParams) -> ScoreInspection, read, host;
+        ScoreSpec = "score.spec" (ScoreSpecParams) -> ScoreSpec, read, host;
 
         AssetImportMidi = "asset.import-midi" (AssetImportParams) -> AssetId, read, project;
         InstrumentList = "instrument.list" (EmptyParams) -> InstrumentLibrary, read, host;
@@ -576,7 +577,7 @@ mod tests {
         let names = command_names();
 
         // Act / Assert
-        assert_eq!(names.len(), 241);
+        assert_eq!(names.len(), 242);
         let unique: std::collections::HashSet<_> = names.iter().copied().collect();
         assert_eq!(unique.len(), names.len());
         for name in names {
@@ -814,7 +815,7 @@ mod tests {
             .filter_map(|line| line.split_once('\'').map(|(name, _)| name))
             .collect();
         let unique: std::collections::HashSet<_> = names.iter().copied().collect();
-        assert_eq!(names.len(), 241);
+        assert_eq!(names.len(), 242);
         assert_eq!(unique.len(), names.len());
 
         for (name, params) in [
@@ -847,6 +848,7 @@ mod tests {
             ("instrument.list", CommandScope::Host),
             ("score.validate", CommandScope::Host),
             ("score.inspect", CommandScope::Host),
+            ("score.spec", CommandScope::Host),
             ("audio.emergency-mute", CommandScope::Host),
             ("instrument.preview", CommandScope::Host),
             ("rig.list", CommandScope::Host),

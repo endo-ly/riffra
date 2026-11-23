@@ -156,6 +156,18 @@ fn run(cli: Cli) -> Result<(), RunFailure> {
         }
         return list_hosts().map_err(RunFailure::Local);
     }
+    if let Some(CliCommand::Score {
+        command: args::ScoreCommand::Spec(args),
+    }) = cli.command.as_ref()
+    {
+        if !attach && data_root.is_none() && !interactive && host_id.is_none() {
+            let spec = riffra_runtime::score_spec(args.topic.map(Into::into));
+            serde_json::to_writer_pretty(io::stdout().lock(), &spec)
+                .map_err(|error| format!("Score spec could not be encoded: {error}"))?;
+            println!();
+            return Ok(());
+        }
+    }
     if let Some(CliCommand::Serve(args)) = cli.command.as_ref() {
         if attach {
             return Err("serve cannot be combined with --attach".into());

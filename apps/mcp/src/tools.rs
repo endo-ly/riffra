@@ -132,8 +132,9 @@ pub(crate) const TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "score",
-        description: "Read a Score YAML file before importing it. validate diagnoses syntax, library references, VST3 sources, state, kits, audio, mix routing, and automation; inspect returns the expanded sections, instruments, lanes, tracks, kits, effects, buses, sends, sidechains, automation, audio clips, and events. Neither command changes a Project or creates persistent assets.",
+        description: "Read or write Score YAML. spec returns the Score YAML language specification by topic (omit topic for a minimal template and topic index). validate diagnoses syntax, library references, VST3 sources, state, kits, audio, mix routing, and automation; inspect returns the expanded sections, instruments, lanes, tracks, kits, effects, buses, sends, sidechains, automation, audio clips, and events. None of these actions change a Project or create persistent assets.",
         actions: &[
+            action("spec", "score.spec"),
             action("validate", "score.validate"),
             action("inspect", "score.inspect"),
         ],
@@ -1167,11 +1168,11 @@ mod tests {
         // Assert
         assert_eq!(names, expected);
         let actions: Vec<_> = TOOLS.iter().flat_map(|tool| tool.actions.iter()).collect();
-        assert_eq!(actions.len(), 226);
+        assert_eq!(actions.len(), 227);
         let commands: std::collections::HashSet<_> =
             actions.iter().map(|action| action.command).collect();
-        assert_eq!(commands.len(), 225);
-        assert_eq!(command_names().len(), 241);
+        assert_eq!(commands.len(), 226);
+        assert_eq!(command_names().len(), 242);
         let public_commands: std::collections::HashSet<_> =
             command_names().iter().copied().collect();
         let mut unused = public_commands

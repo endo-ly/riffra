@@ -73,6 +73,43 @@ pub struct ScoreInspectParams {
     pub events: bool,
 }
 
+/// Topic of the Score YAML language specification to return.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize, TS, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum ScoreSpecTopic {
+    /// Minimal working template and topic index.
+    Overview,
+    /// Top-level structure, meta, form, and scale_definitions.
+    Structure,
+    /// Degrees, octaves, relative_to, register, c-tokens, and tonic override.
+    Pitch,
+    /// Common time axis, pattern grammar, melodies, drums, articulations, swing, and timing_offset_steps.
+    Pattern,
+    /// Chord notation, modifiers, anticipation (<), voicing, comp, arps, and counters.
+    Chords,
+    /// Melodies inheritance (from/replace/use/pickup_steps), sections.from, and drums.overrides.
+    Materials,
+    /// Section lines, placements, audio_clips, time_changes, and partial bars.
+    Sections,
+    /// Instruments (built-in, VST3 source, kit, audio, effects), lanes, and kits.
+    Instruments,
+    /// Events, macros, priority rules, and VST3 articulation/CC control.
+    Events,
+    /// Mix routing (tracks, buses, sends, sidechain, master) and mix.automation.
+    Mix,
+    /// Syntax rules, identifier rules, diagnostics, unimplemented extensions, and field contracts.
+    Diagnostics,
+}
+
+/// Returns the Score YAML language specification by topic.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, TS, schemars::JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[ts(optional_fields = nullable)]
+pub struct ScoreSpecParams {
+    /// Topic to read; omit (or pass `overview`) for a minimal template and topic index.
+    pub topic: Option<ScoreSpecTopic>,
+}
+
 /// Synchronizes the active Project with its linked Score YAML file.
 #[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
