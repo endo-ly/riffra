@@ -1,12 +1,13 @@
 import type { EffectDevice } from '@/model/generated';
 import { Icon } from '@/shared/ui/Icon';
+import controls from '@/shared/ui/controls.module.css';
 import styles from './RigEffectRow.module.css';
 
 interface RigEffectRowProps {
   effect: EffectDevice;
-  /** Whether moving the effect towards the start of the chain is possible. */
+  /** Whether the effect is the first of the chain and cannot move up. */
   first: boolean;
-  /** Whether moving the effect towards the end of the chain is possible. */
+  /** Whether the effect is the last of the chain and cannot move down. */
   last: boolean;
   onBypass: () => void;
   onOpenEditor: () => void;
@@ -15,16 +16,48 @@ interface RigEffectRowProps {
   onRemove: () => void;
 }
 
-/** One effect of the playing rig: name, bypass, editor, order and removal. */
+/** One effect of a rig: name, bypass and editor, with order and removal on hover. */
 export function RigEffectRow(props: RigEffectRowProps) {
   const { effect } = props;
   return (
     <div className={styles.effect} data-bypassed={effect.bypassed}>
-      <span className={styles.effectName} title={effect.name}>
+      <span className={styles.name} title={effect.name}>
         {effect.name}
+      </span>
+      <span className={styles.tools}>
+        <button
+          type="button"
+          className={controls.iconButton}
+          aria-label={`Move ${effect.name} up`}
+          title="Move up"
+          disabled={props.first}
+          onClick={() => props.onMove(-1)}
+        >
+          <Icon name="chevron" className={styles.up} />
+        </button>
+        <button
+          type="button"
+          className={controls.iconButton}
+          aria-label={`Move ${effect.name} down`}
+          title="Move down"
+          disabled={props.last}
+          onClick={() => props.onMove(1)}
+        >
+          <Icon name="chevron" className={styles.down} />
+        </button>
+        <button
+          type="button"
+          className={`${controls.iconButton} ${controls.danger}`}
+          aria-label={`Remove ${effect.name}`}
+          title="Remove"
+          onClick={props.onRemove}
+        >
+          <Icon name="trash" />
+        </button>
       </span>
       <button
         type="button"
+        className={controls.bypassButton}
         aria-pressed={effect.bypassed}
         aria-label={`Bypass ${effect.name}`}
         onClick={props.onBypass}
@@ -33,30 +66,13 @@ export function RigEffectRow(props: RigEffectRowProps) {
       </button>
       <button
         type="button"
+        className={controls.iconButton}
         aria-label={`Open ${effect.name} editor`}
+        title="Open plug-in editor"
         disabled={effect.bypassed || effect.plugin.disabledPlaceholder}
         onClick={props.onOpenEditor}
       >
-        <Icon name="expand" />
-      </button>
-      <button
-        type="button"
-        aria-label={`Move ${effect.name} left`}
-        disabled={props.first}
-        onClick={() => props.onMove(-1)}
-      >
-        <Icon name="chevron" className={styles.left} />
-      </button>
-      <button
-        type="button"
-        aria-label={`Move ${effect.name} right`}
-        disabled={props.last}
-        onClick={() => props.onMove(1)}
-      >
-        <Icon name="chevron" />
-      </button>
-      <button type="button" aria-label={`Remove ${effect.name}`} onClick={props.onRemove}>
-        <Icon name="trash" />
+        <Icon name="maximize" />
       </button>
     </div>
   );

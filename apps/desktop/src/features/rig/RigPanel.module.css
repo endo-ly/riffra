@@ -1,3 +1,7 @@
+/*
+ * A settings surface like a dialog: the panel color keeps the shared controls'
+ * wells and hovers distinct, and the border and shadow lift it above the page.
+ */
 .panel {
   position: absolute;
   top: calc(100% + var(--space-1-5));
@@ -7,196 +11,58 @@
   max-height: min(560px, calc(100vh - var(--size-global-control-bar) - var(--space-4)));
   display: flex;
   flex-direction: column;
-  overflow: hidden;
-  background: var(--color-bg-surface-raised);
+  background: var(--color-bg-panel);
   border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-popover);
 }
 
-.list {
-  min-height: 0;
-  overflow-y: auto;
+.header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2-5);
+  padding: var(--space-3) var(--space-2) var(--space-2) var(--space-3);
+}
+
+/* Quiet like the other controls; only the icon takes the accent while the rig plays. */
+.play {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  color: var(--color-text-primary);
+  background: var(--color-bg-surface);
+  border-radius: 50%;
+}
+
+.play:hover {
+  color: var(--color-text-strong);
+  background: var(--color-bg-surface-raised);
+}
+
+.play[aria-pressed='true'] {
+  color: var(--color-accent);
+  background: var(--color-control-active);
+}
+
+.play[aria-pressed='true']:hover {
+  background: var(--color-control-active-hover);
+}
+
+.play svg {
+  width: var(--size-icon-sm);
+  height: var(--size-icon-sm);
 }
 
 .empty {
-  margin: 0;
-  padding: var(--space-3);
-  color: var(--color-text-muted);
-  font-size: var(--font-size-small);
-}
-
-.item {
-  border-bottom: 1px solid var(--color-border-subtle);
-}
-
-.item[data-active='true'] {
-  background: color-mix(in srgb, var(--color-accent) 5%, transparent);
-}
-
-.itemRow {
-  min-height: var(--size-control-normal);
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-1) var(--space-2);
-}
-
-.itemName {
-  min-width: 0;
-  flex: 1 1 auto;
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-2);
-  padding: 0;
-  text-align: left;
-  background: transparent;
-}
-
-.itemName:hover strong {
-  color: var(--color-accent);
-}
-
-.playingDot {
-  width: var(--size-status-dot);
-  height: var(--size-status-dot);
-  flex: 0 0 auto;
-  border-radius: 50%;
-  background: var(--color-status-success);
-}
-
-.playIcon {
-  width: var(--size-icon-sm);
-  height: var(--size-icon-sm);
-  flex: 0 0 auto;
-  color: var(--color-text-muted);
-}
-
-.detail {
   display: grid;
-  gap: var(--space-2);
-  padding: 0 var(--space-2) var(--space-2);
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-3);
 }
 
-.field {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  color: var(--color-text-muted);
-  font-size: var(--font-size-small);
-}
-
-.field > span:first-child {
-  width: 52px;
-  flex: 0 0 auto;
-}
-
-.field input,
-.field select {
-  min-width: 0;
-  height: var(--size-control-dense);
-  flex: 1 1 auto;
-  padding: 0 var(--space-1-5);
-  color: var(--color-text-primary);
-  font-size: var(--font-size-small);
-  background: var(--color-bg-surface);
-  border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-sm);
-}
-
-.field input[type='number'] {
-  font-family: var(--font-family-mono);
-  text-align: right;
-}
-
-.warning {
-  margin: 0;
-  padding: var(--space-1-5) var(--space-2);
-  color: var(--color-status-warning);
-  font-size: var(--font-size-small);
-  background: color-mix(in srgb, var(--color-status-warning) 9%, transparent);
-  border-radius: var(--radius-sm);
-}
-
-.effects {
-  display: grid;
-  gap: var(--space-1);
-}
-
-.addEffect {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  padding: var(--space-1-5) var(--space-2);
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-small);
-  text-align: left;
-  background: transparent;
-  border: 1px dashed var(--color-border-default);
-  border-radius: var(--radius-sm);
-}
-
-.addEffect:hover {
-  color: var(--color-text-primary);
-  background: var(--color-bg-hover);
-}
-
-.actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--space-2);
-}
-
-.actions button {
-  height: var(--size-control-dense);
-  padding: 0 var(--space-2);
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-small);
-  background: var(--color-bg-surface);
-  border-radius: var(--radius-sm);
-}
-
-.actions button:hover {
-  color: var(--color-text-primary);
-  background: var(--color-bg-hover);
-}
-
-.actions .danger {
-  color: var(--color-status-danger);
-}
-
-.newRig {
-  flex: 0 0 auto;
-  display: flex;
-  gap: var(--space-2);
-  padding: var(--space-2);
-  border-top: 1px solid var(--color-border-subtle);
-}
-
-.newRig input {
-  min-width: 0;
-  height: var(--size-control-normal);
-  flex: 1 1 auto;
-  padding: 0 var(--space-2);
-  color: var(--color-text-primary);
-  font-size: var(--font-size-small);
-  background: var(--color-bg-surface);
-  border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-sm);
-}
-
-.newRig button {
-  height: var(--size-control-normal);
-  padding: 0 var(--space-2);
-  color: var(--color-text-on-accent);
-  font-size: var(--font-size-small);
-  background: var(--color-accent);
-  border-radius: var(--radius-sm);
-}
-
-.error {
-  margin: 0;
-  padding: var(--space-1-5) var(--space-2);
-  color: var(--color-status-danger);
-  font-size: var(--font-size-small);
+.empty > button {
+  justify-self: center;
 }

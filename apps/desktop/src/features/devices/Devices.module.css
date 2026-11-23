@@ -209,15 +209,6 @@
 }
 
 /* Bypass lights in the warning color while the device is out of the signal. */
-.bypass {
-  composes: smallButton from '@/shared/ui/controls.module.css';
-}
-
-.bypass[aria-pressed='true'] {
-  color: var(--color-status-warning);
-  background-color: color-mix(in srgb, var(--color-status-warning) 14%, transparent);
-}
-
 .recovery {
   display: flex;
   flex-wrap: wrap;

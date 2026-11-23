@@ -105,7 +105,11 @@ export function createSessionStore(api: NativeApi): SessionStore {
           (operation, options) => get().commit(operation, options),
           () => get().catalog.scanPlugins(),
         ),
-        rig: createRigSlice(api, (patch) => set((state) => ({ rig: { ...state.rig, ...patch } }))),
+        rig: createRigSlice(
+          api,
+          () => get().rig,
+          (patch) => set((state) => ({ rig: { ...state.rig, ...patch } })),
+        ),
         catalog: createCatalogSlice(
           api,
           () => get().catalog,

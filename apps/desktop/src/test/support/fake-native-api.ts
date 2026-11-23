@@ -176,7 +176,7 @@ class FakeNativeControls {
     this.recordings = options.recordings ?? [];
     this.plugins = options.plugins ?? [];
     this.missing = options.missingDependencies ?? [];
-    this.rigState = options.rigState ?? { rigs: [], activeRigId: null };
+    this.rigState = options.rigState ?? { rigs: [], activeRigId: null, lastPlayedRigId: null };
     this.bootstrapState = mergeBootstrap(options.bootstrapState);
     this.canonicalSequence = this.bootstrapState.canonical.sequence;
     this.instruments = options.instruments ?? defaultInstrumentLibraryItems();
@@ -368,9 +368,8 @@ class FakeNativeControls {
     this.emit('onTransportStatus', next);
   }
 
-  emitRigState(state: RigState = this.rigState): void {
-    this.rigState = state;
-    this.emit('onRigStateChanged', state);
+  private emitRigState(): void {
+    this.emit('onRigStateChanged', this.rigState);
   }
 
   emitAudioStatus(status: AudioStatus): void {
@@ -691,6 +690,8 @@ class FakeNativeControls {
         this.rigState = {
           rigs: this.rigState.rigs.filter((rig) => rig.id !== rigId),
           activeRigId: this.rigState.activeRigId === rigId ? null : this.rigState.activeRigId,
+          lastPlayedRigId:
+            this.rigState.lastPlayedRigId === rigId ? null : this.rigState.lastPlayedRigId,
         };
         this.emitRigState();
         return Promise.resolve(this.rigState);
@@ -777,7 +778,7 @@ class FakeNativeControls {
         const [rigId] = arguments_ as [string];
         if (!this.rigState.rigs.some((rig) => rig.id === rigId))
           return Promise.reject(new Error('rig was not found'));
-        this.rigState = { ...this.rigState, activeRigId: rigId };
+        this.rigState = { ...this.rigState, activeRigId: rigId, lastPlayedRigId: rigId };
         this.emitRigState();
         return Promise.resolve(this.rigState);
       }

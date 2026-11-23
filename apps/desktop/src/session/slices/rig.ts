@@ -1,87 +1,97 @@
 import type { RigState } from '@/model/generated';
 import type { NativeApi } from '@/native/native-api';
-import { errorText } from '@/shared/errors';
+import { notify } from '@/shared/notify';
 
 export interface RigSlice {
   state: RigState;
-  error: string | null;
   load(): Promise<void>;
   accept(state: RigState): void;
-  create(name: string, channelIndex: number): Promise<boolean>;
+  /** Creates a rig and resolves to its id, or `null` when the Host refused it. */
+  create(name: string, channelIndex: number): Promise<string | null>;
+  /** Resolves to whether the Host saved the patch. */
   update(
     rigId: string,
     patch: { name?: string; channelIndex?: number; gainDb?: number },
   ): Promise<boolean>;
-  duplicate(rigId: string): Promise<boolean>;
-  remove(rigId: string): Promise<boolean>;
-  addEffect(rigId: string, pluginPath: string): Promise<boolean>;
-  removeEffect(rigId: string, deviceId: string): Promise<boolean>;
-  moveEffect(rigId: string, orderedDeviceIds: string[]): Promise<boolean>;
-  setEffectBypassed(rigId: string, deviceId: string, bypassed: boolean): Promise<boolean>;
-  start(rigId: string): Promise<boolean>;
-  stop(): Promise<boolean>;
+  /** Duplicates a rig and resolves to the copy's id, or `null` when the Host refused it. */
+  duplicate(rigId: string): Promise<string | null>;
+  remove(rigId: string): Promise<void>;
+  addEffect(rigId: string, pluginPath: string): Promise<void>;
+  removeEffect(rigId: string, deviceId: string): Promise<void>;
+  moveEffect(rigId: string, orderedDeviceIds: string[]): Promise<void>;
+  setEffectBypassed(rigId: string, deviceId: string, bypassed: boolean): Promise<void>;
+  start(rigId: string): Promise<void>;
+  stop(): Promise<void>;
   openEditor(rigId: string, deviceId: string): Promise<void>;
   reset(): void;
 }
 
-const EMPTY: RigState = { rigs: [], activeRigId: null };
+const EMPTY: RigState = { rigs: [], activeRigId: null, lastPlayedRigId: null };
 
 export function createRigSlice(
   api: NativeApi,
+  get: () => RigSlice,
   update: (patch: Partial<RigSlice>) => void,
 ): RigSlice {
   let generation = 0;
-  // Rig state arrives with the initial load and with `rig-state-changed`.
-  // A command result is only its success, so an in-flight command can never
-  // overwrite a newer state event.
-  const run = async (operation: () => Promise<RigState>): Promise<boolean> => {
-    const current = generation;
-    update({ error: null });
+  // Rig state arrives with the initial load and with `rig-state-changed`, so a
+  // command result only reports success and never overwrites a newer event.
+  const run = async <T>(failure: string, operation: () => Promise<T>): Promise<T | null> => {
     try {
-      await operation();
-      return true;
-    } catch (error) {
-      if (current === generation) update({ error: errorText(error) });
-      return false;
+      return await operation();
+    } catch (cause) {
+      notify.error(failure, { cause });
+      return null;
     }
+  };
+  // The rig the result lists that the state before the command did not.
+  const added = async (failure: string, operation: () => Promise<RigState>) => {
+    const before = new Set(get().state.rigs.map((rig) => rig.id));
+    const state = await run(failure, operation);
+    return state?.rigs.find((rig) => !before.has(rig.id))?.id ?? null;
   };
   return {
     state: EMPTY,
-    error: null,
     async load() {
       const current = generation;
-      update({ error: null });
-      try {
-        const state = await api.getRigState();
-        if (current === generation) update({ state });
-      } catch (error) {
-        if (current === generation) update({ error: errorText(error) });
-      }
+      const state = await run('Rigs could not be loaded', () => api.getRigState());
+      if (state && current === generation) update({ state });
     },
     accept: (state) => update({ state }),
-    create: (name, channelIndex) => run(() => api.createRig(name, channelIndex)),
-    update: (rigId, patch) => run(() => api.updateRig(rigId, patch)),
-    duplicate: (rigId) => run(() => api.duplicateRig(rigId)),
-    remove: (rigId) => run(() => api.deleteRig(rigId)),
-    addEffect: (rigId, pluginPath) => run(() => api.addRigEffect(rigId, pluginPath)),
-    removeEffect: (rigId, deviceId) => run(() => api.removeRigEffect(rigId, deviceId)),
-    moveEffect: (rigId, orderedDeviceIds) => run(() => api.moveRigEffect(rigId, orderedDeviceIds)),
-    setEffectBypassed: (rigId, deviceId, bypassed) =>
-      run(() => api.setRigEffectBypassed(rigId, deviceId, bypassed)),
-    start: (rigId) => run(() => api.startRig(rigId)),
-    stop: () => run(() => api.stopRig()),
+    create: (name, channelIndex) =>
+      added('Rig creation failed', () => api.createRig(name, channelIndex)),
+    update: async (rigId, patch) =>
+      (await run('Rig could not be saved', () => api.updateRig(rigId, patch))) !== null,
+    duplicate: (rigId) => added('Rig duplication failed', () => api.duplicateRig(rigId)),
+    async remove(rigId) {
+      await run('Rig deletion failed', () => api.deleteRig(rigId));
+    },
+    async addEffect(rigId, pluginPath) {
+      await run('Effect could not be added', () => api.addRigEffect(rigId, pluginPath));
+    },
+    async removeEffect(rigId, deviceId) {
+      await run('Effect could not be removed', () => api.removeRigEffect(rigId, deviceId));
+    },
+    async moveEffect(rigId, orderedDeviceIds) {
+      await run('Effects could not be reordered', () => api.moveRigEffect(rigId, orderedDeviceIds));
+    },
+    async setEffectBypassed(rigId, deviceId, bypassed) {
+      await run('Bypass could not be changed', () =>
+        api.setRigEffectBypassed(rigId, deviceId, bypassed),
+      );
+    },
+    async start(rigId) {
+      await run('Rig could not start', () => api.startRig(rigId));
+    },
+    async stop() {
+      await run('Rig could not stop', () => api.stopRig());
+    },
     async openEditor(rigId, deviceId) {
-      const current = generation;
-      update({ error: null });
-      try {
-        await api.openRigEditor(rigId, deviceId);
-      } catch (error) {
-        if (current === generation) update({ error: errorText(error) });
-      }
+      await run('Plug-in editor could not open', () => api.openRigEditor(rigId, deviceId));
     },
     reset() {
       generation += 1;
-      update({ state: EMPTY, error: null });
+      update({ state: EMPTY });
     },
   };
 }

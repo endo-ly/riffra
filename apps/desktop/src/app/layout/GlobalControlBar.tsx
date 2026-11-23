@@ -84,7 +84,10 @@ export function GlobalControlBar(ui: GlobalControlBarProps) {
           </div>
         </fieldset>
         <span className={styles.divider} aria-hidden="true" />
-        <fieldset className={styles.rigControls} disabled={!props.hostConnected}>
+        <fieldset
+          className={clsx(styles.rigControls, styles.hostBoundControls)}
+          disabled={!props.hostConnected}
+        >
           <RigControl />
         </fieldset>
       </div>

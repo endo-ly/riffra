@@ -58,7 +58,7 @@ const reads: BrowserPreviewReads = {
   listRecordings: async () => [],
   searchLibrary: async () => [],
   getMissingDependencies: async () => [],
-  getRigState: async () => ({ rigs: [], activeRigId: null }),
+  getRigState: async () => ({ rigs: [], activeRigId: null, lastPlayedRigId: null }),
   onAudioStatus: noop,
   onAudioMeters: noop,
   onCanonicalStateChanged: noop,
