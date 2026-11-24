@@ -448,6 +448,8 @@ mod tests {
         work_state.arrangement.tracks[0].muted = true;
         work_state.arrangement.loop_range.enabled = true;
         work_state.arrangement.loop_range.end_tick = TimelineTick(960);
+        work_state.settings.mixdown.render_mode = crate::RenderMode::Realtime;
+        work_state.settings.mixdown.plugin_warm_up_seconds = 30.0;
         core.commit_candidate(&storage, work_state)
             .expect("work state is editable");
 

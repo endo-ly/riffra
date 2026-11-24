@@ -151,7 +151,9 @@ impl CreativeSession {
     /// Compares the state a linked Score owns, ignoring its stored body.
     ///
     /// Work state such as loop, punch, markers, mute, solo, arm, monitoring,
-    /// input routes, colors, and recording metadata is not compared.
+    /// input routes, colors, and recording metadata is not compared. Render
+    /// execution conditions (tail, plugin warm-up, render mode, sample rate,
+    /// block size) are not compared either.
     pub fn score_performance_equals(&self, other: &Self) -> bool {
         self.score_owned_equals(other, false)
     }
@@ -162,7 +164,10 @@ impl CreativeSession {
             && self.arrangement.timebase == other.arrangement.timebase
             && self.arrangement.mixer == other.arrangement.mixer
             && self.settings.master_db == other.settings.master_db
-            && self.settings.mixdown == other.settings.mixdown
+            && self
+                .settings
+                .mixdown
+                .score_owned_equals(&other.settings.mixdown)
             && self.arrangement.audio_clips == other.arrangement.audio_clips
             && self.arrangement.regions == other.arrangement.regions
             && self.arrangement.harmony_events == other.arrangement.harmony_events
@@ -271,6 +276,26 @@ pub struct LoudnessMastering {
 }
 
 impl MixdownSettings {
+    /// Compares the part of these settings a linked Score owns.
+    ///
+    /// Tail, plugin warm-up, render mode, sample rate, and block size are
+    /// execution conditions the Score cannot express, so they remain editable.
+    fn score_owned_equals(&self, other: &Self) -> bool {
+        let Self {
+            musical_end_tick,
+            fade_out_seconds,
+            mastering,
+            tail_seconds: _,
+            plugin_warm_up_seconds: _,
+            render_mode: _,
+            sample_rate: _,
+            block_size: _,
+        } = self;
+        musical_end_tick == &other.musical_end_tick
+            && fade_out_seconds == &other.fade_out_seconds
+            && mastering == &other.mastering
+    }
+
     pub(crate) fn validate(&self) -> Result<(), String> {
         if !self.tail_seconds.is_finite()
             || self.tail_seconds < 0.0
@@ -453,7 +478,17 @@ mod tests {
         work.arrangement.tracks[0].color = Some("#123456".into());
         work.arrangement.loop_range.enabled = true;
         work.arrangement.midi_clips[0].muted = true;
+        work.settings.mixdown.tail_seconds = 2.0;
+        work.settings.mixdown.plugin_warm_up_seconds = 30.0;
+        work.settings.mixdown.render_mode = RenderMode::Realtime;
+        work.settings.mixdown.sample_rate = Some(48_000);
+        work.settings.mixdown.block_size = Some(512);
         assert!(session.score_owned_state_equals(&work));
+
+        // Score-owned mixdown fields remain protected.
+        let mut faded = work.clone();
+        faded.settings.mixdown.fade_out_seconds = 1.0;
+        assert!(!session.score_owned_state_equals(&faded));
 
         // Ordinary tracks are part of the state the Score owns.
         let mut added = work.clone();
