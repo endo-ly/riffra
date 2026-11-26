@@ -615,7 +615,7 @@ pub(crate) const TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "render_settings",
-        description: "Read or replace the active Project's render settings. set takes the complete MixdownSettings object from get. renderMode is offline (default, as fast as possible) or realtime (1.0x pacing for asynchronous synthesizers such as Synthesizer V, which also need pluginWarmUpSeconds of 10 to 30 seconds).",
+        description: "Read or update the active Project's render settings. set takes any fields of the MixdownSettings object from get and keeps the omitted ones. renderMode is offline (default, as fast as possible) or realtime (1.0x pacing for asynchronous synthesizers such as Synthesizer V, which also need pluginWarmUpSeconds of 10 to 30 seconds).",
         actions: &[
             action("get", "render.settings.get"),
             action("set", "render.settings.set"),

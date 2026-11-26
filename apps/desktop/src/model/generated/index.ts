@@ -220,6 +220,7 @@ export type { MixBusKind } from './MixBusKind';
 export type { MixBusPatch } from './MixBusPatch';
 export type { MixBusUpdateParams } from './MixBusUpdateParams';
 export type { MixdownSettings } from './MixdownSettings';
+export type { MixdownSettingsPatch } from './MixdownSettingsPatch';
 export type { Mixer } from './Mixer';
 export type { MonitoringState } from './MonitoringState';
 export type { MusicalDuration } from './MusicalDuration';

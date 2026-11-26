@@ -328,7 +328,7 @@ control_commands! {
         TimebaseUpdate = "music.timebase.update" (TimebaseUpdateParams) -> ArrangementMutation, mutation(batch), project;
         TimebaseGetMap = "music.timebase.get-map" (EmptyParams) -> Timebase, read, project;
         MixdownGet = "render.settings.get" (EmptyParams) -> Mixdown, read, project;
-        MixdownSet = "render.settings.set" (riffra_core::MixdownSettings) -> ArrangementMutation, mutation(batch), project;
+        MixdownSet = "render.settings.set" (riffra_core::application::MixdownSettingsPatch) -> ArrangementMutation, mutation(batch), project;
         TrackExternalAudioInputSet = "track.external-audio-input.set" (TrackExternalAudioInputSetParams) -> ArrangementMutation, mutation(batch), project;
         TrackExternalAudioInputClear = "track.external-audio-input.clear" (TrackIdParams) -> ArrangementMutation, mutation(batch), project;
         InstrumentEventList = "clip.midi.instrument-event.list" (InstrumentEventClipParams) -> InstrumentEvents, read, project;

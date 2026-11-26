@@ -418,7 +418,7 @@ riffra --attach job wait --id job:analysis-measure:0
 
 待機には開始応答のJob IDを使い、結果の `sources` のパス・Track情報を比較対象と照合する。区間True Peakの位置はWAV先頭からの秒数である。帯域値・測定状態の読み方はRenderと共通である。
 
-Mixdown設定は `render settings get` / `render settings set --settings-json` で参照・置換する。Masteringは目標ラウドネスへMix全体を一定のゲインで合わせ、True Peak上限を超えるときは上限に合わせてゲインを下げる。
+Mixdown設定は `render settings get` / `render settings set --settings-json` で参照・更新する。`set` は渡した項目だけを変え、`null` は `mastering`・`sampleRate`・`blockSize` を外す。Scoreに紐づくProjectでは `musicalEndTick`・`fadeOutSeconds`・`mastering` をScoreが持つため、食い違う値はその項目名を示すエラーになる。Masteringは目標ラウドネスへMix全体を一定のゲインで合わせ、True Peak上限を超えるときは上限に合わせてゲインを下げる。
 
 `mastering.deviation.integratedLufs` は最終ラウドネス − 目標で、負のときは目標に届いていない。`mastering.truePeakCorrectionDb` はTrue Peak上限のために下げたゲインで、0より大きいときは上限で止まったことを示す。
 
