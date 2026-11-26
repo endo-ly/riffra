@@ -336,6 +336,7 @@ export type { RenderHistoryEntry } from './RenderHistoryEntry';
 export type { RenderKind } from './RenderKind';
 export type { RenderMode } from './RenderMode';
 export type { RenderOptions } from './RenderOptions';
+export type { RenderPacing } from './RenderPacing';
 export type { RenderRange } from './RenderRange';
 export type { RenderResult } from './RenderResult';
 export type { RenderStartParams } from './RenderStartParams';

@@ -601,7 +601,7 @@ pub(crate) const TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "render",
-        description: "Start a Render or stem job, export or list completed renders, or delete one managed Render. Renders default to renderMode offline, which processes as fast as possible. Tracks hosting asynchronous synthesizers such as Synthesizer V need renderMode realtime (1.0x pacing) together with pluginWarmUpSeconds of 10 to 30 seconds, and rendering only the vocal Track (trackId) in realtime is the recommended workflow.",
+        description: "Start a Render or stem job, export or list completed renders, or delete one managed Render. Renders default to renderMode offline, which processes as fast as possible. Tracks hosting asynchronous synthesizers such as Synthesizer V need renderMode realtime (1.0x pacing) together with pluginWarmUpSeconds of 10 to 30 seconds, and rendering only the vocal Track (trackId) in realtime is the recommended workflow. options.renderMode overrides the Project's renderMode for one job, while pluginWarmUpSeconds always comes from the Project's render settings; each result's pacing reports the renderMode and pluginWarmUpSeconds it ran with.",
         actions: &[
             action("start", "render.start"),
             action("stems", "render.stems"),

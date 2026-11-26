@@ -2845,7 +2845,7 @@ pub struct RenderStartArgs {
     /// Apply peak normalization to the rendered audio; defaults to false when omitted.
     #[arg(long)]
     pub normalize: Option<bool>,
-    /// Render pacing for this Job only: `offline` (default) renders as fast as possible, `realtime` renders at 1.0x speed for asynchronous synthesizers such as Synthesizer V; overrides the Project setting.
+    /// Render pacing for this Job only: `offline` (default) renders as fast as possible, `realtime` renders at 1.0x speed for asynchronous synthesizers such as Synthesizer V; overrides the Project setting. pluginWarmUpSeconds stays the Project setting; the result's `pacing` reports both values used.
     #[arg(long, value_parser = ["offline", "realtime"])]
     pub render_mode: Option<String>,
     /// Render only this Track as a stem instead of the full mix.

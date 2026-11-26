@@ -1,6 +1,6 @@
 use crate::api::output::{
-    ProjectionDiagnostics, RenderCapture, RenderCaptureResult, RenderResult, RenderStem,
-    RenderStemsResult,
+    ProjectionDiagnostics, RenderCapture, RenderCaptureResult, RenderPacing, RenderResult,
+    RenderStem, RenderStemsResult,
 };
 use crate::api::params::{CaptureTarget, RenderOptions, RenderRange};
 use crate::asset;
@@ -90,7 +90,7 @@ struct RenderPlan {
     start_tick: u64,
     end_tick: u64,
     sample_rate: u32,
-    render_mode: riffra_core::RenderMode,
+    pacing: RenderPacing,
     clip_count: usize,
     source_ids: Vec<AssetId>,
     output_path: PathBuf,
@@ -231,6 +231,15 @@ impl Drop for PendingRenderOutput {
     }
 }
 
+/// Names the pacing a finished render job ran with, e.g. `Realtime stem render completed.`.
+pub(crate) fn completion_message(subject: &str, pacing: RenderPacing) -> String {
+    let mode = match pacing.render_mode {
+        riffra_core::RenderMode::Offline => "Offline",
+        riffra_core::RenderMode::Realtime => "Realtime",
+    };
+    format!("{mode} {subject} completed.")
+}
+
 pub(crate) fn render_timeline_with_project_cancellation(
     renderer: &RenderWorker,
     context: TimelineRenderContext<'_>,
@@ -294,7 +303,7 @@ fn render_timeline_pending(
         sample_rate: plan.sample_rate,
         block_size: plan.block_size,
         normalize: options.normalize && session.settings.mixdown.mastering.is_none(),
-        render_mode: plan.render_mode,
+        render_mode: plan.pacing.render_mode,
     })?;
     if cancelled.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire)) {
         return Err("Timeline render was cancelled.".into());
@@ -408,6 +417,7 @@ fn render_timeline_pending(
         track_id: options.track_id,
         section_name,
         section_occurrence,
+        pacing: plan.pacing,
         state: "completed".into(),
         message: "Timeline rendered through the same Arrangement Graph used for playback.".into(),
     };
@@ -787,7 +797,7 @@ fn render_capture_pending(
         sample_rate: plan.sample_rate,
         block_size: plan.block_size,
         normalize: false,
-        render_mode: plan.render_mode,
+        render_mode: plan.pacing.render_mode,
     })?;
     let mut captures = Vec::with_capacity(outputs.len());
     let mut frames = None;
@@ -877,6 +887,7 @@ fn render_capture_pending(
         frames: frames.ok_or("capture produced no output")?,
         captures,
         exported_directory: None,
+        pacing: plan.pacing,
     };
     if let Some(external) = external {
         let copies = result
@@ -1030,7 +1041,7 @@ fn render_stems_pending(
         sample_rate: plan.sample_rate,
         block_size: plan.block_size,
         normalize: false,
-        render_mode: plan.render_mode,
+        render_mode: plan.pacing.render_mode,
     })
     .map_err(|e| format!("stem rendering failed: {e}"))?;
     for (index, track) in selected_tracks.into_iter().enumerate() {
@@ -1193,6 +1204,7 @@ fn render_stems_pending(
         skipped_track_ids: selection.skipped_track_ids,
         section_name,
         section_occurrence,
+        pacing: plan.pacing,
     };
     if cancelled.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire)) {
         return Err("Timeline render was cancelled.".into());
@@ -1396,9 +1408,12 @@ fn build_render_plan_with_required(
         start_tick: conditions.start_tick,
         end_tick: conditions.end_tick,
         sample_rate: conditions.sample_rate,
-        render_mode: options
-            .render_mode
-            .unwrap_or(session.settings.mixdown.render_mode),
+        pacing: RenderPacing {
+            render_mode: options
+                .render_mode
+                .unwrap_or(session.settings.mixdown.render_mode),
+            plugin_warm_up_seconds: session.settings.mixdown.plugin_warm_up_seconds,
+        },
         clip_count,
         source_ids,
         output_path: data_root
@@ -3281,7 +3296,7 @@ pub(super) mod tests {
         .unwrap();
         assert!(plan.source_ids.is_empty());
         assert_eq!(plan.sample_rate, DEFAULT_OFFLINE_SAMPLE_RATE);
-        assert_eq!(plan.render_mode, riffra_core::RenderMode::Offline);
+        assert_eq!(plan.pacing.render_mode, riffra_core::RenderMode::Offline);
         assert_eq!(plan.output_path.file_name().unwrap(), "timeline.wav");
         assert!(
             plan.output_path
@@ -3295,38 +3310,49 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn render_mode_prefers_the_job_override_over_the_project_setting() {
+    fn render_mode_prefers_the_job_override_and_reports_the_pacing_it_ran_with() {
         // Arrange
-        let root = std::env::temp_dir().join("riffra-render-mode-plan");
+        let root = std::env::temp_dir().join(format!(
+            "riffra-render-mode-{}",
+            riffra_control::new_instance_id()
+        ));
         let mut session = session_with_clips();
         session.settings.mixdown.render_mode = riffra_core::RenderMode::Realtime;
+        session.settings.mixdown.plugin_warm_up_seconds = 30.0;
+        let render = |options: RenderOptions| {
+            let mut requested = None;
+            let result = render_timeline_with_renderer(
+                timeline_render_context(&root, empty_catalog(), &session, 1, options),
+                |request| {
+                    requested = Some(request.render_mode);
+                    fs::write(request.destination(), wav(request.sample_rate, 128)).unwrap();
+                    Ok(Vec::new())
+                },
+                None,
+            )
+            .unwrap();
+            (requested.unwrap(), result.pacing)
+        };
 
         // Act
-        let project = build_render_plan(
-            &root,
-            empty_catalog(),
-            &session,
-            1,
-            &RenderOptions::default(),
-            None,
-        )
-        .unwrap();
-        let overridden = build_render_plan(
-            &root,
-            empty_catalog(),
-            &session,
-            1,
-            &RenderOptions {
-                render_mode: Some(riffra_core::RenderMode::Offline),
-                ..RenderOptions::default()
-            },
-            None,
-        )
-        .unwrap();
+        let project = render(RenderOptions::default());
+        let overridden = render(RenderOptions {
+            render_mode: Some(riffra_core::RenderMode::Offline),
+            ..RenderOptions::default()
+        });
 
         // Assert
-        assert_eq!(project.render_mode, riffra_core::RenderMode::Realtime);
-        assert_eq!(overridden.render_mode, riffra_core::RenderMode::Offline);
+        assert_eq!(project.0, riffra_core::RenderMode::Realtime);
+        assert_eq!(project.1.render_mode, riffra_core::RenderMode::Realtime);
+        assert_eq!(overridden.0, riffra_core::RenderMode::Offline);
+        assert_eq!(
+            overridden.1,
+            RenderPacing {
+                render_mode: riffra_core::RenderMode::Offline,
+                plugin_warm_up_seconds: 30.0,
+            }
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

@@ -132,6 +132,7 @@ it.each(['measured', 'unavailable'] as const)(
       trackId: null,
       sectionName: null,
       sectionOccurrence: null,
+      pacing: { renderMode: 'offline', pluginWarmUpSeconds: 2 },
       state: 'completed',
       message: 'completed',
     };

@@ -1441,7 +1441,7 @@ impl HostState {
                         worker_jobs.complete_if_not_cancelled(
                             &job_id,
                             value,
-                            "Offline render completed.",
+                            render::completion_message("render", pending.result.pacing),
                             move || output.commit(),
                         );
                     }
@@ -1568,7 +1568,7 @@ impl HostState {
                         worker_jobs.complete_if_not_cancelled(
                             &job_id,
                             value,
-                            "Offline capture completed.",
+                            render::completion_message("capture", pending.result.pacing),
                             move || output.commit(),
                         );
                     }
@@ -1629,7 +1629,7 @@ impl HostState {
                         worker_jobs.complete_if_not_cancelled(
                             &job_id,
                             value,
-                            "Offline stem render completed.",
+                            render::completion_message("stem render", pending.result.pacing),
                             move || output.commit(),
                         );
                     }

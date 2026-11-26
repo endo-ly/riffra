@@ -154,8 +154,18 @@ pub struct RenderResult {
     /// One-based Score section occurrence for a section render.
     #[serde(default)]
     pub section_occurrence: Option<u32>,
+    pub pacing: RenderPacing,
     pub state: String,
     pub message: String,
+}
+
+/// Pacing conditions a render job ran with.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct RenderPacing {
+    pub render_mode: riffra_core::RenderMode,
+    /// Seconds hosted VST3 plugins were processed before the render started.
+    pub plugin_warm_up_seconds: f64,
 }
 
 /// Result metadata for an aligned set of rendered Track stems.
@@ -194,6 +204,7 @@ pub struct RenderStemsResult {
     /// One-based Score section occurrence for a section render.
     #[serde(default)]
     pub section_occurrence: Option<u32>,
+    pub pacing: RenderPacing,
 }
 
 /// One post-processing output captured from an offline render.
@@ -223,6 +234,7 @@ pub struct RenderCaptureResult {
     pub frames: u64,
     pub captures: Vec<RenderCapture>,
     pub exported_directory: Option<String>,
+    pub pacing: RenderPacing,
 }
 
 /// Result of copying an existing Render without changing its internal files.
