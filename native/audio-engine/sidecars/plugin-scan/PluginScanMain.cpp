@@ -152,10 +152,15 @@ int describeParameters(const juce::String& path, const juce::String& requestPath
         writeJson(makeError(path, error));
         return 4;
     }
-    // Persisted parameter writes are queued for the audio owner. Flush that queue
-    // before reading the plugin's parameter values and display metadata.
+    // Persisted parameter writes are queued for the audio owner. Flush that queue,
+    // then let the plugin process one block so parameters that reconfigure it, such
+    // as an effect type selecting its controls, settle before their names, values,
+    // and state are read.
     rack.setBypassed(true);
     juce::AudioBuffer<float> scratch(1, 512);
+    rack.process(nullptr, 0, nullptr, 0, scratch.getArrayOfWritePointers(), 1, 512);
+    rack.setBypassed(false);
+    scratch.clear();
     rack.process(nullptr, 0, nullptr, 0, scratch.getArrayOfWritePointers(), 1, 512);
     const auto parameters = rack.parameters();
     const auto captured = rack.persistedState(error);
@@ -220,6 +225,8 @@ int describeParameters(const juce::String& path, const juce::String& requestPath
     result->setProperty("path", path);
     result->setProperty("parameters", juce::var(encoded));
     result->setProperty("parameterValues", juce::var(currentValues));
+    result->setProperty("stateData",
+                        captured->stateData ? juce::var(*captured->stateData) : juce::var());
     result->setProperty("conversions", juce::var(conversions));
     writeJson(juce::var(result));
     return 0;

@@ -774,34 +774,51 @@ fn resolve_production(
         for key in &keys {
             let pending = &uses[key];
             let (start, len) = ranges[key];
-            let conversions = &description.conversions[start..start + len];
             let mut plugin = pending.production.plugin().plugin.clone();
+            let mut reconfigured = None;
             if !pending.spec.params.is_empty() {
-                plugin.parameter_values = parameters::assign_values(
-                    &description.parameters,
-                    &description.parameter_values,
-                    conversions,
+                let mut probe = plugin.clone();
+                let settled = parameters::settle(
+                    &description,
+                    &description.conversions[start..start + len],
                     &pending.spec.params,
+                    |values| {
+                        probe.parameter_values = values;
+                        let next = describe(scanner, &probe, &pending.displays)?;
+                        probe.state_data.clone_from(&next.state_data);
+                        Ok(next)
+                    },
                 )
                 .map_err(|message| ImportError {
                     details: plan.source_detail(key, &message),
                     message,
                 })?;
+                plugin.parameter_values = settled.values;
+                reconfigured = settled.reconfigured;
             } else if pending.has_automation {
                 plugin.parameter_values = description.parameter_values.clone();
             }
+            // Automation targets the parameters the settled configuration exposes.
+            let (exposed, conversions) = match &reconfigured {
+                Some(settled) => {
+                    plugin.state_data.clone_from(&settled.state_data);
+                    (&settled.parameters, settled.conversions.as_slice())
+                }
+                None => (
+                    &description.parameters,
+                    &description.conversions[start..start + len],
+                ),
+            };
             values.insert(key.clone(), plugin);
             for (index, automation) in &automations {
                 if automation.use_key != *key {
                     continue;
                 }
-                let parameter =
-                    parameters::find_parameter(&description.parameters, &automation.parameter)
-                        .map_err(|message| ImportError {
-                            details: plan
-                                .source_detail(&format!("mix.automation[{index}]"), &message),
-                            message,
-                        })?;
+                let parameter = parameters::find_parameter(exposed, &automation.parameter)
+                    .map_err(|message| ImportError {
+                        details: plan.source_detail(&format!("mix.automation[{index}]"), &message),
+                        message,
+                    })?;
                 let parameter_id = parameter.parameter_id.clone().ok_or_else(|| {
                     let message = format!(
                         "plugin parameter {:?} has no stable identifier for automation",

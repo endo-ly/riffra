@@ -529,7 +529,7 @@ instruments:
 - `state` は `PluginStateSnapshot` 形式の JSON（Score 相対パス、`schemaVersion: 2`、`pluginIdentifier` で識別）。
 - `patch` は `state` への編集操作（`op: set | setTree | setXml`、`path`、`value` / `tree` / `values`）。`state` なしの `patch` はエラー。
 - `params` の値は `0..=1` の数値、または `{display: <文字列>}`（数値文字列は不可）。名前重複時は `<名前>#<0始まり index>`。
-- 適用順は `state` → `patch` → `params`（指定パラメーターのみ上書きし、未指定はゼロ埋めしない）。
+- 適用順は `state` → `patch` → `params`（指定パラメーターのみ上書きし、未指定はゼロ埋めしない）。エフェクトの種類のように他のパラメーターの集合を変える値は、いまある名前の値を先に適用してから残りの名前を引き直すので、種類とその種類のつまみを同じ `params` に並べてよい。
 - `velocity` は `[[入力, 出力], ...]` の折れ線（始点 `1`・終点 `127`、入力は単調増加）。1〜127 を線形補間・四捨五入し、MIDI Note 生成時に一度だけ適用する。
 - `source` がある楽器は VST3 不足・不一致・壊れた State を内蔵音源へ黙って切り替えない。
 
