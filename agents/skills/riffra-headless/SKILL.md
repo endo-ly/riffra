@@ -376,6 +376,8 @@ riffra --attach render stems --all-tracks --section walk --occurrence 2 --wait
 
 完成WAVをDataRootの外へ出すときは、Mixが `render start --output-path`、Stemが `render stems --output-directory` で出力先を指定する。保存済みRenderの取り出しは `render export --render-id --output-path`、削除は `render delete --render-id` で行う。
 
+ミックスの往復（音量を少し変えて測り直す）は、書き出し済みの stems から `render remix --from <render-id> --track <track-id>=<dB> [--pan <track-id>=<値>] --wait` で行う。ステムを元のトラックの代わりに置いて、プラグインを読み込まずオフラインで書き出し、通常のRenderとして履歴に残る（測定は `render start` と同じ）。`--track <id>=0` はステムそのままで、dB は stems に含まれるゲインへの差分である。プリフェーダーのSend・パンの変更（既にパンされたステムへのバランス）・Sidechainの検出元は近似になる。stems を書き出し直すと基準が変わる。
+
 各パートの比較は `render stems` でTrack別WAVを作る。全WAVで開始Tick、終了Tick、Sample Rate、フレーム数が揃い、個別の正規化とMasteringは行われない。共有する非線形Effectでは、Stemの合計と全体Mixが一致しない場合がある。StemとMasteringの設計上の扱いは[音声エンジンの設計](../../../docs/audio-engine.md)を参照。
 
 現在のミックス経路を変えずに複数の出力を同時に取得するのは `render capture` である。Track・Group・Return・Masterを選んで同時に取得し、結果の `renderId` を `analysis levels` へ渡すと、各出力のRMSとSample Peakを同じ音楽座標で比較できる。`--wait` はRenderとCaptureの両方のJobで使える。Captureの外部コピーは `--output-directory`、保存済みCaptureの一括取り出しは `render export` で行う。

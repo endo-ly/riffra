@@ -318,6 +318,12 @@ pub struct RenderStem {
     pub asset_id: AssetId,
     /// Full path to the WAV file.
     pub path: String,
+    /// Track gain in dB already applied to the stem.
+    pub gain_db: f64,
+    /// Track pan already applied to the stem.
+    pub pan: f64,
+    /// Group Bus the Track fed at render time; `None` for the Master.
+    pub output_bus_id: Option<String>,
 }
 
 /// Measured loudness of the completed WAV, with deviations from the requested target.

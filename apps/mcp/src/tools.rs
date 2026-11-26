@@ -601,10 +601,11 @@ pub(crate) const TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "render",
-        description: "Start a Render or stem job, export or list completed renders, or delete one managed Render. Riffra decides the pacing from the plugins the rendered signal path loads: real-time (1.0x, with each plugin's warm-up) when one of them synthesizes in wall-clock time, such as Synthesizer V, otherwise as fast as possible, so a render without the vocal Track is fast. options.renderMode forces a mode for inspection, and offline on such a path is rejected. Each result's pacing reports the mode, the warm-up, and the plugins that required real-time.",
+        description: "Start a Render, stem, or remix job, export or list completed renders, or delete one managed Render. remix re-renders the mix from a stems Render (renderId) with gainDb or pan changes on some Tracks (tracks), without loading their plugins: each stem plays in place of its Track through the current Buses, Sends, and Master, and the result is a normal Render in the history. Gain and pan are applied on top of what the stem contains; Sends taken before the fader, a changed pan (a balance on the panned stem), and Sidechain sources are approximations. Riffra decides the pacing from the plugins the rendered signal path loads: real-time (1.0x, with each plugin's warm-up) when one of them synthesizes in wall-clock time, such as Synthesizer V, otherwise as fast as possible, so a render without the vocal Track is fast. options.renderMode forces a mode for inspection, and offline on such a path is rejected. Each result's pacing reports the mode, the warm-up, and the plugins that required real-time.",
         actions: &[
             action("start", "render.start"),
             action("stems", "render.stems"),
+            action("remix", "render.remix"),
             action("capture", "render.capture"),
             action("export", "render.export"),
             action("list", "render.list"),
@@ -1168,11 +1169,11 @@ mod tests {
         // Assert
         assert_eq!(names, expected);
         let actions: Vec<_> = TOOLS.iter().flat_map(|tool| tool.actions.iter()).collect();
-        assert_eq!(actions.len(), 227);
+        assert_eq!(actions.len(), 228);
         let commands: std::collections::HashSet<_> =
             actions.iter().map(|action| action.command).collect();
-        assert_eq!(commands.len(), 226);
-        assert_eq!(command_names().len(), 242);
+        assert_eq!(commands.len(), 227);
+        assert_eq!(command_names().len(), 243);
         let public_commands: std::collections::HashSet<_> =
             command_names().iter().copied().collect();
         let mut unused = public_commands

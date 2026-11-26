@@ -25,4 +25,16 @@ assetId: AssetId,
 /**
  * Full path to the WAV file.
  */
-path: string, };
+path: string, 
+/**
+ * Track gain in dB already applied to the stem.
+ */
+gainDb: number, 
+/**
+ * Track pan already applied to the stem.
+ */
+pan: number, 
+/**
+ * Group Bus the Track fed at render time; `None` for the Master.
+ */
+outputBusId: string | null, };

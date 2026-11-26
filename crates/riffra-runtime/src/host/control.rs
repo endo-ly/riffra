@@ -1183,6 +1183,9 @@ impl HostState {
             RuntimeCommand::RenderStems(params) => {
                 ControlOutput::Job(Some(self.start_render_stems(current, params)?))
             }
+            RuntimeCommand::RenderRemix(params) => {
+                ControlOutput::Job(Some(self.start_render_remix(current, params)?))
+            }
             RuntimeCommand::RenderCapture(params) => {
                 ControlOutput::Job(Some(self.start_render_capture(current, params)?))
             }
@@ -1432,6 +1435,7 @@ impl HostState {
                     project_id: Some(&project_id),
                     created_at_ms: riffra_host::now_ms(),
                     options,
+                    conditions: None,
                 },
                 cancelled.as_ref(),
             ) {
@@ -1526,6 +1530,59 @@ impl HostState {
             jobs.fail(&id, error.clone());
             return Err(command_error(error));
         }
+        jobs::to_background_status(status).map_err(command_error)
+    }
+
+    fn start_render_remix(
+        &self,
+        current: CanonicalState,
+        params: crate::api::params::RenderRemixParams,
+    ) -> Result<BackgroundJobStatus, ProtocolError> {
+        let jobs = self.jobs.clone();
+        let render_access = jobs.lock_render_access().map_err(command_error)?;
+        let prepared = render::prepare_remix(&self.data_root, &current.session, &params)
+            .map_err(|error| ProtocolError::new(ErrorCode::InvalidRequest, error))?;
+        let (id, status) = jobs.start(JobKind::Render);
+        drop(render_access);
+        let Some(cancelled) = jobs.cancellation_flag(&id) else {
+            return Err(command_error("remix job could not be registered"));
+        };
+        let data_root = self.data_root.clone();
+        let built_in_instruments = Arc::clone(&self.built_in_instruments);
+        let worker = self.render_worker.clone();
+        let project_id = current.project_id;
+        let job_id = id.clone();
+        let worker_jobs = jobs.clone();
+        jobs.spawn_worker(&id, "riffra-render-remix-job", move || {
+            worker_jobs.set_running(&job_id, "Rendering the mix from stems.");
+            match render::render_remix_with_cancellation(
+                &worker,
+                &prepared,
+                &data_root,
+                built_in_instruments.as_ref(),
+                &project_id,
+                riffra_host::now_ms(),
+                cancelled.as_ref(),
+            ) {
+                Ok(pending) => match serde_json::to_value(&pending.result) {
+                    Ok(value) => {
+                        let mut output = pending.output;
+                        worker_jobs.complete_if_not_cancelled(
+                            &job_id,
+                            value,
+                            render::completion_message("remix", &pending.result.pacing),
+                            move || output.commit(),
+                        );
+                    }
+                    Err(error) => jobs::fail(&worker_jobs, &data_root, &job_id, error.to_string()),
+                },
+                Err(error) => jobs::fail(&worker_jobs, &data_root, &job_id, error),
+            }
+        })
+        .map_err(|error| {
+            jobs.fail(&id, error.clone());
+            command_error(format!("remix job could not start: {error}"))
+        })?;
         jobs::to_background_status(status).map_err(command_error)
     }
 

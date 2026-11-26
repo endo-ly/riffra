@@ -525,6 +525,7 @@ control_commands! {
 
         RenderStart = "render.start" (RenderStartParams) -> Job, project;
         RenderStems = "render.stems" (RenderStemsParams) -> Job, project;
+        RenderRemix = "render.remix" (RenderRemixParams) -> Job, project;
         RenderCapture = "render.capture" (RenderCaptureParams) -> Job, project(long);
         RenderExport = "render.export" (RenderExportParams) -> RenderExport, host;
         RenderList = "render.list" (EmptyParams) -> RenderList, host;
@@ -577,7 +578,7 @@ mod tests {
         let names = command_names();
 
         // Act / Assert
-        assert_eq!(names.len(), 242);
+        assert_eq!(names.len(), 243);
         let unique: std::collections::HashSet<_> = names.iter().copied().collect();
         assert_eq!(unique.len(), names.len());
         for name in names {
@@ -815,7 +816,7 @@ mod tests {
             .filter_map(|line| line.split_once('\'').map(|(name, _)| name))
             .collect();
         let unique: std::collections::HashSet<_> = names.iter().copied().collect();
-        assert_eq!(names.len(), 242);
+        assert_eq!(names.len(), 243);
         assert_eq!(unique.len(), names.len());
 
         for (name, params) in [

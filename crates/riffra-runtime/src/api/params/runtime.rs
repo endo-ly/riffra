@@ -182,6 +182,36 @@ pub struct RenderStemsParams {
     pub output_directory: Option<String>,
 }
 
+/// Re-renders the mix from a stems Render with level changes on some Tracks.
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[ts(optional_fields = nullable)]
+pub struct RenderRemixParams {
+    /// Stems Render (`render.stems`) whose WAVs stand in for the Tracks they were rendered from.
+    #[schemars(length(min = 1))]
+    pub render_id: String,
+    /// Tracks of the stems Render to change; every other stem plays unchanged.
+    #[schemars(length(min = 1))]
+    pub tracks: Vec<RemixTrackChange>,
+    /// Absolute path for a completed WAV copy outside Riffra's render store.
+    pub output_path: Option<String>,
+}
+
+/// A mix change applied on top of what a stem already contains.
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[ts(optional_fields = nullable)]
+pub struct RemixTrackChange {
+    #[schemars(length(min = 1))]
+    pub track_id: String,
+    /// Gain in dB added to the Track gain the stem was rendered with. Defaults to 0.
+    #[serde(default)]
+    pub gain_db: f64,
+    /// Balance from -1 (left) to 1 (right) applied to the stem, which already contains its own
+    /// pan. Omit to keep the stem's pan.
+    pub pan: Option<f64>,
+}
+
 /// A post-processing output observed during an offline render.
 #[derive(
     Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Deserialize, Serialize, TS, schemars::JsonSchema,

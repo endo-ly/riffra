@@ -16,11 +16,13 @@ use std::{
 
 mod history;
 mod mastering;
+mod remix;
 mod sections;
 mod worker;
 
 pub(crate) use history::resolve_levels_render;
 pub(crate) use history::{delete_render, export_render, list_renders, resolve_measurement_sources};
+pub(crate) use remix::{prepare_remix, render_remix_with_cancellation};
 pub(crate) use worker::RenderWorker;
 
 /// Platform-independent request for rendering a prepared Execution Graph.
@@ -97,7 +99,7 @@ struct RenderPlan {
 }
 
 #[derive(Clone, Copy)]
-struct SharedRenderConditions {
+pub(crate) struct SharedRenderConditions {
     start_tick: u64,
     end_tick: u64,
     tail_seconds: f64,
@@ -118,6 +120,8 @@ pub(crate) struct TimelineRenderContext<'a> {
     pub(crate) project_id: Option<&'a str>,
     pub(crate) created_at_ms: u64,
     pub(crate) options: RenderOptions,
+    /// Range conditions fixed by the caller instead of resolved from `options.range`.
+    pub(crate) conditions: Option<SharedRenderConditions>,
 }
 
 /// Validated Track order and skipped IDs for a stem render request.
@@ -272,6 +276,7 @@ fn render_timeline_pending(
         project_id,
         created_at_ms,
         options,
+        conditions,
     } = context;
     let output_path = options
         .output_path
@@ -284,7 +289,7 @@ fn render_timeline_pending(
         session,
         created_at_ms,
         &options,
-        None,
+        conditions.as_ref(),
     )?;
     let directory = plan
         .output_path
@@ -1193,6 +1198,9 @@ fn render_stems_pending(
             track_name: track.name.clone(),
             asset_id,
             path: output_path.to_string_lossy().into_owned(),
+            gain_db: track.gain_db,
+            pan: track.pan,
+            output_bus_id: track.output_bus_id.clone(),
         });
     }
 
@@ -1779,6 +1787,7 @@ pub(super) mod tests {
             project_id: None,
             created_at_ms,
             options,
+            conditions: None,
         }
     }
 
