@@ -538,7 +538,8 @@ mod tests {
             section_occurrence: None,
             pacing: crate::api::output::RenderPacing {
                 render_mode: riffra_core::RenderMode::Offline,
-                plugin_warm_up_seconds: 2.0,
+                plugin_warm_up_seconds: 0.0,
+                realtime_plugins: Vec::new(),
             },
         };
 

@@ -6599,8 +6599,6 @@ mod tests {
         session.arrangement.tracks[0].color = Some("#123456".into());
         session.settings.count_in_beats = 2;
         session.settings.mixdown.tail_seconds = 2.0;
-        session.settings.mixdown.plugin_warm_up_seconds = 30.0;
-        session.settings.mixdown.render_mode = RenderMode::Realtime;
         session.settings.mixdown.sample_rate = Some(48_000);
         session.settings.mixdown.block_size = Some(512);
 
@@ -6639,8 +6637,6 @@ mod tests {
         );
         assert_eq!(rebuilt.settings.count_in_beats, 2);
         assert_eq!(rebuilt.settings.mixdown.tail_seconds, 2.0);
-        assert_eq!(rebuilt.settings.mixdown.plugin_warm_up_seconds, 30.0);
-        assert_eq!(rebuilt.settings.mixdown.render_mode, RenderMode::Realtime);
         assert_eq!(rebuilt.settings.mixdown.sample_rate, Some(48_000));
         assert_eq!(rebuilt.settings.mixdown.block_size, Some(512));
         assert_eq!(rebuilt.score_source.as_ref().unwrap().yaml, changed);

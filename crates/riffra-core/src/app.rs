@@ -454,8 +454,7 @@ mod tests {
             .application(&storage)
             .update_session_settings(crate::application::SessionSettingsPatch {
                 mixdown: Some(crate::application::MixdownSettingsPatch {
-                    render_mode: Some(crate::RenderMode::Realtime),
-                    plugin_warm_up_seconds: Some(30.0),
+                    tail_seconds: Some(3.0),
                     ..Default::default()
                 }),
                 ..Default::default()
@@ -464,8 +463,7 @@ mod tests {
         assert_eq!(
             execution.settings.mixdown,
             crate::MixdownSettings {
-                render_mode: crate::RenderMode::Realtime,
-                plugin_warm_up_seconds: 30.0,
+                tail_seconds: 3.0,
                 ..before
             }
         );

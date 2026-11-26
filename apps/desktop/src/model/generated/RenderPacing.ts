@@ -2,10 +2,16 @@
 import type { RenderMode } from "./RenderMode";
 
 /**
- * Pacing conditions a render job ran with.
+ * Pacing a render job ran with, derived from the plugins its signal path loads.
  */
 export type RenderPacing = { renderMode: RenderMode, 
 /**
- * Seconds hosted VST3 plugins were processed before the render started.
+ * Seconds hosted VST3 plugins were processed before the render started: the longest warm-up
+ * of `realtimePlugins`, or 0 without any.
  */
-pluginWarmUpSeconds: number, };
+pluginWarmUpSeconds: number, 
+/**
+ * Plugins in the signal path that need wall-clock processing, which is why the render is
+ * real-time.
+ */
+realtimePlugins: Array<string>, };

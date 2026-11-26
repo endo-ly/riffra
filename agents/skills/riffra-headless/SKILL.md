@@ -363,7 +363,7 @@ Processed Variantに必要な制御信号を録音から再利用できない場
 
 音声の書き出しは `render start` で行う。ワンショットでは `render start --wait` / `render stems --wait` で完了結果を待てる。
 
-Synthesizer V のような非同期合成プラグインを含むTrackは、既定の `offline`（可能な限り高速）では合成が追いつかず、周期的に無音が現れる。`render settings set` の `renderMode` を `realtime` にし、`pluginWarmUpSeconds` を10〜30秒に設定したうえで、対象Trackだけを `render start --track-id <ID>` で書き出す。`render start --render-mode realtime` は設定を変えずにそのJobだけ1.0xへ切り替えるが、準備時間は Project の `pluginWarmUpSeconds` のままである。実際に使われた値は結果の `pacing` に出る。`realtime` は書き出し範囲の長さだけ実時間を要するため、`job wait` のタイムアウトは範囲の長さ以上にする。
+Synthesizer V や VoiSona Song のような、合成を裏で進めるプラグインは、速い書き出しでは合成が追いつかず無音になる。Riffra はこれらのクラスを知っており、書き出す範囲の信号経路（読み込まれるプラグイン）に1つでもあれば、書き出し全体を自動で実時間（1.0x）にし、準備時間にはそのうち最長のものを使う。歌を含まない書き出しは自動で最速になる。結果の `pacing` に実際のモード・準備時間・理由のプラグインが出る。`render start --render-mode` は調べるときの強制指定で、実時間が必要な経路への `offline` はプラグイン名つきのエラーで止まる。実時間の書き出しは範囲の長さだけ実時間を要するため、`job wait` のタイムアウトは範囲の長さ以上にする。
 
 応答は `type: "job"` のジョブIDである。ワンショットは `job wait JOB_ID`、interactiveは `job get` の繰り返しで追跡し、`job cancel` で停止する。待機のタイムアウトは `job wait --timeout-ms` で指定し、無指定なら終了まで待つ。`plugin scan --background` と `analysis measure` も同じ非同期ジョブである。`ok: true` は要求の受付成功を表すので、Job自体の成功は `state: "completed"` で判断する。出力はDataRootの `renders/` 配下へ書き出される。
 

@@ -11,8 +11,6 @@ export function sameMixdownSettings(left: MixdownSettings, right: MixdownSetting
     left.musicalEndTick === right.musicalEndTick &&
     left.tailSeconds === right.tailSeconds &&
     left.fadeOutSeconds === right.fadeOutSeconds &&
-    left.pluginWarmUpSeconds === right.pluginWarmUpSeconds &&
-    left.renderMode === right.renderMode &&
     left.sampleRate === right.sampleRate &&
     left.blockSize === right.blockSize &&
     sameMastering

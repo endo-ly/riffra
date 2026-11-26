@@ -91,8 +91,6 @@ pub struct MixdownSettingsPatch {
     pub musical_end_tick: Option<u64>,
     pub tail_seconds: Option<f64>,
     pub fade_out_seconds: Option<f64>,
-    pub plugin_warm_up_seconds: Option<f64>,
-    pub render_mode: Option<crate::RenderMode>,
     /// `null` clears the mastering targets.
     #[serde(
         default,
@@ -128,10 +126,6 @@ impl MixdownSettingsPatch {
             musical_end_tick: self.musical_end_tick.unwrap_or(current.musical_end_tick),
             tail_seconds: self.tail_seconds.unwrap_or(current.tail_seconds),
             fade_out_seconds: self.fade_out_seconds.unwrap_or(current.fade_out_seconds),
-            plugin_warm_up_seconds: self
-                .plugin_warm_up_seconds
-                .unwrap_or(current.plugin_warm_up_seconds),
-            render_mode: self.render_mode.unwrap_or(current.render_mode),
             mastering: self.mastering.unwrap_or_else(|| current.mastering.clone()),
             sample_rate: self.sample_rate.unwrap_or(current.sample_rate),
             block_size: self.block_size.unwrap_or(current.block_size),

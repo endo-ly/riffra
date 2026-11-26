@@ -573,11 +573,6 @@ pub enum MixdownCommand {
     /// Read the current settings.
     Get,
     /// Update settings with a JSON object or @file; omitted fields keep their current values.
-    ///
-    /// pluginWarmUpSeconds: wall-clock VST3 processing before rendering, excluded from the WAV
-    /// (0..=60; omitted = 2). Increase for incomplete asynchronous sample loading; 0 disables it.
-    /// renderMode: `offline` (default, as fast as possible) or `realtime` (1.0x pacing for
-    /// asynchronous synthesizers).
     Set {
         /// Settings fields from `render settings get` to change, as inline JSON or @file; `null` clears mastering, sampleRate, or blockSize.
         #[arg(long)]
@@ -2845,7 +2840,7 @@ pub struct RenderStartArgs {
     /// Apply peak normalization to the rendered audio; defaults to false when omitted.
     #[arg(long)]
     pub normalize: Option<bool>,
-    /// Render pacing for this Job only: `offline` (default) renders as fast as possible, `realtime` renders at 1.0x speed for asynchronous synthesizers such as Synthesizer V; overrides the Project setting. pluginWarmUpSeconds stays the Project setting; the result's `pacing` reports both values used.
+    /// Force the pacing for inspection. Without it Riffra decides from the plugins the rendered signal path loads: real-time (1.0x, with each plugin's warm-up) when one of them synthesizes in wall-clock time, such as Synthesizer V, otherwise as fast as possible. `offline` on such a path is rejected; the result's `pacing` reports the mode, warm-up, and plugins.
     #[arg(long, value_parser = ["offline", "realtime"])]
     pub render_mode: Option<String>,
     /// Render only this Track as a stem instead of the full mix.
@@ -5003,29 +4998,16 @@ mod tests {
     }
 
     #[test]
-    fn render_start_overrides_the_project_render_mode() {
+    fn render_start_forces_the_render_mode_for_one_job() {
         // Arrange
         let arguments = ["riffra", "render", "start", "--render-mode", "realtime"];
-        let settings = [
-            "riffra",
-            "render",
-            "settings",
-            "set",
-            "--settings-json",
-            r#"{"renderMode":"realtime","pluginWarmUpSeconds":30}"#,
-        ];
 
         // Act
         let render = wire(Cli::try_parse_from(arguments).unwrap());
-        let saved = wire(Cli::try_parse_from(settings).unwrap());
 
         // Assert
         assert_eq!(render.name, "render.start");
         assert_eq!(render.params["options"]["renderMode"], "realtime");
-        assert_eq!(saved.name, "render.settings.set");
-        assert_eq!(saved.params["renderMode"], "realtime");
-        assert_eq!(saved.params["pluginWarmUpSeconds"], 30.0);
-        assert_eq!(saved.params["musicalEndTick"], serde_json::Value::Null);
         assert!(
             Cli::try_parse_from(["riffra", "render", "start", "--render-mode", "fast"]).is_err()
         );

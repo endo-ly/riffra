@@ -231,13 +231,21 @@ impl Drop for PendingRenderOutput {
     }
 }
 
-/// Names the pacing a finished render job ran with, e.g. `Realtime stem render completed.`.
-pub(crate) fn completion_message(subject: &str, pacing: RenderPacing) -> String {
+/// Names the pacing a finished render job ran with and why, e.g.
+/// `Realtime stem render completed (Synthesizer V Studio 2 Plugin, 30 s warm-up).`.
+pub(crate) fn completion_message(subject: &str, pacing: &RenderPacing) -> String {
     let mode = match pacing.render_mode {
         riffra_core::RenderMode::Offline => "Offline",
         riffra_core::RenderMode::Realtime => "Realtime",
     };
-    format!("{mode} {subject} completed.")
+    if pacing.realtime_plugins.is_empty() {
+        return format!("{mode} {subject} completed.");
+    }
+    format!(
+        "{mode} {subject} completed ({}, {} s warm-up).",
+        pacing.realtime_plugins.join(", "),
+        pacing.plugin_warm_up_seconds
+    )
 }
 
 pub(crate) fn render_timeline_with_project_cancellation(
@@ -1337,29 +1345,34 @@ fn build_render_plan_with_required(
         for bus in &mut render_session.arrangement.mixer.buses {
             bus.solo = false;
         }
-        let required_tracks = processing_track_ids(&render_session)
+        let on_path = processing_track_ids(&render_session)
             .into_iter()
             .map(str::to_owned)
             .collect::<BTreeSet<_>>();
-        // Tracks outside the selected Track's signal path are not loaded. Latency
-        // compensation aligns every remaining path to the remaining maximum
-        // latency and the write window moves with it, so the output keeps its
-        // timeline position without their plugins.
-        for track in &mut render_session.arrangement.tracks {
-            if !required_tracks.contains(&track.id) {
-                track.instrument = None;
-                track.effects.clear();
-            }
-        }
         render_session
             .arrangement
             .audio_clips
-            .retain(|clip| required_tracks.contains(&clip.track_id));
+            .retain(|clip| on_path.contains(&clip.track_id));
         render_session
             .arrangement
             .midi_clips
-            .retain(|clip| required_tracks.contains(&clip.track_id));
+            .retain(|clip| on_path.contains(&clip.track_id));
     }
+    // Tracks outside the rendered signal path are not loaded. Latency compensation
+    // aligns every remaining path to the remaining maximum latency and the write
+    // window moves with it, so the output keeps its timeline position without
+    // their plugins.
+    let on_path = processing_track_ids_with_required(&render_session, required_tracks)
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<BTreeSet<_>>();
+    for track in &mut render_session.arrangement.tracks {
+        if !on_path.contains(&track.id) {
+            track.instrument = None;
+            track.effects.clear();
+        }
+    }
+    let pacing = resolve_pacing(&render_session, options.render_mode)?;
 
     let conditions = match shared_conditions {
         Some(conditions) => *conditions,
@@ -1404,7 +1417,8 @@ fn build_render_plan_with_required(
         }
     }
     let resources = resolve(data_root, built_in_instruments, &render_session)?;
-    let (graph, diagnostics) = project_graph(&render_session, &resources);
+    let (mut graph, diagnostics) = project_graph(&render_session, &resources);
+    graph.mixdown.plugin_warm_up_seconds = pacing.plugin_warm_up_seconds;
     let dependency_warnings =
         validate_render_dependencies(&render_session, &diagnostics, required_tracks)?;
 
@@ -1416,12 +1430,7 @@ fn build_render_plan_with_required(
         start_tick: conditions.start_tick,
         end_tick: conditions.end_tick,
         sample_rate: conditions.sample_rate,
-        pacing: RenderPacing {
-            render_mode: options
-                .render_mode
-                .unwrap_or(session.settings.mixdown.render_mode),
-            plugin_warm_up_seconds: session.settings.mixdown.plugin_warm_up_seconds,
-        },
+        pacing,
         clip_count,
         source_ids,
         output_path: data_root
@@ -1431,6 +1440,63 @@ fn build_render_plan_with_required(
                 riffra_control::new_instance_id()
             ))
             .join("timeline.wav"),
+    })
+}
+
+/// Decides the render's pacing from the plugins its signal path loads. Any plugin class that
+/// needs wall-clock processing makes the whole render real-time, with the longest warm-up of
+/// those classes; a render without one adds no warm-up.
+fn resolve_pacing(
+    session: &CreativeSession,
+    requested: Option<riffra_core::RenderMode>,
+) -> Result<RenderPacing, String> {
+    let arrangement = &session.arrangement;
+    let plugins = arrangement
+        .tracks
+        .iter()
+        .flat_map(|track| {
+            track
+                .instrument
+                .as_ref()
+                .and_then(riffra_core::TrackInstrument::as_vst3)
+                .into_iter()
+                .chain(track.effects.iter().map(|effect| &effect.plugin))
+        })
+        .chain(
+            arrangement
+                .mixer
+                .buses
+                .iter()
+                .flat_map(|bus| &bus.effects)
+                .chain(&arrangement.mixer.master_effects)
+                .map(|effect| &effect.plugin),
+        )
+        .filter(|plugin| !plugin.disabled_placeholder);
+    let mut realtime_plugins = Vec::new();
+    let mut warm_up = 0.0_f64;
+    for plugin in plugins {
+        if let Some(class) = crate::plugins::realtime_class(&plugin.path)
+            && !realtime_plugins.iter().any(|name| name == class.name)
+        {
+            realtime_plugins.push(class.name.to_owned());
+            warm_up = warm_up.max(class.warm_up_seconds);
+        }
+    }
+    if !realtime_plugins.is_empty() && requested == Some(riffra_core::RenderMode::Offline) {
+        return Err(format!(
+            "offline rendering would produce broken audio for {}, which synthesizes in wall-clock time; do not request renderMode offline for this signal path",
+            realtime_plugins.join(", ")
+        ));
+    }
+    let render_mode = if realtime_plugins.is_empty() {
+        requested.unwrap_or_default()
+    } else {
+        riffra_core::RenderMode::Realtime
+    };
+    Ok(RenderPacing {
+        render_mode,
+        plugin_warm_up_seconds: warm_up,
+        realtime_plugins,
     })
 }
 
@@ -3318,49 +3384,66 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn render_mode_prefers_the_job_override_and_reports_the_pacing_it_ran_with() {
+    fn pacing_follows_the_plugins_on_the_rendered_signal_path() {
         // Arrange
-        let root = std::env::temp_dir().join(format!(
-            "riffra-render-mode-{}",
-            riffra_control::new_instance_id()
-        ));
+        let root = std::env::temp_dir().join("riffra-render-pacing-plan");
         let mut session = session_with_clips();
-        session.settings.mixdown.render_mode = riffra_core::RenderMode::Realtime;
-        session.settings.mixdown.plugin_warm_up_seconds = 30.0;
-        let render = |options: RenderOptions| {
-            let mut requested = None;
-            let result = render_timeline_with_renderer(
-                timeline_render_context(&root, empty_catalog(), &session, 1, options),
-                |request| {
-                    requested = Some(request.render_mode);
-                    fs::write(request.destination(), wav(request.sample_rate, 128)).unwrap();
-                    Ok(Vec::new())
-                },
-                None,
+        let mut vocal = Track::audio("vocal".into(), "Vocal".into());
+        vocal.effects.push(
+            riffra_core::EffectDevice::new(
+                "synthv".into(),
+                "Synthesizer V".into(),
+                "C:/VST3/Synthesizer V Studio 2 Plugin.vst3".into(),
             )
-            .unwrap();
-            (requested.unwrap(), result.pacing)
+            .unwrap(),
+        );
+        session.arrangement.tracks.push(vocal);
+        session.arrangement.midi_clips.push(MidiClip {
+            id: "vocal-clip".into(),
+            track_id: "vocal".into(),
+            ..session.arrangement.midi_clips[0].clone()
+        });
+        let plan = |options: RenderOptions| {
+            build_render_plan(&root, empty_catalog(), &session, 1, &options, None)
         };
 
         // Act
-        let project = render(RenderOptions::default());
-        let overridden = render(RenderOptions {
+        let whole = plan(RenderOptions::default()).unwrap();
+        let without_vocal = plan(RenderOptions {
+            track_id: Some("instrument".into()),
+            ..Default::default()
+        })
+        .unwrap();
+        let forced_offline = plan(RenderOptions {
             render_mode: Some(riffra_core::RenderMode::Offline),
-            ..RenderOptions::default()
+            ..Default::default()
         });
 
         // Assert
-        assert_eq!(project.0, riffra_core::RenderMode::Realtime);
-        assert_eq!(project.1.render_mode, riffra_core::RenderMode::Realtime);
-        assert_eq!(overridden.0, riffra_core::RenderMode::Offline);
         assert_eq!(
-            overridden.1,
+            whole.pacing,
             RenderPacing {
-                render_mode: riffra_core::RenderMode::Offline,
+                render_mode: riffra_core::RenderMode::Realtime,
                 plugin_warm_up_seconds: 30.0,
+                realtime_plugins: vec!["Synthesizer V Studio 2 Plugin".into()],
             }
         );
-        fs::remove_dir_all(root).unwrap();
+        assert_eq!(whole.graph.mixdown.plugin_warm_up_seconds, 30.0);
+        assert_eq!(
+            without_vocal.pacing,
+            RenderPacing {
+                render_mode: riffra_core::RenderMode::Offline,
+                plugin_warm_up_seconds: 0.0,
+                realtime_plugins: Vec::new(),
+            }
+        );
+        assert_eq!(without_vocal.graph.mixdown.plugin_warm_up_seconds, 0.0);
+        assert!(
+            forced_offline
+                .err()
+                .unwrap()
+                .contains("Synthesizer V Studio 2 Plugin")
+        );
     }
 
     #[test]
@@ -3384,7 +3467,9 @@ pub(super) mod tests {
             },
         };
         let mut session = session_with_clips();
-        session.arrangement.tracks[0].effects.push(effect("selected-effect"));
+        session.arrangement.tracks[0]
+            .effects
+            .push(effect("selected-effect"));
         let mut unrelated = Track::audio("unrelated".into(), "Unrelated".into());
         unrelated.effects.push(effect("unrelated-effect"));
         session.arrangement.tracks.push(unrelated);

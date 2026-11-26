@@ -32,7 +32,7 @@ meta:
 - `gate`: 生成音符の基本音価へ掛ける倍率（0 より大きく 1 以下）
 - `fade_out_seconds`: 楽曲全体のフェードアウト秒数（0 以上、省略時 0）
 - `master`: 記述する場合は `target_lufs`（`-70.0..=-5.0`）と `max_true_peak_db`（`-9.0..=0.0`）が必須。`target_lra_lu`（`>= 0.0`）は任意。これらは完成目標であり、`mix.master`（9 章）とは区別する
-- `sample_rate`、`block_size`、`tail_seconds`、`renderMode`、`pluginWarmUpSeconds`、出力先は実行条件であり楽譜には持たせない
+- `sample_rate`、`block_size`、`tail_seconds`、出力先は実行条件であり楽譜には持たせない
 
 `form` の各項目は `{section, bars, tonic}` を必須とし、`scale`、`bpm`、`meter`、`last_bar_quarters`、`swing` を追加できる。テンポと拍子は曲頭で `meta` の値を採用し、`form` で変更した場合は後続セクションにも引き継ぐ。
 

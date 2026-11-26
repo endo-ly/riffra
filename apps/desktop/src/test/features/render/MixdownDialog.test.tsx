@@ -1,6 +1,6 @@
 import { createTestSessionStore, TestSessionProvider } from '@/test/support/session-provider';
 // @vitest-environment jsdom
-import type { MixdownSettings, RenderResult } from '@/model/generated';
+import type { RenderResult } from '@/model/generated';
 import { canonicalState, defaultSession } from '@/native/preview/fixtures';
 import { toAssetId } from '@/model/asset-id';
 import { createFakeNativeApi } from '@/test/support/fake-native-api';
@@ -46,32 +46,6 @@ it('starts an unchanged mixdown render without committing a settings mutation', 
 
   await waitFor(() => expect(startRenderJob).toHaveBeenCalledOnce());
   expect(setMixdown).not.toHaveBeenCalled();
-});
-
-it('saves the selected render mode with the mixdown settings', async () => {
-  const session = defaultSession();
-  const api = createFakeNativeApi();
-  const setMixdown = vi.fn(async (settings: MixdownSettings) => {
-    session.settings.mixdown = structuredClone(settings);
-    return {
-      canonical: canonicalState(structuredClone(session)),
-      createdEntityIds: {},
-      projection: { state: 'notRequired' as const },
-    };
-  });
-  api.setMixdown = setMixdown;
-  render(
-    <TestSessionProvider api={api}>
-      <MixdownDialog session={session} onClose={() => undefined} />
-    </TestSessionProvider>,
-  );
-
-  fireEvent.click(screen.getByRole('button', { name: 'Real-time (1x)' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
-
-  await waitFor(() => expect(setMixdown).toHaveBeenCalledOnce());
-  expect(setMixdown.mock.calls[0][0].renderMode).toBe('realtime');
-  expect(session.settings.mixdown.renderMode).toBe('realtime');
 });
 
 it.each(['measured', 'unavailable'] as const)(
@@ -132,7 +106,7 @@ it.each(['measured', 'unavailable'] as const)(
       trackId: null,
       sectionName: null,
       sectionOccurrence: null,
-      pacing: { renderMode: 'offline', pluginWarmUpSeconds: 2 },
+      pacing: { renderMode: 'offline', pluginWarmUpSeconds: 0, realtimePlugins: [] },
       state: 'completed',
       message: 'completed',
     };
@@ -168,9 +142,6 @@ it.each(['measured', 'unavailable'] as const)(
     }
     render(<Harness />);
     fireEvent.change(screen.getByLabelText('Tail (seconds)'), { target: { value: '3' } });
-    fireEvent.change(screen.getByLabelText('Plugin preparation time (seconds)'), {
-      target: { value: '10' },
-    });
     if (state === 'measured') {
       fireEvent.click(screen.getByLabelText('Loudness Mastering'));
       fireEvent.change(screen.getByLabelText('Target Integrated LUFS'), {
@@ -182,7 +153,6 @@ it.each(['measured', 'unavailable'] as const)(
     }
     fireEvent.click(screen.getByRole('button', { name: 'Save and render' }));
     await waitFor(() => expect(session.settings.mixdown.tailSeconds).toBe(3));
-    expect(session.settings.mixdown.pluginWarmUpSeconds).toBe(10);
     if (state === 'measured') {
       expect(session.settings.mixdown.mastering?.integratedLufs).toBe(-16);
       expect(session.settings.mixdown.mastering?.truePeakDb).toBe(-2);

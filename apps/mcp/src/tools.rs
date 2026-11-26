@@ -601,7 +601,7 @@ pub(crate) const TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "render",
-        description: "Start a Render or stem job, export or list completed renders, or delete one managed Render. Renders default to renderMode offline, which processes as fast as possible. Tracks hosting asynchronous synthesizers such as Synthesizer V need renderMode realtime (1.0x pacing) together with pluginWarmUpSeconds of 10 to 30 seconds, and rendering only the vocal Track (trackId) in realtime is the recommended workflow. options.renderMode overrides the Project's renderMode for one job, while pluginWarmUpSeconds always comes from the Project's render settings; each result's pacing reports the renderMode and pluginWarmUpSeconds it ran with.",
+        description: "Start a Render or stem job, export or list completed renders, or delete one managed Render. Riffra decides the pacing from the plugins the rendered signal path loads: real-time (1.0x, with each plugin's warm-up) when one of them synthesizes in wall-clock time, such as Synthesizer V, otherwise as fast as possible, so a render without the vocal Track is fast. options.renderMode forces a mode for inspection, and offline on such a path is rejected. Each result's pacing reports the mode, the warm-up, and the plugins that required real-time.",
         actions: &[
             action("start", "render.start"),
             action("stems", "render.stems"),
@@ -615,7 +615,7 @@ pub(crate) const TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "render_settings",
-        description: "Read or update the active Project's render settings. set takes any fields of the MixdownSettings object from get and keeps the omitted ones. renderMode is offline (default, as fast as possible) or realtime (1.0x pacing for asynchronous synthesizers such as Synthesizer V, which also need pluginWarmUpSeconds of 10 to 30 seconds).",
+        description: "Read or update the active Project's render settings. set takes any fields of the MixdownSettings object from get and keeps the omitted ones.",
         actions: &[
             action("get", "render.settings.get"),
             action("set", "render.settings.set"),
@@ -1397,20 +1397,12 @@ mod tests {
     }
 
     #[test]
-    fn render_schemas_publish_and_forward_the_render_mode() {
+    fn render_schema_publishes_and_forwards_the_render_mode() {
         // Arrange
         let tools = build_tools().unwrap();
         let render = tools
             .iter()
             .find(|tool| tool.tool.name == "render")
-            .unwrap();
-        let settings = tools
-            .iter()
-            .find(|tool| tool.tool.name == "render_settings")
-            .unwrap();
-        let edit = tools
-            .iter()
-            .find(|tool| tool.tool.name == "session_edit")
             .unwrap();
         let start = json!({
             "action": "start",
@@ -1424,83 +1416,42 @@ mod tests {
                 }
             }
         });
-        let mixdown = json!({
-            "musicalEndTick": 0,
-            "tailSeconds": 0.0,
-            "fadeOutSeconds": 0.0,
-            "renderMode": "realtime",
-            "mastering": null,
-            "sampleRate": null,
-            "blockSize": null
-        });
-        let save = json!({"action": "set", "params": mixdown.clone()});
-        let update = json!({"action": "settings_update", "params": {"mixdown": mixdown}});
 
         // Act
-        let command =
-            client::decode_client_command("render.start", start["params"].clone()).unwrap();
-        let encoded = serde_json::to_value(command).unwrap();
-        let updated = serde_json::to_value(
-            client::decode_client_command("session.settings.update", update["params"].clone())
-                .unwrap(),
+        let encoded = serde_json::to_value(
+            client::decode_client_command("render.start", start["params"].clone()).unwrap(),
         )
         .unwrap();
-        let modes = |tool: &ToolSpec| {
-            let schema = Value::Object((*tool.tool.input_schema).clone());
-            schema
-                .pointer("/$defs/RenderMode/oneOf")
-                .and_then(Value::as_array)
-                .map(|variants| {
-                    variants
-                        .iter()
-                        .filter_map(|variant| variant["const"].as_str().map(str::to_owned))
-                        .collect::<Vec<_>>()
-                })
-        };
+        let schema = Value::Object((*render.tool.input_schema).clone());
+        let modes = schema
+            .pointer("/$defs/RenderMode/oneOf")
+            .and_then(Value::as_array)
+            .map(|variants| {
+                variants
+                    .iter()
+                    .filter_map(|variant| variant["const"].as_str().map(str::to_owned))
+                    .collect::<Vec<_>>()
+            });
+        let mut fast = start.clone();
+        fast["params"]["options"]["renderMode"] = json!("fast");
 
         // Assert
-        for tool in [render, settings, edit] {
-            assert_eq!(
-                modes(tool),
-                Some(vec!["offline".to_owned(), "realtime".to_owned()]),
-                "{}",
-                tool.tool.name
-            );
-        }
+        assert_eq!(
+            modes,
+            Some(vec!["offline".to_owned(), "realtime".to_owned()])
+        );
         assert!(
             render
                 .action_validator(Some("start"))
                 .unwrap()
                 .is_valid(&start)
         );
-        assert!(
-            settings
-                .action_validator(Some("set"))
-                .unwrap()
-                .is_valid(&save)
-        );
-        assert!(
-            edit.action_validator(Some("settings_update"))
-                .unwrap()
-                .is_valid(&update)
-        );
         assert_eq!(encoded["params"]["options"]["renderMode"], "realtime");
-        assert_eq!(updated["params"]["mixdown"]["renderMode"], "realtime");
-        let mut fast = start.clone();
-        fast["params"]["options"]["renderMode"] = json!("fast");
         assert!(
             !render
                 .action_validator(Some("start"))
                 .unwrap()
                 .is_valid(&fast)
-        );
-        let mut unsupported = update.clone();
-        unsupported["params"]["mixdown"]["renderMode"] = json!("fast");
-        assert!(
-            !edit
-                .action_validator(Some("settings_update"))
-                .unwrap()
-                .is_valid(&unsupported)
         );
     }
 

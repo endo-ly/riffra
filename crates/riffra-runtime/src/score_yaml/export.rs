@@ -3146,7 +3146,7 @@ mod tests {
             &root,
             catalog,
         );
-        session.settings.mixdown.render_mode = riffra_core::RenderMode::Realtime;
+        session.settings.mixdown.tail_seconds = 2.0;
 
         let exported = exported(&session, &root, catalog);
 

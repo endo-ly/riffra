@@ -159,13 +159,17 @@ pub struct RenderResult {
     pub message: String,
 }
 
-/// Pacing conditions a render job ran with.
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize, TS)]
+/// Pacing a render job ran with, derived from the plugins its signal path loads.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct RenderPacing {
     pub render_mode: riffra_core::RenderMode,
-    /// Seconds hosted VST3 plugins were processed before the render started.
+    /// Seconds hosted VST3 plugins were processed before the render started: the longest warm-up
+    /// of `realtimePlugins`, or 0 without any.
     pub plugin_warm_up_seconds: f64,
+    /// Plugins in the signal path that need wall-clock processing, which is why the render is
+    /// real-time.
+    pub realtime_plugins: Vec<String>,
 }
 
 /// Result metadata for an aligned set of rendered Track stems.

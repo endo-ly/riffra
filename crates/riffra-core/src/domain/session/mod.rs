@@ -264,41 +264,45 @@ pub enum RenderMode {
 }
 
 /// Project-wide offline render conditions and master mix envelope.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, schemars::JsonSchema)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MixdownSettings {
     pub musical_end_tick: u64,
     pub tail_seconds: f64,
     pub fade_out_seconds: f64,
-    /// Wall-clock seconds to process VST3 plugins before rendering, excluded from the WAV.
-    /// Defaults to 2 when omitted; range 0..=60. Increase if asynchronous sample loading
-    /// leaves the start silent or incomplete; 0 disables warm-up.
-    #[serde(default = "default_plugin_warm_up_seconds")]
-    pub plugin_warm_up_seconds: f64,
-    /// Pacing of the offline render. Defaults to `offline` when omitted.
-    #[serde(default)]
-    pub render_mode: RenderMode,
     pub mastering: Option<LoudnessMastering>,
     pub sample_rate: Option<u32>,
     pub block_size: Option<u32>,
 }
 
-fn default_plugin_warm_up_seconds() -> f64 {
-    2.0
+/// Stored shape of [`MixdownSettings`]. Sessions saved when the Project owned the render pacing
+/// still carry `renderMode` and `pluginWarmUpSeconds`; both are read and dropped.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct MixdownSettingsWire {
+    musical_end_tick: u64,
+    tail_seconds: f64,
+    fade_out_seconds: f64,
+    #[serde(default, rename = "pluginWarmUpSeconds")]
+    _plugin_warm_up_seconds: Option<serde::de::IgnoredAny>,
+    #[serde(default, rename = "renderMode")]
+    _render_mode: Option<serde::de::IgnoredAny>,
+    mastering: Option<LoudnessMastering>,
+    sample_rate: Option<u32>,
+    block_size: Option<u32>,
 }
 
-impl Default for MixdownSettings {
-    fn default() -> Self {
-        Self {
-            musical_end_tick: 0,
-            tail_seconds: 0.0,
-            fade_out_seconds: 0.0,
-            plugin_warm_up_seconds: default_plugin_warm_up_seconds(),
-            render_mode: RenderMode::default(),
-            mastering: None,
-            sample_rate: None,
-            block_size: None,
-        }
+impl<'de> Deserialize<'de> for MixdownSettings {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let wire = MixdownSettingsWire::deserialize(deserializer)?;
+        Ok(Self {
+            musical_end_tick: wire.musical_end_tick,
+            tail_seconds: wire.tail_seconds,
+            fade_out_seconds: wire.fade_out_seconds,
+            mastering: wire.mastering,
+            sample_rate: wire.sample_rate,
+            block_size: wire.block_size,
+        })
     }
 }
 
@@ -314,16 +318,14 @@ pub struct LoudnessMastering {
 impl MixdownSettings {
     /// Names the first setting a linked Score owns that differs.
     ///
-    /// Tail, plugin warm-up, render mode, sample rate, and block size are
-    /// execution conditions the Score cannot express, so they remain editable.
+    /// Tail, sample rate, and block size are execution conditions the Score
+    /// cannot express, so they remain editable.
     fn score_owned_difference(&self, other: &Self) -> Option<&'static str> {
         let Self {
             musical_end_tick,
             fade_out_seconds,
             mastering,
             tail_seconds: _,
-            plugin_warm_up_seconds: _,
-            render_mode: _,
             sample_rate: _,
             block_size: _,
         } = self;
@@ -347,8 +349,6 @@ impl MixdownSettings {
             || self.tail_seconds < 0.0
             || !self.fade_out_seconds.is_finite()
             || self.fade_out_seconds < 0.0
-            || !self.plugin_warm_up_seconds.is_finite()
-            || !(0.0..=60.0).contains(&self.plugin_warm_up_seconds)
             || self.sample_rate == Some(0)
             || self.block_size == Some(0)
         {
@@ -400,49 +400,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn plugin_warm_up_defaults_and_validates() {
-        let mut json = serde_json::to_value(MixdownSettings::default()).unwrap();
-        json.as_object_mut().unwrap().remove("pluginWarmUpSeconds");
-        let mut settings: MixdownSettings = serde_json::from_value(json).unwrap();
-        assert_eq!(settings.plugin_warm_up_seconds, 2.0);
-        for value in [0.0, 60.0] {
-            settings.plugin_warm_up_seconds = value;
-            assert!(settings.validate().is_ok());
-        }
-        for value in [-1.0, 60.1, f64::NAN, f64::INFINITY] {
-            settings.plugin_warm_up_seconds = value;
-            assert!(settings.validate().is_err());
-        }
-    }
-
-    #[test]
-    fn render_mode_defaults_to_offline_and_round_trips() {
+    fn mixdown_settings_read_the_pacing_fields_of_older_sessions() {
         // Arrange
-        let mut omitted = serde_json::to_value(MixdownSettings::default()).unwrap();
-        omitted.as_object_mut().unwrap().remove("renderMode");
+        let mut json = serde_json::to_value(MixdownSettings::default()).unwrap();
+        json["pluginWarmUpSeconds"] = 30.0.into();
+        json["renderMode"] = "realtime".into();
 
         // Act
-        let settings: MixdownSettings = serde_json::from_value(omitted).unwrap();
+        let settings: MixdownSettings = serde_json::from_value(json).unwrap();
 
         // Assert
-        assert_eq!(settings.render_mode, RenderMode::Offline);
-        for (mode, encoded) in [
-            (RenderMode::Offline, "offline"),
-            (RenderMode::Realtime, "realtime"),
-        ] {
-            let json = serde_json::to_value(MixdownSettings {
-                render_mode: mode,
-                ..MixdownSettings::default()
-            })
-            .unwrap();
-            assert_eq!(json["renderMode"], encoded);
-            assert_eq!(
-                serde_json::from_value::<MixdownSettings>(json)
-                    .unwrap()
-                    .render_mode,
-                mode
-            );
-        }
+        assert_eq!(settings, MixdownSettings::default());
+        let mut unknown = serde_json::to_value(&settings).unwrap();
+        unknown["pluginWarmUp"] = 1.into();
+        assert!(serde_json::from_value::<MixdownSettings>(unknown).is_err());
     }
 
     #[test]
@@ -525,8 +496,6 @@ mod tests {
         work.arrangement.loop_range.enabled = true;
         work.arrangement.midi_clips[0].muted = true;
         work.settings.mixdown.tail_seconds = 2.0;
-        work.settings.mixdown.plugin_warm_up_seconds = 30.0;
-        work.settings.mixdown.render_mode = RenderMode::Realtime;
         work.settings.mixdown.sample_rate = Some(48_000);
         work.settings.mixdown.block_size = Some(512);
         assert_eq!(session.score_owned_difference(&work), None);
