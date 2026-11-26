@@ -1326,10 +1326,8 @@ fn build_render_plan_with_required(
         {
             return Err(format!("Track is not registered: {track_id}"));
         }
-        // Keep every Track's plugin graph so all independently rendered stems
-        // use the same project-wide PDC baseline. Soloing the selected Track
-        // silences the other Tracks' main outputs and their return Sends while
-        // their Sidechain routes stay audible.
+        // Soloing the selected Track silences the other Tracks' main outputs and
+        // their return Sends while their Sidechain routes stay audible.
         for track in &mut render_session.arrangement.tracks {
             track.solo = track.id == track_id;
             if track.id == track_id {
@@ -1343,6 +1341,16 @@ fn build_render_plan_with_required(
             .into_iter()
             .map(str::to_owned)
             .collect::<BTreeSet<_>>();
+        // Tracks outside the selected Track's signal path are not loaded. Latency
+        // compensation aligns every remaining path to the remaining maximum
+        // latency and the write window moves with it, so the output keeps its
+        // timeline position without their plugins.
+        for track in &mut render_session.arrangement.tracks {
+            if !required_tracks.contains(&track.id) {
+                track.instrument = None;
+                track.effects.clear();
+            }
+        }
         render_session
             .arrangement
             .audio_clips
@@ -3356,13 +3364,30 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn track_render_keeps_the_project_graph_for_a_shared_pdc_baseline() {
-        let root = std::env::temp_dir().join("riffra-track-pdc-render-plan");
-        let mut session = session_with_clips();
-        session.arrangement.tracks.push(Track::audio(
-            "latency-reference".into(),
-            "Latency Reference".into(),
+    fn track_render_loads_only_the_plugins_on_the_selected_signal_path() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-track-render-plan-{}",
+            riffra_control::new_instance_id()
         ));
+        fs::create_dir_all(&root).unwrap();
+        let plugin = root.join("effect.vst3");
+        fs::write(&plugin, b"").unwrap();
+        let effect = |id: &str| riffra_core::EffectDevice {
+            id: id.into(),
+            name: "Effect".into(),
+            bypassed: false,
+            plugin: riffra_core::Vst3Plugin {
+                path: plugin.to_string_lossy().into_owned(),
+                parameter_values: Vec::new(),
+                state_data: None,
+                disabled_placeholder: false,
+            },
+        };
+        let mut session = session_with_clips();
+        session.arrangement.tracks[0].effects.push(effect("selected-effect"));
+        let mut unrelated = Track::audio("unrelated".into(), "Unrelated".into());
+        unrelated.effects.push(effect("unrelated-effect"));
+        session.arrangement.tracks.push(unrelated);
         session
             .arrangement
             .automation_lanes
@@ -3395,15 +3420,18 @@ pub(super) mod tests {
         assert_eq!(tracks[0].id, "instrument");
         assert!(!tracks[0].muted);
         assert!(tracks[0].solo);
-        assert_eq!(tracks[1].id, "latency-reference");
+        assert_eq!(tracks[0].effects.len(), 1);
+        assert_eq!(tracks[1].id, "unrelated");
         assert!(!tracks[1].solo);
         assert!(tracks[1].audio_clips.is_empty() && tracks[1].midi_clips.is_empty());
+        assert!(tracks[1].effects.is_empty());
         assert_eq!(plan.graph.automation.len(), 1);
         assert_eq!(
             plan.graph.automation[0].target,
             riffra_core::AutomationTarget::MasterGain
         );
         assert_eq!(plan.graph.automation[0].points[0].value, -9.0);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
