@@ -236,7 +236,7 @@ impl Drop for PendingRenderOutput {
 }
 
 /// Names the pacing a finished render job ran with and why, e.g.
-/// `Realtime stem render completed (Synthesizer V Studio 2 Plugin, 30 s warm-up).`.
+/// `Realtime stem render completed (Vocal Synth, 30 s warm-up).`.
 pub(crate) fn completion_message(subject: &str, pacing: &RenderPacing) -> String {
     let mode = match pacing.render_mode {
         riffra_core::RenderMode::Offline => "Offline",
@@ -1380,7 +1380,7 @@ fn build_render_plan_with_required(
             track.effects.clear();
         }
     }
-    let pacing = resolve_pacing(&render_session, options.render_mode)?;
+    let pacing = resolve_pacing(data_root, &render_session, options.render_mode)?;
 
     let conditions = match shared_conditions {
         Some(conditions) => *conditions,
@@ -1451,13 +1451,23 @@ fn build_render_plan_with_required(
     })
 }
 
-/// Decides the render's pacing from the plugins its signal path loads. Any plugin class that
-/// needs wall-clock processing makes the whole render real-time, with the longest warm-up of
-/// those classes; a render without one adds no warm-up.
+/// Decides the render's pacing from the plugins its signal path loads. A plugin the catalog marks
+/// as synthesizing in wall-clock time makes the whole render real-time, with the longest warm-up
+/// of those plugins; a render without one adds no warm-up.
 fn resolve_pacing(
+    data_root: &Path,
     session: &CreativeSession,
     requested: Option<riffra_core::RenderMode>,
 ) -> Result<RenderPacing, String> {
+    let realtime_entries: Vec<_> = crate::plugins::load(data_root)
+        .map_err(|error| format!("plugin catalog could not be read: {error}"))?
+        .into_iter()
+        .filter_map(|entry| {
+            entry
+                .realtime_warm_up_seconds
+                .map(|seconds| (entry.path, entry.name, seconds))
+        })
+        .collect();
     let arrangement = &session.arrangement;
     let plugins = arrangement
         .tracks
@@ -1483,16 +1493,18 @@ fn resolve_pacing(
     let mut realtime_plugins = Vec::new();
     let mut warm_up = 0.0_f64;
     for plugin in plugins {
-        if let Some(class) = crate::plugins::realtime_class(&plugin.path)
-            && !realtime_plugins.iter().any(|name| name == class.name)
+        if let Some((_, name, seconds)) = realtime_entries
+            .iter()
+            .find(|(path, _, _)| crate::plugins::catalog::same_plugin_path(path, &plugin.path))
+            && !realtime_plugins.contains(name)
         {
-            realtime_plugins.push(class.name.to_owned());
-            warm_up = warm_up.max(class.warm_up_seconds);
+            realtime_plugins.push(name.clone());
+            warm_up = warm_up.max(*seconds);
         }
     }
     if !realtime_plugins.is_empty() && requested == Some(riffra_core::RenderMode::Offline) {
         return Err(format!(
-            "offline rendering would produce broken audio for {}, which synthesizes in wall-clock time; do not request renderMode offline for this signal path",
+            "offline rendering would produce broken audio for {}, which the plugin catalog marks as synthesizing in wall-clock time; do not request renderMode offline for this signal path",
             realtime_plugins.join(", ")
         ));
     }
@@ -3395,16 +3407,40 @@ pub(super) mod tests {
     #[test]
     fn pacing_follows_the_plugins_on_the_rendered_signal_path() {
         // Arrange
-        let root = std::env::temp_dir().join("riffra-render-pacing-plan");
+        let root = std::env::temp_dir().join(format!(
+            "riffra-render-pacing-plan-{}",
+            riffra_control::new_instance_id()
+        ));
+        let vocal_synth = root.join("Vocal Synth.vst3").to_string_lossy().into_owned();
+        crate::plugins::save(
+            &root,
+            &crate::api::output::ScanReport {
+                root: root.to_string_lossy().into_owned(),
+                started_at_ms: 0,
+                finished_at_ms: 0,
+                plugins: vec![crate::api::output::PluginEntry {
+                    id: "vst3-vocal".into(),
+                    name: "Vocal Synth".into(),
+                    vendor: None,
+                    version: None,
+                    identifier: None,
+                    format: crate::api::output::PluginFormat::Vst3,
+                    role: Some(crate::api::output::PluginRole::Effect),
+                    path: vocal_synth.clone(),
+                    bundle: true,
+                    modified_at_ms: None,
+                    scan_state: crate::api::output::PluginScanState::Validated,
+                    realtime_warm_up_seconds: Some(30.0),
+                }],
+                issues: Vec::new(),
+            },
+        )
+        .unwrap();
         let mut session = session_with_clips();
         let mut vocal = Track::audio("vocal".into(), "Vocal".into());
         vocal.effects.push(
-            riffra_core::EffectDevice::new(
-                "synthv".into(),
-                "Synthesizer V".into(),
-                "C:/VST3/Synthesizer V Studio 2 Plugin.vst3".into(),
-            )
-            .unwrap(),
+            riffra_core::EffectDevice::new("vocal-synth".into(), "Vocal Synth".into(), vocal_synth)
+                .unwrap(),
         );
         session.arrangement.tracks.push(vocal);
         session.arrangement.midi_clips.push(MidiClip {
@@ -3434,7 +3470,7 @@ pub(super) mod tests {
             RenderPacing {
                 render_mode: riffra_core::RenderMode::Realtime,
                 plugin_warm_up_seconds: 30.0,
-                realtime_plugins: vec!["Synthesizer V Studio 2 Plugin".into()],
+                realtime_plugins: vec!["Vocal Synth".into()],
             }
         );
         assert_eq!(whole.graph.mixdown.plugin_warm_up_seconds, 30.0);
@@ -3447,12 +3483,8 @@ pub(super) mod tests {
             }
         );
         assert_eq!(without_vocal.graph.mixdown.plugin_warm_up_seconds, 0.0);
-        assert!(
-            forced_offline
-                .err()
-                .unwrap()
-                .contains("Synthesizer V Studio 2 Plugin")
-        );
+        assert!(forced_offline.err().unwrap().contains("Vocal Synth"));
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

@@ -2567,6 +2567,21 @@ pub enum PluginCommand {
 pub enum PluginCatalogCommand {
     /// List the discovered VST3 plugin catalog; requires a running Riffra Host accessed with --attach.
     List,
+    /// Mark a catalog plugin as synthesizing in wall-clock time, so any render whose signal path loads it runs at 1.0x after the warm-up, or clear the mark with --off; requires --attach. A scan keeps the mark.
+    Realtime(PluginRealtimeArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct PluginRealtimeArgs {
+    /// Plugin ID from `plugin catalog list`.
+    #[arg(long)]
+    pub plugin_id: String,
+    /// Seconds (0 to 60) the plugin is processed before the render starts.
+    #[arg(long, conflicts_with = "off", required_unless_present = "off")]
+    pub warm_up_seconds: Option<f64>,
+    /// Render the plugin as fast as possible again.
+    #[arg(long)]
+    pub off: bool,
 }
 
 #[derive(Debug, Args)]
@@ -2850,7 +2865,7 @@ pub struct RenderStartArgs {
     /// Apply peak normalization to the rendered audio; defaults to false when omitted.
     #[arg(long)]
     pub normalize: Option<bool>,
-    /// Force the pacing for inspection. Without it Riffra decides from the plugins the rendered signal path loads: real-time (1.0x, with each plugin's warm-up) when one of them synthesizes in wall-clock time, such as Synthesizer V, otherwise as fast as possible. `offline` on such a path is rejected; the result's `pacing` reports the mode, warm-up, and plugins.
+    /// Force the pacing for inspection. Without it Riffra decides from the plugins the rendered signal path loads: real-time (1.0x, with the longest warm-up) when the plugin catalog marks one of them as synthesizing in wall-clock time (`plugin catalog realtime`; a scan marks Synthesizer V when it first finds it), otherwise as fast as possible. `offline` on such a path is rejected; the result's `pacing` reports the mode, warm-up, and plugins.
     #[arg(long, value_parser = ["offline", "realtime"])]
     pub render_mode: Option<String>,
     /// Render only this Track as a stem instead of the full mix.
@@ -4072,6 +4087,13 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
         CliCommand::Plugin { command } => match command {
             PluginCommand::Catalog { command } => match command {
                 PluginCatalogCommand::List => Runtime::PluginCatalogList(empty).into(),
+                PluginCatalogCommand::Realtime(args) => {
+                    Runtime::PluginCatalogRealtime(PluginRealtimeParams {
+                        plugin_id: args.plugin_id,
+                        warm_up_seconds: args.warm_up_seconds,
+                    })
+                    .into()
+                }
             },
             PluginCommand::Scan(args) => {
                 let params = PluginScanParams { path: args.path };

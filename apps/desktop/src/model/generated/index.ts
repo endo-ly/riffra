@@ -263,6 +263,7 @@ export type { PluginFormat } from './PluginFormat';
 export type { PluginPathParams } from './PluginPathParams';
 export type { PluginPresetInfo } from './PluginPresetInfo';
 export type { PluginPresetSetParams } from './PluginPresetSetParams';
+export type { PluginRealtimeParams } from './PluginRealtimeParams';
 export type { PluginRole } from './PluginRole';
 export type { PluginScanParams } from './PluginScanParams';
 export type { PluginScanState } from './PluginScanState';

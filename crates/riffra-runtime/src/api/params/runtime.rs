@@ -122,6 +122,18 @@ pub struct PluginScanParams {
     pub path: Option<String>,
 }
 
+/// Marks a catalog plugin as synthesizing in wall-clock time, or clears the mark.
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[ts(optional_fields = nullable)]
+pub struct PluginRealtimeParams {
+    /// Plugin ID from the DataRoot catalog.
+    pub plugin_id: String,
+    /// Warm-up in seconds (0 to 60) before a render that loads the plugin; omit to render the
+    /// plugin as fast as possible.
+    pub warm_up_seconds: Option<f64>,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct AudioChannelsProbeParams {

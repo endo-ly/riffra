@@ -95,6 +95,7 @@ pub enum ControlOutput {
     PluginPresets(Vec<PluginPresetInfo>),
     PluginPreset(PluginPresetInfo),
     Plugins(Vec<PluginEntry>),
+    Plugin(PluginEntry),
     PluginScan(ScanReport),
     Missing(Vec<MissingDependency>),
     RigState(RigState),

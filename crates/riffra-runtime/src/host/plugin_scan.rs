@@ -12,6 +12,7 @@ impl HostState {
         plugins::reuse_cached_scan_results(&self.data_root, &mut report);
         let mut report = plugins::validate_report(report, &self.binaries.plugin_scan)?;
         report.finished_at_ms = now_ms();
+        plugins::carry_realtime(&self.data_root, &mut report);
         plugins::save(&self.data_root, &report)
             .map_err(|error| format!("plugin catalog could not be saved: {error}"))?;
         library::sync_plugins(&self.data_root, &report.plugins)?;
@@ -45,7 +46,7 @@ impl HostState {
                         }
                     };
                 plugins::reuse_cached_scan_results(&data_root, &mut report);
-                let report = match plugins::validate_report_with_cancel(
+                let mut report = match plugins::validate_report_with_cancel(
                     report,
                     &scanner,
                     Some(cancelled.clone()),
@@ -63,6 +64,7 @@ impl HostState {
                     registry.mark_cancelled(&job_id);
                     return;
                 }
+                plugins::carry_realtime(&data_root, &mut report);
                 if let Err(error) = plugins::save(&data_root, &report) {
                     jobs::fail(
                         &registry,

@@ -804,6 +804,10 @@ impl HostState {
                     command_error(format!("plugin catalog could not be loaded: {error}"))
                 })?)
             }
+            RuntimeCommand::PluginCatalogRealtime(params) => ControlOutput::Plugin(
+                plugins::set_realtime(&self.data_root, &params.plugin_id, params.warm_up_seconds)
+                    .map_err(command_error)?,
+            ),
             RuntimeCommand::PluginScan(params) => {
                 self.ensure_plugin_discovery_online()?;
                 let root = params

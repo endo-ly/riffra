@@ -498,9 +498,10 @@ pub(crate) const TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "plugin_catalog",
-        description: "List installed plugins, scan synchronously, or start a background scan.",
+        description: "List installed plugins, scan synchronously, start a background scan, or set whether a plugin synthesizes in wall-clock time. realtime takes pluginId and warmUpSeconds (0 to 60; omit to clear): any render whose signal path loads a marked plugin runs at 1.0x after the longest warm-up, and a scan keeps the mark.",
         actions: &[
             action("list", "plugin.catalog.list"),
+            action("realtime", "plugin.catalog.realtime"),
             action("scan", "plugin.scan"),
             action("scan_start", "plugin.scan.start"),
         ],
@@ -601,7 +602,7 @@ pub(crate) const TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "render",
-        description: "Start a Render, stem, or remix job, export or list completed renders, or delete one managed Render. remix re-renders the mix from a stems Render (renderId) with gainDb or pan changes on some Tracks (tracks), without loading their plugins: each stem plays in place of its Track through the current Buses, Sends, and Master, and the result is a normal Render in the history. Gain and pan are applied on top of what the stem contains; Sends taken before the fader, a changed pan (a balance on the panned stem), and Sidechain sources are approximations. Riffra decides the pacing from the plugins the rendered signal path loads: real-time (1.0x, with each plugin's warm-up) when one of them synthesizes in wall-clock time, such as Synthesizer V, otherwise as fast as possible, so a render without the vocal Track is fast. options.renderMode forces a mode for inspection, and offline on such a path is rejected. Each result's pacing reports the mode, the warm-up, and the plugins that required real-time.",
+        description: "Start a Render, stem, or remix job, export or list completed renders, or delete one managed Render. remix re-renders the mix from a stems Render (renderId) with gainDb or pan changes on some Tracks (tracks), without loading their plugins: each stem plays in place of its Track through the current Buses, Sends, and Master, and the result is a normal Render in the history. Gain and pan are applied on top of what the stem contains; Sends taken before the fader, a changed pan (a balance on the panned stem), and Sidechain sources are approximations. Riffra decides the pacing from the plugins the rendered signal path loads: real-time (1.0x, with the longest warm-up) when the plugin catalog marks one of them as synthesizing in wall-clock time (plugin_catalog realtime; a scan marks Synthesizer V when it first finds it), otherwise as fast as possible, so a render without the vocal Track is fast. options.renderMode forces a mode for inspection, and offline on such a path is rejected. Each result's pacing reports the mode, the warm-up, and the plugins that required real-time.",
         actions: &[
             action("start", "render.start"),
             action("stems", "render.stems"),
@@ -1169,11 +1170,11 @@ mod tests {
         // Assert
         assert_eq!(names, expected);
         let actions: Vec<_> = TOOLS.iter().flat_map(|tool| tool.actions.iter()).collect();
-        assert_eq!(actions.len(), 228);
+        assert_eq!(actions.len(), 229);
         let commands: std::collections::HashSet<_> =
             actions.iter().map(|action| action.command).collect();
-        assert_eq!(commands.len(), 227);
-        assert_eq!(command_names().len(), 243);
+        assert_eq!(commands.len(), 228);
+        assert_eq!(command_names().len(), 244);
         let public_commands: std::collections::HashSet<_> =
             command_names().iter().copied().collect();
         let mut unused = public_commands

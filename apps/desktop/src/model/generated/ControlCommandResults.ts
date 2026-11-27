@@ -176,6 +176,7 @@ export type ControlCommandResults = {
   'midi.target.set': OutputValue<'ok'>;
   'midi.panic': OutputValue<'ok'>;
   'plugin.catalog.list': OutputValue<'plugins'>;
+  'plugin.catalog.realtime': OutputValue<'plugin'>;
   'plugin.scan': OutputValue<'pluginScan'>;
   'plugin.scan.start': OutputValue<'job'>;
   'plugin.editor.open': OutputValue<'ok'>;

@@ -4457,6 +4457,7 @@ mod tests {
                 bundle: true,
                 modified_at_ms: None,
                 scan_state: PluginScanState::Validated,
+                realtime_warm_up_seconds: None,
             },
             plugin: Vst3Plugin::new(format!("/plugins/{name}.vst3")),
         }
@@ -4608,6 +4609,7 @@ mod tests {
                 bundle: true,
                 modified_at_ms: None,
                 scan_state: PluginScanState::Validated,
+                realtime_warm_up_seconds: None,
             }],
         };
         crate::plugins::catalog::save(&root, &report).unwrap();
@@ -4894,6 +4896,7 @@ mod tests {
                     bundle: true,
                     modified_at_ms: None,
                     scan_state: PluginScanState::Validated,
+                    realtime_warm_up_seconds: None,
                 }
             })
             .collect();
@@ -5708,6 +5711,7 @@ mod tests {
                 bundle: true,
                 modified_at_ms: None,
                 scan_state: PluginScanState::Validated,
+                realtime_warm_up_seconds: None,
             }
         })
         .collect();
@@ -5864,6 +5868,7 @@ mod tests {
                     bundle: true,
                     modified_at_ms: None,
                     scan_state: PluginScanState::Validated,
+                    realtime_warm_up_seconds: None,
                 }],
             },
         )

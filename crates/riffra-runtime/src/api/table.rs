@@ -474,6 +474,7 @@ control_commands! {
         MidiPanic = "midi.panic" (TrackIdParams) -> Ok, project;
 
         PluginCatalogList = "plugin.catalog.list" (EmptyParams) -> Plugins, host;
+        PluginCatalogRealtime = "plugin.catalog.realtime" (PluginRealtimeParams) -> Plugin, host;
         PluginScan = "plugin.scan" (PluginScanParams) -> PluginScan, host;
         PluginScanStart = "plugin.scan.start" (PluginScanParams) -> Job, host;
         PluginEditorOpen = "plugin.editor.open" (DeviceParams) -> Ok, project;
@@ -578,7 +579,7 @@ mod tests {
         let names = command_names();
 
         // Act / Assert
-        assert_eq!(names.len(), 243);
+        assert_eq!(names.len(), 244);
         let unique: std::collections::HashSet<_> = names.iter().copied().collect();
         assert_eq!(unique.len(), names.len());
         for name in names {
@@ -816,7 +817,7 @@ mod tests {
             .filter_map(|line| line.split_once('\'').map(|(name, _)| name))
             .collect();
         let unique: std::collections::HashSet<_> = names.iter().copied().collect();
-        assert_eq!(names.len(), 243);
+        assert_eq!(names.len(), 244);
         assert_eq!(unique.len(), names.len());
 
         for (name, params) in [

@@ -281,6 +281,9 @@ pub struct PluginEntry {
     pub bundle: bool,
     pub modified_at_ms: Option<u64>,
     pub scan_state: PluginScanState,
+    /// Wall-clock seconds of warm-up when the plugin synthesizes in wall-clock time, so a render
+    /// whose signal path loads it runs at 1.0x; `None` when it renders as fast as possible.
+    pub realtime_warm_up_seconds: Option<f64>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
