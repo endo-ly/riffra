@@ -328,7 +328,7 @@ control_commands! {
         TimebaseUpdate = "music.timebase.update" (TimebaseUpdateParams) -> ArrangementMutation, mutation(batch), project;
         TimebaseGetMap = "music.timebase.get-map" (EmptyParams) -> Timebase, read, project;
         MixdownGet = "render.settings.get" (EmptyParams) -> Mixdown, read, project;
-        MixdownSet = "render.settings.set" (riffra_core::MixdownSettings) -> ArrangementMutation, mutation(batch), project;
+        MixdownSet = "render.settings.set" (riffra_core::application::MixdownSettingsPatch) -> ArrangementMutation, mutation(batch), project;
         TrackExternalAudioInputSet = "track.external-audio-input.set" (TrackExternalAudioInputSetParams) -> ArrangementMutation, mutation(batch), project;
         TrackExternalAudioInputClear = "track.external-audio-input.clear" (TrackIdParams) -> ArrangementMutation, mutation(batch), project;
         InstrumentEventList = "clip.midi.instrument-event.list" (InstrumentEventClipParams) -> InstrumentEvents, read, project;
@@ -474,6 +474,7 @@ control_commands! {
         MidiPanic = "midi.panic" (TrackIdParams) -> Ok, project;
 
         PluginCatalogList = "plugin.catalog.list" (EmptyParams) -> Plugins, host;
+        PluginCatalogRealtime = "plugin.catalog.realtime" (PluginRealtimeParams) -> Plugin, host;
         PluginScan = "plugin.scan" (PluginScanParams) -> PluginScan, host;
         PluginScanStart = "plugin.scan.start" (PluginScanParams) -> Job, host;
         PluginEditorOpen = "plugin.editor.open" (DeviceParams) -> Ok, project;
@@ -525,6 +526,7 @@ control_commands! {
 
         RenderStart = "render.start" (RenderStartParams) -> Job, project;
         RenderStems = "render.stems" (RenderStemsParams) -> Job, project;
+        RenderRemix = "render.remix" (RenderRemixParams) -> Job, project;
         RenderCapture = "render.capture" (RenderCaptureParams) -> Job, project(long);
         RenderExport = "render.export" (RenderExportParams) -> RenderExport, host;
         RenderList = "render.list" (EmptyParams) -> RenderList, host;
@@ -577,7 +579,7 @@ mod tests {
         let names = command_names();
 
         // Act / Assert
-        assert_eq!(names.len(), 242);
+        assert_eq!(names.len(), 244);
         let unique: std::collections::HashSet<_> = names.iter().copied().collect();
         assert_eq!(unique.len(), names.len());
         for name in names {
@@ -815,7 +817,7 @@ mod tests {
             .filter_map(|line| line.split_once('\'').map(|(name, _)| name))
             .collect();
         let unique: std::collections::HashSet<_> = names.iter().copied().collect();
-        assert_eq!(names.len(), 242);
+        assert_eq!(names.len(), 244);
         assert_eq!(unique.len(), names.len());
 
         for (name, params) in [

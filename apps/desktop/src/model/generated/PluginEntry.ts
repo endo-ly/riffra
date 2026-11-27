@@ -11,4 +11,9 @@ identifier: string | null, format: PluginFormat,
 /**
  * The plug-in role reported by the VST3 scanner, when available.
  */
-role: PluginRole | null, path: string, bundle: boolean, modifiedAtMs: number | null, scanState: PluginScanState, };
+role: PluginRole | null, path: string, bundle: boolean, modifiedAtMs: number | null, scanState: PluginScanState, 
+/**
+ * Wall-clock seconds of warm-up when the plugin synthesizes in wall-clock time, so a render
+ * whose signal path loads it runs at 1.0x; `None` when it renders as fast as possible.
+ */
+realtimeWarmUpSeconds: number | null, };

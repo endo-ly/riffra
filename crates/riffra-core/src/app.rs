@@ -215,12 +215,11 @@ impl AppCore {
             .score_source
             .as_ref()
             .is_some_and(|source| source.path.is_some())
-            && !self.snapshot.session.score_owned_state_equals(candidate)
+            && let Some(path) = self.snapshot.session.score_owned_difference(candidate)
         {
-            return Err(ApplicationError::InvalidCommand(
-                "this Project is linked to a Score; edit the Score file and rebuild the Project"
-                    .into(),
-            ));
+            return Err(ApplicationError::InvalidCommand(format!(
+                "this Project is linked to a Score that owns `{path}`; edit the Score file and rebuild the Project"
+            )));
         }
         Ok(())
     }
@@ -448,17 +447,48 @@ mod tests {
         work_state.arrangement.tracks[0].muted = true;
         work_state.arrangement.loop_range.enabled = true;
         work_state.arrangement.loop_range.end_tick = TimelineTick(960);
-        work_state.settings.mixdown.render_mode = crate::RenderMode::Realtime;
-        work_state.settings.mixdown.plugin_warm_up_seconds = 30.0;
         core.commit_candidate(&storage, work_state)
             .expect("work state is editable");
+        let before = core.canonical_state().session.settings.mixdown;
+        let execution = core
+            .application(&storage)
+            .update_session_settings(crate::application::SessionSettingsPatch {
+                mixdown: Some(crate::application::MixdownSettingsPatch {
+                    tail_seconds: Some(3.0),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .expect("execution conditions are editable");
+        assert_eq!(
+            execution.settings.mixdown,
+            crate::MixdownSettings {
+                tail_seconds: 3.0,
+                ..before
+            }
+        );
+        let error = core
+            .application(&storage)
+            .update_session_settings(crate::application::SessionSettingsPatch {
+                mixdown: Some(crate::application::MixdownSettingsPatch {
+                    fade_out_seconds: Some(before.fade_out_seconds + 1.0),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("`settings.mixdown.fadeOutSeconds`")
+        );
 
         let mut note = core.canonical_state().session;
         note.arrangement.midi_clips[0].notes[0].note = 62;
         let error = core.commit_candidate(&storage, note).unwrap_err();
         assert_eq!(
             error.to_string(),
-            "invalid command: this Project is linked to a Score; edit the Score file and rebuild the Project"
+            "invalid command: this Project is linked to a Score that owns `arrangement.midiClips`; edit the Score file and rebuild the Project"
         );
 
         let mut title = core.canonical_state().session;
@@ -468,7 +498,7 @@ mod tests {
         let mut score_text = core.canonical_state().session;
         score_text.score_source.as_mut().unwrap().yaml = "meta: {title: Edited}".into();
         assert!(core.commit_candidate(&storage, score_text).is_err());
-        assert_eq!(storage.sessions.lock().unwrap().len(), 1);
+        assert_eq!(storage.sessions.lock().unwrap().len(), 2);
     }
 
     #[test]

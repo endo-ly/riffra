@@ -50,6 +50,7 @@ where
     ) -> Result<CreativeSession, ApplicationError> {
         self.core.commit(self.storage, |session| {
             if let Some(mixdown) = patch.mixdown {
+                let mixdown = mixdown.applied_to(&session.settings.mixdown);
                 mixdown
                     .validate()
                     .map_err(ApplicationError::InvalidCommand)?;

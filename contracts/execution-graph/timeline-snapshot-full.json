@@ -6,7 +6,7 @@
       "musicalEndTick": 0,
       "tailSeconds": 0.0,
       "fadeOutSeconds": 0.0,
-      "pluginWarmUpSeconds": 2.0
+      "pluginWarmUpSeconds": 0.0
     },
     "timebase": {
       "ppq": 960,

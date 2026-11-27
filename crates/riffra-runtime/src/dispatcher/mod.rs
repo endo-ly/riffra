@@ -873,6 +873,7 @@ mod tests {
                     bundle: true,
                     modified_at_ms: None,
                     scan_state: crate::api::output::PluginScanState::Validated,
+                    realtime_warm_up_seconds: None,
                 }],
                 issues: Vec::new(),
             },

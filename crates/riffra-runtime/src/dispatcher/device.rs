@@ -264,6 +264,7 @@ mod tests {
                 bundle: true,
                 modified_at_ms: None,
                 scan_state: PluginScanState::Validated,
+                realtime_warm_up_seconds: None,
             })
             .collect(),
         };

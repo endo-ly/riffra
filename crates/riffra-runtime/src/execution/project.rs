@@ -191,7 +191,7 @@ pub(crate) fn project_graph(
             musical_end_tick: session.settings.mixdown.musical_end_tick,
             tail_seconds: session.settings.mixdown.tail_seconds,
             fade_out_seconds: session.settings.mixdown.fade_out_seconds,
-            plugin_warm_up_seconds: session.settings.mixdown.plugin_warm_up_seconds,
+            plugin_warm_up_seconds: 0.0,
         },
         timebase: arrangement.timebase.clone(),
         loop_range: GraphLoopRange {

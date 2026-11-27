@@ -162,6 +162,7 @@ pub fn prepare_command(command: &mut ControlCommand) -> Result<(), String> {
                 }
             }
             RuntimeCommand::RenderStems(params) => resolve_optional(&mut params.output_directory)?,
+            RuntimeCommand::RenderRemix(params) => resolve_optional(&mut params.output_path)?,
             RuntimeCommand::RenderCapture(params) => {
                 resolve_optional(&mut params.output_directory)?
             }

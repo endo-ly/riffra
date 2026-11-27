@@ -536,6 +536,11 @@ mod tests {
             skipped_track_ids: Vec::new(),
             section_name: None,
             section_occurrence: None,
+            pacing: crate::api::output::RenderPacing {
+                render_mode: riffra_core::RenderMode::Offline,
+                plugin_warm_up_seconds: 0.0,
+                realtime_plugins: Vec::new(),
+            },
         };
 
         assert!(registry.complete_if_not_cancelled(

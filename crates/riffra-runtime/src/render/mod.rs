@@ -1,6 +1,6 @@
 use crate::api::output::{
-    ProjectionDiagnostics, RenderCapture, RenderCaptureResult, RenderResult, RenderStem,
-    RenderStemsResult,
+    ProjectionDiagnostics, RenderCapture, RenderCaptureResult, RenderPacing, RenderResult,
+    RenderStem, RenderStemsResult,
 };
 use crate::api::params::{CaptureTarget, RenderOptions, RenderRange};
 use crate::asset;
@@ -16,11 +16,13 @@ use std::{
 
 mod history;
 mod mastering;
+mod remix;
 mod sections;
 mod worker;
 
 pub(crate) use history::resolve_levels_render;
 pub(crate) use history::{delete_render, export_render, list_renders, resolve_measurement_sources};
+pub(crate) use remix::{prepare_remix, render_remix_with_cancellation};
 pub(crate) use worker::RenderWorker;
 
 /// Platform-independent request for rendering a prepared Execution Graph.
@@ -90,14 +92,14 @@ struct RenderPlan {
     start_tick: u64,
     end_tick: u64,
     sample_rate: u32,
-    render_mode: riffra_core::RenderMode,
+    pacing: RenderPacing,
     clip_count: usize,
     source_ids: Vec<AssetId>,
     output_path: PathBuf,
 }
 
 #[derive(Clone, Copy)]
-struct SharedRenderConditions {
+pub(crate) struct SharedRenderConditions {
     start_tick: u64,
     end_tick: u64,
     tail_seconds: f64,
@@ -118,6 +120,8 @@ pub(crate) struct TimelineRenderContext<'a> {
     pub(crate) project_id: Option<&'a str>,
     pub(crate) created_at_ms: u64,
     pub(crate) options: RenderOptions,
+    /// Range conditions fixed by the caller instead of resolved from `options.range`.
+    pub(crate) conditions: Option<SharedRenderConditions>,
 }
 
 /// Validated Track order and skipped IDs for a stem render request.
@@ -231,6 +235,23 @@ impl Drop for PendingRenderOutput {
     }
 }
 
+/// Names the pacing a finished render job ran with and why, e.g.
+/// `Realtime stem render completed (Vocal Synth, 30 s warm-up).`.
+pub(crate) fn completion_message(subject: &str, pacing: &RenderPacing) -> String {
+    let mode = match pacing.render_mode {
+        riffra_core::RenderMode::Offline => "Offline",
+        riffra_core::RenderMode::Realtime => "Realtime",
+    };
+    if pacing.realtime_plugins.is_empty() {
+        return format!("{mode} {subject} completed.");
+    }
+    format!(
+        "{mode} {subject} completed ({}, {} s warm-up).",
+        pacing.realtime_plugins.join(", "),
+        pacing.plugin_warm_up_seconds
+    )
+}
+
 pub(crate) fn render_timeline_with_project_cancellation(
     renderer: &RenderWorker,
     context: TimelineRenderContext<'_>,
@@ -255,6 +276,7 @@ fn render_timeline_pending(
         project_id,
         created_at_ms,
         options,
+        conditions,
     } = context;
     let output_path = options
         .output_path
@@ -267,7 +289,7 @@ fn render_timeline_pending(
         session,
         created_at_ms,
         &options,
-        None,
+        conditions.as_ref(),
     )?;
     let directory = plan
         .output_path
@@ -294,7 +316,7 @@ fn render_timeline_pending(
         sample_rate: plan.sample_rate,
         block_size: plan.block_size,
         normalize: options.normalize && session.settings.mixdown.mastering.is_none(),
-        render_mode: plan.render_mode,
+        render_mode: plan.pacing.render_mode,
     })?;
     if cancelled.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire)) {
         return Err("Timeline render was cancelled.".into());
@@ -408,6 +430,7 @@ fn render_timeline_pending(
         track_id: options.track_id,
         section_name,
         section_occurrence,
+        pacing: plan.pacing,
         state: "completed".into(),
         message: "Timeline rendered through the same Arrangement Graph used for playback.".into(),
     };
@@ -787,7 +810,7 @@ fn render_capture_pending(
         sample_rate: plan.sample_rate,
         block_size: plan.block_size,
         normalize: false,
-        render_mode: plan.render_mode,
+        render_mode: plan.pacing.render_mode,
     })?;
     let mut captures = Vec::with_capacity(outputs.len());
     let mut frames = None;
@@ -877,6 +900,7 @@ fn render_capture_pending(
         frames: frames.ok_or("capture produced no output")?,
         captures,
         exported_directory: None,
+        pacing: plan.pacing,
     };
     if let Some(external) = external {
         let copies = result
@@ -1030,7 +1054,7 @@ fn render_stems_pending(
         sample_rate: plan.sample_rate,
         block_size: plan.block_size,
         normalize: false,
-        render_mode: plan.render_mode,
+        render_mode: plan.pacing.render_mode,
     })
     .map_err(|e| format!("stem rendering failed: {e}"))?;
     for (index, track) in selected_tracks.into_iter().enumerate() {
@@ -1174,6 +1198,9 @@ fn render_stems_pending(
             track_name: track.name.clone(),
             asset_id,
             path: output_path.to_string_lossy().into_owned(),
+            gain_db: track.gain_db,
+            pan: track.pan,
+            output_bus_id: track.output_bus_id.clone(),
         });
     }
 
@@ -1193,6 +1220,7 @@ fn render_stems_pending(
         skipped_track_ids: selection.skipped_track_ids,
         section_name,
         section_occurrence,
+        pacing: plan.pacing,
     };
     if cancelled.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire)) {
         return Err("Timeline render was cancelled.".into());
@@ -1314,10 +1342,8 @@ fn build_render_plan_with_required(
         {
             return Err(format!("Track is not registered: {track_id}"));
         }
-        // Keep every Track's plugin graph so all independently rendered stems
-        // use the same project-wide PDC baseline. Soloing the selected Track
-        // silences the other Tracks' main outputs and their return Sends while
-        // their Sidechain routes stay audible.
+        // Soloing the selected Track silences the other Tracks' main outputs and
+        // their return Sends while their Sidechain routes stay audible.
         for track in &mut render_session.arrangement.tracks {
             track.solo = track.id == track_id;
             if track.id == track_id {
@@ -1327,19 +1353,34 @@ fn build_render_plan_with_required(
         for bus in &mut render_session.arrangement.mixer.buses {
             bus.solo = false;
         }
-        let required_tracks = processing_track_ids(&render_session)
+        let on_path = processing_track_ids(&render_session)
             .into_iter()
             .map(str::to_owned)
             .collect::<BTreeSet<_>>();
         render_session
             .arrangement
             .audio_clips
-            .retain(|clip| required_tracks.contains(&clip.track_id));
+            .retain(|clip| on_path.contains(&clip.track_id));
         render_session
             .arrangement
             .midi_clips
-            .retain(|clip| required_tracks.contains(&clip.track_id));
+            .retain(|clip| on_path.contains(&clip.track_id));
     }
+    // Tracks outside the rendered signal path are not loaded. Latency compensation
+    // aligns every remaining path to the remaining maximum latency and the write
+    // window moves with it, so the output keeps its timeline position without
+    // their plugins.
+    let on_path = processing_track_ids_with_required(&render_session, required_tracks)
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<BTreeSet<_>>();
+    for track in &mut render_session.arrangement.tracks {
+        if !on_path.contains(&track.id) {
+            track.instrument = None;
+            track.effects.clear();
+        }
+    }
+    let pacing = resolve_pacing(data_root, &render_session, options.render_mode)?;
 
     let conditions = match shared_conditions {
         Some(conditions) => *conditions,
@@ -1384,7 +1425,8 @@ fn build_render_plan_with_required(
         }
     }
     let resources = resolve(data_root, built_in_instruments, &render_session)?;
-    let (graph, diagnostics) = project_graph(&render_session, &resources);
+    let (mut graph, diagnostics) = project_graph(&render_session, &resources);
+    graph.mixdown.plugin_warm_up_seconds = pacing.plugin_warm_up_seconds;
     let dependency_warnings =
         validate_render_dependencies(&render_session, &diagnostics, required_tracks)?;
 
@@ -1396,9 +1438,7 @@ fn build_render_plan_with_required(
         start_tick: conditions.start_tick,
         end_tick: conditions.end_tick,
         sample_rate: conditions.sample_rate,
-        render_mode: options
-            .render_mode
-            .unwrap_or(session.settings.mixdown.render_mode),
+        pacing,
         clip_count,
         source_ids,
         output_path: data_root
@@ -1408,6 +1448,75 @@ fn build_render_plan_with_required(
                 riffra_control::new_instance_id()
             ))
             .join("timeline.wav"),
+    })
+}
+
+/// Decides the render's pacing from the plugins its signal path loads. A plugin the catalog marks
+/// as synthesizing in wall-clock time makes the whole render real-time, with the longest warm-up
+/// of those plugins; a render without one adds no warm-up.
+fn resolve_pacing(
+    data_root: &Path,
+    session: &CreativeSession,
+    requested: Option<riffra_core::RenderMode>,
+) -> Result<RenderPacing, String> {
+    let realtime_entries: Vec<_> = crate::plugins::load(data_root)
+        .map_err(|error| format!("plugin catalog could not be read: {error}"))?
+        .into_iter()
+        .filter_map(|entry| {
+            entry
+                .realtime_warm_up_seconds
+                .map(|seconds| (entry.path, entry.name, seconds))
+        })
+        .collect();
+    let arrangement = &session.arrangement;
+    let plugins = arrangement
+        .tracks
+        .iter()
+        .flat_map(|track| {
+            track
+                .instrument
+                .as_ref()
+                .and_then(riffra_core::TrackInstrument::as_vst3)
+                .into_iter()
+                .chain(track.effects.iter().map(|effect| &effect.plugin))
+        })
+        .chain(
+            arrangement
+                .mixer
+                .buses
+                .iter()
+                .flat_map(|bus| &bus.effects)
+                .chain(&arrangement.mixer.master_effects)
+                .map(|effect| &effect.plugin),
+        )
+        .filter(|plugin| !plugin.disabled_placeholder);
+    let mut realtime_plugins = Vec::new();
+    let mut warm_up = 0.0_f64;
+    for plugin in plugins {
+        if let Some((_, name, seconds)) = realtime_entries
+            .iter()
+            .find(|(path, _, _)| crate::plugins::catalog::same_plugin_path(path, &plugin.path))
+            && !realtime_plugins.contains(name)
+        {
+            realtime_plugins.push(name.clone());
+            warm_up = warm_up.max(*seconds);
+        }
+    }
+    if !realtime_plugins.is_empty() && requested == Some(riffra_core::RenderMode::Offline) {
+        return Err(format!(
+            "offline rendering would produce broken audio for {}, which the plugin catalog marks as synthesizing in wall-clock time; do not request renderMode offline for this signal path",
+            realtime_plugins.join(", ")
+        ));
+    }
+    let render_mode = if realtime_plugins.is_empty() {
+        requested.unwrap_or_default()
+    } else {
+        riffra_core::RenderMode::Realtime
+    };
+    Ok(RenderPacing {
+        render_mode,
+        plugin_warm_up_seconds: warm_up,
+        realtime_plugins,
     })
 }
 
@@ -1690,6 +1799,7 @@ pub(super) mod tests {
             project_id: None,
             created_at_ms,
             options,
+            conditions: None,
         }
     }
 
@@ -3281,7 +3391,7 @@ pub(super) mod tests {
         .unwrap();
         assert!(plan.source_ids.is_empty());
         assert_eq!(plan.sample_rate, DEFAULT_OFFLINE_SAMPLE_RATE);
-        assert_eq!(plan.render_mode, riffra_core::RenderMode::Offline);
+        assert_eq!(plan.pacing.render_mode, riffra_core::RenderMode::Offline);
         assert_eq!(plan.output_path.file_name().unwrap(), "timeline.wav");
         assert!(
             plan.output_path
@@ -3295,48 +3405,115 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn render_mode_prefers_the_job_override_over_the_project_setting() {
+    fn pacing_follows_the_plugins_on_the_rendered_signal_path() {
         // Arrange
-        let root = std::env::temp_dir().join("riffra-render-mode-plan");
+        let root = std::env::temp_dir().join(format!(
+            "riffra-render-pacing-plan-{}",
+            riffra_control::new_instance_id()
+        ));
+        let vocal_synth = root.join("Vocal Synth.vst3").to_string_lossy().into_owned();
+        crate::plugins::save(
+            &root,
+            &crate::api::output::ScanReport {
+                root: root.to_string_lossy().into_owned(),
+                started_at_ms: 0,
+                finished_at_ms: 0,
+                plugins: vec![crate::api::output::PluginEntry {
+                    id: "vst3-vocal".into(),
+                    name: "Vocal Synth".into(),
+                    vendor: None,
+                    version: None,
+                    identifier: None,
+                    format: crate::api::output::PluginFormat::Vst3,
+                    role: Some(crate::api::output::PluginRole::Effect),
+                    path: vocal_synth.clone(),
+                    bundle: true,
+                    modified_at_ms: None,
+                    scan_state: crate::api::output::PluginScanState::Validated,
+                    realtime_warm_up_seconds: Some(30.0),
+                }],
+                issues: Vec::new(),
+            },
+        )
+        .unwrap();
         let mut session = session_with_clips();
-        session.settings.mixdown.render_mode = riffra_core::RenderMode::Realtime;
+        let mut vocal = Track::audio("vocal".into(), "Vocal".into());
+        vocal.effects.push(
+            riffra_core::EffectDevice::new("vocal-synth".into(), "Vocal Synth".into(), vocal_synth)
+                .unwrap(),
+        );
+        session.arrangement.tracks.push(vocal);
+        session.arrangement.midi_clips.push(MidiClip {
+            id: "vocal-clip".into(),
+            track_id: "vocal".into(),
+            ..session.arrangement.midi_clips[0].clone()
+        });
+        let plan = |options: RenderOptions| {
+            build_render_plan(&root, empty_catalog(), &session, 1, &options, None)
+        };
 
         // Act
-        let project = build_render_plan(
-            &root,
-            empty_catalog(),
-            &session,
-            1,
-            &RenderOptions::default(),
-            None,
-        )
+        let whole = plan(RenderOptions::default()).unwrap();
+        let without_vocal = plan(RenderOptions {
+            track_id: Some("instrument".into()),
+            ..Default::default()
+        })
         .unwrap();
-        let overridden = build_render_plan(
-            &root,
-            empty_catalog(),
-            &session,
-            1,
-            &RenderOptions {
-                render_mode: Some(riffra_core::RenderMode::Offline),
-                ..RenderOptions::default()
-            },
-            None,
-        )
-        .unwrap();
+        let forced_offline = plan(RenderOptions {
+            render_mode: Some(riffra_core::RenderMode::Offline),
+            ..Default::default()
+        });
 
         // Assert
-        assert_eq!(project.render_mode, riffra_core::RenderMode::Realtime);
-        assert_eq!(overridden.render_mode, riffra_core::RenderMode::Offline);
+        assert_eq!(
+            whole.pacing,
+            RenderPacing {
+                render_mode: riffra_core::RenderMode::Realtime,
+                plugin_warm_up_seconds: 30.0,
+                realtime_plugins: vec!["Vocal Synth".into()],
+            }
+        );
+        assert_eq!(whole.graph.mixdown.plugin_warm_up_seconds, 30.0);
+        assert_eq!(
+            without_vocal.pacing,
+            RenderPacing {
+                render_mode: riffra_core::RenderMode::Offline,
+                plugin_warm_up_seconds: 0.0,
+                realtime_plugins: Vec::new(),
+            }
+        );
+        assert_eq!(without_vocal.graph.mixdown.plugin_warm_up_seconds, 0.0);
+        assert!(forced_offline.err().unwrap().contains("Vocal Synth"));
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
-    fn track_render_keeps_the_project_graph_for_a_shared_pdc_baseline() {
-        let root = std::env::temp_dir().join("riffra-track-pdc-render-plan");
-        let mut session = session_with_clips();
-        session.arrangement.tracks.push(Track::audio(
-            "latency-reference".into(),
-            "Latency Reference".into(),
+    fn track_render_loads_only_the_plugins_on_the_selected_signal_path() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-track-render-plan-{}",
+            riffra_control::new_instance_id()
         ));
+        fs::create_dir_all(&root).unwrap();
+        let plugin = root.join("effect.vst3");
+        fs::write(&plugin, b"").unwrap();
+        let effect = |id: &str| riffra_core::EffectDevice {
+            id: id.into(),
+            name: "Effect".into(),
+            bypassed: false,
+            plugin: riffra_core::Vst3Plugin {
+                path: plugin.to_string_lossy().into_owned(),
+                parameter_values: Vec::new(),
+                state_data: None,
+                disabled_placeholder: false,
+            },
+        };
+        let mut session = session_with_clips();
+        session.arrangement.tracks[0]
+            .effects
+            .push(effect("selected-effect"));
+        let mut unrelated = Track::audio("unrelated".into(), "Unrelated".into());
+        unrelated.effects.push(effect("unrelated-effect"));
+        session.arrangement.tracks.push(unrelated);
         session
             .arrangement
             .automation_lanes
@@ -3369,15 +3546,18 @@ pub(super) mod tests {
         assert_eq!(tracks[0].id, "instrument");
         assert!(!tracks[0].muted);
         assert!(tracks[0].solo);
-        assert_eq!(tracks[1].id, "latency-reference");
+        assert_eq!(tracks[0].effects.len(), 1);
+        assert_eq!(tracks[1].id, "unrelated");
         assert!(!tracks[1].solo);
         assert!(tracks[1].audio_clips.is_empty() && tracks[1].midi_clips.is_empty());
+        assert!(tracks[1].effects.is_empty());
         assert_eq!(plan.graph.automation.len(), 1);
         assert_eq!(
             plan.graph.automation[0].target,
             riffra_core::AutomationTarget::MasterGain
         );
         assert_eq!(plan.graph.automation[0].points[0].value, -9.0);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

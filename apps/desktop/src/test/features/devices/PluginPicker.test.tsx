@@ -37,6 +37,7 @@ const plugins = [
     bundle: true,
     modifiedAtMs: null,
     scanState: 'validated' as const,
+    realtimeWarmUpSeconds: null,
   },
   {
     id: 'plugin:reverb',
@@ -50,6 +51,7 @@ const plugins = [
     bundle: true,
     modifiedAtMs: null,
     scanState: 'validated' as const,
+    realtimeWarmUpSeconds: null,
   },
 ];
 

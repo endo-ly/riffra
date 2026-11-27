@@ -176,6 +176,7 @@ export type ControlCommandResults = {
   'midi.target.set': OutputValue<'ok'>;
   'midi.panic': OutputValue<'ok'>;
   'plugin.catalog.list': OutputValue<'plugins'>;
+  'plugin.catalog.realtime': OutputValue<'plugin'>;
   'plugin.scan': OutputValue<'pluginScan'>;
   'plugin.scan.start': OutputValue<'job'>;
   'plugin.editor.open': OutputValue<'ok'>;
@@ -224,6 +225,7 @@ export type ControlCommandResults = {
   'project.restore-generation': OutputValue<'arrangementMutation'>;
   'render.start': OutputValue<'job'>;
   'render.stems': OutputValue<'job'>;
+  'render.remix': OutputValue<'job'>;
   'render.capture': OutputValue<'job'>;
   'render.export': OutputValue<'renderExport'>;
   'render.list': OutputValue<'renderList'>;

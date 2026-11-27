@@ -143,9 +143,10 @@ impl CreativeSession {
         }
     }
 
-    /// Compares the state a linked Score owns, including its stored body.
-    pub fn score_owned_state_equals(&self, other: &Self) -> bool {
-        self.score_owned_equals(other, true)
+    /// Names the first part of the state a linked Score owns that differs,
+    /// including its stored body.
+    pub fn score_owned_difference(&self, other: &Self) -> Option<&'static str> {
+        self.score_owned_difference_from(other, true)
     }
 
     /// Compares the state a linked Score owns, ignoring its stored body.
@@ -155,38 +156,73 @@ impl CreativeSession {
     /// execution conditions (tail, plugin warm-up, render mode, sample rate,
     /// block size) are not compared either.
     pub fn score_performance_equals(&self, other: &Self) -> bool {
-        self.score_owned_equals(other, false)
+        self.score_owned_difference_from(other, false).is_none()
     }
 
-    fn score_owned_equals(&self, other: &Self, include_source: bool) -> bool {
-        let same_metadata = (!include_source || self.score_source == other.score_source)
-            && self.project_name == other.project_name
-            && self.arrangement.timebase == other.arrangement.timebase
-            && self.arrangement.mixer == other.arrangement.mixer
-            && self.settings.master_db == other.settings.master_db
-            && self
-                .settings
-                .mixdown
-                .score_owned_equals(&other.settings.mixdown)
-            && self.arrangement.audio_clips == other.arrangement.audio_clips
-            && self.arrangement.regions == other.arrangement.regions
-            && self.arrangement.harmony_events == other.arrangement.harmony_events
-            && self.arrangement.automation_lanes == other.arrangement.automation_lanes;
-        same_metadata
-            && self.arrangement.tracks.len() == other.arrangement.tracks.len()
-            && self
-                .arrangement
+    fn score_owned_difference_from(
+        &self,
+        other: &Self,
+        include_source: bool,
+    ) -> Option<&'static str> {
+        let arrangement = (&self.arrangement, &other.arrangement);
+        let tracks_equal = arrangement.0.tracks.len() == arrangement.1.tracks.len()
+            && arrangement
+                .0
                 .tracks
                 .iter()
-                .zip(&other.arrangement.tracks)
-                .all(|(track, candidate)| score_track_equals(track, candidate))
-            && self.arrangement.midi_clips.len() == other.arrangement.midi_clips.len()
-            && self
-                .arrangement
+                .zip(&arrangement.1.tracks)
+                .all(|(track, candidate)| score_track_equals(track, candidate));
+        let clips_equal = arrangement.0.midi_clips.len() == arrangement.1.midi_clips.len()
+            && arrangement
+                .0
                 .midi_clips
                 .iter()
-                .zip(&other.arrangement.midi_clips)
-                .all(|(clip, candidate)| score_clip_equals(clip, candidate))
+                .zip(&arrangement.1.midi_clips)
+                .all(|(clip, candidate)| score_clip_equals(clip, candidate));
+        [
+            (
+                !include_source || self.score_source == other.score_source,
+                "scoreSource",
+            ),
+            (self.project_name == other.project_name, "projectName"),
+            (
+                arrangement.0.timebase == arrangement.1.timebase,
+                "arrangement.timebase",
+            ),
+            (
+                arrangement.0.mixer == arrangement.1.mixer,
+                "arrangement.mixer",
+            ),
+            (
+                self.settings.master_db == other.settings.master_db,
+                "settings.masterDb",
+            ),
+            (
+                arrangement.0.audio_clips == arrangement.1.audio_clips,
+                "arrangement.audioClips",
+            ),
+            (
+                arrangement.0.regions == arrangement.1.regions,
+                "arrangement.regions",
+            ),
+            (
+                arrangement.0.harmony_events == arrangement.1.harmony_events,
+                "arrangement.harmonyEvents",
+            ),
+            (
+                arrangement.0.automation_lanes == arrangement.1.automation_lanes,
+                "arrangement.automationLanes",
+            ),
+            (tracks_equal, "arrangement.tracks"),
+            (clips_equal, "arrangement.midiClips"),
+        ]
+        .into_iter()
+        .find_map(|(equal, path)| (!equal).then_some(path))
+        .or_else(|| {
+            self.settings
+                .mixdown
+                .score_owned_difference(&other.settings.mixdown)
+        })
     }
 
     /// Validates production rules and normalizes clamped values, mirroring the
@@ -228,41 +264,45 @@ pub enum RenderMode {
 }
 
 /// Project-wide offline render conditions and master mix envelope.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, schemars::JsonSchema)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MixdownSettings {
     pub musical_end_tick: u64,
     pub tail_seconds: f64,
     pub fade_out_seconds: f64,
-    /// Wall-clock seconds to process VST3 plugins before rendering, excluded from the WAV.
-    /// Defaults to 2 when omitted; range 0..=60. Increase if asynchronous sample loading
-    /// leaves the start silent or incomplete; 0 disables warm-up.
-    #[serde(default = "default_plugin_warm_up_seconds")]
-    pub plugin_warm_up_seconds: f64,
-    /// Pacing of the offline render. Defaults to `offline` when omitted.
-    #[serde(default)]
-    pub render_mode: RenderMode,
     pub mastering: Option<LoudnessMastering>,
     pub sample_rate: Option<u32>,
     pub block_size: Option<u32>,
 }
 
-fn default_plugin_warm_up_seconds() -> f64 {
-    2.0
+/// Stored shape of [`MixdownSettings`]. Sessions saved when the Project owned the render pacing
+/// still carry `renderMode` and `pluginWarmUpSeconds`; both are read and dropped.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct MixdownSettingsWire {
+    musical_end_tick: u64,
+    tail_seconds: f64,
+    fade_out_seconds: f64,
+    #[serde(default, rename = "pluginWarmUpSeconds")]
+    _plugin_warm_up_seconds: Option<serde::de::IgnoredAny>,
+    #[serde(default, rename = "renderMode")]
+    _render_mode: Option<serde::de::IgnoredAny>,
+    mastering: Option<LoudnessMastering>,
+    sample_rate: Option<u32>,
+    block_size: Option<u32>,
 }
 
-impl Default for MixdownSettings {
-    fn default() -> Self {
-        Self {
-            musical_end_tick: 0,
-            tail_seconds: 0.0,
-            fade_out_seconds: 0.0,
-            plugin_warm_up_seconds: default_plugin_warm_up_seconds(),
-            render_mode: RenderMode::default(),
-            mastering: None,
-            sample_rate: None,
-            block_size: None,
-        }
+impl<'de> Deserialize<'de> for MixdownSettings {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let wire = MixdownSettingsWire::deserialize(deserializer)?;
+        Ok(Self {
+            musical_end_tick: wire.musical_end_tick,
+            tail_seconds: wire.tail_seconds,
+            fade_out_seconds: wire.fade_out_seconds,
+            mastering: wire.mastering,
+            sample_rate: wire.sample_rate,
+            block_size: wire.block_size,
+        })
     }
 }
 
@@ -276,24 +316,32 @@ pub struct LoudnessMastering {
 }
 
 impl MixdownSettings {
-    /// Compares the part of these settings a linked Score owns.
+    /// Names the first setting a linked Score owns that differs.
     ///
-    /// Tail, plugin warm-up, render mode, sample rate, and block size are
-    /// execution conditions the Score cannot express, so they remain editable.
-    fn score_owned_equals(&self, other: &Self) -> bool {
+    /// Tail, sample rate, and block size are execution conditions the Score
+    /// cannot express, so they remain editable.
+    fn score_owned_difference(&self, other: &Self) -> Option<&'static str> {
         let Self {
             musical_end_tick,
             fade_out_seconds,
             mastering,
             tail_seconds: _,
-            plugin_warm_up_seconds: _,
-            render_mode: _,
             sample_rate: _,
             block_size: _,
         } = self;
-        musical_end_tick == &other.musical_end_tick
-            && fade_out_seconds == &other.fade_out_seconds
-            && mastering == &other.mastering
+        [
+            (
+                musical_end_tick == &other.musical_end_tick,
+                "settings.mixdown.musicalEndTick",
+            ),
+            (
+                fade_out_seconds == &other.fade_out_seconds,
+                "settings.mixdown.fadeOutSeconds",
+            ),
+            (mastering == &other.mastering, "settings.mixdown.mastering"),
+        ]
+        .into_iter()
+        .find_map(|(equal, path)| (!equal).then_some(path))
     }
 
     pub(crate) fn validate(&self) -> Result<(), String> {
@@ -301,8 +349,6 @@ impl MixdownSettings {
             || self.tail_seconds < 0.0
             || !self.fade_out_seconds.is_finite()
             || self.fade_out_seconds < 0.0
-            || !self.plugin_warm_up_seconds.is_finite()
-            || !(0.0..=60.0).contains(&self.plugin_warm_up_seconds)
             || self.sample_rate == Some(0)
             || self.block_size == Some(0)
         {
@@ -354,49 +400,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn plugin_warm_up_defaults_and_validates() {
-        let mut json = serde_json::to_value(MixdownSettings::default()).unwrap();
-        json.as_object_mut().unwrap().remove("pluginWarmUpSeconds");
-        let mut settings: MixdownSettings = serde_json::from_value(json).unwrap();
-        assert_eq!(settings.plugin_warm_up_seconds, 2.0);
-        for value in [0.0, 60.0] {
-            settings.plugin_warm_up_seconds = value;
-            assert!(settings.validate().is_ok());
-        }
-        for value in [-1.0, 60.1, f64::NAN, f64::INFINITY] {
-            settings.plugin_warm_up_seconds = value;
-            assert!(settings.validate().is_err());
-        }
-    }
-
-    #[test]
-    fn render_mode_defaults_to_offline_and_round_trips() {
+    fn mixdown_settings_read_the_pacing_fields_of_older_sessions() {
         // Arrange
-        let mut omitted = serde_json::to_value(MixdownSettings::default()).unwrap();
-        omitted.as_object_mut().unwrap().remove("renderMode");
+        let mut json = serde_json::to_value(MixdownSettings::default()).unwrap();
+        json["pluginWarmUpSeconds"] = 30.0.into();
+        json["renderMode"] = "realtime".into();
 
         // Act
-        let settings: MixdownSettings = serde_json::from_value(omitted).unwrap();
+        let settings: MixdownSettings = serde_json::from_value(json).unwrap();
 
         // Assert
-        assert_eq!(settings.render_mode, RenderMode::Offline);
-        for (mode, encoded) in [
-            (RenderMode::Offline, "offline"),
-            (RenderMode::Realtime, "realtime"),
-        ] {
-            let json = serde_json::to_value(MixdownSettings {
-                render_mode: mode,
-                ..MixdownSettings::default()
-            })
-            .unwrap();
-            assert_eq!(json["renderMode"], encoded);
-            assert_eq!(
-                serde_json::from_value::<MixdownSettings>(json)
-                    .unwrap()
-                    .render_mode,
-                mode
-            );
-        }
+        assert_eq!(settings, MixdownSettings::default());
+        let mut unknown = serde_json::to_value(&settings).unwrap();
+        unknown["pluginWarmUp"] = 1.into();
+        assert!(serde_json::from_value::<MixdownSettings>(unknown).is_err());
     }
 
     #[test]
@@ -479,16 +496,17 @@ mod tests {
         work.arrangement.loop_range.enabled = true;
         work.arrangement.midi_clips[0].muted = true;
         work.settings.mixdown.tail_seconds = 2.0;
-        work.settings.mixdown.plugin_warm_up_seconds = 30.0;
-        work.settings.mixdown.render_mode = RenderMode::Realtime;
         work.settings.mixdown.sample_rate = Some(48_000);
         work.settings.mixdown.block_size = Some(512);
-        assert!(session.score_owned_state_equals(&work));
+        assert_eq!(session.score_owned_difference(&work), None);
 
         // Score-owned mixdown fields remain protected.
         let mut faded = work.clone();
         faded.settings.mixdown.fade_out_seconds = 1.0;
-        assert!(!session.score_owned_state_equals(&faded));
+        assert_eq!(
+            session.score_owned_difference(&faded),
+            Some("settings.mixdown.fadeOutSeconds")
+        );
 
         // Ordinary tracks are part of the state the Score owns.
         let mut added = work.clone();
@@ -496,21 +514,33 @@ mod tests {
             .arrangement
             .tracks
             .push(Track::audio("track:other".into(), "Other".into()));
-        assert!(!session.score_owned_state_equals(&added));
+        assert_eq!(
+            session.score_owned_difference(&added),
+            Some("arrangement.tracks")
+        );
 
         let mut edited = work.clone();
         edited.arrangement.tracks[1].gain_db = -6.0;
-        assert!(!session.score_owned_state_equals(&edited));
+        assert_eq!(
+            session.score_owned_difference(&edited),
+            Some("arrangement.tracks")
+        );
 
         // Device parameter automation is protected like track automation.
         let mut automated = work.clone();
         automated.arrangement.automation_lanes[0].points[0].value = 0.75;
-        assert!(!session.score_owned_state_equals(&automated));
+        assert_eq!(
+            session.score_owned_difference(&automated),
+            Some("arrangement.automationLanes")
+        );
 
         // Master gain is Score-owned and differs from temporary mix state.
         let mut mastered = work.clone();
         mastered.settings.master_db = -6.0;
-        assert!(!session.score_owned_state_equals(&mastered));
+        assert_eq!(
+            session.score_owned_difference(&mastered),
+            Some("settings.masterDb")
+        );
     }
 
     #[test]

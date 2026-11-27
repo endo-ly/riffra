@@ -363,7 +363,7 @@ Processed Variantに必要な制御信号を録音から再利用できない場
 
 音声の書き出しは `render start` で行う。ワンショットでは `render start --wait` / `render stems --wait` で完了結果を待てる。
 
-Synthesizer V のような非同期合成プラグインを含むTrackは、既定の `offline`（可能な限り高速）では合成が追いつかず、周期的に無音が現れる。`render settings set` の `renderMode` を `realtime` にし、`pluginWarmUpSeconds` を10〜30秒に設定したうえで、対象Trackだけを `render start --track-id <ID>` で書き出す。`render start --render-mode realtime` は設定を変えずにそのJobだけ1.0xへ切り替える。`realtime` は書き出し範囲の長さだけ実時間を要するため、`job wait` のタイムアウトは範囲の長さ以上にする。
+Synthesizer V のような、合成を裏で進めるプラグインは、速い書き出しでは合成が追いつかず無音になる。プラグインカタログの各項目の `realtimeWarmUpSeconds` がこの性質を表し、書き出す範囲の信号経路（読み込まれるプラグイン）に印のあるものが1つでもあれば、書き出し全体を自動で実時間（1.0x）にし、準備時間にはそのうち最長のものを使う。Synthesizer V は初めてスキャンで見つかったときに30秒で印が付く。ほかのプラグインに印を付けるには `plugin catalog realtime --plugin-id ID --warm-up-seconds 秒`（0〜60）、外すには `--off` を使う。印は再スキャンしても残る。歌を含まない書き出しは自動で最速になる。結果の `pacing` に実際のモード・準備時間・理由のプラグインが出る。`render start --render-mode` は調べるときの強制指定で、実時間が必要な経路への `offline` はプラグイン名つきのエラーで止まる。実時間の書き出しは範囲の長さだけ実時間を要するため、`job wait` のタイムアウトは範囲の長さ以上にする。
 
 応答は `type: "job"` のジョブIDである。ワンショットは `job wait JOB_ID`、interactiveは `job get` の繰り返しで追跡し、`job cancel` で停止する。待機のタイムアウトは `job wait --timeout-ms` で指定し、無指定なら終了まで待つ。`plugin scan --background` と `analysis measure` も同じ非同期ジョブである。`ok: true` は要求の受付成功を表すので、Job自体の成功は `state: "completed"` で判断する。出力はDataRootの `renders/` 配下へ書き出される。
 
@@ -375,6 +375,8 @@ riffra --attach render stems --all-tracks --section walk --occurrence 2 --wait
 ```
 
 完成WAVをDataRootの外へ出すときは、Mixが `render start --output-path`、Stemが `render stems --output-directory` で出力先を指定する。保存済みRenderの取り出しは `render export --render-id --output-path`、削除は `render delete --render-id` で行う。
+
+ミックスの往復（音量を少し変えて測り直す）は、書き出し済みの stems から `render remix --from <render-id> --track <track-id>=<dB> [--pan <track-id>=<値>] --wait` で行う。ステムを元のトラックの代わりに置いて、プラグインを読み込まずオフラインで書き出し、通常のRenderとして履歴に残る（測定は `render start` と同じ）。`--track <id>=0` はステムそのままで、dB は stems に含まれるゲインへの差分である。プリフェーダーのSend・パンの変更（既にパンされたステムへのバランス）・Sidechainの検出元は近似になる。stems を書き出し直すと基準が変わる。
 
 各パートの比較は `render stems` でTrack別WAVを作る。全WAVで開始Tick、終了Tick、Sample Rate、フレーム数が揃い、個別の正規化とMasteringは行われない。共有する非線形Effectでは、Stemの合計と全体Mixが一致しない場合がある。StemとMasteringの設計上の扱いは[音声エンジンの設計](../../../docs/audio-engine.md)を参照。
 
@@ -418,7 +420,7 @@ riffra --attach job wait --id job:analysis-measure:0
 
 待機には開始応答のJob IDを使い、結果の `sources` のパス・Track情報を比較対象と照合する。区間True Peakの位置はWAV先頭からの秒数である。帯域値・測定状態の読み方はRenderと共通である。
 
-Mixdown設定は `render settings get` / `render settings set --settings-json` で参照・置換する。Masteringは目標ラウドネスへMix全体を一定のゲインで合わせ、True Peak上限を超えるときは上限に合わせてゲインを下げる。
+Mixdown設定は `render settings get` / `render settings set --settings-json` で参照・更新する。`set` は渡した項目だけを変え、`null` は `mastering`・`sampleRate`・`blockSize` を外す。Scoreに紐づくProjectでは `musicalEndTick`・`fadeOutSeconds`・`mastering` をScoreが持つため、食い違う値はその項目名を示すエラーになる。Masteringは目標ラウドネスへMix全体を一定のゲインで合わせ、True Peak上限を超えるときは上限に合わせてゲインを下げる。
 
 `mastering.deviation.integratedLufs` は最終ラウドネス − 目標で、負のときは目標に届いていない。`mastering.truePeakCorrectionDb` はTrue Peak上限のために下げたゲインで、0より大きいときは上限で止まったことを示す。
 

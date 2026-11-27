@@ -62,7 +62,7 @@ impl Default for GraphMixdown {
             musical_end_tick: 0,
             tail_seconds: 0.0,
             fade_out_seconds: 0.0,
-            plugin_warm_up_seconds: 2.0,
+            plugin_warm_up_seconds: 0.0,
         }
     }
 }

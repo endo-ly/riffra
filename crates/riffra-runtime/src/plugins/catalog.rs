@@ -53,15 +53,19 @@ pub fn save(data_root: &Path, report: &ScanReport) -> io::Result<()> {
 /// Returns an error when the catalog cannot be read or decoded. A missing
 /// catalog is represented by an empty entry list.
 pub fn load(data_root: &Path) -> io::Result<Vec<PluginEntry>> {
+    Ok(read_report(data_root)?.map_or_else(Vec::new, |report| report.plugins))
+}
+
+fn read_report(data_root: &Path) -> io::Result<Option<ScanReport>> {
     let catalog_path = data_root.join("plugins/catalog.json");
     let payload = match fs::read(catalog_path) {
         Ok(payload) => payload,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error),
     };
-    let catalog = serde_json::from_slice::<ScanReport>(&payload)
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-    Ok(catalog.plugins)
+    serde_json::from_slice(&payload)
+        .map(Some)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }
 
 /// Reuses validation results for plugins whose discovered path and filesystem
@@ -99,6 +103,70 @@ pub fn reuse_cached_scan_results(data_root: &Path, report: &mut ScanReport) {
         plugin.role = previous.role;
         plugin.scan_state = previous.scan_state;
     }
+}
+
+/// Plugins that synthesize in wall-clock time, by the name the scanner reports, with the warm-up
+/// a newly found one starts with.
+const REALTIME_DEFAULTS: [(&str, f64); 1] = [("Synthesizer V Studio 2 Plugin", 30.0)];
+
+/// Longest warm-up the audio engine accepts for a render.
+const MAX_REALTIME_WARM_UP_SECONDS: f64 = 60.0;
+
+/// Keeps each plugin's real-time setting across scans. A plugin class the stored catalog already
+/// lists keeps its setting; a newly found one starts from [`REALTIME_DEFAULTS`].
+pub(crate) fn carry_realtime(data_root: &Path, report: &mut ScanReport) {
+    let stored = load(data_root).unwrap_or_default();
+    for plugin in &mut report.plugins {
+        plugin.realtime_warm_up_seconds = match stored
+            .iter()
+            .find(|entry| entry.path == plugin.path && entry.identifier == plugin.identifier)
+        {
+            Some(entry) => entry.realtime_warm_up_seconds,
+            None => REALTIME_DEFAULTS
+                .iter()
+                .find(|(name, _)| *name == plugin.name)
+                .map(|(_, seconds)| *seconds),
+        };
+    }
+}
+
+/// Marks the catalog plugin `id` as synthesizing in wall-clock time with `warm_up_seconds` of
+/// warm-up, or as rendering as fast as possible with `None`, and returns the updated entry.
+///
+/// # Errors
+///
+/// Returns an error when the catalog cannot be read or saved, no entry has `id`, or the warm-up
+/// is outside 0 to 60 seconds.
+pub(crate) fn set_realtime(
+    data_root: &Path,
+    id: &str,
+    warm_up_seconds: Option<f64>,
+) -> Result<PluginEntry, String> {
+    if warm_up_seconds
+        .is_some_and(|seconds| !(0.0..=MAX_REALTIME_WARM_UP_SECONDS).contains(&seconds))
+    {
+        return Err(format!(
+            "warm-up must be between 0 and {MAX_REALTIME_WARM_UP_SECONDS} seconds"
+        ));
+    }
+    let mut report = read_report(data_root)
+        .map_err(|error| format!("plugin catalog could not be read: {error}"))?
+        .ok_or_else(|| {
+            "this DataRoot has no plugin catalog; run `riffra --attach plugin scan` first"
+                .to_owned()
+        })?;
+    let mut matching = report.plugins.iter_mut().filter(|entry| entry.id == id);
+    let entry = matching
+        .next()
+        .ok_or_else(|| format!("plugin ID is not registered: {id}"))?;
+    if matching.next().is_some() {
+        return Err(format!("plugin ID is ambiguous: {id}"));
+    }
+    entry.realtime_warm_up_seconds = warm_up_seconds;
+    let updated = entry.clone();
+    save(data_root, &report)
+        .map_err(|error| format!("plugin catalog could not be saved: {error}"))?;
+    Ok(updated)
 }
 
 /// Resolves a VST3 the current catalog validated, with its name, path, and role.
@@ -213,7 +281,7 @@ fn validated_entry(entry: &PluginEntry, expected_role: PluginRole) -> Result<Pat
 /// A VST3 bundle can expose several classes. A path alone cannot identify one,
 /// so this returns an error when the catalog contains more than one validated
 /// class at the same location.
-fn same_plugin_path(first: &str, second: &str) -> bool {
+pub(crate) fn same_plugin_path(first: &str, second: &str) -> bool {
     first == second
         || Path::new(first)
             .canonicalize()
@@ -345,6 +413,7 @@ mod tests {
                 bundle: true,
                 modified_at_ms: None,
                 scan_state: PluginScanState::Validated,
+                realtime_warm_up_seconds: None,
             }],
             issues: vec![],
         };
@@ -355,6 +424,59 @@ mod tests {
         let payload = fs::read_to_string(root.join("plugins/catalog.json")).unwrap();
         assert!(payload.contains("Updated"));
         assert!(!payload.contains(".catalog-"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn scans_keep_the_realtime_mark_and_mark_new_known_plugins() {
+        // Arrange
+        let root = test_root();
+        let entry = |id: &str, name: &str| PluginEntry {
+            id: id.into(),
+            name: name.into(),
+            vendor: None,
+            version: None,
+            identifier: Some(format!("VST3-{name}")),
+            format: PluginFormat::Vst3,
+            role: Some(PluginRole::Instrument),
+            path: format!("/VST3/{id}.vst3"),
+            bundle: true,
+            modified_at_ms: None,
+            scan_state: PluginScanState::Validated,
+            realtime_warm_up_seconds: None,
+        };
+        let synthv = "Synthesizer V Studio 2 Plugin";
+        let report = |plugins| ScanReport {
+            root: "/VST3".into(),
+            started_at_ms: 1,
+            finished_at_ms: 2,
+            plugins,
+            issues: vec![],
+        };
+        save(
+            &root,
+            &report(vec![entry("vocal", "Vocal"), entry("synthv-a", synthv)]),
+        )
+        .unwrap();
+        let rejected = set_realtime(&root, "vocal", Some(61.0));
+        set_realtime(&root, "vocal", Some(12.0)).unwrap();
+        let mut rescanned = report(vec![
+            entry("vocal", "Vocal"),
+            entry("synthv-a", synthv),
+            entry("synthv-b", synthv),
+        ]);
+
+        // Act
+        carry_realtime(&root, &mut rescanned);
+
+        // Assert
+        assert!(rejected.unwrap_err().contains("between 0 and 60"));
+        let warm_ups: Vec<_> = rescanned
+            .plugins
+            .iter()
+            .map(|plugin| plugin.realtime_warm_up_seconds)
+            .collect();
+        assert_eq!(warm_ups, [Some(12.0), None, Some(30.0)]);
         let _ = fs::remove_dir_all(root);
     }
 
@@ -383,6 +505,7 @@ mod tests {
                 bundle: true,
                 modified_at_ms: None,
                 scan_state: PluginScanState::Validated,
+                realtime_warm_up_seconds: None,
             }],
             issues: vec![],
         };
@@ -489,6 +612,7 @@ mod tests {
                 bundle: true,
                 modified_at_ms: Some(1),
                 scan_state: PluginScanState::Validated,
+                realtime_warm_up_seconds: None,
             }],
             issues: vec![],
         };
@@ -540,6 +664,7 @@ mod tests {
                 bundle: true,
                 modified_at_ms: Some(1),
                 scan_state: PluginScanState::Validated,
+                realtime_warm_up_seconds: None,
             }],
             issues: vec![],
         };

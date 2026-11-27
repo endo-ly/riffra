@@ -49,6 +49,7 @@ const verb: PluginEntry = {
   bundle: true,
   modifiedAtMs: null,
   scanState: 'validated',
+  realtimeWarmUpSeconds: null,
 };
 
 const synth: PluginEntry = { ...verb, id: 'plugin:synth', name: 'Wave Synth', role: 'instrument' };

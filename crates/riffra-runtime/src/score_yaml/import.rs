@@ -774,34 +774,51 @@ fn resolve_production(
         for key in &keys {
             let pending = &uses[key];
             let (start, len) = ranges[key];
-            let conversions = &description.conversions[start..start + len];
             let mut plugin = pending.production.plugin().plugin.clone();
+            let mut reconfigured = None;
             if !pending.spec.params.is_empty() {
-                plugin.parameter_values = parameters::assign_values(
-                    &description.parameters,
-                    &description.parameter_values,
-                    conversions,
+                let mut probe = plugin.clone();
+                let settled = parameters::settle(
+                    &description,
+                    &description.conversions[start..start + len],
                     &pending.spec.params,
+                    |values| {
+                        probe.parameter_values = values;
+                        let next = describe(scanner, &probe, &pending.displays)?;
+                        probe.state_data.clone_from(&next.state_data);
+                        Ok(next)
+                    },
                 )
                 .map_err(|message| ImportError {
                     details: plan.source_detail(key, &message),
                     message,
                 })?;
+                plugin.parameter_values = settled.values;
+                reconfigured = settled.reconfigured;
             } else if pending.has_automation {
                 plugin.parameter_values = description.parameter_values.clone();
             }
+            // Automation targets the parameters the settled configuration exposes.
+            let (exposed, conversions) = match &reconfigured {
+                Some(settled) => {
+                    plugin.state_data.clone_from(&settled.state_data);
+                    (&settled.parameters, settled.conversions.as_slice())
+                }
+                None => (
+                    &description.parameters,
+                    &description.conversions[start..start + len],
+                ),
+            };
             values.insert(key.clone(), plugin);
             for (index, automation) in &automations {
                 if automation.use_key != *key {
                     continue;
                 }
-                let parameter =
-                    parameters::find_parameter(&description.parameters, &automation.parameter)
-                        .map_err(|message| ImportError {
-                            details: plan
-                                .source_detail(&format!("mix.automation[{index}]"), &message),
-                            message,
-                        })?;
+                let parameter = parameters::find_parameter(exposed, &automation.parameter)
+                    .map_err(|message| ImportError {
+                        details: plan.source_detail(&format!("mix.automation[{index}]"), &message),
+                        message,
+                    })?;
                 let parameter_id = parameter.parameter_id.clone().ok_or_else(|| {
                     let message = format!(
                         "plugin parameter {:?} has no stable identifier for automation",
@@ -4440,6 +4457,7 @@ mod tests {
                 bundle: true,
                 modified_at_ms: None,
                 scan_state: PluginScanState::Validated,
+                realtime_warm_up_seconds: None,
             },
             plugin: Vst3Plugin::new(format!("/plugins/{name}.vst3")),
         }
@@ -4591,6 +4609,7 @@ mod tests {
                 bundle: true,
                 modified_at_ms: None,
                 scan_state: PluginScanState::Validated,
+                realtime_warm_up_seconds: None,
             }],
         };
         crate::plugins::catalog::save(&root, &report).unwrap();
@@ -4877,6 +4896,7 @@ mod tests {
                     bundle: true,
                     modified_at_ms: None,
                     scan_state: PluginScanState::Validated,
+                    realtime_warm_up_seconds: None,
                 }
             })
             .collect();
@@ -5691,6 +5711,7 @@ mod tests {
                 bundle: true,
                 modified_at_ms: None,
                 scan_state: PluginScanState::Validated,
+                realtime_warm_up_seconds: None,
             }
         })
         .collect();
@@ -5847,6 +5868,7 @@ mod tests {
                     bundle: true,
                     modified_at_ms: None,
                     scan_state: PluginScanState::Validated,
+                    realtime_warm_up_seconds: None,
                 }],
             },
         )
@@ -6582,8 +6604,6 @@ mod tests {
         session.arrangement.tracks[0].color = Some("#123456".into());
         session.settings.count_in_beats = 2;
         session.settings.mixdown.tail_seconds = 2.0;
-        session.settings.mixdown.plugin_warm_up_seconds = 30.0;
-        session.settings.mixdown.render_mode = RenderMode::Realtime;
         session.settings.mixdown.sample_rate = Some(48_000);
         session.settings.mixdown.block_size = Some(512);
 
@@ -6622,8 +6642,6 @@ mod tests {
         );
         assert_eq!(rebuilt.settings.count_in_beats, 2);
         assert_eq!(rebuilt.settings.mixdown.tail_seconds, 2.0);
-        assert_eq!(rebuilt.settings.mixdown.plugin_warm_up_seconds, 30.0);
-        assert_eq!(rebuilt.settings.mixdown.render_mode, RenderMode::Realtime);
         assert_eq!(rebuilt.settings.mixdown.sample_rate, Some(48_000));
         assert_eq!(rebuilt.settings.mixdown.block_size, Some(512));
         assert_eq!(rebuilt.score_source.as_ref().unwrap().yaml, changed);

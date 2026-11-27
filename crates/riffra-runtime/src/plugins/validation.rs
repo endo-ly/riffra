@@ -154,6 +154,8 @@ pub(crate) struct ParameterDescription {
     path: String,
     pub(crate) parameters: Vec<ParameterInfo>,
     pub(crate) parameter_values: Vec<f32>,
+    /// Plugin state after the requested values were applied and processed.
+    pub(crate) state_data: Option<String>,
     pub(crate) conversions: Vec<Vec<DisplayConversion>>,
 }
 

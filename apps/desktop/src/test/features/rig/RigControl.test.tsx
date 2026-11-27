@@ -95,6 +95,7 @@ function plugin(name: string): PluginEntry {
     bundle: true,
     modifiedAtMs: null,
     scanState: 'validated',
+    realtimeWarmUpSeconds: null,
   };
 }
 

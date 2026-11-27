@@ -2,6 +2,7 @@
 import type { AssetId } from "./AssetId";
 import type { AudioMeasurements } from "./AudioMeasurements";
 import type { MasteringReport } from "./MasteringReport";
+import type { RenderPacing } from "./RenderPacing";
 
 export type RenderResult = { measurements: AudioMeasurements, warnings: Array<string>, mastering: MasteringReport | null, assetId: AssetId, 
 /**
@@ -31,4 +32,4 @@ sectionName: string | null,
 /**
  * One-based Score section occurrence for a section render.
  */
-sectionOccurrence: number | null, state: string, message: string, };
+sectionOccurrence: number | null, pacing: RenderPacing, state: string, message: string, };

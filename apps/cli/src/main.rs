@@ -131,6 +131,9 @@ fn run(cli: Cli) -> Result<(), RunFailure> {
             command: args::RenderCommand::Stems(args),
         }) => args.wait,
         Some(CliCommand::Render {
+            command: args::RenderCommand::Remix(args),
+        }) => args.wait,
+        Some(CliCommand::Render {
             command: args::RenderCommand::Capture(args),
         }) => args.wait,
         Some(CliCommand::Analysis {

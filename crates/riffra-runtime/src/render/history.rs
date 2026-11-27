@@ -107,6 +107,11 @@ struct StoredStem {
     path: String,
     #[serde(default)]
     measurements: Option<serde_json::Value>,
+    /// Present only in stems saved with their Track mix state.
+    #[serde(default)]
+    gain_db: Option<f64>,
+    #[serde(default)]
+    output_bus_id: Option<String>,
 }
 
 fn read_render_manifest(path: &Path) -> Result<StoredRender, String> {
@@ -262,6 +267,61 @@ pub(crate) fn resolve_measurement_sources(
             })
             .collect(),
     }
+}
+
+/// The audio and mix state a stems Render offers to a remix.
+pub(crate) struct RemixSource {
+    pub(crate) start_tick: u64,
+    pub(crate) end_tick: u64,
+    pub(crate) range_kind: String,
+    pub(crate) sample_rate: u32,
+    pub(crate) frames: u64,
+    pub(crate) stems: Vec<RemixStem>,
+}
+
+pub(crate) struct RemixStem {
+    pub(crate) track_id: String,
+    pub(crate) asset_id: AssetId,
+    pub(crate) output_bus_id: Option<String>,
+}
+
+/// Reads a stems Render for a remix.
+///
+/// # Errors
+/// Returns an error when the Render is not a stems Render or was saved without the musical
+/// range or the Track mix state that a remix needs.
+pub(crate) fn resolve_remix_source(
+    data_root: &Path,
+    render_id: &str,
+) -> Result<RemixSource, String> {
+    let directory = managed_render_directory(data_root, render_id)?;
+    let StoredRender::Stems(render) = read_render_manifest(&directory.join("render.json"))? else {
+        return Err(format!("render {render_id} is not a stems render"));
+    };
+    let outdated = || {
+        format!("render {render_id} was saved without what a remix needs; render the stems again")
+    };
+    let range = render.musical_range.ok_or_else(outdated)?;
+    let stems = render
+        .stems
+        .into_iter()
+        .map(|stem| {
+            stem.gain_db.ok_or_else(outdated)?;
+            Ok(RemixStem {
+                track_id: stem.track_id,
+                asset_id: stem.asset_id,
+                output_bus_id: stem.output_bus_id,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    Ok(RemixSource {
+        start_tick: range.start_tick,
+        end_tick: range.end_tick,
+        range_kind: render.range_kind.ok_or_else(outdated)?,
+        sample_rate: render.sample_rate,
+        frames: render.frames,
+        stems,
+    })
 }
 
 pub(crate) struct LevelsRender {

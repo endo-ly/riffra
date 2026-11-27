@@ -572,14 +572,9 @@ pub enum SidechainCommand {
 pub enum MixdownCommand {
     /// Read the current settings.
     Get,
-    /// Replace settings with a JSON object or @file.
-    ///
-    /// pluginWarmUpSeconds: wall-clock VST3 processing before rendering, excluded from the WAV
-    /// (0..=60; omitted = 2). Increase for incomplete asynchronous sample loading; 0 disables it.
-    /// renderMode: `offline` (default, as fast as possible) or `realtime` (1.0x pacing for
-    /// asynchronous synthesizers).
+    /// Update settings with a JSON object or @file; omitted fields keep their current values.
     Set {
-        /// Complete settings object from `render settings get`, edited as inline JSON or @file.
+        /// Settings fields from `render settings get` to change, as inline JSON or @file; `null` clears mastering, sampleRate, or blockSize.
         #[arg(long)]
         settings_json: String,
     },
@@ -2572,6 +2567,21 @@ pub enum PluginCommand {
 pub enum PluginCatalogCommand {
     /// List the discovered VST3 plugin catalog; requires a running Riffra Host accessed with --attach.
     List,
+    /// Mark a catalog plugin as synthesizing in wall-clock time, so any render whose signal path loads it runs at 1.0x after the warm-up, or clear the mark with --off; requires --attach. A scan keeps the mark.
+    Realtime(PluginRealtimeArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct PluginRealtimeArgs {
+    /// Plugin ID from `plugin catalog list`.
+    #[arg(long)]
+    pub plugin_id: String,
+    /// Seconds (0 to 60) the plugin is processed before the render starts.
+    #[arg(long, conflicts_with = "off", required_unless_present = "off")]
+    pub warm_up_seconds: Option<f64>,
+    /// Render the plugin as fast as possible again.
+    #[arg(long)]
+    pub off: bool,
 }
 
 #[derive(Debug, Args)]
@@ -2812,6 +2822,16 @@ pub enum RenderCommand {
     /// skips Tracks without unmuted Clips; explicit IDs must be unique and
     /// refer to Tracks with renderable Clips. Range options match render start.
     Stems(RenderStemsArgs),
+    /// Re-render the mix from a stems Render with level changes, without loading the Tracks' plugins.
+    ///
+    /// Each stem of --from replaces its Track as audio, and the Track keeps its Group Bus, Sends,
+    /// Sidechain routes, and the Buses and Master keep their processing, so the result is
+    /// measured and mastered like `render start` and appears in the Render history. Gain and pan
+    /// are applied on top of what the stem already contains, so `--track ID=0` reproduces the
+    /// stem as rendered. The remix is an approximation of a full render: a Send taken before the
+    /// fader follows the changed gain, a changed pan acts as a balance on the already panned
+    /// stem, and Sidechain sources are the post-fader stems. Nothing is saved to the Project.
+    Remix(RenderRemixArgs),
     /// Capture selected Track, Bus and Master outputs together without changing routing.
     Capture(RenderCaptureArgs),
     /// Copy a completed Render to a WAV path, or copy all stems to an existing directory.
@@ -2845,7 +2865,7 @@ pub struct RenderStartArgs {
     /// Apply peak normalization to the rendered audio; defaults to false when omitted.
     #[arg(long)]
     pub normalize: Option<bool>,
-    /// Render pacing for this Job only: `offline` (default) renders as fast as possible, `realtime` renders at 1.0x speed for asynchronous synthesizers such as Synthesizer V; overrides the Project setting.
+    /// Force the pacing for inspection. Without it Riffra decides from the plugins the rendered signal path loads: real-time (1.0x, with the longest warm-up) when the plugin catalog marks one of them as synthesizing in wall-clock time (`plugin catalog realtime`; a scan marks Synthesizer V when it first finds it), otherwise as fast as possible. `offline` on such a path is rejected; the result's `pacing` reports the mode, warm-up, and plugins.
     #[arg(long, value_parser = ["offline", "realtime"])]
     pub render_mode: Option<String>,
     /// Render only this Track as a stem instead of the full mix.
@@ -2885,6 +2905,25 @@ pub struct RenderStemsArgs {
     /// Copy completed stem WAVs to this existing directory without replacing files.
     #[arg(long)]
     pub output_directory: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub struct RenderRemixArgs {
+    /// Wait for the Job to finish; failure or cancellation exits non-zero (requires --attach).
+    #[arg(long)]
+    pub wait: bool,
+    /// Stems Render ID from `render list`.
+    #[arg(long)]
+    pub from: String,
+    /// Gain change in dB for one Track as `TRACK_ID=DB`; may be repeated.
+    #[arg(long = "track", value_name = "TRACK_ID=DB")]
+    pub tracks: Vec<String>,
+    /// Balance from -1 to 1 for one Track as `TRACK_ID=PAN`, applied to its already panned stem; may be repeated.
+    #[arg(long = "pan", value_name = "TRACK_ID=PAN")]
+    pub pans: Vec<String>,
+    /// Copy the completed WAV to this path without replacing an existing file.
+    #[arg(long)]
+    pub output_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -4048,6 +4087,13 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
         CliCommand::Plugin { command } => match command {
             PluginCommand::Catalog { command } => match command {
                 PluginCatalogCommand::List => Runtime::PluginCatalogList(empty).into(),
+                PluginCatalogCommand::Realtime(args) => {
+                    Runtime::PluginCatalogRealtime(PluginRealtimeParams {
+                        plugin_id: args.plugin_id,
+                        warm_up_seconds: args.warm_up_seconds,
+                    })
+                    .into()
+                }
             },
             PluginCommand::Scan(args) => {
                 let params = PluginScanParams { path: args.path };
@@ -4140,6 +4186,7 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
         CliCommand::Render { command } => match command {
             RenderCommand::Start(args) => render_start(args)?,
             RenderCommand::Stems(args) => render_stems(args)?,
+            RenderCommand::Remix(args) => render_remix(args)?,
             RenderCommand::Capture(args) => {
                 let mut targets = args
                     .track_id
@@ -4316,6 +4363,52 @@ fn render_stems(args: RenderStemsArgs) -> Result<ControlCommand, RequestError> {
         )?,
         output_directory: args
             .output_directory
+            .map(|path| path.to_string_lossy().into_owned()),
+    })
+    .into())
+}
+
+fn render_remix(args: RenderRemixArgs) -> Result<ControlCommand, RequestError> {
+    let mut tracks: Vec<RemixTrackChange> = Vec::new();
+    let mut change = |flag: &str, entry: &str| -> Result<(), RequestError> {
+        let (track_id, value) = entry
+            .rsplit_once('=')
+            .ok_or_else(|| format!("{flag} expects TRACK_ID=VALUE, got {entry}"))?;
+        let value = value
+            .parse::<f64>()
+            .map_err(|_| format!("{flag} value is not a number: {entry}"))?;
+        let index = match tracks.iter().position(|change| change.track_id == track_id) {
+            Some(index) => index,
+            None => {
+                tracks.push(RemixTrackChange {
+                    track_id: track_id.to_owned(),
+                    gain_db: 0.0,
+                    pan: None,
+                });
+                tracks.len() - 1
+            }
+        };
+        if flag == "--track" {
+            tracks[index].gain_db = value;
+        } else {
+            tracks[index].pan = Some(value);
+        }
+        Ok(())
+    };
+    for entry in &args.tracks {
+        change("--track", entry)?;
+    }
+    for entry in &args.pans {
+        change("--pan", entry)?;
+    }
+    if tracks.is_empty() {
+        return Err("at least one --track or --pan is required".into());
+    }
+    Ok(Runtime::RenderRemix(RenderRemixParams {
+        render_id: args.from,
+        tracks,
+        output_path: args
+            .output_path
             .map(|path| path.to_string_lossy().into_owned()),
     })
     .into())
@@ -5003,30 +5096,52 @@ mod tests {
     }
 
     #[test]
-    fn render_start_overrides_the_project_render_mode() {
+    fn render_start_forces_the_render_mode_for_one_job() {
         // Arrange
         let arguments = ["riffra", "render", "start", "--render-mode", "realtime"];
-        let settings = [
-            "riffra",
-            "render",
-            "settings",
-            "set",
-            "--settings-json",
-            r#"{"musicalEndTick":0,"tailSeconds":0.0,"fadeOutSeconds":0.0,"renderMode":"realtime","mastering":null,"sampleRate":null,"blockSize":null}"#,
-        ];
 
         // Act
         let render = wire(Cli::try_parse_from(arguments).unwrap());
-        let saved = wire(Cli::try_parse_from(settings).unwrap());
 
         // Assert
         assert_eq!(render.name, "render.start");
         assert_eq!(render.params["options"]["renderMode"], "realtime");
-        assert_eq!(saved.name, "render.settings.set");
-        assert_eq!(saved.params["renderMode"], "realtime");
         assert!(
             Cli::try_parse_from(["riffra", "render", "start", "--render-mode", "fast"]).is_err()
         );
+    }
+
+    #[test]
+    fn render_remix_collects_gain_and_pan_per_track() {
+        // Arrange
+        let arguments = [
+            "riffra",
+            "render",
+            "remix",
+            "--from",
+            "render-1-a",
+            "--track",
+            "bass=-2.5",
+            "--track",
+            "lead=1",
+            "--pan",
+            "lead=-0.3",
+        ];
+
+        // Act
+        let remix = wire(Cli::try_parse_from(arguments).unwrap());
+
+        // Assert
+        assert_eq!(remix.name, "render.remix");
+        assert_eq!(remix.params["renderId"], "render-1-a");
+        assert_eq!(
+            remix.params["tracks"],
+            json!([
+                {"trackId": "bass", "gainDb": -2.5, "pan": null},
+                {"trackId": "lead", "gainDb": 1.0, "pan": -0.3},
+            ])
+        );
+        assert!(Cli::try_parse_from(["riffra", "render", "remix", "--from", "r"]).is_ok());
     }
 
     #[test]

@@ -53,6 +53,7 @@ function plugin(name: string, role: PluginEntry['role']): PluginEntry {
     bundle: true,
     modifiedAtMs: null,
     scanState: 'validated',
+    realtimeWarmUpSeconds: null,
   };
 }
 
