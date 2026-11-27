@@ -36,6 +36,10 @@ pub(super) enum Category {
 }
 
 /// Classifies one Track from its playable notes and its Score structure.
+///
+/// # Panics
+///
+/// Panics when `notes` is empty; Tracks without playable notes are not drawn.
 pub(super) fn classify(
     track: &Track,
     notes: &[Note],
@@ -49,7 +53,11 @@ pub(super) fn classify(
         return Category::Vocal;
     }
     let polyphony = polyphony(notes);
-    let lowest = notes.iter().map(|note| note.midi).min().unwrap_or(0);
+    let lowest = notes
+        .iter()
+        .map(|note| note.midi)
+        .min()
+        .expect("a drawn Track has notes");
     if polyphony < BASS_MAX_POLYPHONY
         && (median(notes) < BASS_MAX_MEDIAN || lowest < BASS_MAX_LOWEST)
     {
@@ -66,28 +74,26 @@ pub(super) fn classify(
 }
 
 fn is_drums(track: &Track, notes: &[Note], linked: Option<&LinkedScore>) -> bool {
-    let Some(instrument) = track.score_instrument.as_deref() else {
-        return notes.iter().all(|note| note.channel == DRUM_CHANNEL);
-    };
-    if instrument.starts_with("kit:") {
-        return true;
-    }
-    if let Some(linked) = linked {
-        let mut lanes = linked
-            .plan()
-            .lanes
-            .iter()
-            .filter(|lane| lane.id == instrument)
-            .peekable();
-        if lanes.peek().is_some()
-            && lanes.all(|lane| {
-                !lane.sources.is_empty() && lane.sources.iter().all(|source| source.trigger)
-            })
-        {
-            return true;
-        }
-    }
-    notes.iter().all(|note| note.channel == DRUM_CHANNEL)
+    let instrument = track.score_instrument.as_deref();
+    instrument.is_some_and(|instrument| instrument.starts_with("kit:"))
+        || instrument
+            .zip(linked)
+            .is_some_and(|(instrument, linked)| plays_only_triggers(instrument, linked))
+        || notes.iter().all(|note| note.channel == DRUM_CHANNEL)
+}
+
+/// Returns whether the Score plays an instrument through trigger patterns only.
+fn plays_only_triggers(instrument: &str, linked: &LinkedScore) -> bool {
+    let mut lanes = linked
+        .plan()
+        .lanes
+        .iter()
+        .filter(|lane| lane.id == instrument)
+        .peekable();
+    lanes.peek().is_some()
+        && lanes.all(|lane| {
+            !lane.sources.is_empty() && lane.sources.iter().all(|source| source.trigger)
+        })
 }
 
 /// Returns the ratio of attacks that sound more than one note.
@@ -95,9 +101,6 @@ fn polyphony(notes: &[Note]) -> f64 {
     let mut attacks: BTreeMap<u64, usize> = BTreeMap::new();
     for note in notes {
         *attacks.entry(note.start_tick).or_insert(0) += 1;
-    }
-    if attacks.is_empty() {
-        return 0.0;
     }
     let polyphonic = attacks.values().filter(|count| **count >= 2).count();
     polyphonic as f64 / attacks.len() as f64
@@ -107,10 +110,7 @@ fn polyphony(notes: &[Note]) -> f64 {
 fn median(notes: &[Note]) -> u8 {
     let mut pitches = notes.iter().map(|note| note.midi).collect::<Vec<_>>();
     pitches.sort_unstable();
-    pitches
-        .get(pitches.len().saturating_sub(1) / 2)
-        .copied()
-        .unwrap_or(0)
+    pitches[(pitches.len() - 1) / 2]
 }
 
 fn average_beats(notes: &[Note], ppq: u32) -> f64 {
