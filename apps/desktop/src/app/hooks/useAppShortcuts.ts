@@ -23,6 +23,16 @@ export function useAppShortcuts(setCommandOpen: Dispatch<SetStateAction<boolean>
       }
       if (selectWorkspaceWaiting(state)) return;
       const typing = isEditableTypingTarget(event.target);
+      if (event.ctrlKey && !event.shiftKey && !typing && event.key.toLowerCase() === 'b') {
+        event.preventDefault();
+        state.workspace.toggleBrowser();
+        return;
+      }
+      if (event.ctrlKey && !event.shiftKey && !typing && event.key.toLowerCase() === 'i') {
+        event.preventDefault();
+        state.workspace.toggleInspector();
+        return;
+      }
       if (event.ctrlKey && !typing && event.key.toLowerCase() === 'z') {
         event.preventDefault();
         void (event.shiftKey ? project.redo() : project.undo());

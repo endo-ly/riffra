@@ -24,10 +24,10 @@ interface TimelineToolbarProps {
   automationAvailable: boolean;
   automationOpen: boolean;
   onToggleAutomation: () => void;
-  playSurfaceOpen: boolean;
-  onTogglePlaySurface: () => void;
-  mixerOpen: boolean;
-  onToggleMixer: () => void;
+  browserOpen: boolean;
+  onToggleBrowser: () => void;
+  inspectorOpen: boolean;
+  onToggleInspector: () => void;
   /** Placed at the end of the toolbar, after the toggles. */
   accessory?: ReactNode;
 }
@@ -54,9 +54,29 @@ export function TimelineToolbar(props: TimelineToolbarProps) {
               props.onZoom(props.zoom * (direction > 0 ? ZOOM_STEP : 1 / ZOOM_STEP))
             }
           />
+          <ToolbarDivider />
+          <ToolbarToggle
+            active={props.inspectorOpen}
+            icon="inspector"
+            ariaLabel="Inspector"
+            title="Show or hide Inspector (Ctrl+I)"
+            onClick={props.onToggleInspector}
+          >
+            Inspector
+          </ToolbarToggle>
         </>
       }
     >
+      <ToolbarToggle
+        active={props.browserOpen}
+        icon="folder"
+        ariaLabel="Library"
+        title="Show or hide Library (Ctrl+B)"
+        onClick={props.onToggleBrowser}
+      >
+        Library
+      </ToolbarToggle>
+      <ToolbarDivider />
       <ToolbarSegmented
         label="Arrange tool"
         value={props.tool}
@@ -73,6 +93,7 @@ export function TimelineToolbar(props: TimelineToolbarProps) {
         onChange={props.onSnap}
         options={SNAP_GRID_OPTIONS.map((value) => ({ value, label: snapGridLabel(value) }))}
       />
+      <ToolbarDivider />
       <ToolbarToggle
         active={props.automationOpen}
         icon="curve"
@@ -86,24 +107,6 @@ export function TimelineToolbar(props: TimelineToolbarProps) {
         onClick={props.onToggleAutomation}
       >
         Automation
-      </ToolbarToggle>
-      <ToolbarToggle
-        active={props.mixerOpen}
-        icon="mixer"
-        ariaLabel="Mixer"
-        title="Show or hide the Mixer"
-        onClick={props.onToggleMixer}
-      >
-        Mixer
-      </ToolbarToggle>
-      <ToolbarToggle
-        active={props.playSurfaceOpen}
-        icon="keys"
-        ariaLabel="Play Surface"
-        title="Show or hide the on-screen keyboard and drum pads"
-        onClick={props.onTogglePlaySurface}
-      >
-        Play Surface
       </ToolbarToggle>
       {props.accessory}
     </Toolbar>

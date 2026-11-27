@@ -23,7 +23,7 @@ describe('project store', () => {
 
       store.getState().project.acceptBootstrap(structuredClone(api.bootstrapState));
       expect(store.getState().readModel).toBe(original.readModel);
-      expect(store.getState().workspace.lower.heights.detail).toBe(420);
+      expect(store.getState().workspace.lower.height).toBe(420);
 
       const boot = structuredClone(store.getState().project.boot!);
       boot.canonical.sequence += 1;
@@ -41,7 +41,7 @@ describe('project store', () => {
       expect(store.getState().readModel!.session.arrangement.timebase).not.toBe(
         original.readModel!.session.arrangement.timebase,
       );
-      expect(store.getState().workspace.lower.heights.detail).toBe(380);
+      expect(store.getState().workspace.lower.height).toBe(360);
     },
   );
 

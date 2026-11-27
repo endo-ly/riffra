@@ -1,5 +1,4 @@
 import { useSessionCommand } from '@/session/hooks/useSessionCommand';
-import { errorText } from '@/shared/errors';
 import { useSessionRead } from '@/session/hooks/useSessionRead';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type {
@@ -9,7 +8,6 @@ import type {
   DeviceParameterInfo,
   PluginPresetInfo,
 } from '@/model/generated';
-import { HostConnectionChangedError } from '@/native/invoke';
 import { useSession, useSessionContext } from '@/session/session-context';
 
 interface DeviceDetails {
@@ -107,21 +105,11 @@ export function useDeviceDetails(
       if (targetGeneration.current === target) setSaving(false);
     }
   };
-  const openEditor = async () => {
-    const target = targetGeneration.current;
-    try {
-      await api.openPluginEditor(owner, deviceId);
-    } catch (failure) {
-      if (targetGeneration.current === target && !(failure instanceof HostConnectionChangedError))
-        setError(errorText(failure));
-    }
-  };
   return {
     details,
     loading,
     error: error ?? metadata.error ?? values.error,
     saving,
     mutate,
-    openEditor,
   };
 }

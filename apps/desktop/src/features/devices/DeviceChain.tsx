@@ -182,6 +182,23 @@ export function DeviceChain(props: DeviceChainProps) {
                 <div className={styles.cardActions}>
                   {!unavailable && (
                     <>
+                      {device.plugin && (
+                        <button
+                          type="button"
+                          className={`${controls.smallButton} ${controls.accent}`}
+                          disabled={device.bypassed}
+                          aria-label={`Open ${device.name} editor`}
+                          title={
+                            device.bypassed
+                              ? 'Unbypass to open plug-in editor'
+                              : 'Open plug-in editor'
+                          }
+                          onClick={() => props.runOperation(api.openPluginEditor(owner, device.id))}
+                        >
+                          <Icon name="maximize" />
+                          UI
+                        </button>
+                      )}
                       <button
                         type="button"
                         className={controls.bypassButton}

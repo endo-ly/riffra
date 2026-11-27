@@ -157,10 +157,53 @@
   border-color: var(--color-accent);
 }
 
+.trackTrailing {
+  grid-column: 3;
+  display: flex;
+  align-items: center;
+  gap: var(--space-0-5);
+}
+
+.fxButton {
+  width: 24px;
+  height: 20px;
+  padding: 0;
+  color: var(--color-text-muted);
+  font: 700 var(--font-size-micro) var(--font-family-mono);
+  background: var(--color-bg-panel);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  display: grid;
+  place-content: center;
+  transition:
+    background-color var(--duration-fast),
+    border-color var(--duration-fast),
+    color var(--duration-fast);
+}
+
+.fxButton:hover {
+  color: var(--color-text-strong);
+  border-color: var(--color-border-strong);
+}
+
+.trackVolumeRow {
+  grid-column: 1 / 4;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 44px 24px;
+  align-items: center;
+  gap: var(--space-1-5);
+  height: 20px;
+}
+
+.trackVolumeRow button {
+  height: 20px;
+}
+
 .trackControl {
   grid-column: 1 / 4;
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) 44px;
+  grid-template-columns: 24px minmax(0, 1fr) 44px 24px;
   align-items: center;
   gap: var(--space-1-5);
   height: 16px;
@@ -168,12 +211,14 @@
   font-size: var(--font-size-micro);
 }
 
+.trackVolumeRow input,
 .trackControl input {
   --slider-height: 14px;
   --slider-track-height: 2px;
   --slider-thumb-height: 12px;
 }
 
+.trackVolumeRow output,
 .trackControl output {
   color: var(--color-text-muted);
   font: var(--font-size-micro) var(--font-family-mono);

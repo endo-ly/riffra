@@ -230,7 +230,13 @@ export const MidiEditorPanel = memo(function MidiEditorPanel() {
     setNoteContextMenu,
   ]);
 
-  if (!clip) return <div className={styles.empty} />;
+  if (!clip) {
+    return (
+      <div className={styles.empty} aria-label="MIDI Editor">
+        No MIDI clip to edit. Double-click an Instrument track lane to create one.
+      </div>
+    );
+  }
 
   const notes = editing.notes;
   const noteBox = (note: MidiNote): CSSProperties => ({

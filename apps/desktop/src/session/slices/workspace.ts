@@ -2,20 +2,20 @@ import type { AutomationTarget, CreativeSession } from '@/model/generated';
 import type { EditorSelection } from '@/model/editor-selection';
 import { automationOwner } from '@/model/automation';
 
-type DetailView = 'midiEditor' | 'devices';
-type OverlayView = 'mixer' | 'playSurface';
-export type WorkspaceLowerView = 'closed' | DetailView | OverlayView;
+export type LowerPanelView = 'midiEditor' | 'devices' | 'mixer' | 'playSurface';
+export type WorkspaceLowerView = 'closed' | LowerPanelView;
 export interface LowerAreaState {
   activeMidiClipId: string | null;
   view: WorkspaceLowerView;
   collapsed: boolean;
   maximized: boolean;
-  heights: Record<'detail' | OverlayView, number>;
-  returnView: DetailView | null;
+  height: number;
 }
 export interface WorkspaceSlice {
   selection: EditorSelection;
   focusedTrackId: string | null;
+  browserOpen: boolean;
+  inspectorOpen: boolean;
   lower: LowerAreaState;
   automation: {
     trackTargets: Partial<Record<string, AutomationTarget>>;
@@ -24,11 +24,14 @@ export interface WorkspaceSlice {
   reset(): void;
   setSelection(selection: EditorSelection): void;
   focusTrack(id: string | null): void;
+  setBrowserOpen(open: boolean): void;
+  toggleBrowser(): void;
+  setInspectorOpen(open: boolean): void;
+  toggleInspector(): void;
   openMidiEditor(id: string): void;
   keepMidiClipVisible(id: string): void;
   openDevices(): void;
-  toggleMixer(): void;
-  togglePlaySurface(): void;
+  toggleLowerView(view: LowerPanelView): void;
   closeLower(): void;
   setLowerCollapsed(value: boolean): void;
   setLowerMaximized(value: boolean): void;
@@ -43,13 +46,14 @@ const initialLower = (): LowerAreaState => ({
   view: 'closed',
   collapsed: false,
   maximized: false,
-  heights: { detail: 380, mixer: 320, playSurface: 260 },
-  returnView: null,
+  height: 360,
 });
 export function initialWorkspace() {
   return {
     selection: { kind: 'none' } as EditorSelection,
     focusedTrackId: null,
+    browserOpen: false,
+    inspectorOpen: false,
     lower: initialLower(),
     automation: { trackTargets: {}, mixerTarget: null },
   };
@@ -83,7 +87,7 @@ export function reconcileWorkspace(
   if (invalidSelection) {
     selection = { kind: 'none' };
     if (lower.view === 'devices')
-      lower = { ...lower, view: 'closed', collapsed: false, maximized: false, returnView: null };
+      lower = { ...lower, view: 'closed', collapsed: false, maximized: false };
   }
   if (focusedTrackId && !tracks.some((track) => track.id === focusedTrackId)) focusedTrackId = null;
   if (
@@ -92,7 +96,7 @@ export function reconcileWorkspace(
   ) {
     lower = { ...lower, activeMidiClipId: null };
     if (lower.view === 'midiEditor')
-      lower = { ...lower, view: 'closed', collapsed: false, maximized: false, returnView: null };
+      lower = { ...lower, view: 'closed', collapsed: false, maximized: false };
   }
   return selection === workspace.selection &&
     focusedTrackId === workspace.focusedTrackId &&
@@ -106,64 +110,53 @@ export function createWorkspaceSlice(
   session: () => CreativeSession | null,
 ): WorkspaceSlice {
   const lower = (patch: Partial<LowerAreaState>) => update({ lower: { ...get().lower, ...patch } });
-  const toggle = (overlay: OverlayView) => {
-    const current = get().lower;
-    if (current.view === overlay) {
-      const exists = session()?.arrangement.midiClips.some(
-        (clip) => clip.id === current.activeMidiClipId,
-      );
-      const view =
-        current.returnView === 'devices'
-          ? 'devices'
-          : current.returnView === 'midiEditor' && exists
-            ? 'midiEditor'
-            : 'closed';
-      lower({ view, returnView: null, collapsed: false });
-      return;
-    }
-    lower({
-      view: overlay,
-      collapsed: false,
-      returnView:
-        current.view === 'midiEditor' || current.view === 'devices'
-          ? current.view
-          : current.view === 'closed'
-            ? null
-            : current.returnView,
-    });
-  };
   return {
     ...initialWorkspace(),
     reset: () => update(initialWorkspace()),
-    setSelection: (selection) => update({ selection }),
+    setSelection(selection) {
+      if (selection.kind === 'track') {
+        const track = session()?.arrangement.tracks.find((item) => item.id === selection.trackId);
+        if (track) {
+          update({
+            selection,
+            focusedTrackId: track.kind === 'instrument' ? track.id : null,
+          });
+          return;
+        }
+      }
+      update({ selection });
+    },
     focusTrack: (focusedTrackId) => update({ focusedTrackId }),
+    setBrowserOpen: (browserOpen) => update({ browserOpen }),
+    toggleBrowser: () => update({ browserOpen: !get().browserOpen }),
+    setInspectorOpen: (inspectorOpen) => update({ inspectorOpen }),
+    toggleInspector: () => update({ inspectorOpen: !get().inspectorOpen }),
     openMidiEditor(id) {
       update({
         selection: { kind: 'clips', clipIds: [id] },
         lower: {
           ...get().lower,
           activeMidiClipId: id,
-          returnView: null,
           view: 'midiEditor',
           collapsed: false,
         },
       });
     },
     keepMidiClipVisible: (id) => lower({ activeMidiClipId: id, collapsed: false }),
-    openDevices: () => lower({ returnView: null, view: 'devices', collapsed: false }),
-    toggleMixer: () => toggle('mixer'),
-    togglePlaySurface: () => toggle('playSurface'),
-    closeLower: () =>
-      lower({ view: 'closed', collapsed: false, maximized: false, returnView: null }),
+    openDevices: () => lower({ view: 'devices', collapsed: false }),
+    toggleLowerView(view) {
+      const current = get().lower;
+      if (current.view === view && !current.collapsed) {
+        lower({ view: 'closed', collapsed: false, maximized: false });
+        return;
+      }
+      lower({ view, collapsed: false });
+    },
+    closeLower: () => lower({ view: 'closed', collapsed: false, maximized: false }),
     setLowerCollapsed: (collapsed) =>
       lower({ collapsed, ...(collapsed ? { maximized: false } : {}) }),
     setLowerMaximized: (maximized) => lower({ collapsed: false, maximized }),
-    setLowerHeight(height) {
-      const current = get().lower;
-      const key =
-        current.view === 'mixer' || current.view === 'playSurface' ? current.view : 'detail';
-      lower({ heights: { ...current.heights, [key]: height } });
-    },
+    setLowerHeight: (height) => lower({ height }),
     openAutomation(target) {
       const current = session();
       if (!current) return;

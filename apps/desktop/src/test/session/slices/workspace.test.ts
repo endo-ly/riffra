@@ -39,15 +39,15 @@ describe('workspace', () => {
     store.getState().workspace.setLowerMaximized(true);
     expect(store.getState().workspace.lower.maximized).toBe(true);
     expect(store.getState().workspace.lower.collapsed).toBe(false);
-    store.getState().workspace.toggleMixer();
+    store.getState().workspace.toggleLowerView('mixer');
     expect(store.getState().workspace.lower.view).toBe('mixer');
-    store.getState().workspace.toggleMixer();
+    store.getState().workspace.toggleLowerView('midiEditor');
     expect(store.getState().workspace.lower.view).toBe('midiEditor');
     expect(store.getState().workspace.lower.maximized).toBe(true);
     store.getState().workspace.closeLower();
-    store.getState().workspace.toggleMixer();
+    store.getState().workspace.toggleLowerView('mixer');
     expect(store.getState().workspace.lower.view).toBe('mixer');
-    store.getState().workspace.toggleMixer();
+    store.getState().workspace.toggleLowerView('mixer');
     expect(store.getState().workspace.lower.view).toBe('closed');
     store.getState().project.acceptCanonical({
       ...api.bootstrapState.canonical,

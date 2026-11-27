@@ -74,7 +74,7 @@ describe('LiveInput', () => {
     // Act: the Play Surface opens over the MIDI Editor and returns to it.
     fireEvent.doubleClick(container.querySelector('[data-clip-id="clip:live"]')!);
     const lowerArea = screen.getByRole('region', { name: 'Arrange lower area' });
-    fireEvent.click(screen.getByRole('button', { name: 'Play Surface' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Play' }));
 
     // Assert
     expect(lowerArea).toHaveAttribute('data-view', 'playSurface');
@@ -97,7 +97,7 @@ describe('LiveInput', () => {
     fireEvent.pointerUp(pad, { pointerId: 1 });
     await waitFor(() => expect(sendMidi).toHaveBeenCalledWith('track:live', [0x89, 49, 0]));
 
-    fireEvent.click(screen.getByRole('button', { name: 'Play Surface' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'MIDI' }));
     expect(lowerArea).toHaveAttribute('data-view', 'midiEditor');
   });
 
@@ -303,6 +303,17 @@ describe('LiveInput', () => {
     // Assert: the input the user turned on followed the focus.
     expect(computerKeyboard).toHaveAttribute('aria-pressed', 'true');
     await waitFor(() => expect(sendMidi).toHaveBeenCalledWith('track:b', [0x90, 60, 100]));
+
+    // Act: open Play and switch the played track from the Play Surface selector.
+    fireEvent.click(screen.getByRole('tab', { name: 'Play' }));
+    const playTrackSelect = screen.getByRole('combobox', { name: 'Play track' });
+    expect(playTrackSelect).toHaveValue('track:b');
+    fireEvent.change(playTrackSelect, { target: { value: 'track:a' } });
+    fireEvent.keyDown(window, { key: 'a' });
+    fireEvent.keyUp(window, { key: 'a' });
+
+    // Assert: MIDI routes to the track selected inside the Play tab.
+    await waitFor(() => expect(sendMidi).toHaveBeenCalledWith('track:a', [0x90, 60, 100]));
   });
 
   it('toggles live input once for a held computer keyboard shortcut', () => {

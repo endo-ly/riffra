@@ -295,8 +295,7 @@ describe('EditorWorkspace', () => {
       const { store } = renderWorkspace(api, { session });
 
       // Act
-      fireEvent.click(screen.getByLabelText('Instrument Delete track menu'));
-      fireEvent.click(screen.getByRole('menuitem', { name: 'Open Devices' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Open Instrument Delete effects' }));
       expect(screen.getByRole('region', { name: 'Arrange lower area' })).toHaveAttribute(
         'data-view',
         'devices',
@@ -319,9 +318,10 @@ describe('EditorWorkspace', () => {
       }
       fireEvent.click(screen.getByRole('button', { name: 'Delete Track' }));
       await waitFor(() =>
-        expect(
-          screen.queryByRole('region', { name: 'Arrange lower area' }),
-        ).not.toBeInTheDocument(),
+        expect(screen.getByRole('region', { name: 'Arrange lower area' })).toHaveAttribute(
+          'data-view',
+          'closed',
+        ),
       );
     },
   );
@@ -373,8 +373,7 @@ describe('EditorWorkspace', () => {
     expect(screen.getByRole('menu')).toBeInTheDocument();
     fireEvent.mouseDown(document.body);
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByLabelText('Guitar track menu'));
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Open Devices' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open Guitar effects' }));
 
     // Assert
     expect(screen.getByRole('region', { name: 'Arrange lower area' })).toHaveAttribute(
@@ -457,7 +456,7 @@ describe('EditorWorkspace', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Maximize lower area' }));
     expect(screen.getByRole('button', { name: 'Restore lower area size' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Close lower area' }));
-    expect(screen.queryByRole('region', { name: 'Arrange lower area' })).not.toBeInTheDocument();
+    expect(lowerArea).toHaveAttribute('data-view', 'closed');
   });
 
   it('shows the Mixer and the MIDI editor in the shared lower area', async () => {
@@ -495,20 +494,20 @@ describe('EditorWorkspace', () => {
     const api = createFakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
     renderWorkspace(api, { session, focusedTrackId: 'track:focused' });
 
-    const mixerToggle = screen.getByRole('button', { name: 'Mixer' });
-    fireEvent.click(mixerToggle);
-
     const lowerArea = screen.getByRole('region', { name: 'Arrange lower area' });
+    const mixerTab = within(lowerArea).getByRole('tab', { name: 'Mixer' });
+    fireEvent.click(mixerTab);
+
     expect(lowerArea.querySelector('[data-mixer-panel]')).toBeInTheDocument();
     const trackChannel = screen.getByRole('article', { name: 'Mix Track mixer channel' });
     expect(screen.getByRole('complementary', { name: 'Master mixer channel' })).toBeInTheDocument();
 
-    fireEvent.click(within(trackChannel).getByTitle('Open Track Devices'));
+    fireEvent.click(within(trackChannel).getByTitle('Open Devices'));
     await waitFor(() => expect(lowerArea).toHaveAttribute('data-view', 'devices'));
-    fireEvent.click(mixerToggle);
+    fireEvent.click(mixerTab);
     expect(lowerArea).toHaveAttribute('data-view', 'mixer');
-    fireEvent.click(mixerToggle);
-    expect(lowerArea).toHaveAttribute('data-view', 'devices');
+    fireEvent.click(mixerTab);
+    expect(lowerArea).toHaveAttribute('data-view', 'closed');
   });
 
   it('routes Space to the shared transport controller from the Arrange editor', async () => {

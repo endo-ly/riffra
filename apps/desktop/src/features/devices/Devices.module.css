@@ -3,46 +3,35 @@
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   overflow: hidden;
   color: var(--color-text-primary);
   font-size: var(--font-size-small);
   background: var(--color-bg-panel);
 }
 
-/* Keep the toolbar clear of the overlaid lower-area controls. */
-.panel > header {
-  padding-right: var(--lower-actions-width);
-}
-
-/* The edited channel, marked in its track color. */
-.identity {
-  max-width: 420px;
-  display: inline-flex;
+.channelBar {
+  display: flex;
   align-items: center;
-  gap: var(--space-1-5);
-  overflow: hidden;
-  color: var(--color-text-strong);
-  font-size: var(--font-size-small);
-  font-weight: 600;
-  white-space: nowrap;
+  gap: var(--space-2);
 }
 
-.identity::before {
+.channelDot {
   width: 8px;
   height: 8px;
   flex: 0 0 8px;
-  content: '';
   background: var(--track-color, var(--color-accent));
   border-radius: 2px;
 }
 
-.identity small {
-  overflow: hidden;
-  color: var(--color-text-muted);
-  font-size: var(--font-size-micro);
-  font-weight: 400;
-  text-overflow: ellipsis;
+.channelSelect {
+  width: auto;
+  min-width: 140px;
+  max-width: 240px;
+}
+
+.paramFilter {
+  width: 180px;
 }
 
 .content {
@@ -93,7 +82,7 @@
 
 .card {
   position: relative;
-  width: 212px;
+  width: 236px;
   flex: 0 0 auto;
   display: grid;
   grid-template-columns: 28px minmax(0, 1fr);

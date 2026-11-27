@@ -49,6 +49,7 @@ export function Icon({ name, className }: { name: string; className?: string }) 
     export: 'M12 15 6.6 9.6 8 8.2l3 3V3h2v8.2l3-3 1.4 1.4L12 15ZM5 18h14v2H5v-2Z',
     trash: 'M9 3h6l1 2h4v2H4V5h4l1-2ZM6 9h12l-1 12H7L6 9Zm4 2v8h1.5v-8H10Zm2.5 0v8H14v-8h-1.5Z',
     folder: 'M3 5h7l2 2h9v12H3V5Zm2 4v8h14V9H5Z',
+    inspector: 'M3 4h18v16H3V4Zm2 2v12h9V6H5Zm11 0v12h3V6h-3Z',
     route:
       'M5 4a3 3 0 0 1 1 5.83V11h7a3 3 0 0 0 3-3V6h-2l3-3 3 3h-2v2a5 5 0 0 1-5 5H6v1.17A3 3 0 1 1 4 14.17V9.83A3 3 0 0 1 5 4Z',
   };

@@ -9,6 +9,22 @@
   user-select: none;
 }
 
+.header {
+  height: var(--size-toolbar);
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--space-2) 0 var(--space-3);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.header strong {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-small);
+  font-weight: 600;
+}
+
 .body {
   min-height: 0;
   flex: 1;

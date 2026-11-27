@@ -18,6 +18,7 @@ import {
 } from '@/shared/ui/Toolbar';
 import { DrumPadGrid } from './DrumPadGrid';
 import { MusicalTypingKeyboard } from './MusicalTypingKeyboard';
+import controls from '@/shared/ui/controls.module.css';
 import styles from './PlaySurface.module.css';
 import { InlineMessage } from '@/shared/ui/message/InlineMessage';
 
@@ -28,14 +29,40 @@ export function PlaySurface({ play }: { play: LivePlay }) {
   const setSelection = useSession((state) => state.workspace.setSelection);
   const openDevices = useSession((state) => state.workspace.openDevices);
   const { track, settings } = play;
+  const instrumentTracks = tracks.filter((item) => item.kind === 'instrument');
   const trackColor = track ? resolveTrackColorById(tracks, track.id) : null;
   const onChooseInstrument = () => {
     if (!track) return;
     setSelection({ kind: 'track', trackId: track.id });
     openDevices();
   };
+  const onSelectTrack = (trackId: string) => {
+    if (!trackId) return;
+    setSelection({ kind: 'track', trackId });
+  };
   if (!track || play.availability === 'noTrack') {
-    return <div className={styles.state}>Select an Instrument Track to play it here.</div>;
+    return (
+      <div className={styles.state}>
+        <span>Select an Instrument Track to play it here.</span>
+        {instrumentTracks.length > 0 && (
+          <select
+            className={`${controls.control} ${styles.trackSelect}`}
+            aria-label="Play track"
+            value=""
+            onChange={(event) => onSelectTrack(event.currentTarget.value)}
+          >
+            <option value="" disabled>
+              Choose an Instrument Track…
+            </option>
+            {instrumentTracks.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.name}
+              </option>
+            ))}
+          </select>
+        )}
+      </div>
+    );
   }
   if (play.availability === 'notInstrument') {
     return <div className={styles.state}>{LIVE_PLAY_BLOCKED_REASON.notInstrument}</div>;
@@ -83,10 +110,21 @@ export function PlaySurface({ play }: { play: LivePlay }) {
       role="region"
     >
       <Toolbar label="Play Surface toolbar">
-        <span className={styles.identity} title={`${track.name} · ${track.instrument?.name}`}>
-          {track.name}
-          <small>{track.instrument?.name}</small>
-        </span>
+        <div className={styles.identity} title={`${track.name} · ${track.instrument?.name}`}>
+          <select
+            className={`${controls.control} ${styles.trackSelect}`}
+            aria-label="Play track"
+            value={track.id}
+            onChange={(event) => onSelectTrack(event.currentTarget.value)}
+          >
+            {instrumentTracks.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.name}
+              </option>
+            ))}
+          </select>
+          {track.instrument?.name && <small>{track.instrument.name}</small>}
+        </div>
         <ToolbarDivider />
         <ToolbarSegmented
           label="Play Surface mode"

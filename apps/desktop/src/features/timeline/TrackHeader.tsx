@@ -97,10 +97,9 @@ export function TrackHeader(props: TimelineTrackProps) {
   const solo = pendingTrackValues.solo ?? props.track.solo;
   const monitoringClass =
     activeMonitoring === 'auto' ? styles.monAuto : activeMonitoring === 'on' ? styles.monOn : '';
+  const fxCount = props.track.effects.length;
 
   const trackMenuItems: ContextMenuItem[] = [
-    { label: 'Open Devices', onClick: props.onOpenDevices },
-    { separator: true },
     { label: 'Duplicate', onClick: props.onDuplicate },
     { separator: true },
     { label: 'Delete', danger: true, onClick: props.onDelete },
@@ -242,10 +241,22 @@ export function TrackHeader(props: TimelineTrackProps) {
             </button>
           )}
         </div>
-        <MenuButton label={`${props.track.name} track menu`} items={trackMenuItems} />
+        <div className={styles.trackTrailing}>
+          <button
+            type="button"
+            className={styles.fxButton}
+            aria-label={`Open ${props.track.name} effects`}
+            title={fxCount > 0 ? `Open Devices (${fxCount} effects)` : 'Open Devices'}
+            onClick={props.onOpenDevices}
+          >
+            FX
+          </button>
+          {!showVolume && (
+            <MenuButton label={`${props.track.name} track menu`} items={trackMenuItems} />
+          )}
+        </div>
         {showVolume && (
-          <label className={styles.trackControl}>
-            <span>VOL</span>
+          <div className={styles.trackVolumeRow}>
             <ValueSlider
               control={gain}
               range={MIX_GAIN_DB}
@@ -253,7 +264,8 @@ export function TrackHeader(props: TimelineTrackProps) {
               ariaLabel={`${props.track.name} gain`}
             />
             <output>{formatGainDb(gain.value)}</output>
-          </label>
+            <MenuButton label={`${props.track.name} track menu`} items={trackMenuItems} />
+          </div>
         )}
         {showPan && (
           <label className={styles.trackControl}>

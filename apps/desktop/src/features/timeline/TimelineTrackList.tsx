@@ -43,7 +43,6 @@ export function TimelineTrackList(props: TimelineTrackListProps) {
   const automation = useSession((state) => state.workspace.automation);
   const lowerView = useSession((state) => state.workspace.lower.view);
   const setSelection = useSession((state) => state.workspace.setSelection);
-  const focusTrack = useSession((state) => state.workspace.focusTrack);
   const openMidiEditor = useSession((state) => state.workspace.openMidiEditor);
   const keepMidiClipVisible = useSession((state) => state.workspace.keepMidiClipVisible);
   const openDevices = useSession((state) => state.workspace.openDevices);
@@ -135,7 +134,6 @@ export function TimelineTrackList(props: TimelineTrackListProps) {
               onSelectTrack={() => {
                 props.clearSelectedRange();
                 setSelection({ kind: 'track', trackId: track.id });
-                focusTrack(track.kind === 'instrument' ? track.id : null);
               }}
               timelineWidth={timelineWidth}
               pixelsPerTick={pixelsPerTick}

@@ -8,6 +8,7 @@ import { ValueSlider } from '@/shared/ui/ValueSlider';
 import { Icon } from '@/shared/ui/Icon';
 import { useEffect, useRef, useState } from 'react';
 import styles from './Mixer.module.css';
+import { MixerEffectSlots } from './MixerEffectSlots';
 import { MixerMeter } from './MixerMeter';
 
 interface MixerMasterChannelStripProps {
@@ -15,6 +16,7 @@ interface MixerMasterChannelStripProps {
   onOpenDevices: () => void;
   onOpenAutomation: () => void;
   onOpenMixdown: () => void;
+  onError?: (message: string) => void;
   missingDeviceIds: readonly string[];
   disabled?: boolean;
 }
@@ -59,21 +61,27 @@ export function MixerMasterChannelStrip(props: MixerMasterChannelStripProps) {
       </div>
 
       <div className={styles.masterActions}>
-        <button type="button" className={styles.fxSummary} onClick={props.onOpenDevices}>
-          FX {props.session.arrangement.mixer.masterEffects.length}
-          {props.session.arrangement.mixer.masterEffects.some(
-            (device) =>
-              device.plugin.disabledPlaceholder || props.missingDeviceIds.includes(device.id),
-          )
-            ? ' · MISSING'
-            : ''}
-        </button>
-        <button type="button" className={styles.routeButton} onClick={props.onOpenAutomation}>
-          Automation
-        </button>
-        <button type="button" className={styles.mixdownButton} onClick={props.onOpenMixdown}>
-          Mixdown…
-        </button>
+        <MixerEffectSlots
+          owner={{ kind: 'master' }}
+          effects={props.session.arrangement.mixer.masterEffects}
+          missingDeviceIds={props.missingDeviceIds}
+          onOpenDevices={props.onOpenDevices}
+          onError={props.onError}
+        />
+        <div className={styles.stripActions}>
+          <button type="button" className={styles.mixdownButton} onClick={props.onOpenMixdown}>
+            Mixdown…
+          </button>
+          <button
+            type="button"
+            className={styles.autoButton}
+            aria-label="Automation"
+            title="Open master gain automation"
+            onClick={props.onOpenAutomation}
+          >
+            <Icon name="curve" />
+          </button>
+        </div>
       </div>
       <div className={styles.masterMixControl}>
         <MixerMeter owner={{ kind: 'master' }} mode="peak" />
@@ -93,27 +101,22 @@ export function MixerMasterChannelStrip(props: MixerMasterChannelStripProps) {
       </div>
 
       <section className={`${styles.safety} ${safetyWarning ? styles.safetyWarning : ''}`}>
-        <span className={styles.safetyTitle}>
-          <Icon name={safetyWarning ? 'stop' : 'speaker'} /> SAFETY
-        </span>
         <dl className={styles.diagnostics}>
           <div>
             <dt>PRE</dt>
             <dd>{meters.available ? `${formatMeterLevel(meters.preLimiterPeak)} dB` : '—'}</dd>
           </div>
           <div>
-            <dt>LIMITER</dt>
+            <dt>GR</dt>
             <dd>{meters.available ? `${meters.limiterGainReductionDb.toFixed(1)} dB` : '—'}</dd>
           </div>
-          <div>
-            <dt>CLIP</dt>
-            <dd>{clipLatched ? 'CLIP' : '—'}</dd>
-          </div>
-          <div>
-            <dt>FEEDBACK</dt>
-            <dd>{meters.available ? (meters.feedbackSuspected ? 'CHECK' : 'CLEAR') : '—'}</dd>
-          </div>
         </dl>
+        {(clipLatched || (meters.available && meters.feedbackSuspected)) && (
+          <div className={styles.safetyAlerts}>
+            {clipLatched && <span>CLIP</span>}
+            {meters.available && meters.feedbackSuspected && <span>FEEDBACK</span>}
+          </div>
+        )}
       </section>
     </aside>
   );

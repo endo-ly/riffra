@@ -15,7 +15,7 @@ import { ProjectHostSelector } from '@/features/project/ProjectHostSelector';
 import { ProjectBoundRegion } from '@/app/layout/ProjectBoundRegion';
 import { NoticeBar } from '@/app/status/NoticeBar';
 import { WorkspaceWait } from '@/app/status/WorkspaceWait';
-import { LeftColumn } from '@/app/layout/LeftColumn';
+import { AppBodyLayout } from '@/app/layout/AppBodyLayout';
 import { CommandPalette } from '@/app/layout/CommandPalette';
 import shellStyles from './AppShell.module.css';
 
@@ -102,7 +102,7 @@ export function AppShell() {
 
       <NoticeBar />
 
-      <LeftColumn
+      <AppBodyLayout
         browser={<BrowserPanel onApply={(placement) => void placeAtPlayhead(placement)} />}
         properties={
           <ProjectBoundRegion>
@@ -115,7 +115,7 @@ export function AppShell() {
             <EditorWorkspace />
           </ProjectBoundRegion>
         </section>
-      </LeftColumn>
+      </AppBodyLayout>
 
       <WorkspaceWait />
 

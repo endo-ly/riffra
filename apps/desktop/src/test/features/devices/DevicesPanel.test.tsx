@@ -11,6 +11,7 @@ import {
   renderHook,
   screen,
   waitFor,
+  within,
 } from '@testing-library/react';
 import { Profiler, type ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -424,7 +425,9 @@ describe('DevicesPanel', () => {
       });
       if (kind === 'track') expect(screen.getByText('Audio Input →')).toBeInTheDocument();
       else expect(screen.queryByText('Audio Input →')).not.toBeInTheDocument();
-      fireEvent.click(screen.getByRole('button', { name: 'Test Effect' }));
+      // The first device is selected automatically and exposes a direct editor button on its card.
+      fireEvent.click(screen.getByRole('button', { name: 'Open Test Effect editor' }));
+      expect(api.openPluginEditor).toHaveBeenCalledWith(owner, effect.id);
       const slider = await screen.findByLabelText('Level · AUTO');
       expect(screen.getByText('-6 dB')).toBeInTheDocument();
       await waitFor(() =>
@@ -464,8 +467,6 @@ describe('DevicesPanel', () => {
       await waitFor(() => expect(api.setPluginPreset).toHaveBeenCalledWith(owner, effect.id, 1));
       await waitFor(() => expect(parameterReads.mock.calls.length).toBeGreaterThan(reads));
       await waitFor(() => expect(screen.getByLabelText('Preset')).toHaveValue('1'));
-      fireEvent.click(screen.getByRole('button', { name: 'Open Plugin Editor' }));
-      expect(api.openPluginEditor).toHaveBeenCalledWith(owner, effect.id);
       await waitFor(() => expect(screen.getByLabelText('Level · AUTO')).toBeEnabled());
       api.setDeviceParameter = vi.fn().mockRejectedValue(new Error('Parameter rejected'));
       fireEvent.change(screen.getByLabelText('Level · AUTO'), { target: { value: '0.9' } });
@@ -640,9 +641,12 @@ describe('DevicesPanel', () => {
     expect(api.previewSidechainSendLevel).toHaveBeenCalledWith('sidechain:1', -12);
     fireEvent.click(screen.getByRole('button', { name: 'Remove Sidechain' }));
     await waitFor(() => expect(api.removeSidechainSend).toHaveBeenCalledWith('sidechain:1'));
-    await waitFor(() => expect(screen.getByLabelText('Add Sidechain source')).toBeEnabled());
-    expect(screen.getByRole('option', { name: 'Drums' })).toBeInTheDocument();
-    expect(screen.queryByRole('option', { name: 'Audio' })).not.toBeInTheDocument();
+    const sidechainSelect = screen.getByLabelText('Add Sidechain source');
+    await waitFor(() => expect(sidechainSelect).toBeEnabled());
+    expect(within(sidechainSelect).getByRole('option', { name: 'Drums' })).toBeInTheDocument();
+    expect(
+      within(sidechainSelect).queryByRole('option', { name: 'Audio' }),
+    ).not.toBeInTheDocument();
   });
 
   it('disables adding a sidechain source when no mono or stereo layout is supported', async () => {

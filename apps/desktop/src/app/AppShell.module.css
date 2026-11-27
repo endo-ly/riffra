@@ -19,9 +19,11 @@
   min-height: 0;
   position: relative;
   display: grid;
-  grid-template-columns: var(--layout-left-column-width) minmax(0, 1fr);
+  grid-template-columns: var(--layout-left-column-width) minmax(0, 1fr) var(
+      --layout-right-column-width
+    );
   grid-template-rows: minmax(0, 1fr);
-  grid-template-areas: 'left workspace';
+  grid-template-areas: 'left workspace right';
   overflow: hidden;
 }
 

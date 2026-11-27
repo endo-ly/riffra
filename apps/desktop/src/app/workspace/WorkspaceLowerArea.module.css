@@ -3,18 +3,11 @@
   isolation: isolate;
   height: var(--lower-height);
   display: grid;
-  grid-template-rows: minmax(0, 1fr);
+  grid-template-rows: 36px minmax(0, 1fr);
   overflow: hidden;
   color: var(--color-text-primary);
   background: var(--color-bg-surface);
-
-  /*
-   * Horizontal space the overlaid area controls occupy, including their inset
-   * from the right edge. Each view's top bar keeps this clear.
-   */
-  --lower-actions-width: calc(
-    var(--size-control-dense) * 3 + var(--space-1) * 2 + var(--space-3) * 2
-  );
+  border-top: 1px solid var(--color-border-default);
 }
 
 .maximized {
@@ -26,16 +19,75 @@
 }
 
 .collapsed {
-  min-height: 48px;
-  height: 48px;
-  grid-template-rows: 48px;
+  min-height: 36px;
+  height: 36px;
+  grid-template-rows: 36px;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 0 var(--space-3) 0 var(--space-2);
+  background: var(--color-bg-panel);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.tabs {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.tab {
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  padding: 0 var(--space-2-5);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-small);
+  font-weight: 500;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition:
+    background-color var(--duration-fast),
+    color var(--duration-fast);
+}
+
+.tab svg {
+  width: var(--size-icon-sm);
+  height: var(--size-icon-sm);
+  fill: currentcolor;
+}
+
+.tab:hover:not(:disabled) {
+  color: var(--color-text-strong);
+  background: var(--color-bg-surface);
+}
+
+.tab[data-active='true'] {
+  color: var(--color-text-strong);
+  background: var(--color-control-active);
+}
+
+.tab[data-active='true']:hover:not(:disabled) {
+  background: var(--color-control-active-hover);
+}
+
+.tab[data-active='true'] svg {
+  color: var(--color-accent);
+}
+
+.tab:disabled {
+  color: var(--color-text-disabled);
+  cursor: default;
 }
 
 .actions {
-  position: absolute;
-  top: var(--space-2);
-  right: var(--space-3);
-  z-index: var(--z-lower-area-controls);
   display: flex;
   align-items: center;
   gap: var(--space-1);
@@ -48,15 +100,14 @@
   place-items: center;
   padding: 0;
   color: var(--color-text-secondary);
-  background: color-mix(in srgb, var(--color-bg-panel) 82%, transparent);
-  border-color: color-mix(in srgb, var(--color-border-strong) 70%, transparent);
+  background: transparent;
+  border-color: transparent;
   border-radius: var(--radius-sm);
 }
 
 .actions button:hover:not(:disabled) {
   color: var(--color-accent);
   background: var(--color-bg-hover);
-  border-color: var(--color-border-strong);
 }
 
 .actions svg {

@@ -1,9 +1,10 @@
 import { useSessionCommand } from '@/session/hooks/useSessionCommand';
-import type { ArrangementMutationResult, EffectOwner, MixBusKind } from '@/model/generated';
+import type { ArrangementMutationResult, EffectOwner, MixBus, MixBusKind } from '@/model/generated';
 import { useSession, useSessionContext } from '@/session/session-context';
 import { useShallow } from 'zustand/react/shallow';
 import { selectMissingDeviceIds } from '@/session/selectors';
 import { ownerSelection, selectionOwner } from '@/model/editor-selection';
+import { Icon } from '@/shared/ui/Icon';
 import controls from '@/shared/ui/controls.module.css';
 import { useState } from 'react';
 import { MixdownDialog } from '@/features/render/MixdownDialog';
@@ -13,6 +14,14 @@ import { MixerMasterChannelStrip } from './MixerMasterChannelStrip';
 import { MixerRouting } from './MixerRouting';
 import { MixerTrackChannelStrip } from './MixerTrackChannelStrip';
 import { InlineMessage } from '@/shared/ui/message/InlineMessage';
+
+function nextBusName(buses: readonly MixBus[], kind: MixBusKind) {
+  const prefix = kind === 'group' ? 'Group' : 'Return';
+  const existing = new Set(buses.map((bus) => bus.name));
+  let index = 1;
+  while (existing.has(`${prefix} ${index}`)) index += 1;
+  return `${prefix} ${index}`;
+}
 
 export function MixerPanel() {
   const { api } = useSessionContext();
@@ -34,8 +43,6 @@ export function MixerPanel() {
   };
   const { arrangement } = session;
   const [routingTrackId, setRoutingTrackId] = useState<string | null>(null);
-  const [newName, setNewName] = useState('');
-  const [newKind, setNewKind] = useState<MixBusKind>('group');
   const [error, setError] = useState<string | null>(null);
   const [mixdownOpen, setMixdownOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -44,89 +51,21 @@ export function MixerPanel() {
     setError(null);
     void commitMutation(operation, { onError: setError });
   };
-  const addBus = async () => {
-    if (busy || !newName.trim()) return;
+  const addBus = async (kind: MixBusKind) => {
+    if (busy) return;
     setBusy(true);
     setError(null);
     try {
-      const result = await commitMutation(api.addMixBus(newName.trim(), newKind), {
-        onError: setError,
-      });
-      if (result) setNewName('');
+      const name = nextBusName(arrangement.mixer.buses, kind);
+      await commitMutation(api.addMixBus(name, kind), { onError: setError });
     } finally {
       setBusy(false);
     }
   };
-  const selectedBus =
-    selectedOwner?.kind === 'bus'
-      ? arrangement.mixer.buses.find(
-          (bus) => selectedOwner?.kind === 'bus' && bus.id === selectedOwner.id,
-        )
-      : undefined;
   const routingTrack = arrangement.tracks.find((track) => track.id === routingTrackId);
 
   return (
     <div className={styles.panel} aria-label="Mixer" data-mixer-panel>
-      <header className={styles.panelHeader}>
-        <div>
-          <strong>MIXER</strong>
-          <span>Tracks, Groups, Returns and Master</span>
-        </div>
-        <form
-          className={styles.busControls}
-          onSubmit={(e) => {
-            e.preventDefault();
-            void addBus();
-          }}
-        >
-          <input
-            className={controls.control}
-            aria-label="New channel name"
-            placeholder="Channel name"
-            value={newName}
-            onChange={(e) => setNewName(e.currentTarget.value)}
-            disabled={busy}
-          />
-          <select
-            className={controls.control}
-            aria-label="New channel kind"
-            value={newKind}
-            onChange={(e) => setNewKind(e.currentTarget.value as MixBusKind)}
-          >
-            <option value="group">Group</option>
-            <option value="return">Return</option>
-          </select>
-          <button
-            type="submit"
-            className={`${controls.smallButton} ${controls.accent}`}
-            disabled={busy || !newName.trim()}
-          >
-            Add channel
-          </button>
-          {selectedBus && (
-            <>
-              <input
-                className={controls.control}
-                key={selectedBus.id}
-                aria-label="Channel name"
-                defaultValue={selectedBus.name}
-                onBlur={(e) => {
-                  if (e.currentTarget.value !== selectedBus.name)
-                    commit(api.updateMixBus(selectedBus.id, { name: e.currentTarget.value }));
-                }}
-              />
-              <button
-                type="button"
-                className={`${controls.smallButton} ${controls.danger}`}
-                onClick={() => commit(api.removeMixBus(selectedBus.id))}
-              >
-                Remove channel
-              </button>
-            </>
-          )}
-        </form>
-      </header>
-
       <div className={styles.trackViewport}>
         {arrangement.tracks.length || arrangement.mixer.buses.length ? (
           <div className={styles.trackRail}>
@@ -185,6 +124,7 @@ export function MixerPanel() {
                     onOpenAutomation={() =>
                       workspace.openAutomation({ kind: 'busMix', busId: bus.id, parameter: 'gain' })
                     }
+                    onRemove={() => commit(api.removeMixBus(bus.id))}
                     automated={arrangement.automationLanes.some(
                       (lane) => lane.target.kind === 'busMix' && lane.target.busId === bus.id,
                     )}
@@ -192,6 +132,24 @@ export function MixerPanel() {
                   />
                 )),
             )}
+            <div className={styles.addBusColumn}>
+              <button
+                type="button"
+                className={controls.smallButton}
+                disabled={busy}
+                onClick={() => void addBus('group')}
+              >
+                <Icon name="plus" /> Group
+              </button>
+              <button
+                type="button"
+                className={controls.smallButton}
+                disabled={busy}
+                onClick={() => void addBus('return')}
+              >
+                <Icon name="plus" /> Return
+              </button>
+            </div>
           </div>
         ) : (
           <div className={styles.empty}>
@@ -205,6 +163,7 @@ export function MixerPanel() {
         onOpenAutomation={() => workspace.openAutomation({ kind: 'masterGain' })}
         onOpenMixdown={() => setMixdownOpen(true)}
         onOpenDevices={() => openOwnerDevices({ kind: 'master' })}
+        onError={setError}
         missingDeviceIds={missingDeviceIds}
         session={session}
       />

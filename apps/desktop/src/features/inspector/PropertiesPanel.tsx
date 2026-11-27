@@ -2,6 +2,7 @@ import { clipDurationTicks } from '@/model/clip-time';
 import { tickToMusicalPosition } from '@/model/time-format';
 import { useSession, useSessionContext } from '@/session/session-context';
 import { Icon } from '@/shared/ui/Icon';
+import controls from '@/shared/ui/controls.module.css';
 import { AudioClipInspector } from './AudioClipInspector';
 import { MidiClipInspector } from './MidiClipInspector';
 import { MultiClipInspector } from './MultiClipInspector';
@@ -45,6 +46,18 @@ export function PropertiesPanel() {
   );
   return (
     <aside className={styles.panel} aria-label="Properties" data-properties-panel>
+      <header className={styles.header}>
+        <strong>Inspector</strong>
+        <button
+          type="button"
+          className={controls.iconButton}
+          aria-label="Close Inspector"
+          title="Close Inspector (Ctrl+I)"
+          onClick={() => workspace.setInspectorOpen(false)}
+        >
+          <Icon name="close" />
+        </button>
+      </header>
       <div className={styles.body}>
         {selectedTrack ? (
           <>

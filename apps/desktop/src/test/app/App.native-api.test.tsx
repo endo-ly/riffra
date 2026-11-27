@@ -110,9 +110,20 @@ describe('App native boundary', () => {
     expect(api.calls.filter((call) => call === 'bootstrap')).toHaveLength(2);
   });
 
-  it('supports both left column resize handles from the keyboard', async () => {
+  it('toggles Library and Inspector panels and resizes the Library from the keyboard', async () => {
     const api = createFakeNativeApi();
     await renderApp(api);
+
+    const leftColumn = document.querySelector('[data-left-column]')!;
+    const rightColumn = document.querySelector('[data-right-column]')!;
+    expect(leftColumn).toHaveAttribute('aria-hidden', 'true');
+    expect(leftColumn).toHaveAttribute('inert');
+    expect(rightColumn).toHaveAttribute('aria-hidden', 'true');
+    expect(rightColumn).toHaveAttribute('inert');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Library' }));
+    expect(leftColumn).toHaveAttribute('aria-hidden', 'false');
+    expect(leftColumn).not.toHaveAttribute('inert');
 
     const leftColumnHandle = screen.getByRole('separator', {
       name: 'Resize or collapse left column',
@@ -120,28 +131,15 @@ describe('App native boundary', () => {
     fireEvent.keyDown(leftColumnHandle, { key: 'ArrowRight' });
     expect(leftColumnHandle).toHaveAttribute('aria-valuenow', '288');
 
-    const propertiesHandle = screen.getByRole('separator', {
-      name: 'Resize Browser and Properties',
-    });
-    fireEvent.keyDown(propertiesHandle, { key: 'ArrowUp' });
-    expect(propertiesHandle).toHaveAttribute('aria-valuenow', '328');
-  });
-
-  it('removes a collapsed left column from the interaction tree', async () => {
-    const api = createFakeNativeApi();
-    await renderApp(api);
-
-    const leftColumn = screen.getByRole('complementary', { name: 'Left column' });
-    const leftColumnHandle = screen.getByRole('separator', {
-      name: 'Resize or collapse left column',
-    });
-    for (let step = 0; step < 29; step += 1) {
+    for (let step = 0; step < 30; step += 1) {
       fireEvent.keyDown(leftColumnHandle, { key: 'ArrowLeft' });
     }
-
-    expect(leftColumnHandle).toHaveAttribute('aria-valuenow', '0');
     expect(leftColumn).toHaveAttribute('aria-hidden', 'true');
     expect(leftColumn).toHaveAttribute('inert');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Inspector' }));
+    expect(rightColumn).toHaveAttribute('aria-hidden', 'false');
+    expect(rightColumn).not.toHaveAttribute('inert');
   });
 
   it('shows a runtime restart notification without replaying session commands', async () => {

@@ -8,6 +8,7 @@ import { ValueSlider } from '@/shared/ui/ValueSlider';
 import { useState, type CSSProperties } from 'react';
 import { useChannelMixValue } from '@/session/hooks/useChannelMixValue';
 import styles from './Mixer.module.css';
+import { MixerEffectSlots } from './MixerEffectSlots';
 import { MixerMeter } from './MixerMeter';
 interface MixerTrackChannelStripProps {
   sessionId: string;
@@ -41,9 +42,8 @@ export function MixerTrackChannelStrip(props: MixerTrackChannelStripProps) {
     disabled: props.disabled,
   });
   const color = resolveTrackColor(track, props.trackIndex);
-  const fxCount = track.effects.length;
-  const hasMissingFx = track.effects.some(
-    (device) => device.plugin.disabledPlaceholder || props.missingDeviceIds.includes(device.id),
+  const hasAutomation = Boolean(
+    props.volumeAutomation?.points.length || props.panAutomation?.points.length,
   );
   const commitSwitch = async (field: 'muted' | 'solo' | 'armed') => {
     if (props.disabled || pendingSwitch !== null) return;
@@ -76,27 +76,38 @@ export function MixerTrackChannelStrip(props: MixerTrackChannelStripProps) {
         <small>{track.kind === 'instrument' ? 'INSTRUMENT' : 'AUDIO'}</small>
       </button>
 
-      <button
-        type="button"
-        className={`${styles.fxSummary}${hasMissingFx ? ` ${styles.warning}` : ''}`}
-        onClick={(event) => {
-          event.stopPropagation();
-          props.onOpenDevices();
-        }}
-        title={hasMissingFx ? 'Missing effect device' : 'Open Track Devices'}
-      >
-        <Icon name="module" /> FX {fxCount === 0 ? '—' : fxCount}
-      </button>
+      <MixerEffectSlots
+        owner={{ kind: 'track', id: track.id }}
+        effects={track.effects}
+        missingDeviceIds={props.missingDeviceIds}
+        onOpenDevices={props.onOpenDevices}
+        onError={props.onError}
+        track={track}
+      />
 
-      <button type="button" className={styles.routeButton} onClick={props.onOpenRouting}>
-        {props.outputName} · {props.sendCount} Sends
-      </button>
-      <button type="button" className={styles.routeButton} onClick={props.onOpenAutomation}>
-        Automation
-      </button>
+      <div className={styles.stripActions}>
+        <button
+          type="button"
+          className={styles.routeButton}
+          onClick={props.onOpenRouting}
+          title={`Output: ${props.outputName}, ${props.sendCount} Sends`}
+        >
+          {props.outputName}
+          {props.sendCount > 0 ? ` · ${props.sendCount}` : ''}
+        </button>
+        <button
+          type="button"
+          className={`${styles.autoButton}${hasAutomation ? ` ${styles.autoActive}` : ''}`}
+          aria-label="Automation"
+          title="Open volume automation"
+          onClick={props.onOpenAutomation}
+        >
+          <Icon name="curve" />
+        </button>
+      </div>
       <label className={styles.panControl}>
         <span>
-          PAN · STATIC <output>{formatPan(pan.value)}</output>
+          PAN <output>{formatPan(pan.value)}</output>
           {props.panAutomation?.points.length ? <b>AUTO</b> : null}
         </span>
         <ValueSlider
@@ -113,7 +124,7 @@ export function MixerTrackChannelStrip(props: MixerTrackChannelStripProps) {
 
         <label className={styles.faderControl}>
           <span className={styles.faderLabel}>
-            <span>GAIN · STATIC</span>
+            <span>GAIN</span>
             {props.volumeAutomation?.points.length ? <b>AUTO</b> : null}
           </span>
           <ValueSlider

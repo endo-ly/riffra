@@ -209,13 +209,24 @@ export function DeviceParameterEditor(props: DeviceParameterEditorProps) {
     props.automationLanes.some(
       (lane) => lane.target.kind === 'deviceParameter' && lane.target.deviceId === props.deviceId,
     );
-  const { details, loading, error, saving, mutate, openEditor } = useDeviceDetails(
+  const { details, loading, error, saving, mutate } = useDeviceDetails(
     props.owner,
     props.deviceId,
     props.pluginPath,
     props.parameterValues,
     props.stateData,
   );
+  const [filter, setFilter] = useState('');
+  const normalizedFilter = filter.trim().toLowerCase();
+  const visibleParameters = details
+    ? normalizedFilter
+      ? details.parameters.filter((parameter) =>
+          (parameter.name || `Parameter ${parameter.index}`)
+            .toLowerCase()
+            .includes(normalizedFilter),
+        )
+      : details.parameters
+    : [];
   return (
     <section
       className={styles.details}
@@ -237,6 +248,16 @@ export function DeviceParameterEditor(props: DeviceParameterEditorProps) {
         <>
           <header className={styles.detailsHeader}>
             <strong>{details.inspection.name}</strong>
+            {details.parameters.length > 8 && (
+              <input
+                type="search"
+                className={`${controls.control} ${styles.paramFilter}`}
+                aria-label="Filter parameters"
+                placeholder="Filter parameters…"
+                value={filter}
+                onChange={(event) => setFilter(event.currentTarget.value)}
+              />
+            )}
             {details.inspection.capabilities.presets && (
               <label className={styles.preset}>
                 <span>Preset</span>
@@ -264,17 +285,6 @@ export function DeviceParameterEditor(props: DeviceParameterEditorProps) {
                 </select>
               </label>
             )}
-            {details.inspection.capabilities.editor && (
-              <button
-                type="button"
-                className={`${controls.smallButton} ${controls.accent}`}
-                onClick={() => {
-                  void openEditor();
-                }}
-              >
-                Open Plugin Editor
-              </button>
-            )}
           </header>
           <DeviceSidechainEditor
             arrangement={props.arrangement}
@@ -285,9 +295,9 @@ export function DeviceParameterEditor(props: DeviceParameterEditorProps) {
             commit={props.commit}
             onOpenAutomation={props.onOpenSidechainAutomation}
           />
-          {details.parameters.length > 0 && (
+          {visibleParameters.length > 0 && (
             <div className={styles.parameters} role="group" aria-label="Parameters">
-              {details.parameters.map((parameter) => {
+              {visibleParameters.map((parameter) => {
                 const lane = props.automationLanes.find(
                   (candidate) =>
                     candidate.target.kind === 'deviceParameter' &&

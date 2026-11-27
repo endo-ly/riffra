@@ -25,11 +25,6 @@
   --roll-key-white: color-mix(in oklch, var(--piano-key-white) 78%, var(--color-bg-app));
 }
 
-/* Keep the toolbar's trailing controls clear of the overlaid lower-area controls. */
-.editor > header {
-  padding-right: var(--lower-actions-width);
-}
-
 /* The clip being edited, marked in its track color. */
 .clipIdentity {
   max-width: 180px;

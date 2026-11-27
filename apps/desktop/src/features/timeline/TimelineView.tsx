@@ -37,11 +37,12 @@ export function TimelineView({ toolbarAccessory }: TimelineViewProps) {
   const selection = useSession((state) => state.workspace.selection);
   const setSelection = useSession((state) => state.workspace.setSelection);
   const trackTargets = useSession((state) => state.workspace.automation.trackTargets);
-  const lowerView = useSession((state) => state.workspace.lower.view);
+  const browserOpen = useSession((state) => state.workspace.browserOpen);
+  const toggleBrowser = useSession((state) => state.workspace.toggleBrowser);
+  const inspectorOpen = useSession((state) => state.workspace.inspectorOpen);
+  const toggleInspector = useSession((state) => state.workspace.toggleInspector);
   const openMidiEditor = useSession((state) => state.workspace.openMidiEditor);
   const toggleTrackAutomation = useSession((state) => state.workspace.toggleTrackAutomation);
-  const togglePlaySurface = useSession((state) => state.workspace.togglePlaySurface);
-  const toggleMixer = useSession((state) => state.workspace.toggleMixer);
   const openDevices = useSession((state) => state.workspace.openDevices);
   const transportStatus = useSession((state) => state.transport.status);
   const playhead = useSession((state) => state.transport.playhead);
@@ -154,10 +155,10 @@ export function TimelineView({ toolbarAccessory }: TimelineViewProps) {
         onToggleAutomation={() => {
           if (selectedTrackId) toggleTrackAutomation(selectedTrackId);
         }}
-        playSurfaceOpen={lowerView === 'playSurface'}
-        onTogglePlaySurface={togglePlaySurface}
-        mixerOpen={lowerView === 'mixer'}
-        onToggleMixer={toggleMixer}
+        browserOpen={browserOpen}
+        onToggleBrowser={toggleBrowser}
+        inspectorOpen={inspectorOpen}
+        onToggleInspector={toggleInspector}
         accessory={toolbarAccessory}
       />
 

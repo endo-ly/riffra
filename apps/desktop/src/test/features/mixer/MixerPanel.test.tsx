@@ -26,9 +26,29 @@ it('edits Group and Send routes, commits their controls, and opens Bus and Maste
     armed: false,
     monitoring: 'off',
     midiInput: {},
-    effects: [],
+    instrument: {
+      id: 'inst:1',
+      name: 'MODO BASS 2',
+      bypassed: false,
+      midi: { transposeSemitones: 0, playableNotes: null, keyswitches: [] },
+      source: {
+        type: 'vst3',
+        path: 'modo-bass.vst3',
+        parameterValues: [],
+        disabledPlaceholder: false,
+      },
+    },
+    effects: [
+      {
+        id: 'fx:1',
+        name: 'Pro-Q 3',
+        bypassed: false,
+        plugin: { path: 'pro-q.vst3', parameterValues: [], disabledPlaceholder: false },
+      },
+    ],
   });
   const api = createFakeNativeApi();
+  api.openPluginEditor = vi.fn().mockResolvedValue(undefined);
   const receipt = () => api.mutationResult(structuredClone(session));
   api.addMixBus = vi.fn(async (name, kind) => {
     session.arrangement.mixer.buses.push({
@@ -93,21 +113,24 @@ it('edits Group and Send routes, commits their controls, and opens Bus and Maste
   expect(screen.getByLabelText('Keys gain')).toHaveStyle('--fill-direction: to top');
   expect(screen.getByLabelText('Keys pan')).toHaveStyle('--fill-direction: to right');
   expect(screen.getByLabelText('Master mixer gain')).toHaveStyle('--fill-direction: to top');
-  const add = async (name: string, kind: MixBus['kind']) => {
-    fireEvent.change(screen.getByLabelText('New channel name'), { target: { value: name } });
-    fireEvent.change(screen.getByLabelText('New channel kind'), { target: { value: kind } });
-    fireEvent.click(screen.getByRole('button', { name: 'Add channel' }));
-    await screen.findByRole('article', { name: `${name} mixer channel` });
+  fireEvent.click(screen.getByRole('button', { name: 'MODO BASS 2' }));
+  expect(api.openPluginEditor).toHaveBeenCalledWith({ kind: 'track', id: 'track:1' }, 'inst:1');
+  fireEvent.click(screen.getByRole('button', { name: 'Pro-Q 3' }));
+  expect(api.openPluginEditor).toHaveBeenCalledWith({ kind: 'track', id: 'track:1' }, 'fx:1');
+  expect(store.getState().workspace.lower.view).toBe('closed');
+  const add = async (kind: MixBus['kind'], expectedName: string) => {
+    fireEvent.click(screen.getByRole('button', { name: kind === 'group' ? 'Group' : 'Return' }));
+    await screen.findByRole('article', { name: `${expectedName} mixer channel` });
   };
-  await add('Group', 'group');
-  expect(screen.getByLabelText('Group gain')).toHaveStyle('--fill-direction: to top');
-  await add('Reverb', 'return');
-  fireEvent.click(screen.getByRole('button', { name: 'Master · 0 Sends' }));
+  await add('group', 'Group 1');
+  expect(screen.getByLabelText('Group 1 gain')).toHaveStyle('--fill-direction: to top');
+  await add('return', 'Return 1');
+  fireEvent.click(screen.getByRole('button', { name: 'Master' }));
   fireEvent.change(screen.getByLabelText('Main output'), { target: { value: 'bus:group' } });
   await waitFor(() => expect(screen.getByLabelText('Main output')).toHaveValue('bus:group'));
   fireEvent.change(screen.getByLabelText('Add Send'), { target: { value: 'bus:return' } });
-  const send = await screen.findByRole('group', { name: 'Reverb send' });
-  const slider = within(send).getByLabelText('Reverb send level');
+  const send = await screen.findByRole('group', { name: 'Return 1 send' });
+  const slider = within(send).getByLabelText('Return 1 send level');
   fireEvent.click(within(send).getByRole('button', { name: 'Automation' }));
   expect(store.getState().workspace.automation.trackTargets['track:1']).toEqual({
     kind: 'sendLevel',
@@ -147,34 +170,34 @@ it('edits Group and Send routes, commits their controls, and opens Bus and Maste
     ),
   );
   fireEvent.click(screen.getByRole('button', { name: 'Close' }));
-  expect(await screen.findByRole('button', { name: 'Group · 1 Sends' })).toBeInTheDocument();
-  const group = screen.getByRole('article', { name: 'Group mixer channel' });
+  expect(await screen.findByRole('button', { name: 'Group 1 · 1' })).toBeInTheDocument();
+  const group = screen.getByRole('article', { name: 'Group 1 mixer channel' });
   fireEvent.click(within(group).getByRole('button', { name: 'Automation' }));
   expect(store.getState().workspace.automation.mixerTarget).toEqual({
     kind: 'busMix',
     busId: 'bus:group',
     parameter: 'gain',
   });
-  const gain = within(group).getByLabelText('Group gain');
+  const gain = within(group).getByLabelText('Group 1 gain');
   fireEvent.pointerDown(gain);
   fireEvent.change(gain, { target: { value: '-9' } });
   fireEvent.pointerUp(gain);
   fireEvent.blur(gain);
   await waitFor(() => expect(session.arrangement.mixer.buses[0].gainDb).toBe(-9));
-  fireEvent.click(within(group).getByRole('button', { name: 'Group mute' }));
+  fireEvent.click(within(group).getByRole('button', { name: 'Group 1 mute' }));
   await waitFor(() =>
-    expect(within(group).getByRole('button', { name: 'Group mute' })).toHaveAttribute(
+    expect(within(group).getByRole('button', { name: 'Group 1 mute' })).toHaveAttribute(
       'aria-pressed',
       'true',
     ),
   );
-  fireEvent.click(within(group).getByRole('button', { name: 'FX 0' }));
+  fireEvent.click(within(group).getByRole('button', { name: 'Add FX' }));
   expect(store.getState().workspace.selection).toEqual({ kind: 'bus', busId: 'bus:group' });
   expect(store.getState().workspace.lower.view).toBe('devices');
   fireEvent.click(
     within(screen.getByRole('complementary', { name: 'Master mixer channel' })).getByRole(
       'button',
-      { name: 'FX 0' },
+      { name: 'Add FX' },
     ),
   );
   expect(store.getState().workspace.selection).toEqual({ kind: 'master' });
