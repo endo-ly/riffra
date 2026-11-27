@@ -4116,27 +4116,39 @@ fn validate_performance(
     Ok(())
 }
 
-fn harmony_events(plan: &ScorePlan) -> Result<Vec<HarmonyEvent>, String> {
-    let note = |pitch: i32| {
-        MusicalNoteName::new(
-            [
-                "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
-            ][pitch.rem_euclid(12) as usize],
-        )
-        .map_err(|error| error.to_string())
-    };
+fn harmony_events(plan: &ScorePlan) -> Result<Vec<HarmonyEvent>, ImportError> {
     let mut events = Vec::new();
     for (section_index, section) in plan.sections.iter().enumerate() {
-        let tonic = syntax::tonic(&section.tonic).map_err(|error| error.to_string())?;
+        let path = format!("sections.{}.chords", section.section);
+        let tonic = MusicalNoteName::new(&section.tonic).map_err(|error| error.to_string())?;
         for (index, change) in section.chords.iter().enumerate() {
             let Some(chord) = syntax::chord(&change.chord).map_err(|error| error.to_string())?
             else {
                 continue;
             };
-            let tones = syntax::voicing(&chord, tonic, 48)
-                .into_iter()
-                .map(note)
-                .collect::<std::result::Result<Vec<_>, _>>()?;
+            let spell = |base: MusicalNoteName, degree: u8, semitones: i32| {
+                MusicalNoteName::from_interval(
+                    base,
+                    degree,
+                    u8::try_from(semitones.rem_euclid(12)).expect("a pitch class fits a u8"),
+                )
+            };
+            let spelling_error = |_| ImportError {
+                details: plan
+                    .source_detail(&path, "chord spelling requires more than two accidentals"),
+                message: "chord spelling requires more than two accidentals".into(),
+            };
+            let root = spell(tonic, chord.root_step, chord.root).map_err(spelling_error)?;
+            let bass = chord
+                .slash_bass
+                .then(|| spell(tonic, chord.bass_step, chord.bass))
+                .transpose()
+                .map_err(spelling_error)?;
+            let tones = chord
+                .tones()
+                .map(|(degree, semitones)| spell(root, degree, semitones))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(spelling_error)?;
             events.push(HarmonyEvent {
                 id: format!("score:harmony:{section_index}:{index}"),
                 start_tick: TimelineTick(change.tick),
@@ -4148,8 +4160,8 @@ fn harmony_events(plan: &ScorePlan) -> Result<Vec<HarmonyEvent>, String> {
                 ),
                 chord: HarmonyChord::from_explicit(
                     tones,
-                    Some(note(tonic + chord.root)?),
-                    Some(note(tonic + chord.bass)?),
+                    Some(root),
+                    bass,
                     Some(change.chord.clone()),
                 )
                 .map_err(|error| error.to_string())?,
@@ -4976,6 +4988,80 @@ mod tests {
             .iter()
             .map(|note| (note.start_tick.0, note.note))
             .collect()
+    }
+
+    const SPELLING: &str = r#"{
+        "meta":{"title":"Spelling","bpm":120,"meter":"4/4","tuning":"12edo","gate":1},
+        "form":[
+            {"section":"flat","bars":1,"tonic":"Eb"},
+            {"section":"slash","bars":1,"tonic":"F"}
+        ],
+        "sections":{"flat":{"chords":["b6:maj7"]},"slash":{"chords":["4:maj7/5"]}},
+        "instruments":{"lead":{"external":true}}
+    }"#;
+
+    const UNSPELLABLE: &str = r##"{
+        "meta":{"title":"Unspellable","bpm":120,"meter":"4/4","tuning":"12edo","gate":1},
+        "form":[{"section":"flat","bars":1,"tonic":"G#"}],
+        "sections":{"flat":{"chords":["#4:aug"]}},
+        "instruments":{"lead":{"external":true}}
+    }"##;
+
+    #[test]
+    fn harmony_spells_roots_and_tones_from_the_section_tonic() {
+        // Arrange
+        let plan = crate::score::compile(SPELLING).expect("the Score compiles");
+
+        // Act
+        let events = harmony_events(&plan).expect("harmony is spelled");
+
+        // Assert
+        assert_eq!(
+            events
+                .iter()
+                .map(|event| (
+                    event.chord.name.as_str(),
+                    event.chord.root.map(|root| root.to_string()),
+                    event.chord.bass.map(|bass| bass.to_string()),
+                    event
+                        .chord
+                        .tones
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>(),
+                ))
+                .collect::<Vec<_>>(),
+            [
+                (
+                    "b6:maj7",
+                    Some("Cb".into()),
+                    None,
+                    vec!["Cb".into(), "Eb".into(), "Gb".into(), "Bb".into()],
+                ),
+                (
+                    "4:maj7/5",
+                    Some("Bb".into()),
+                    Some("C".into()),
+                    vec!["Bb".into(), "D".into(), "F".into(), "A".into()],
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_chord_that_needs_more_than_two_accidentals_is_rejected() {
+        // Arrange
+        let plan = crate::score::compile(UNSPELLABLE).expect("the Score compiles");
+
+        // Act
+        let error = harmony_events(&plan).expect_err("the chord cannot be spelled");
+
+        // Assert
+        assert_eq!(
+            error.message,
+            "chord spelling requires more than two accidentals"
+        );
+        assert_eq!(error.details["path"], "sections.flat.chords");
     }
 
     const PRODUCTION: &str = r#"{
