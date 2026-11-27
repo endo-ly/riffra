@@ -11,6 +11,7 @@ mod production;
 use crate::api::output::ScoreExportOmission;
 use crate::instrument::BuiltInInstrumentCatalog;
 use crate::score::{self, emit};
+use crate::score_yaml::linked::LinkedScore;
 use num_rational::BigRational;
 use riffra_core::{CreativeSession, MidiClip, PanLaw, Track, TrackInstrument, TrackKind};
 use serde_json::{Map, Value, json};
@@ -167,12 +168,6 @@ pub(super) struct KitMember {
     pub(super) source: Option<String>,
 }
 
-/// Original Score declarations the Session cannot reconstruct.
-pub(super) struct Original {
-    document: Value,
-    plan: score::ScorePlan,
-}
-
 pub(super) struct Export<'a> {
     pub(super) session: &'a CreativeSession,
     pub(super) data_root: &'a Path,
@@ -182,7 +177,7 @@ pub(super) struct Export<'a> {
     pub(super) sections: Vec<SongSection>,
     pub(super) tracks: Vec<ExportTrack<'a>>,
     pub(super) kits: BTreeMap<String, Vec<KitMember>>,
-    pub(super) original: Option<Original>,
+    pub(super) original: Option<LinkedScore>,
     pub(super) omissions: Vec<ScoreExportOmission>,
     /// Files of the song folder by their relative path, generated or copied at write time.
     pub(super) files: BTreeMap<String, ExportFile>,
@@ -257,7 +252,7 @@ pub(crate) fn plan(
             path.display()
         )));
     }
-    let original = original(session);
+    let original = LinkedScore::load(session);
     let clock = Clock::new(&session.arrangement.timebase);
     let song_end = song_end(session, &clock);
     let mut omissions = Vec::new();
@@ -352,39 +347,7 @@ pub(super) fn file_identifier(text: &str) -> String {
     identifier(text).unwrap_or_else(|| "item".into())
 }
 
-fn original(session: &CreativeSession) -> Option<Original> {
-    let source = session.score_source.as_ref()?;
-    let plan = score::compile(&source.yaml).ok()?;
-    let document = score::parse_document(&source.yaml).ok()?;
-    Some(Original { document, plan })
-}
-
-impl Original {
-    /// Returns the Score form occurrence matching one section start.
-    pub(super) fn occurrence(
-        &self,
-        name: &str,
-        start_tick: u64,
-        ppq: u32,
-    ) -> Option<&score::Occurrence> {
-        self.plan.sections.iter().find(|occurrence| {
-            occurrence.section == name
-                && ticks(
-                    &to_quarters(occurrence.start_tick, u32::from(self.plan.ticks_per_beat)),
-                    ppq,
-                ) == Some(start_tick)
-        })
-    }
-
-    /// Returns a raw Score field, following no inheritance.
-    pub(super) fn field(&self, path: &[&str]) -> Option<&Value> {
-        let mut value = &self.document;
-        for key in path {
-            value = value.get(key)?;
-        }
-        Some(value)
-    }
-
+impl LinkedScore {
     /// Returns the section display note declared for a Score section.
     pub(super) fn section_notes(&self, section: &str) -> Option<&str> {
         self.field(&["sections", section, "notes"])
@@ -561,7 +524,7 @@ impl Clock {
         &self,
         session: &CreativeSession,
         end: u64,
-        original: Option<&Original>,
+        original: Option<&LinkedScore>,
         omissions: &mut Vec<ScoreExportOmission>,
     ) -> Vec<SongSection> {
         let regions = &session.arrangement.regions;
@@ -674,7 +637,7 @@ impl Clock {
         name: &str,
         start: u64,
         end: u64,
-        original: Option<&Original>,
+        original: Option<&LinkedScore>,
     ) -> SongSection {
         let mut bar_starts = Vec::new();
         let mut bar_lengths = Vec::new();
@@ -815,7 +778,7 @@ fn kit_members(export: &Export, used: &mut BTreeSet<String>) -> BTreeMap<String,
     kits
 }
 
-fn original_kit_part(original: &Original, kit: &str, trigger: u8) -> Option<String> {
+fn original_kit_part(original: &LinkedScore, kit: &str, trigger: u8) -> Option<String> {
     let instruments = original.field(&["instruments"])?.as_object()?;
     instruments.iter().find_map(|(id, spec)| {
         (spec.get("kit").and_then(Value::as_str) == Some(kit)

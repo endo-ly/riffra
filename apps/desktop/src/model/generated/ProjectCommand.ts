@@ -5,6 +5,7 @@ import type { ProjectCreateParams } from "./ProjectCreateParams";
 import type { ProjectDeleteParams } from "./ProjectDeleteParams";
 import type { ProjectExportParams } from "./ProjectExportParams";
 import type { ProjectExportScoreParams } from "./ProjectExportScoreParams";
+import type { ProjectExportVisualParams } from "./ProjectExportVisualParams";
 import type { ProjectImportParams } from "./ProjectImportParams";
 import type { ProjectImportScoreParams } from "./ProjectImportScoreParams";
 import type { ProjectOpenParams } from "./ProjectOpenParams";
@@ -14,4 +15,4 @@ import type { ProjectRenameParams } from "./ProjectRenameParams";
 /**
  * A command that selects or exchanges Project containers.
  */
-export type ProjectCommand = { "command": "project.list", "params": EmptyParams } | { "command": "project.create", "params": ProjectCreateParams } | { "command": "project.open", "params": ProjectOpenParams } | { "command": "project.delete", "params": ProjectDeleteParams } | { "command": "project.rename", "params": ProjectRenameParams } | { "command": "project.import", "params": ProjectImportParams } | { "command": "project.import-score", "params": ProjectImportScoreParams } | { "command": "project.rebuild-score", "params": ProjectRebuildScoreParams } | { "command": "music.export-midi", "params": MidiExportParams } | { "command": "project.export", "params": ProjectExportParams } | { "command": "project.export-score", "params": ProjectExportScoreParams };
+export type ProjectCommand = { "command": "project.list", "params": EmptyParams } | { "command": "project.create", "params": ProjectCreateParams } | { "command": "project.open", "params": ProjectOpenParams } | { "command": "project.delete", "params": ProjectDeleteParams } | { "command": "project.rename", "params": ProjectRenameParams } | { "command": "project.import", "params": ProjectImportParams } | { "command": "project.import-score", "params": ProjectImportScoreParams } | { "command": "project.rebuild-score", "params": ProjectRebuildScoreParams } | { "command": "music.export-midi", "params": MidiExportParams } | { "command": "project.export", "params": ProjectExportParams } | { "command": "project.export-score", "params": ProjectExportScoreParams } | { "command": "project.export-visual", "params": ProjectExportVisualParams };

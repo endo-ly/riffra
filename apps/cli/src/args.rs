@@ -1798,6 +1798,8 @@ pub enum ProjectCommand {
     Export(ProjectExportArgs),
     /// Write the active project as a Score YAML song folder.
     ExportScore(ProjectExportScoreArgs),
+    /// Write the active project's visual snapshot as JSON.
+    ExportVisual(ProjectExportVisualArgs),
     /// Import a project file from disk and make it active.
     Import(ProjectImportArgs),
     /// Create and activate an editable project from Score YAML.
@@ -1938,6 +1940,13 @@ fn parse_score_binding(value: &str) -> Result<(String, PathBuf), String> {
 #[derive(Debug, Args)]
 pub struct ProjectExportArgs {
     /// Output path for the exported project file.
+    #[arg(long)]
+    pub output: PathBuf,
+}
+
+#[derive(Debug, Args)]
+pub struct ProjectExportVisualArgs {
+    /// JSON file to write; an existing file is replaced.
     #[arg(long)]
     pub output: PathBuf,
 }
@@ -3817,6 +3826,12 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
                 Project::ProjectExportScore(ProjectExportScoreParams {
                     path: args.path,
                     link: args.link,
+                })
+                .into()
+            }
+            ProjectCommand::ExportVisual(args) => {
+                Project::ProjectExportVisual(ProjectExportVisualParams {
+                    output: args.output,
                 })
                 .into()
             }
