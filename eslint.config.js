@@ -18,6 +18,8 @@ export default tseslint.config(
       'apps/desktop/src-tauri',
       'native',
       'apps/desktop/src/model/generated',
+      'packages/visual-renderer/dist',
+      'packages/visual-renderer/src/generated',
       '*.config.ts',
     ],
   },
@@ -85,6 +87,23 @@ export default tseslint.config(
     files: ['apps/desktop/src/native/**/*.{ts,tsx}'],
     rules: {
       'no-restricted-imports': 'off',
+    },
+  },
+  {
+    files: ['packages/visual-renderer/src/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['react', 'react/*', 'react-dom', 'react-dom/*', '@tauri-apps/*', '@/*'],
+              message:
+                'The visual renderer must stay independent of React, Tauri, and the Desktop app.',
+            },
+          ],
+        },
+      ],
     },
   },
   prettier,

@@ -1,9 +1,11 @@
 import type { AutomationTarget, CreativeSession } from '@/model/generated';
 import type { EditorSelection } from '@/model/editor-selection';
 import { automationOwner } from '@/model/automation';
+import type { ColorMode } from '@riffra/visual-renderer';
 
 export type LowerPanelView = 'midiEditor' | 'devices' | 'mixer' | 'playSurface';
 export type WorkspaceLowerView = 'closed' | LowerPanelView;
+export type WorkspaceViewMode = 'edit' | 'showcase';
 export interface LowerAreaState {
   activeMidiClipId: string | null;
   view: WorkspaceLowerView;
@@ -16,6 +18,8 @@ export interface WorkspaceSlice {
   focusedTrackId: string | null;
   browserOpen: boolean;
   inspectorOpen: boolean;
+  viewMode: WorkspaceViewMode;
+  showcaseColorMode: ColorMode;
   lower: LowerAreaState;
   automation: {
     trackTargets: Partial<Record<string, AutomationTarget>>;
@@ -28,6 +32,9 @@ export interface WorkspaceSlice {
   toggleBrowser(): void;
   setInspectorOpen(open: boolean): void;
   toggleInspector(): void;
+  setViewMode(mode: WorkspaceViewMode): void;
+  toggleViewMode(): void;
+  setShowcaseColorMode(mode: ColorMode): void;
   openMidiEditor(id: string): void;
   keepMidiClipVisible(id: string): void;
   openDevices(): void;
@@ -54,6 +61,8 @@ export function initialWorkspace() {
     focusedTrackId: null,
     browserOpen: false,
     inspectorOpen: false,
+    viewMode: 'edit' as const,
+    showcaseColorMode: 'harmony' as const,
     lower: initialLower(),
     automation: { trackTargets: {}, mixerTarget: null },
   };
@@ -131,6 +140,9 @@ export function createWorkspaceSlice(
     toggleBrowser: () => update({ browserOpen: !get().browserOpen }),
     setInspectorOpen: (inspectorOpen) => update({ inspectorOpen }),
     toggleInspector: () => update({ inspectorOpen: !get().inspectorOpen }),
+    setViewMode: (viewMode) => update({ viewMode }),
+    toggleViewMode: () => update({ viewMode: get().viewMode === 'edit' ? 'showcase' : 'edit' }),
+    setShowcaseColorMode: (showcaseColorMode) => update({ showcaseColorMode }),
     openMidiEditor(id) {
       update({
         selection: { kind: 'clips', clipIds: [id] },

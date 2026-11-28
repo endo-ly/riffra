@@ -48,12 +48,13 @@ DesktopはHostConnectionManagerを介して自身のEmbedded Hostまたは別プ
 | `crates/riffra-host/`        | SessionStore、Asset、Project、制作ファイル解析、DataRoot所有                     |
 | `crates/riffra-runtime/`     | Desktop と Headless Host が共有するRuntime型・投影・ローカル制御の基盤           |
 | `native/audio-engine/`       | リアルタイム音声エンジンのサイドカー（C++ / JUCE）                               |
+| `packages/visual-renderer/`  | `VisualSnapshot` の時刻クエリと描画テーマを提供する独立パッケージ                |
 | `contracts/execution-graph/` | Rust が生成し C++ が検証する実行グラフ契約フィクスチャ                           |
 | `scripts/`                   | 型生成（`gen-barrel.js`）などの開発スクリプト                                    |
 | `docs/`                      | 設計・調整ドキュメント                                                           |
 | `agents/skills/`             | AI エージェントが参照するスキル（CLI ヘッドレス操作、作曲知識、曲設計図）        |
 
-依存関係は npm workspace（`@riffra/desktop`）と Cargo workspace（`riffra-core` / `riffra-control` / `riffra-host` / `riffra-runtime` / `riffra-cli` / `riffra-mcp` / デスクトップバイナリ）で管理する。
+依存関係は npm workspace（`@riffra/desktop` / `@riffra/visual-renderer`）と Cargo workspace（`riffra-core` / `riffra-control` / `riffra-host` / `riffra-runtime` / `riffra-cli` / `riffra-mcp` / デスクトップバイナリ）で管理する。
 
 ## 技術スタック
 

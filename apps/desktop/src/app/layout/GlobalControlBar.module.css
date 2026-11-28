@@ -16,6 +16,7 @@
 }
 
 .disconnected .historyControls,
+.disconnected .viewModeControls,
 .disconnected .rigControls,
 .disconnected .transportControls,
 .disconnected .audioControls {
@@ -91,6 +92,10 @@
 .historyControls svg {
   width: var(--size-icon-md);
   height: var(--size-icon-md);
+}
+
+.viewModeControls {
+  composes: segmented from '@/shared/ui/controls.module.css';
 }
 
 .commandTrigger svg {

@@ -1,0 +1,14 @@
+export type { ChordRole } from './ChordRole';
+export type { TrackCategory } from './TrackCategory';
+export type { VisualBeat } from './VisualBeat';
+export type { VisualChord } from './VisualChord';
+export type { VisualDrumHit } from './VisualDrumHit';
+export type { VisualDrumLane } from './VisualDrumLane';
+export type { VisualKey } from './VisualKey';
+export type { VisualMeter } from './VisualMeter';
+export type { VisualNote } from './VisualNote';
+export type { VisualSection } from './VisualSection';
+export type { VisualSnapshot } from './VisualSnapshot';
+export type { VisualSustain } from './VisualSustain';
+export type { VisualTempo } from './VisualTempo';
+export type { VisualTrack } from './VisualTrack';

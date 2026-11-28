@@ -12,6 +12,8 @@ export interface TransportSlice {
   acceptStatus(status: TransportStatus): void;
   seekLocally(tick: number): void;
   seek(tick: number): Promise<void>;
+  /** Playback position in seconds, extrapolated from the last status while playing. */
+  currentSeconds(timebase: ProjectTimebase): number;
   advance(now: number, timebase: ProjectTimebase): void;
   play(): Promise<void>;
   pause(): Promise<void>;
@@ -99,9 +101,12 @@ export function createTransportSlice(
           notify.error('Seek failed', { cause: error });
       }
     },
+    currentSeconds(timebase) {
+      const elapsed = anchor.playing ? (performance.now() - anchor.at) / 1000 : 0;
+      return ticksToSeconds(anchor.tick, timebase) + elapsed;
+    },
     advance(now, timebase) {
-      const elapsed = anchor.playing ? performance.now() - anchor.at : 0;
-      const tick = secondsToTicks(ticksToSeconds(anchor.tick, timebase) + elapsed / 1000, timebase);
+      const tick = secondsToTicks(get().currentSeconds(timebase), timebase);
       playhead.current = tick;
       if (now - lastUiUpdate < 250) return;
       lastUiUpdate = now;

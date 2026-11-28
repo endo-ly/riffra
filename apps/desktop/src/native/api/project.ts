@@ -6,6 +6,7 @@ import type {
   ScoreRebuild,
 } from '@/model/generated';
 import type { SessionSettingsPatch } from '@/model/generated';
+import type { VisualSnapshot } from '@riffra/visual-renderer';
 import { dispatchControl } from '@/native/invoke';
 
 export interface ProjectApi {
@@ -22,6 +23,7 @@ export interface ProjectApi {
   updateSessionSettings(patch: SessionSettingsPatch): Promise<ArrangementMutationResult>;
   importScore(path: string, bindings: Record<string, string>): Promise<ProjectActivationResult>;
   rebuildScore(path: string | undefined, bindings: Record<string, string>): Promise<ScoreRebuild>;
+  getVisualSnapshot(): Promise<VisualSnapshot | null>;
 }
 
 async function undoSession(): Promise<ArrangementMutationResult> {
@@ -84,6 +86,10 @@ async function rebuildScore(
   return dispatchControl({ command: 'project.rebuild-score', params: { path, bindings } });
 }
 
+async function getVisualSnapshot(): Promise<VisualSnapshot | null> {
+  return dispatchControl({ command: 'project.visual-snapshot', params: {} });
+}
+
 export const projectApi: ProjectApi = {
   undoSession,
   redoSession,
@@ -98,4 +104,5 @@ export const projectApi: ProjectApi = {
   updateSessionSettings,
   importScore,
   rebuildScore,
+  getVisualSnapshot,
 };

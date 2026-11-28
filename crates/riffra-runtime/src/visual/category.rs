@@ -1,10 +1,11 @@
 //! Deterministic visual categories derived from the notes a Track actually plays.
 
-use super::Note;
+use super::VisualNote;
 use crate::score_yaml::linked::LinkedScore;
 use riffra_core::Track;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use ts_rs::TS;
 
 /// Tracks whose notes all use the General MIDI percussion channel.
 const DRUM_CHANNEL: u8 = 10;
@@ -24,9 +25,9 @@ const ARP_MAX_POLYPHONY: f64 = 0.25;
 const ARP_MAX_BEATS: f64 = 0.5;
 
 /// How a Track is drawn without relying on its name.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
-pub(super) enum Category {
+pub enum TrackCategory {
     Vocal,
     Lead,
     Chords,
@@ -42,15 +43,15 @@ pub(super) enum Category {
 /// Panics when `notes` is empty; Tracks without playable notes are not drawn.
 pub(super) fn classify(
     track: &Track,
-    notes: &[Note],
+    notes: &[VisualNote],
     ppq: u32,
     linked: Option<&LinkedScore>,
-) -> Category {
+) -> TrackCategory {
     if is_drums(track, notes, linked) {
-        return Category::Drums;
+        return TrackCategory::Drums;
     }
     if notes.iter().any(|note| note.lyric.is_some()) {
-        return Category::Vocal;
+        return TrackCategory::Vocal;
     }
     let polyphony = polyphony(notes);
     let lowest = notes
@@ -61,19 +62,19 @@ pub(super) fn classify(
     if polyphony < BASS_MAX_POLYPHONY
         && (median(notes) < BASS_MAX_MEDIAN || lowest < BASS_MAX_LOWEST)
     {
-        return Category::Bass;
+        return TrackCategory::Bass;
     }
     let beats = average_beats(notes, ppq);
     if polyphony >= CHORDS_MIN_POLYPHONY && beats >= CHORDS_MIN_BEATS {
-        return Category::Chords;
+        return TrackCategory::Chords;
     }
     if polyphony < ARP_MAX_POLYPHONY && beats <= ARP_MAX_BEATS {
-        return Category::Arp;
+        return TrackCategory::Arp;
     }
-    Category::Lead
+    TrackCategory::Lead
 }
 
-fn is_drums(track: &Track, notes: &[Note], linked: Option<&LinkedScore>) -> bool {
+fn is_drums(track: &Track, notes: &[VisualNote], linked: Option<&LinkedScore>) -> bool {
     let instrument = track.score_instrument.as_deref();
     instrument.is_some_and(|instrument| instrument.starts_with("kit:"))
         || instrument
@@ -97,7 +98,7 @@ fn plays_only_triggers(instrument: &str, linked: &LinkedScore) -> bool {
 }
 
 /// Returns the ratio of attacks that sound more than one note.
-fn polyphony(notes: &[Note]) -> f64 {
+fn polyphony(notes: &[VisualNote]) -> f64 {
     let mut attacks: BTreeMap<u64, usize> = BTreeMap::new();
     for note in notes {
         *attacks.entry(note.start_tick).or_insert(0) += 1;
@@ -107,13 +108,13 @@ fn polyphony(notes: &[Note]) -> f64 {
 }
 
 /// Returns the lower median of the Track's pitches.
-fn median(notes: &[Note]) -> u8 {
+fn median(notes: &[VisualNote]) -> u8 {
     let mut pitches = notes.iter().map(|note| note.midi).collect::<Vec<_>>();
     pitches.sort_unstable();
     pitches[(pitches.len() - 1) / 2]
 }
 
-fn average_beats(notes: &[Note], ppq: u32) -> f64 {
+fn average_beats(notes: &[VisualNote], ppq: u32) -> f64 {
     let ticks: u64 = notes
         .iter()
         .map(|note| note.end_tick.saturating_sub(note.start_tick))
@@ -141,7 +142,7 @@ mod tests {
         track
     }
 
-    fn note(midi: u8, start_tick: u64, end_tick: u64, channel: u8) -> Note {
+    fn note(midi: u8, start_tick: u64, end_tick: u64, channel: u8) -> VisualNote {
         note_with(midi, start_tick, end_tick, channel, None)
     }
 
@@ -151,8 +152,8 @@ mod tests {
         end_tick: u64,
         channel: u8,
         lyric: Option<&str>,
-    ) -> Note {
-        Note {
+    ) -> VisualNote {
+        VisualNote {
             start_sec: 0.0,
             end_sec: 0.0,
             midi,
@@ -180,7 +181,11 @@ mod tests {
         LinkedScore::load(&session).expect("the Score compiles")
     }
 
-    fn classify_with(track: &Track, notes: &[Note], linked: Option<&LinkedScore>) -> Category {
+    fn classify_with(
+        track: &Track,
+        notes: &[VisualNote],
+        linked: Option<&LinkedScore>,
+    ) -> TrackCategory {
         classify(track, notes, 960, linked)
     }
 
@@ -196,16 +201,19 @@ mod tests {
         let linked = linked();
 
         // Act / Assert
-        assert_eq!(classify_with(&kit, &notes, None), Category::Drums);
+        assert_eq!(classify_with(&kit, &notes, None), TrackCategory::Drums);
         assert_eq!(
             classify_with(&triggered, &notes, Some(&linked)),
-            Category::Drums
+            TrackCategory::Drums
         );
         assert_eq!(
             classify_with(&channelled, &[note(36, 0, 240, 10)], None),
-            Category::Drums
+            TrackCategory::Drums
         );
-        assert_eq!(classify_with(&mixed, &mixed_notes, None), Category::Lead);
+        assert_eq!(
+            classify_with(&mixed, &mixed_notes, None),
+            TrackCategory::Lead
+        );
     }
 
     #[test]
@@ -227,10 +235,10 @@ mod tests {
         let lead = [note(72, 0, 960, 1), note(74, 960, 1920, 1)];
 
         // Act / Assert
-        assert_eq!(classify_with(&track, &sung, None), Category::Vocal);
-        assert_eq!(classify_with(&track, &bass, None), Category::Bass);
-        assert_eq!(classify_with(&track, &chords, None), Category::Chords);
-        assert_eq!(classify_with(&track, &arpeggio, None), Category::Arp);
-        assert_eq!(classify_with(&track, &lead, None), Category::Lead);
+        assert_eq!(classify_with(&track, &sung, None), TrackCategory::Vocal);
+        assert_eq!(classify_with(&track, &bass, None), TrackCategory::Bass);
+        assert_eq!(classify_with(&track, &chords, None), TrackCategory::Chords);
+        assert_eq!(classify_with(&track, &arpeggio, None), TrackCategory::Arp);
+        assert_eq!(classify_with(&track, &lead, None), TrackCategory::Lead);
     }
 }

@@ -3151,32 +3151,17 @@ fn resolve_form(doc: &Value, mut bpm: f64, mut meter: (u8, u8)) -> Result<FormTi
             .map(|_| text_field(entry, "scale", &path))
             .transpose()?
             .map(str::to_owned);
-        if let Some(scale) = &scale {
-            let known = [
-                "ionian",
-                "dorian",
-                "phrygian",
-                "lydian",
-                "mixolydian",
-                "aeolian",
-                "locrian",
-                "harmonic_minor",
-                "melodic_minor",
-                "major_pentatonic",
-                "minor_pentatonic",
-                "whole_tone",
-            ];
-            if !known.contains(&scale.as_str())
-                && doc
-                    .get("scale_definitions")
-                    .and_then(|d| d.get(scale))
-                    .is_none()
-            {
-                return Err(Error::new(
-                    format!("{path}.scale"),
-                    "unknown scale; declare it in scale_definitions",
-                ));
-            }
+        if let Some(scale) = &scale
+            && super::scale::degrees(scale).is_none()
+            && doc
+                .get("scale_definitions")
+                .and_then(|d| d.get(scale))
+                .is_none()
+        {
+            return Err(Error::new(
+                format!("{path}.scale"),
+                "unknown scale; declare it in scale_definitions",
+            ));
         }
         let occurrence = occurrences.entry(name.to_owned()).or_default();
         *occurrence += 1;

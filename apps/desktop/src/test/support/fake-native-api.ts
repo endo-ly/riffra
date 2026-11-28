@@ -596,6 +596,8 @@ class FakeNativeControls {
           warnings: [],
         });
       }
+      case 'getVisualSnapshot':
+        return Promise.resolve(null);
       case 'listProjects':
       case 'renameProject':
         return Promise.resolve(this.bootstrapState.projectState);

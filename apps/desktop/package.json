@@ -13,9 +13,10 @@
     "release:tauri": "node ../../scripts/release/release-desktop.mjs",
     "gen:types": "cargo test --manifest-path ../../Cargo.toml -p riffra-desktop export_types && node ../../scripts/gen-barrel.js",
     "check": "npm run build && npm run test",
-    "typecheck": "tsc -b"
+    "typecheck": "npm run build --workspace @riffra/visual-renderer && tsc -b"
   },
   "dependencies": {
+    "@riffra/visual-renderer": "*",
     "@tauri-apps/api": "2.11.1",
     "@tauri-apps/plugin-dialog": "^2",
     "clsx": "^2.1.1",

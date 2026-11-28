@@ -1,7 +1,7 @@
 //! Drum lanes and their sixteen-step positions.
 
-use super::category::Category;
-use super::{DrumHit, Note, TrackVisual, VisualDrumLane};
+use super::category::TrackCategory;
+use super::{TrackVisual, VisualDrumHit, VisualDrumLane, VisualNote};
 use crate::score::ScorePlan;
 use crate::score_yaml::linked::LinkedScore;
 use riffra_core::{MusicalFraction, MusicalPosition, ProjectTimebase, TimelineTick};
@@ -19,9 +19,9 @@ pub(super) fn lanes(
     let mut lanes = Vec::new();
     for track in tracks
         .iter()
-        .filter(|track| track.category == Category::Drums)
+        .filter(|track| track.category == TrackCategory::Drums)
     {
-        let mut by_pitch: BTreeMap<u8, Vec<&Note>> = BTreeMap::new();
+        let mut by_pitch: BTreeMap<u8, Vec<&VisualNote>> = BTreeMap::new();
         for note in &track.notes {
             by_pitch.entry(note.midi).or_default().push(note);
         }
@@ -37,7 +37,7 @@ pub(super) fn lanes(
     lanes
 }
 
-fn hit(note: &Note, timebase: &ProjectTimebase) -> DrumHit {
+fn hit(note: &VisualNote, timebase: &ProjectTimebase) -> VisualDrumHit {
     let position = timebase.tick_to_musical_position(TimelineTick(note.start_tick));
     let bar_start = timebase
         .musical_position_to_tick(MusicalPosition {
@@ -47,7 +47,7 @@ fn hit(note: &Note, timebase: &ProjectTimebase) -> DrumHit {
         })
         .expect("validated project timebase")
         .0;
-    DrumHit {
+    VisualDrumHit {
         t: timebase.ticks_to_seconds(note.start_tick),
         bar: position.bar,
         step: (note.start_tick - bar_start) * 4 / u64::from(timebase.ppq),
@@ -59,7 +59,7 @@ fn hit(note: &Note, timebase: &ProjectTimebase) -> DrumHit {
 /// Returns the Score instrument a lane's source pitch belongs to.
 fn label(
     instrument: Option<&str>,
-    notes: &[&Note],
+    notes: &[&VisualNote],
     linked: Option<&LinkedScore>,
 ) -> Option<String> {
     let instrument = instrument?;
@@ -130,8 +130,8 @@ mod tests {
         track
     }
 
-    fn note(midi: u8, source_midi: u8, start_tick: u64, velocity: u8) -> Note {
-        Note {
+    fn note(midi: u8, source_midi: u8, start_tick: u64, velocity: u8) -> VisualNote {
+        VisualNote {
             start_sec: 0.0,
             end_sec: 0.0,
             midi,
@@ -153,7 +153,7 @@ mod tests {
         let track = track("kit:drums");
         let visual = TrackVisual {
             track: &track,
-            category: Category::Drums,
+            category: TrackCategory::Drums,
             notes: vec![
                 note(38, 38, 480, 96),
                 note(36, 36, 0, 120),
@@ -181,7 +181,7 @@ mod tests {
         let track = track("kick");
         let visual = TrackVisual {
             track: &track,
-            category: Category::Drums,
+            category: TrackCategory::Drums,
             notes: vec![
                 note(36, 36, 0, 120),
                 note(36, 36, 960, 100),

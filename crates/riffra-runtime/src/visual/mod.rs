@@ -3,22 +3,24 @@
 //! Every instant is a second from the start of the song, so consumers never
 //! read the tempo map, the Score, or the canonical arrangement themselves.
 
-mod category;
+pub mod category;
 mod drums;
-mod harmony;
+pub mod harmony;
 
 use crate::api::output::VisualExport;
 use crate::api::params::ProjectExportVisualParams;
 use crate::render::entire_arrangement_end_tick;
+use crate::score::scale;
 use crate::score_yaml::linked::LinkedScore;
-use category::Category;
-use harmony::ChordRole;
+use category::TrackCategory;
+use harmony::{ChordRole, VisualChord};
 use riffra_core::{
     CreativeSession, InstrumentControlEventKind, MidiClip, MidiEventKind, MusicalFraction,
     MusicalNoteName, MusicalPosition, ProjectTimebase, TimelineTick, Track, TrackKind,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use ts_rs::TS;
 
 /// The version of the snapshot contract.
 const SCHEMA_VERSION: u32 = 1;
@@ -33,7 +35,8 @@ pub(crate) fn export(
     session: &CreativeSession,
     params: &ProjectExportVisualParams,
 ) -> Result<VisualExport, String> {
-    let snapshot = snapshot(session)?;
+    let snapshot = snapshot_optional(session)
+        .ok_or_else(|| "visual export requires a positive-duration clip".to_owned())?;
     let bytes = serde_json::to_vec_pretty(&snapshot)
         .map_err(|error| format!("could not write visual snapshot: {error}"))?;
     std::fs::write(&params.output, bytes)
@@ -43,10 +46,13 @@ pub(crate) fn export(
     })
 }
 
-fn snapshot(session: &CreativeSession) -> Result<VisualSnapshot, String> {
+/// Builds the visual snapshot of the active Project.
+///
+/// Returns `None` when the Project has no clip to measure.
+pub(crate) fn snapshot_optional(session: &CreativeSession) -> Option<VisualSnapshot> {
     let end_tick = entire_arrangement_end_tick(session);
     if end_tick == 0 {
-        return Err("visual export requires a positive-duration clip".into());
+        return None;
     }
     let timebase = &session.arrangement.timebase;
     let linked = LinkedScore::load(session);
@@ -54,7 +60,7 @@ fn snapshot(session: &CreativeSession) -> Result<VisualSnapshot, String> {
     let chords = harmony::chords(session, &sections, timebase);
     let mut tracks = tracks(session, end_tick, timebase, linked.as_ref());
     for track in &mut tracks {
-        if track.category != Category::Drums {
+        if track.category != TrackCategory::Drums {
             for note in &mut track.notes {
                 note.chord_role = harmony::chord_role(note.midi, note.start_tick, &chords);
             }
@@ -62,7 +68,7 @@ fn snapshot(session: &CreativeSession) -> Result<VisualSnapshot, String> {
         harmony::mark_top(&mut track.notes);
     }
     let drum_lanes = drums::lanes(&tracks, linked.as_ref(), timebase);
-    Ok(VisualSnapshot {
+    Some(VisualSnapshot {
         schema_version: SCHEMA_VERSION,
         title: session.project_name.clone().unwrap_or_default(),
         duration_sec: timebase.ticks_to_seconds(end_tick),
@@ -97,137 +103,163 @@ fn snapshot(session: &CreativeSession) -> Result<VisualSnapshot, String> {
     })
 }
 
-#[derive(Serialize)]
+/// A time-expanded view of the active Project that a renderer draws.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
-struct VisualSnapshot {
-    schema_version: u32,
-    title: String,
-    duration_sec: f64,
-    tempos: Vec<VisualTempo>,
-    meters: Vec<VisualMeter>,
-    beats: Vec<VisualBeat>,
-    sections: Vec<VisualSection>,
-    chords: Vec<harmony::Chord>,
-    tracks: Vec<VisualTrack>,
-    drum_lanes: Vec<VisualDrumLane>,
+pub struct VisualSnapshot {
+    pub schema_version: u32,
+    pub title: String,
+    pub duration_sec: f64,
+    pub tempos: Vec<VisualTempo>,
+    pub meters: Vec<VisualMeter>,
+    pub beats: Vec<VisualBeat>,
+    pub sections: Vec<VisualSection>,
+    pub chords: Vec<VisualChord>,
+    pub tracks: Vec<VisualTrack>,
+    pub drum_lanes: Vec<VisualDrumLane>,
 }
 
-#[derive(Serialize)]
+/// A tempo change and its time from the start of the song.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
-struct VisualTempo {
-    t: f64,
-    bpm: f64,
+pub struct VisualTempo {
+    pub t: f64,
+    pub bpm: f64,
 }
 
-#[derive(Serialize)]
+/// A time-signature change and the bar it starts.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
-struct VisualMeter {
-    t: f64,
-    bar: u32,
-    numerator: u8,
-    denominator: u8,
+pub struct VisualMeter {
+    pub t: f64,
+    pub bar: u32,
+    pub numerator: u8,
+    pub denominator: u8,
 }
 
-#[derive(Serialize)]
+/// One beat of the arrangement.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
-struct VisualBeat {
-    t: f64,
-    bar: u32,
-    beat: u32,
-    downbeat: bool,
+pub struct VisualBeat {
+    pub t: f64,
+    pub bar: u32,
+    pub beat: u32,
+    pub downbeat: bool,
 }
 
-#[derive(Serialize)]
+/// One region of the arrangement and its key.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
-struct VisualSection {
-    name: String,
-    occurrence: u32,
-    start_sec: f64,
-    end_sec: f64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    key: Option<VisualKey>,
+pub struct VisualSection {
+    pub name: String,
+    pub occurrence: u32,
+    pub start_sec: f64,
+    pub end_sec: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub key: Option<VisualKey>,
     #[serde(skip)]
-    start_tick: u64,
+    #[ts(skip)]
+    pub(crate) start_tick: u64,
     #[serde(skip)]
-    end_tick: u64,
+    #[ts(skip)]
+    pub(crate) end_tick: u64,
 }
 
-#[derive(Serialize)]
+/// The key one section is written in, resolved to pitch classes.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
-struct VisualKey {
-    tonic: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    scale: Option<String>,
-    #[serde(skip)]
-    tonic_pc: Option<u8>,
+pub struct VisualKey {
+    pub tonic: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub scale: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub tonic_pc: Option<u8>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scale_pcs: Vec<u8>,
 }
 
-#[derive(Serialize)]
+/// One playable Track with its notes and sustain ranges.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
-struct VisualTrack {
-    id: String,
-    name: String,
-    category: Category,
-    notes: Vec<Note>,
-    sustain: Vec<VisualSustain>,
+pub struct VisualTrack {
+    pub id: String,
+    pub name: String,
+    pub category: TrackCategory,
+    pub notes: Vec<VisualNote>,
+    pub sustain: Vec<VisualSustain>,
 }
 
-#[derive(Serialize)]
+/// A sustain pedal range.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
-struct VisualSustain {
-    start_sec: f64,
-    end_sec: f64,
+pub struct VisualSustain {
+    pub start_sec: f64,
+    pub end_sec: f64,
 }
 
-#[derive(Serialize)]
+/// One sounding note.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
-struct Note {
-    start_sec: f64,
-    end_sec: f64,
-    midi: u8,
-    velocity: u8,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    chord_role: Option<ChordRole>,
-    top: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    lyric: Option<String>,
+pub struct VisualNote {
+    pub start_sec: f64,
+    pub end_sec: f64,
+    pub midi: u8,
+    pub velocity: u8,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub chord_role: Option<ChordRole>,
+    pub top: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub lyric: Option<String>,
     #[serde(skip)]
-    id: String,
+    #[ts(skip)]
+    pub(crate) id: String,
     #[serde(skip)]
-    start_tick: u64,
+    #[ts(skip)]
+    pub(crate) start_tick: u64,
     #[serde(skip)]
-    end_tick: u64,
+    #[ts(skip)]
+    pub(crate) end_tick: u64,
     #[serde(skip)]
-    channel: u8,
+    #[ts(skip)]
+    pub(crate) channel: u8,
     #[serde(skip)]
-    source_midi: u8,
+    #[ts(skip)]
+    pub(crate) source_midi: u8,
 }
 
-#[derive(Serialize)]
+/// One drum pitch of a Track.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
-struct VisualDrumLane {
-    track_id: String,
-    pitch: u8,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    label: Option<String>,
-    hits: Vec<DrumHit>,
+pub struct VisualDrumLane {
+    pub track_id: String,
+    pub pitch: u8,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub label: Option<String>,
+    pub hits: Vec<VisualDrumHit>,
 }
 
-#[derive(Serialize)]
+/// One drum hit on a lane.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
-struct DrumHit {
-    t: f64,
-    bar: u32,
-    step: u64,
-    velocity: u8,
-    accent: bool,
+pub struct VisualDrumHit {
+    pub t: f64,
+    pub bar: u32,
+    pub step: u64,
+    pub velocity: u8,
+    pub accent: bool,
 }
 
 /// One Instrument Track's playable notes before their visual meaning is set.
 struct TrackVisual<'a> {
     track: &'a Track,
-    category: Category,
-    notes: Vec<Note>,
+    category: TrackCategory,
+    notes: Vec<VisualNote>,
     /// Merged sustain pedal ranges in ticks.
     sustain: Vec<(u64, u64)>,
 }
@@ -302,13 +334,7 @@ fn sections(
         *occurrence += 1;
         let key = linked
             .and_then(|score| score.occurrence(&region.name, region.start_tick.0, timebase.ppq))
-            .map(|occurrence| VisualKey {
-                tonic: occurrence.tonic.clone(),
-                scale: occurrence.scale.clone(),
-                tonic_pc: MusicalNoteName::new(&occurrence.tonic)
-                    .ok()
-                    .map(MusicalNoteName::pitch_class),
-            });
+            .map(|occurrence| visual_key(occurrence, linked));
         sections.push(VisualSection {
             name: region.name.clone(),
             occurrence: *occurrence,
@@ -320,6 +346,50 @@ fn sections(
         });
     }
     sections
+}
+
+/// Resolves one Score occurrence to the key its section is drawn in.
+fn visual_key(occurrence: &crate::score::Occurrence, linked: Option<&LinkedScore>) -> VisualKey {
+    let tonic_pc = MusicalNoteName::new(&occurrence.tonic)
+        .ok()
+        .map(MusicalNoteName::pitch_class);
+    let scale_pcs = occurrence
+        .scale
+        .as_deref()
+        .zip(tonic_pc)
+        .map(|(scale, tonic_pc)| pitch_classes(tonic_pc, scale_offsets(scale, linked)))
+        .unwrap_or_default();
+    VisualKey {
+        tonic: occurrence.tonic.clone(),
+        scale: occurrence.scale.clone(),
+        tonic_pc,
+        scale_pcs,
+    }
+}
+
+/// Returns the semitone offsets of a built-in or a custom Score scale.
+fn scale_offsets(scale: &str, linked: Option<&LinkedScore>) -> Vec<i32> {
+    if let Some(degrees) = scale::degrees(scale) {
+        return scale::offsets(degrees.iter().copied());
+    }
+    let Some(definitions) = linked
+        .and_then(|score| score.field(&["scale_definitions", scale]))
+        .and_then(|definitions| definitions.as_array())
+    else {
+        return Vec::new();
+    };
+    scale::offsets(definitions.iter().filter_map(|degree| degree.as_str()))
+}
+
+/// Places semitone offsets onto the circle of pitch classes.
+fn pitch_classes(tonic_pc: u8, offsets: Vec<i32>) -> Vec<u8> {
+    let mut pitch_classes = offsets
+        .into_iter()
+        .map(|offset| (i32::from(tonic_pc) + offset).rem_euclid(12) as u8)
+        .collect::<Vec<_>>();
+    pitch_classes.sort_unstable();
+    pitch_classes.dedup();
+    pitch_classes
 }
 
 fn tracks<'a>(
@@ -362,7 +432,7 @@ fn tracks<'a>(
                         continue;
                     }
                     let note_end = start_tick.saturating_add(note.duration_ticks).min(pass_end);
-                    notes.push(Note {
+                    notes.push(VisualNote {
                         start_sec: timebase.ticks_to_seconds(start_tick),
                         end_sec: timebase.ticks_to_seconds(note_end),
                         midi,
@@ -578,7 +648,7 @@ mod tests {
         session.arrangement.midi_clips = vec![clip];
 
         // Act
-        let snapshot = snapshot(&session).unwrap();
+        let snapshot = snapshot_optional(&session).unwrap();
 
         // Assert
         assert_eq!(
@@ -628,7 +698,7 @@ mod tests {
         "meta":{"title":"Keyed","bpm":120,"meter":"4/4","tuning":"12edo","gate":1},
         "form":[
             {"section":"first","bars":1,"tonic":"F","scale":"ionian"},
-            {"section":"second","bars":1,"tonic":"A","scale":"aeolian"}
+            {"section":"second","bars":1,"tonic":"A","scale":"harmonic_minor"}
         ],
         "sections":{"first":{},"second":{}},
         "instruments":{"lead":{"preset":"TEST/001-lead"}}
@@ -668,9 +738,9 @@ mod tests {
         });
 
         // Act
-        let linked = snapshot(&session).unwrap();
+        let linked = snapshot_optional(&session).unwrap();
         session.score_source = None;
-        let unlinked = snapshot(&session).unwrap();
+        let unlinked = snapshot_optional(&session).unwrap();
 
         // Assert
         assert_eq!(
@@ -679,23 +749,108 @@ mod tests {
                 .iter()
                 .map(|section| (
                     section.occurrence,
-                    section
-                        .key
-                        .as_ref()
-                        .map(|key| (key.tonic.as_str(), key.scale.as_deref()))
+                    section.key.as_ref().map(|key| (
+                        key.tonic.as_str(),
+                        key.scale.as_deref(),
+                        key.tonic_pc,
+                        key.scale_pcs.clone()
+                    ))
                 ))
                 .collect::<Vec<_>>(),
             [
-                (1, Some(("F", Some("ionian")))),
-                (1, Some(("A", Some("aeolian")))),
+                (
+                    1,
+                    Some(("F", Some("ionian"), Some(5), vec![0, 2, 4, 5, 7, 9, 10]))
+                ),
+                (
+                    1,
+                    Some((
+                        "A",
+                        Some("harmonic_minor"),
+                        Some(9),
+                        vec![0, 2, 4, 5, 8, 9, 11]
+                    ))
+                ),
                 (2, None),
             ]
+        );
+        assert_eq!(
+            serde_json::to_value(linked.sections[0].key.as_ref().unwrap()).unwrap(),
+            serde_json::json!({
+                "tonic": "F",
+                "scale": "ionian",
+                "tonicPc": 5,
+                "scalePcs": [0, 2, 4, 5, 7, 9, 10],
+            })
         );
         assert!(
             unlinked
                 .sections
                 .iter()
                 .all(|section| section.key.is_none())
+        );
+    }
+
+    fn keyed_sections(yaml: &str) -> Vec<VisualSection> {
+        let mut session = CreativeSession::new(0);
+        session.settings.mixdown.musical_end_tick = 3840;
+        session.arrangement.regions = vec![TimelineRegion {
+            id: "region:1".into(),
+            name: "first".into(),
+            start_tick: TimelineTick(0),
+            end_tick: TimelineTick(3840),
+        }];
+        session.score_source = Some(ScoreSource {
+            file_name: "score.yaml".into(),
+            yaml: yaml.into(),
+            path: None,
+            bindings: Default::default(),
+            production_inputs: Default::default(),
+        });
+        snapshot_optional(&session).unwrap().sections
+    }
+
+    #[test]
+    fn custom_scales_resolve_through_their_degree_definitions() {
+        // Arrange
+        let custom = r#"{
+            "meta":{"title":"Custom","bpm":120,"meter":"4/4","tuning":"12edo","gate":1},
+            "scale_definitions":{"hexatonic":["1","2","b3","4","5","b7"]},
+            "form":[{"section":"first","bars":1,"tonic":"D","scale":"hexatonic"}],
+            "sections":{"first":{}},
+            "instruments":{"lead":{"preset":"TEST/001-lead"}}
+        }"#;
+        let unspecified = r#"{
+            "meta":{"title":"Unspecified","bpm":120,"meter":"4/4","tuning":"12edo","gate":1},
+            "form":[{"section":"first","bars":1,"tonic":"D"}],
+            "sections":{"first":{}},
+            "instruments":{"lead":{"preset":"TEST/001-lead"}}
+        }"#;
+
+        // Act
+        let custom = keyed_sections(custom);
+        let unspecified = keyed_sections(unspecified);
+
+        // Assert
+        assert_eq!(
+            custom[0].key.as_ref().map(|key| (
+                key.scale.as_deref(),
+                key.tonic_pc,
+                key.scale_pcs.as_slice()
+            )),
+            Some((Some("hexatonic"), Some(2), &[0, 2, 4, 5, 7, 9][..]))
+        );
+        assert_eq!(
+            unspecified[0].key.as_ref().map(|key| (
+                key.scale.as_deref(),
+                key.tonic_pc,
+                key.scale_pcs.len()
+            )),
+            Some((None, Some(2), 0))
+        );
+        assert_eq!(
+            serde_json::to_value(unspecified[0].key.as_ref().unwrap()).unwrap(),
+            serde_json::json!({"tonic": "D", "tonicPc": 2})
         );
     }
 
@@ -738,7 +893,7 @@ mod tests {
         session.arrangement.midi_clips = vec![looping, silent, bypassed_clip];
 
         // Act
-        let snapshot = snapshot(&session).unwrap();
+        let snapshot = snapshot_optional(&session).unwrap();
 
         // Assert
         assert_eq!(
@@ -778,7 +933,7 @@ mod tests {
         session.arrangement.midi_clips = vec![first, second];
 
         // Act
-        let snapshot = snapshot(&session).unwrap();
+        let snapshot = snapshot_optional(&session).unwrap();
 
         // Assert
         assert_eq!(
