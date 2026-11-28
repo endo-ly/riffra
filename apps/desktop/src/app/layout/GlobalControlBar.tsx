@@ -2,6 +2,7 @@ import clsx from 'clsx';
 import type { AudioStatus } from '@/model/generated';
 import { useSession } from '@/session/session-context';
 import { selectHostReady } from '@/session/selectors';
+import type { WorkspaceViewMode } from '@/session/slices/workspace';
 import { isEmergencyMuteActive } from '@/model/audio-status';
 import { useAudioFeedbackSuspected } from '@/session/audio-meters';
 
@@ -19,10 +20,17 @@ interface GlobalControlBarProps {
   audioSettingsOpen: boolean;
 }
 
+const VIEW_MODES: readonly { mode: WorkspaceViewMode; label: string }[] = [
+  { mode: 'edit', label: 'Edit' },
+  { mode: 'showcase', label: 'Showcase' },
+];
+
 export function GlobalControlBar(ui: GlobalControlBarProps) {
   const project = useSession((state) => state.project);
   const hostConnected = useSession(selectHostReady);
   const audio = useSession((state) => state.audio);
+  const viewMode = useSession((state) => state.workspace.viewMode);
+  const setViewMode = useSession((state) => state.workspace.setViewMode);
   const liveFeedbackSuspected = useAudioFeedbackSuspected();
   const preparation = useSession((state) => preparationLabel(state.runtime));
   const props = {
@@ -31,6 +39,8 @@ export function GlobalControlBar(ui: GlobalControlBarProps) {
     historyState: project.boot!.canonical.history,
     hostConnected,
     projectSwitching: project.switching,
+    viewMode,
+    onSetViewMode: setViewMode,
     isMuted: isEmergencyMuteActive(audio.status),
     onUndo: project.undo,
     onRedo: project.redo,
@@ -81,6 +91,20 @@ export function GlobalControlBar(ui: GlobalControlBarProps) {
             >
               <Icon name="redo" />
             </button>
+          </div>
+          <span className={styles.divider} aria-hidden="true" />
+          <div className={styles.viewModeControls} role="group" aria-label="View mode">
+            {VIEW_MODES.map((option) => (
+              <button
+                key={option.mode}
+                type="button"
+                aria-pressed={props.viewMode === option.mode}
+                title="Toggle Showcase (V)"
+                onClick={() => props.onSetViewMode(option.mode)}
+              >
+                {option.label}
+              </button>
+            ))}
           </div>
         </fieldset>
         <span className={styles.divider} aria-hidden="true" />

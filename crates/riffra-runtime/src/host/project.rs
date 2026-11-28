@@ -36,6 +36,10 @@ pub(super) fn dispatch(
             ),
             current.sequence,
         )),
+        ProjectCommand::ProjectVisualSnapshot(_) => Ok((
+            ControlOutput::VisualSnapshot(crate::visual::snapshot_optional(&current.session)),
+            current.sequence,
+        )),
         ProjectCommand::ProjectExport(params) => Ok((
             ControlOutput::ProjectExport(
                 projects::export(

@@ -1,35 +1,41 @@
 //! Chord segmentation, roman-numeral naming, and note-level harmony meaning.
 
-use super::{Note, VisualSection};
+use super::{VisualNote, VisualSection};
 use crate::score::syntax;
 use riffra_core::{CreativeSession, HarmonyChord, HarmonyEvent, ProjectTimebase};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
+use ts_rs::TS;
 
 /// A chord sounding over a non-overlapping range of the arrangement.
-#[derive(Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
-pub(super) struct Chord {
-    start_sec: f64,
-    end_sec: f64,
-    symbol: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    degree: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    root_pc: Option<u8>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    bass_pc: Option<u8>,
-    tones_pc: Vec<u8>,
+pub struct VisualChord {
+    pub start_sec: f64,
+    pub end_sec: f64,
+    pub symbol: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub degree: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub root_pc: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub bass_pc: Option<u8>,
+    pub tones_pc: Vec<u8>,
     #[serde(skip)]
-    start_tick: u64,
+    #[ts(skip)]
+    pub(crate) start_tick: u64,
     #[serde(skip)]
-    end_tick: u64,
+    #[ts(skip)]
+    pub(crate) end_tick: u64,
 }
 
 /// The role a note plays in the chord sounding when it starts.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
-pub(super) enum ChordRole {
+pub enum ChordRole {
     Root,
     ChordTone,
     Tension,
@@ -49,7 +55,7 @@ pub(super) fn chords(
     session: &CreativeSession,
     sections: &[VisualSection],
     timebase: &ProjectTimebase,
-) -> Vec<Chord> {
+) -> Vec<VisualChord> {
     let events = &session.arrangement.harmony_events;
     let mut boundaries: Vec<u64> = events
         .iter()
@@ -87,7 +93,7 @@ fn chord(
     event: &HarmonyEvent,
     sections: &[VisualSection],
     timebase: &ProjectTimebase,
-) -> Chord {
+) -> VisualChord {
     let harmony = &event.chord;
     let mut tones_pc = harmony
         .tones
@@ -97,7 +103,7 @@ fn chord(
     tones_pc.sort_unstable();
     tones_pc.dedup();
     let (degree, symbol) = naming(harmony, sections, start_tick);
-    Chord {
+    VisualChord {
         start_sec: timebase.ticks_to_seconds(start_tick),
         end_sec: timebase.ticks_to_seconds(end_tick),
         symbol,
@@ -205,14 +211,14 @@ fn degrees_above(pitch_class: i32, tonic_pc: i32) -> &'static str {
 }
 
 /// Returns the role of a note in the chord sounding when the note starts.
-pub(super) fn chord_role(midi: u8, start_tick: u64, chords: &[Chord]) -> Option<ChordRole> {
+pub(super) fn chord_role(midi: u8, start_tick: u64, chords: &[VisualChord]) -> Option<ChordRole> {
     let chord = chords
         .iter()
         .find(|chord| chord.start_tick <= start_tick && start_tick < chord.end_tick)?;
     Some(chord.role(midi % 12))
 }
 
-impl Chord {
+impl VisualChord {
     fn role(&self, pitch_class: u8) -> ChordRole {
         let sounding = self.tones_pc.contains(&pitch_class);
         let Some(root_pc) = self.root_pc else {
@@ -246,7 +252,7 @@ impl Chord {
 }
 
 /// Marks the notes that no other note sounding with them is higher than.
-pub(super) fn mark_top(notes: &mut [Note]) {
+pub(super) fn mark_top(notes: &mut [VisualNote]) {
     let tops = notes
         .iter()
         .enumerate()
@@ -307,14 +313,15 @@ mod tests {
                 tonic: tonic.into(),
                 scale: Some("ionian".into()),
                 tonic_pc: MusicalNoteName::new(tonic).ok().map(|n| n.pitch_class()),
+                scale_pcs: Vec::new(),
             }),
             start_tick,
             end_tick,
         }
     }
 
-    fn note(id: &str, midi: u8, start_tick: u64, end_tick: u64) -> Note {
-        Note {
+    fn note(id: &str, midi: u8, start_tick: u64, end_tick: u64) -> VisualNote {
+        VisualNote {
             start_sec: 0.0,
             end_sec: 0.0,
             midi,

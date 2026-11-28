@@ -79,6 +79,7 @@ pub enum ControlOutput {
     ScoreSpec(ScoreSpec),
     MidiExport(MidiExport),
     VisualExport(VisualExport),
+    VisualSnapshot(Option<crate::visual::VisualSnapshot>),
     InstrumentLibrary(Vec<InstrumentLibraryItem>),
     InstrumentLibraryItem(InstrumentLibraryItem),
     InstrumentCategories(Vec<String>),

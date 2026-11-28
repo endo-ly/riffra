@@ -41,6 +41,33 @@ export function useAppShortcuts(setCommandOpen: Dispatch<SetStateAction<boolean>
       if (event.ctrlKey && !typing && event.key.toLowerCase() === 'y') {
         event.preventDefault();
         void project.redo();
+        return;
+      }
+      if (
+        !event.defaultPrevented &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.altKey &&
+        !event.shiftKey &&
+        !event.repeat &&
+        !typing &&
+        event.key.toLowerCase() === 'v'
+      ) {
+        state.workspace.toggleViewMode();
+        return;
+      }
+      if (
+        event.key === ' ' &&
+        state.workspace.viewMode === 'showcase' &&
+        !event.defaultPrevented &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.altKey &&
+        !event.repeat &&
+        !typing
+      ) {
+        event.preventDefault();
+        void state.transport.togglePlayback();
       }
     };
     window.addEventListener('keydown', onKey);

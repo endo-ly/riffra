@@ -4,6 +4,7 @@ mod lower;
 mod parse;
 pub(super) mod production;
 mod resolve;
+pub(crate) mod scale;
 pub(crate) mod spec;
 pub(super) mod syntax;
 pub(crate) mod time;

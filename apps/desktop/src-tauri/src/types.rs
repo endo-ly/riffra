@@ -26,6 +26,7 @@ use riffra_runtime::api::params::{
     AudioDriverConfig, RenderOptions, RenderRange, RenderStemsParams,
 };
 use riffra_runtime::api::{ControlCommand, ControlOutput, typescript_result_map};
+use riffra_runtime::visual::VisualSnapshot;
 use riffra_runtime::{
     ArrangementMutationResult, AudioAccessMode, AudioChannelInfo, AudioDevicePairing,
     AudioDeviceProbe, AudioDriverInfo, AudioState, AudioStatus, DeviceChannels, MidiDeviceInfo,
@@ -182,4 +183,8 @@ fn export_types() {
         typescript_result_map(),
     )
     .expect("ControlCommandResults bindings");
+    let visual_cfg = Config::new()
+        .with_out_dir("../../../packages/visual-renderer/src/generated")
+        .with_large_int("number");
+    VisualSnapshot::export_all(&visual_cfg).expect("VisualSnapshot bindings");
 }

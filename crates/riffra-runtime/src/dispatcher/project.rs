@@ -179,6 +179,9 @@ impl HostDispatcher<'_> {
             ProjectCommand::ProjectExportVisual(params) => {
                 ControlOutput::VisualExport(crate::visual::export(&canonical.session, &params)?)
             }
+            ProjectCommand::ProjectVisualSnapshot(_) => {
+                ControlOutput::VisualSnapshot(crate::visual::snapshot_optional(&canonical.session))
+            }
             ProjectCommand::ProjectExport(params) => {
                 ControlOutput::ProjectExport(crate::projects::export(
                     &self.data_root,
@@ -811,6 +814,9 @@ mod tests {
             .unwrap();
         let bytes = std::fs::read(&path).unwrap();
         let snapshot: Value = serde_json::from_slice(&bytes).unwrap();
+        let inline = dispatcher
+            .dispatch(request("project.visual-snapshot", json!({})))
+            .unwrap();
         let second = dispatcher
             .dispatch(request("project.export-visual", json!({"output": path})))
             .unwrap();
@@ -828,8 +834,26 @@ mod tests {
         assert_eq!(snapshot["tracks"][0]["category"], "lead");
         assert_eq!(snapshot["tracks"][0]["notes"][0]["midi"], 60);
         assert_eq!(snapshot["tracks"][0]["notes"][0]["startSec"], 0.25);
+        assert_eq!(output_type(&inline), "visualSnapshot");
+        assert_eq!(output_value(&inline), snapshot);
         assert_eq!(output_type(&second), "visualExport");
         assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        dispatcher
+            .dispatch(request("project.create", json!({"name":"Empty"})))
+            .unwrap();
+        let empty = dispatcher
+            .dispatch(request("project.visual-snapshot", json!({})))
+            .unwrap();
+        assert_eq!(output_type(&empty), "visualSnapshot");
+        assert_eq!(output_value(&empty), Value::Null);
+        assert!(
+            dispatcher
+                .dispatch(request(
+                    "project.export-visual",
+                    json!({"output": root.join("empty.json")})
+                ))
+                .is_err()
+        );
         drop(dispatcher);
         let _ = std::fs::remove_dir_all(root);
     }

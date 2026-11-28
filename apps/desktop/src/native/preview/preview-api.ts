@@ -25,6 +25,7 @@ type BrowserPreviewReads = Pick<
   | 'listInstrumentCategories'
   | 'listInstrumentCollections'
   | 'listRecordings'
+  | 'getVisualSnapshot'
   | 'searchLibrary'
   | 'getMissingDependencies'
   | 'getRigState'
@@ -56,6 +57,7 @@ const reads: BrowserPreviewReads = {
   listInstrumentCategories: async () => [],
   listInstrumentCollections: async () => [],
   listRecordings: async () => [],
+  getVisualSnapshot: async () => null,
   searchLibrary: async () => [],
   getMissingDependencies: async () => [],
   getRigState: async () => ({ rigs: [], activeRigId: null, lastPlayedRigId: null }),

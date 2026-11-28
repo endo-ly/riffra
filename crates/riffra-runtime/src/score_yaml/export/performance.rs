@@ -6,7 +6,7 @@ use super::{
 };
 use crate::api::output::ScoreExportOmission;
 use crate::instrument::BuiltInInstrumentCatalog;
-use crate::score::syntax;
+use crate::score::{scale, syntax};
 use crate::score_yaml::linked::LinkedScore;
 use num_rational::BigRational;
 use riffra_core::{
@@ -16,22 +16,6 @@ use riffra_core::{
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-
-/// Scale spellings used when a section names a known scale.
-const SCALES: &[(&str, &[&str])] = &[
-    ("ionian", &["1", "2", "3", "4", "5", "6", "7"]),
-    ("dorian", &["1", "2", "b3", "4", "5", "6", "b7"]),
-    ("phrygian", &["1", "b2", "b3", "4", "5", "b6", "b7"]),
-    ("lydian", &["1", "2", "3", "#4", "5", "6", "7"]),
-    ("mixolydian", &["1", "2", "3", "4", "5", "6", "b7"]),
-    ("aeolian", &["1", "2", "b3", "4", "5", "b6", "b7"]),
-    ("locrian", &["1", "b2", "b3", "4", "b5", "b6", "b7"]),
-    ("harmonic_minor", &["1", "2", "b3", "4", "5", "b6", "7"]),
-    ("melodic_minor", &["1", "2", "b3", "4", "5", "6", "7"]),
-    ("major_pentatonic", &["1", "2", "3", "5", "6"]),
-    ("minor_pentatonic", &["1", "b3", "4", "5", "b7"]),
-    ("whole_tone", &["1", "2", "3", "#4", "#5", "#6"]),
-];
 
 /// Chromatic spellings used for notes outside the section scale.
 const CHROMATIC: &[&str] = &[
@@ -744,7 +728,7 @@ fn degree(section: &SongSection, midi: u8) -> String {
     let spelling = section
         .scale
         .as_deref()
-        .and_then(scale_spelling)
+        .and_then(scale::degrees)
         .and_then(|scale| {
             scale.iter().find_map(|name| {
                 (syntax::degree(name).ok()?.rem_euclid(12) == pitch).then(|| (*name).to_owned())
@@ -756,13 +740,6 @@ fn degree(section: &SongSection, midi: u8) -> String {
         n if n > 0 => format!("{spelling}{}", "'".repeat(n as usize)),
         n => format!("{spelling}{}", ",".repeat((-n) as usize)),
     }
-}
-
-fn scale_spelling(name: &str) -> Option<&'static [&'static str]> {
-    SCALES
-        .iter()
-        .find(|(scale, _)| *scale == name)
-        .map(|(_, degrees)| *degrees)
 }
 
 fn drum_grid(

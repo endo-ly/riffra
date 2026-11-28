@@ -89,7 +89,7 @@ interface VisualSnapshot {
     occurrence: number;
     startSec: number;
     endSec: number;
-    key?: { tonic: string; scale?: string };
+    key?: { tonic: string; scale?: string; tonicPc?: number; scalePcs?: number[] };
   }>;
   chords: Array<{
     startSec: number;
@@ -124,16 +124,17 @@ interface VisualSnapshot {
 }
 ```
 
-| 項目                            | 意味                                                                                 |
-| ------------------------------- | ------------------------------------------------------------------------------------ |
-| `title`                         | `CreativeSession.project_name`                                                       |
-| `bar` / `beat`                  | 1 始まり                                                                             |
-| `sections[].occurrence`         | 同名区間の中での 1 始まりの順番                                                      |
-| `chords[].symbol` / `degree`    | 絶対表記（`Bbmaj7(#11)`）と度数表記（`bVImaj7(#11)`）。臨時記号は ASCII の `b` / `#` |
-| `rootPc` / `bassPc` / `tonesPc` | ピッチクラス（0 = C … 11 = B）。`tonesPc` は昇順・重複なし                           |
-| `notes[].midi`                  | 出力音高（§4.4）                                                                     |
-| `drumLanes[].pitch`             | 出力音高                                                                             |
-| `hits[].step`                   | 小節頭からの 16 分音符単位の位置（0 始まり）                                         |
+| 項目                            | 意味                                                                                          |
+| ------------------------------- | --------------------------------------------------------------------------------------------- |
+| `title`                         | `CreativeSession.project_name`                                                                |
+| `bar` / `beat`                  | 1 始まり                                                                                      |
+| `sections[].occurrence`         | 同名区間の中での 1 始まりの順番                                                               |
+| `chords[].symbol` / `degree`    | 絶対表記（`Bbmaj7(#11)`）と度数表記（`bVImaj7(#11)`）。臨時記号は ASCII の `b` / `#`          |
+| `rootPc` / `bassPc` / `tonesPc` | ピッチクラス（0 = C … 11 = B）。`tonesPc` は昇順・重複なし                                    |
+| `tonicPc` / `scalePcs`          | 主音とスケール構成音のピッチクラス。`scalePcs` は昇順・重複なしで、スケール未指定のときは省略 |
+| `notes[].midi`                  | 出力音高（§4.4）                                                                              |
+| `drumLanes[].pitch`             | 出力音高                                                                                      |
+| `hits[].step`                   | 小節頭からの 16 分音符単位の位置（0 始まり）                                                  |
 
 ## 4. 生成規則
 
@@ -147,7 +148,8 @@ interface VisualSnapshot {
 ### 4.2 セクションと調
 
 - `sections` は `arrangement.regions` の配列順（並べ替えない）。`occurrence` は `render/sections.rs` の `score_ranges` と同じく、配列順に同名を数える
-- `key` はリンク済み Score の form 出現から採る。名前と開始 Tick が一致する出現の `tonic` / `scale` を使い、一致が無い区間とリンクが無い Project では持たない
+- `key` はリンク済み Score の form 出現から採る。名前と開始 Tick が一致する出現の `tonic` / `scale` を使い、一致が無い区間とリンクが無い Project では持たない。`tonicPc` は `tonic` のピッチクラスで、`tonic` が音名として読めるときだけ持つ
+- `scalePcs` は `tonicPc` と `scale` の両方があるとき、そのスケールの構成音をピッチクラスへ展開する。Score の既知 12 スケールの半音オフセットは `score/scale.rs` の定義を共有し、カスタム `scale_definitions` は度数配列を `score::syntax::degree` で変換する。`scale` が未指定のときは推測せず空（JSON 省略）とする
 - 突き合わせには `score_yaml/export.rs` の `Original` を使う。`Original` を `score_yaml/linked.rs` へ移して `LinkedScore` と改名し、`pub(crate) fn load(session: &CreativeSession) -> Option<LinkedScore>`（今の `original()`）、`pub(crate) fn occurrence`、`pub(crate) fn field`、`pub(crate) plan` をそこで定義する。Score 書き出しだけで使うメソッドは、`export.rs` の `impl LinkedScore` に残す
 
 ### 4.3 コード
@@ -260,7 +262,7 @@ interface VisualSnapshot {
 
 ## 6. 置き場所
 
-`crates/riffra-runtime/src/visual/` に置く。リンク済み Score のコンパイル結果を使うため Runtime 層にする。すべて `pub(crate)` 以下。
+`crates/riffra-runtime/src/visual/` に置く。リンク済み Score のコンパイル結果を使うため Runtime 層にする。`VisualSnapshot` と配下の型は `ControlOutput::VisualSnapshot` として IPC に出るため `pub`、組み立てと書き出しは `pub(crate)` 以下。
 
 | ファイル      | 内容                                                                    |
 | ------------- | ----------------------------------------------------------------------- |

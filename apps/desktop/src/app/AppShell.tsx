@@ -17,6 +17,7 @@ import { NoticeBar } from '@/app/status/NoticeBar';
 import { WorkspaceWait } from '@/app/status/WorkspaceWait';
 import { AppBodyLayout } from '@/app/layout/AppBodyLayout';
 import { CommandPalette } from '@/app/layout/CommandPalette';
+import { ShowcaseWorkspace } from '@/features/showcase/ShowcaseWorkspace';
 import shellStyles from './AppShell.module.css';
 
 export function AppShell() {
@@ -33,6 +34,8 @@ export function AppShell() {
   const importProject = useSession((state) => state.project.importPackage);
   const hostReason = useSession((state) => state.host.connection.reason);
   const hostConnected = useSession(selectHostReady);
+  const viewMode = useSession((state) => state.workspace.viewMode);
+  const toggleViewMode = useSession((state) => state.workspace.toggleViewMode);
   const { placeAtPlayhead } = usePlaceBrowserItem(commit);
   const checkForUpdate = useSession((state) => state.appUpdate.checkNow);
   const checkForUpdateOnStartup = useSession((state) => state.appUpdate.checkOnStartup);
@@ -63,6 +66,15 @@ export function AppShell() {
     );
 
   const commandItems = [
+    {
+      section: 'VIEW',
+      label: viewMode === 'showcase' ? 'Switch to Edit' : 'Switch to Showcase',
+      description:
+        viewMode === 'showcase'
+          ? 'Return to the arrangement and its editors'
+          : 'Watch the arrangement perform full screen',
+      run: toggleViewMode,
+    },
     {
       section: 'PROJECT',
       label: 'Import Project…',
@@ -102,20 +114,28 @@ export function AppShell() {
 
       <NoticeBar />
 
-      <AppBodyLayout
-        browser={<BrowserPanel onApply={(placement) => void placeAtPlayhead(placement)} />}
-        properties={
+      {viewMode === 'showcase' ? (
+        <div className={shellStyles.showcaseBody}>
           <ProjectBoundRegion>
-            <PropertiesPanel />
+            <ShowcaseWorkspace />
           </ProjectBoundRegion>
-        }
-      >
-        <section className={shellStyles.workspace}>
-          <ProjectBoundRegion>
-            <EditorWorkspace />
-          </ProjectBoundRegion>
-        </section>
-      </AppBodyLayout>
+        </div>
+      ) : (
+        <AppBodyLayout
+          browser={<BrowserPanel onApply={(placement) => void placeAtPlayhead(placement)} />}
+          properties={
+            <ProjectBoundRegion>
+              <PropertiesPanel />
+            </ProjectBoundRegion>
+          }
+        >
+          <section className={shellStyles.workspace}>
+            <ProjectBoundRegion>
+              <EditorWorkspace />
+            </ProjectBoundRegion>
+          </section>
+        </AppBodyLayout>
+      )}
 
       <WorkspaceWait />
 
