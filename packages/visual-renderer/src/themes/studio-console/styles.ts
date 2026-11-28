@@ -134,6 +134,10 @@ export const STUDIO_CONSOLE_STYLES = `
   flex-shrink: 0;
 }
 
+.sc-chord-strip[hidden] {
+  display: none;
+}
+
 .sc-root[data-layout="9:16"] .sc-chord-strip {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
@@ -142,14 +146,17 @@ export const STUDIO_CONSOLE_STYLES = `
   position: relative;
   display: flex;
   flex-direction: column;
+  align-items: center;
   justify-content: center;
-  min-height: 62px;
-  padding: 9px 14px 12px 14px;
+  text-align: center;
+  min-height: 60px;
+  padding: 8px 14px 12px 14px;
   border-radius: 9px;
   background: linear-gradient(180deg, ${P.surface.card} 0%, ${P.surface.panelRecessed} 100%);
   border: 1px solid ${P.border.subtle};
   box-shadow: inset 0 1px 0 ${P.border.specular};
   overflow: hidden;
+  opacity: 0.72;
 }
 
 .sc-chord-card[hidden] {
@@ -157,11 +164,12 @@ export const STUDIO_CONSOLE_STYLES = `
 }
 
 .sc-chord-card[data-active="true"] {
-  background: linear-gradient(180deg, ${P.surface.cardActive} 0%, #111827 100%);
+  opacity: 1;
+  background: linear-gradient(180deg, #1d263a 0%, #121928 100%);
   border-color: ${P.border.active};
   box-shadow:
-    inset 0 1px 0 rgba(255, 224, 170, 0.16),
-    0 0 22px rgba(245, 185, 99, 0.14);
+    inset 0 1px 0 rgba(255, 224, 170, 0.22),
+    0 0 26px rgba(245, 185, 99, 0.18);
 }
 
 .sc-chord-primary {
@@ -173,11 +181,13 @@ export const STUDIO_CONSOLE_STYLES = `
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  max-width: 100%;
 }
 
 .sc-chord-card[data-active="true"] .sc-chord-primary {
+  font-size: 23px;
   color: ${P.accent.amberBright};
-  text-shadow: 0 0 16px rgba(245, 185, 99, 0.35);
+  text-shadow: 0 0 18px rgba(245, 185, 99, 0.42);
 }
 
 .sc-chord-secondary {
@@ -189,6 +199,7 @@ export const STUDIO_CONSOLE_STYLES = `
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  max-width: 100%;
 }
 
 .sc-chord-secondary[hidden] {
@@ -196,7 +207,7 @@ export const STUDIO_CONSOLE_STYLES = `
 }
 
 .sc-chord-card[data-active="true"] .sc-chord-secondary {
-  color: ${P.text.secondary};
+  color: ${P.text.primary};
 }
 
 .sc-chord-progress-track {
@@ -204,7 +215,7 @@ export const STUDIO_CONSOLE_STYLES = `
   left: 0;
   right: 0;
   bottom: 0;
-  height: 3px;
+  height: 4px;
   background: rgba(182, 204, 240, 0.08);
 }
 
@@ -257,27 +268,32 @@ export const STUDIO_CONSOLE_STYLES = `
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 7px 12px;
+  padding: 5px 11px;
   border-bottom: 1px solid ${P.border.subtle};
-  background: rgba(9, 13, 21, 0.56);
+  background: rgba(9, 13, 21, 0.42);
   flex-shrink: 0;
 }
 
 .sc-panel-title {
   font-family: ${P.typography.mono};
-  font-size: 10px;
+  font-size: 9.5px;
   font-weight: 600;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: ${P.text.secondary};
+  color: ${P.text.muted};
 }
 
 .sc-panel-tag {
   font-family: ${P.typography.mono};
   font-size: 10px;
-  letter-spacing: 0.08em;
-  color: ${P.text.muted};
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: ${P.accent.amberBright};
   font-variant-numeric: tabular-nums;
+}
+
+.sc-panel-tag[hidden] {
+  display: none;
 }
 
 /* Piano Roll */
@@ -345,14 +361,14 @@ export const STUDIO_CONSOLE_STYLES = `
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 6px 10px;
+  padding: 10px 14px;
 }
 
 .sc-circle-svg {
   width: 100%;
   height: 100%;
-  max-width: 280px;
-  max-height: 280px;
+  max-width: 380px;
+  max-height: 380px;
   overflow: visible;
 }
 
@@ -361,9 +377,9 @@ export const STUDIO_CONSOLE_STYLES = `
   align-items: center;
   justify-content: center;
   gap: 8px;
-  padding: 7px 12px;
+  padding: 6px 12px;
   border-top: 1px solid ${P.border.subtle};
-  background: rgba(9, 13, 21, 0.56);
+  background: rgba(9, 13, 21, 0.42);
   font-family: ${P.typography.mono};
   font-size: 11px;
   color: ${P.text.secondary};
@@ -371,18 +387,14 @@ export const STUDIO_CONSOLE_STYLES = `
   flex-shrink: 0;
 }
 
-.sc-circle-key {
-  color: ${P.accent.cyanBright};
-  font-weight: 500;
-}
-
-.sc-circle-key[hidden],
-.sc-circle-sep[hidden] {
+.sc-circle-footer[hidden] {
   display: none;
 }
 
-.sc-circle-sep {
-  color: ${P.text.dim};
+.sc-circle-key {
+  color: ${P.accent.cyanBright};
+  font-weight: 600;
+  letter-spacing: 0.04em;
 }
 
 /* Pulse Lane */
@@ -390,6 +402,11 @@ export const STUDIO_CONSOLE_STYLES = `
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
+  max-height: 28%;
+}
+
+.sc-pulse-panel[hidden] {
+  display: none;
 }
 
 .sc-pulse-body {
@@ -397,6 +414,12 @@ export const STUDIO_CONSOLE_STYLES = `
   flex-direction: column;
   gap: 5px;
   padding: 8px 12px 10px 12px;
+  overflow-y: auto;
+}
+
+.sc-pulse-panel[data-compact="true"] .sc-pulse-body {
+  gap: 3px;
+  padding: 6px 12px 8px 12px;
 }
 
 .sc-pulse-row {
@@ -437,8 +460,9 @@ export const STUDIO_CONSOLE_STYLES = `
   position: relative;
   min-width: 0;
   height: 18px;
+  padding: 3px;
   border-radius: 4px;
-  background: ${P.surface.panelRecessed};
+  background: rgba(14, 20, 32, 0.85);
   border: 1px solid ${P.border.subtle};
   display: flex;
   align-items: center;
@@ -446,35 +470,44 @@ export const STUDIO_CONSOLE_STYLES = `
   overflow: hidden;
 }
 
+.sc-pulse-panel[data-compact="true"] .sc-pulse-step {
+  height: 13px;
+  padding: 2px;
+}
+
+.sc-pulse-step[data-beat-group="odd"] {
+  background: rgba(20, 28, 44, 0.85);
+}
+
 .sc-pulse-step[data-beat-start="true"] {
-  border-left-color: rgba(182, 204, 240, 0.24);
+  border-left: 2px solid rgba(182, 204, 240, 0.28);
 }
 
 .sc-pulse-step[data-current="true"] {
-  background: rgba(245, 185, 99, 0.14);
-  border-color: rgba(245, 185, 99, 0.45);
+  background: rgba(245, 185, 99, 0.18);
+  border-color: rgba(245, 185, 99, 0.55);
 }
 
 .sc-pulse-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 2px;
-  background: rgba(182, 204, 240, 0.1);
+  width: 4px;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(182, 204, 240, 0.14);
 }
 
 .sc-pulse-step[data-hit="regular"] .sc-pulse-dot {
-  width: 10px;
-  height: 9px;
-  border-radius: 2.5px;
-  background: ${P.accent.cyan};
+  width: 100%;
+  height: 100%;
+  border-radius: 2px;
+  background: linear-gradient(180deg, ${P.accent.cyanBright} 0%, ${P.accent.cyan} 100%);
   box-shadow: 0 0 8px ${P.accent.cyanGlow};
 }
 
 .sc-pulse-step[data-hit="accent"] .sc-pulse-dot {
-  width: 12px;
-  height: 12px;
-  border-radius: 3px;
-  background: ${P.accent.amber};
+  width: 100%;
+  height: 100%;
+  border-radius: 2px;
+  background: linear-gradient(180deg, ${P.accent.amberBright} 0%, ${P.accent.amber} 100%);
   box-shadow: 0 0 11px ${P.accent.amberGlow};
 }
 

@@ -104,10 +104,13 @@ export class PulseLaneView {
 
     if (this.indexedLanes.length === 0) {
       this.clearRows();
+      this.element.hidden = true;
       this.emptyState.hidden = false;
       return;
     }
 
+    this.element.hidden = false;
+    this.element.dataset.compact = this.indexedLanes.length > 4 ? 'true' : 'false';
     this.emptyState.hidden = true;
     if (
       this.renderedStepsPerBar !== pos.stepsPerBar ||
@@ -127,9 +130,11 @@ export class PulseLaneView {
         const cellNodes = rowNodes.cells[step];
         const hit = barHits?.get(step);
         const isCurrent = step === pos.step;
+        const beatGroup = Math.floor(step / stepsPerBeat) % 2 === 0 ? 'even' : 'odd';
 
         cellNodes.cell.dataset.current = isCurrent ? 'true' : 'false';
         cellNodes.cell.dataset.beatStart = step % stepsPerBeat === 0 ? 'true' : 'false';
+        cellNodes.cell.dataset.beatGroup = beatGroup;
 
         if (!hit) {
           cellNodes.cell.dataset.hit = 'none';
@@ -140,10 +145,10 @@ export class PulseLaneView {
         cellNodes.cell.dataset.hit = hit.accent ? 'accent' : 'regular';
         const bounce = stepBounce(timeSec - hit.t, bounceDuration);
         if (bounce > 0.005) {
-          const scaleY = 1 + bounce * (hit.accent ? 0.55 : 0.42);
-          const scaleX = 1 + bounce * 0.18;
+          const scaleY = 1 + bounce * (hit.accent ? 0.32 : 0.24);
+          const scaleX = 1 + bounce * 0.1;
           cellNodes.dot.style.transform = `scale(${scaleX.toFixed(3)}, ${scaleY.toFixed(3)})`;
-          cellNodes.dot.style.filter = `brightness(${(1 + bounce * 0.55).toFixed(3)})`;
+          cellNodes.dot.style.filter = `brightness(${(1 + bounce * 0.65).toFixed(3)})`;
         } else {
           cellNodes.dot.removeAttribute('style');
         }

@@ -4,7 +4,6 @@ use super::{VisualNote, VisualSection};
 use crate::score::syntax;
 use riffra_core::{CreativeSession, HarmonyChord, HarmonyEvent, ProjectTimebase};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
 use ts_rs::TS;
 
 /// A chord sounding over a non-overlapping range of the arrangement.
@@ -212,10 +211,11 @@ fn degrees_above(pitch_class: i32, tonic_pc: i32) -> &'static str {
 
 /// Returns the role of a note in the chord sounding when the note starts.
 pub(super) fn chord_role(midi: u8, start_tick: u64, chords: &[VisualChord]) -> Option<ChordRole> {
-    let chord = chords
-        .iter()
-        .find(|chord| chord.start_tick <= start_tick && start_tick < chord.end_tick)?;
-    Some(chord.role(midi % 12))
+    let index = chords
+        .partition_point(|chord| chord.start_tick <= start_tick)
+        .checked_sub(1)?;
+    let chord = &chords[index];
+    (start_tick < chord.end_tick).then(|| chord.role(midi % 12))
 }
 
 impl VisualChord {
@@ -235,16 +235,16 @@ impl VisualChord {
             return ChordRole::NonChord;
         }
         let interval = (12 + pitch_class - root_pc) % 12;
-        let intervals: BTreeSet<u8> = self
-            .tones_pc
-            .iter()
-            .map(|tone| (12 + tone - root_pc) % 12)
-            .collect();
+        let mut intervals_mask: u16 = 0;
+        for &tone in &self.tones_pc {
+            intervals_mask |= 1_u16 << ((12 + tone - root_pc) % 12);
+        }
+        let has = |semitones: u8| (intervals_mask & (1_u16 << semitones)) != 0;
         match interval {
             3 | 4 | 7 | 10 | 11 => ChordRole::ChordTone,
-            6 | 8 if intervals.contains(&7) => ChordRole::Tension,
+            6 | 8 if has(7) => ChordRole::Tension,
             6 | 8 => ChordRole::ChordTone,
-            9 if intervals.contains(&10) || intervals.contains(&11) => ChordRole::Tension,
+            9 if has(10) || has(11) => ChordRole::Tension,
             9 => ChordRole::ChordTone,
             _ => ChordRole::Tension,
         }
@@ -253,20 +253,35 @@ impl VisualChord {
 
 /// Marks the notes that no other note sounding with them is higher than.
 pub(super) fn mark_top(notes: &mut [VisualNote]) {
-    let tops = notes
-        .iter()
-        .enumerate()
-        .map(|(index, note)| {
-            notes.iter().enumerate().all(|(other, candidate)| {
-                other == index
-                    || !(candidate.start_tick <= note.start_tick
-                        && note.start_tick < candidate.end_tick)
-                    || candidate.midi <= note.midi
-            })
-        })
-        .collect::<Vec<_>>();
-    for (note, top) in notes.iter_mut().zip(tops) {
-        note.top = top;
+    if notes.is_empty() {
+        return;
+    }
+    let mut order: Vec<usize> = (0..notes.len()).collect();
+    order.sort_by_key(|&index| notes[index].start_tick);
+
+    let mut active: Vec<(u64, u8)> = Vec::new();
+    let mut cursor = 0;
+    while cursor < order.len() {
+        let tick = notes[order[cursor]].start_tick;
+        let mut group_end = cursor + 1;
+        while group_end < order.len() && notes[order[group_end]].start_tick == tick {
+            group_end += 1;
+        }
+
+        active.retain(|&(end_tick, _)| end_tick > tick);
+        for &index in &order[cursor..group_end] {
+            let note = &notes[index];
+            if note.end_tick > tick {
+                active.push((note.end_tick, note.midi));
+            }
+        }
+
+        let highest = active.iter().map(|&(_, midi)| midi).max();
+        for &index in &order[cursor..group_end] {
+            notes[index].top = highest.is_none_or(|top_midi| notes[index].midi >= top_midi);
+        }
+
+        cursor = group_end;
     }
 }
 

@@ -1,8 +1,9 @@
+import { formatKeyLabel } from '../../format';
 import type { VisualSnapshot } from '../../generated';
 import { findSectionAt, findTempoAt } from '../../query';
 import type { ViewState, VisualLayout, VisualTheme } from '../../types';
 import { ChordStripView } from './chord-strip';
-import { CircleOfFifthsView, formatKeyLabel } from './circle-of-fifths';
+import { CircleOfFifthsView } from './circle-of-fifths';
 import { PianoRollView } from './piano-roll';
 import { PulseLaneView } from './pulse-lane';
 import { STUDIO_CONSOLE_STYLES } from './styles';

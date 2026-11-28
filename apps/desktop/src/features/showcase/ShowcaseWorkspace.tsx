@@ -6,7 +6,6 @@ import {
 } from '@riffra/visual-renderer';
 import { secondsToTicks } from '@/model/timebase';
 import { useSession } from '@/session/session-context';
-import { Toolbar, ToolbarSegmented } from '@/shared/ui/Toolbar';
 import { useVisualSnapshot } from './useVisualSnapshot';
 import styles from './ShowcaseWorkspace.module.css';
 
@@ -24,23 +23,31 @@ export function ShowcaseWorkspace() {
 
   return (
     <section className={styles.showcase} aria-label="Showcase" data-showcase-workspace>
-      <Toolbar label="Showcase">
-        <ToolbarSegmented
-          label="Color Mode"
-          value={colorMode}
-          options={COLOR_MODES}
-          onChange={setColorMode}
-        />
-      </Toolbar>
+      <div className={styles.controlsBar}>
+        <div className={styles.colorModeGroup} role="group" aria-label="Color Mode">
+          {COLOR_MODES.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              aria-pressed={colorMode === option.value}
+              onClick={() => setColorMode(option.value)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </div>
       {snapshot ? (
         <ShowcaseStage snapshot={snapshot} colorMode={colorMode} />
+      ) : loading ? (
+        <div className={styles.status} role="status" aria-live="polite">
+          <span>Preparing Showcase…</span>
+        </div>
       ) : (
-        !loading && (
-          <div className={styles.empty}>
-            <h2>Nothing to visualize yet</h2>
-            <p>Add a clip to the arrangement, then return here to watch the music play.</p>
-          </div>
-        )
+        <div className={styles.empty}>
+          <h2>Nothing to visualize yet</h2>
+          <p>Add a clip to the arrangement, then return here to watch the music play.</p>
+        </div>
       )}
     </section>
   );
@@ -62,7 +69,7 @@ function ShowcaseStage({
   const currentSeconds = useSession((state) => state.transport.currentSeconds);
   const seek = useSession((state) => state.transport.seek);
   const timebase = useSession(
-    (state) => state.project.boot!.canonical.session.arrangement.timebase,
+    (state) => state.project.boot?.canonical.session.arrangement.timebase ?? null,
   );
 
   useEffect(() => {
@@ -77,6 +84,7 @@ function ShowcaseStage({
   }, [theme, snapshot]);
 
   const draw = useCallback(() => {
+    if (!timebase) return;
     theme.render(snapshot, currentSeconds(timebase), {
       colorMode,
       showHeader: false,

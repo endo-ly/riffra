@@ -59,6 +59,7 @@ export class ChordStripView {
 
   render(snapshot: VisualSnapshot, timeSec: number): void {
     if (snapshot.chords.length === 0) {
+      this.element.hidden = true;
       this.emptyState.hidden = false;
       for (const slot of this.slots) {
         slot.card.hidden = true;
@@ -68,6 +69,7 @@ export class ChordStripView {
       return;
     }
 
+    this.element.hidden = false;
     this.emptyState.hidden = true;
     const window = findChordWindow(snapshot, timeSec, SLOT_COUNT);
 

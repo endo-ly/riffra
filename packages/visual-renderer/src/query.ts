@@ -73,6 +73,24 @@ function lastIndexAtOrBefore<T>(
   return found;
 }
 
+/** Returns the first beat index at or after `targetSec`. */
+export function findFirstBeatAtOrAfter(
+  beats: readonly { readonly t: number }[],
+  targetSec: number,
+): number {
+  let low = 0;
+  let high = beats.length;
+  while (low < high) {
+    const mid = Math.floor((low + high) / 2);
+    if (beats[mid].t < targetSec) {
+      low = mid + 1;
+    } else {
+      high = mid;
+    }
+  }
+  return low;
+}
+
 /** Returns the tempo in effect at `timeSec`. */
 export function findTempoAt(snapshot: VisualSnapshot, timeSec: number): VisualTempo | null {
   const index = lastIndexAtOrBefore(snapshot.tempos, (tempo) => tempo.t, timeSec);

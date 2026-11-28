@@ -92,7 +92,19 @@ export function GlobalControlBar(ui: GlobalControlBarProps) {
               <Icon name="redo" />
             </button>
           </div>
-          <span className={styles.divider} aria-hidden="true" />
+        </fieldset>
+        <span className={styles.divider} aria-hidden="true" />
+        <fieldset
+          className={clsx(styles.rigControls, styles.hostBoundControls)}
+          disabled={!props.hostConnected}
+        >
+          <RigControl />
+        </fieldset>
+        <span className={styles.divider} aria-hidden="true" />
+        <fieldset
+          className={styles.projectHostBoundControls}
+          disabled={!props.hostConnected || props.projectSwitching}
+        >
           <div className={styles.viewModeControls} role="group" aria-label="View mode">
             {VIEW_MODES.map((option) => (
               <button
@@ -106,13 +118,6 @@ export function GlobalControlBar(ui: GlobalControlBarProps) {
               </button>
             ))}
           </div>
-        </fieldset>
-        <span className={styles.divider} aria-hidden="true" />
-        <fieldset
-          className={clsx(styles.rigControls, styles.hostBoundControls)}
-          disabled={!props.hostConnected}
-        >
-          <RigControl />
         </fieldset>
       </div>
 

@@ -1,11 +1,14 @@
-import { midiToLabel } from '../../format';
-import type { VisualNote, VisualSnapshot, VisualSustain, VisualTrack } from '../../generated';
-import { clamp01, expDecay } from '../../math';
+import type { VisualSnapshot, VisualSustain, VisualTrack } from '../../generated';
 import type { ColorMode, ViewState } from '../../types';
-import { interpolateVelocityColor, STUDIO_PALETTE, type TrackColorStyle } from './palette';
+import { STUDIO_PALETTE } from './palette';
+import {
+  canvasXToTimeSec,
+  drawPianoRollFrame,
+  type IndexedNote,
+  type PianoRollSnapshotCache,
+} from './piano-roll-canvas';
 
 const MAX_LEGEND_ITEMS = 6;
-const BLACK_KEY_PCS = new Set([1, 3, 6, 8, 10]);
 
 interface LegendItemNodes {
   item: HTMLSpanElement;
@@ -13,25 +16,9 @@ interface LegendItemNodes {
   label: HTMLSpanElement;
 }
 
-interface IndexedNote {
-  note: VisualNote;
-  trackIndex: number;
-  category: VisualTrack['category'];
-}
-
-interface SnapshotCache {
-  snapshot: VisualSnapshot;
-  nonDrumTracks: VisualTrack[];
-  notes: IndexedNote[];
-  sustains: VisualSustain[];
-  minMidi: number;
-  maxMidi: number;
-  isSoloEmphasis: boolean;
-}
-
 /**
- * Canvas 2D scrolling piano roll with CC64 sustain sub-lane, deterministic
- * note illumination, and click-to-seek support.
+ * Manages the Piano Roll panel DOM, snapshot indexing, legend, and click-to-seek,
+ * delegating pure Canvas 2D frame rendering to `drawPianoRollFrame`.
  */
 export class PianoRollView {
   readonly element: HTMLElement;
@@ -40,7 +27,7 @@ export class PianoRollView {
   private readonly legendContainer: HTMLDivElement;
   private readonly legendItems: LegendItemNodes[] = [];
 
-  private cache: SnapshotCache | null = null;
+  private cache: PianoRollSnapshotCache | null = null;
   private lastLegendKey = '';
   private lastTimeSec = 0;
   private lastDurationSec = 0;
@@ -95,12 +82,14 @@ export class PianoRollView {
       if (!onSeek) return;
       const rect = this.canvas.getBoundingClientRect();
       if (rect.width <= 0) return;
-      const ratio = (event.clientX - rect.left) / rect.width;
-      const windowSec = STUDIO_PALETTE.pianoRoll.windowSec;
-      const windowStart = this.lastTimeSec - windowSec * STUDIO_PALETTE.pianoRoll.playheadRatio;
-      const rawTime = windowStart + ratio * windowSec;
-      const clamped = Math.min(Math.max(rawTime, 0), Math.max(0, this.lastDurationSec));
-      onSeek(clamped);
+      onSeek(
+        canvasXToTimeSec(
+          event.clientX - rect.left,
+          rect.width,
+          this.lastTimeSec,
+          this.lastDurationSec,
+        ),
+      );
     };
 
     this.canvas.addEventListener('click', this.handleClick);
@@ -186,7 +175,7 @@ export class PianoRollView {
 
     ctx.save();
     ctx.scale(dpr, dpr);
-    this.drawFrame(ctx, cssWidth, cssHeight, cache, timeSec, state.colorMode);
+    drawPianoRollFrame(ctx, cssWidth, cssHeight, cache, timeSec, state.colorMode);
     ctx.restore();
   }
 
@@ -242,339 +231,4 @@ export class PianoRollView {
       node.label.textContent = entry.label;
     }
   }
-
-  private drawFrame(
-    ctx: CanvasRenderingContext2D,
-    width: number,
-    height: number,
-    cache: SnapshotCache,
-    timeSec: number,
-    colorMode: ColorMode,
-  ): void {
-    const { pianoRoll, surface, grid, text, decay } = STUDIO_PALETTE;
-    const sustainHeight = Math.min(pianoRoll.sustainLaneHeight, Math.floor(height * 0.22));
-    const rollTop = pianoRoll.headerInsetTop;
-    const rollBottom = Math.max(rollTop + 20, height - sustainHeight);
-    const rollHeight = rollBottom - rollTop;
-
-    const windowSec = pianoRoll.windowSec;
-    const playheadX = width * pianoRoll.playheadRatio;
-    const windowStart = timeSec - windowSec * pianoRoll.playheadRatio;
-    const windowEnd = windowStart + windowSec;
-    const timeToX = (t: number) => ((t - windowStart) / windowSec) * width;
-
-    // Background fill
-    ctx.fillStyle = surface.panelRecessed;
-    ctx.fillRect(0, 0, width, height);
-
-    // Pitch bands and octave lines
-    const pitchCount = Math.max(1, cache.maxMidi - cache.minMidi + 1);
-    const rowHeight = rollHeight / pitchCount;
-    const midiToY = (midi: number) => rollBottom - (midi - cache.minMidi + 1) * rowHeight;
-
-    for (let midi = cache.minMidi; midi <= cache.maxMidi; midi += 1) {
-      const y = midiToY(midi);
-      const pc = ((midi % 12) + 12) % 12;
-      if (BLACK_KEY_PCS.has(pc)) {
-        ctx.fillStyle = grid.blackKeyBand;
-        ctx.fillRect(0, y, width, rowHeight);
-      }
-      if (pc === 0) {
-        const lineY = Math.round(y + rowHeight) + 0.5;
-        ctx.strokeStyle = grid.octaveLine;
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(0, lineY);
-        ctx.lineTo(width, lineY);
-        ctx.stroke();
-
-        ctx.fillStyle = text.dim;
-        ctx.font = `500 9px ${STUDIO_PALETTE.typography.mono}`;
-        ctx.fillText(midiToLabel(midi), 6, lineY - 3);
-      }
-    }
-
-    // Beat and bar vertical grid lines
-    const beats = cache.snapshot.beats;
-    let beatIndex = lowerBoundBeat(beats, windowStart);
-    while (beatIndex < beats.length && beats[beatIndex].t <= windowEnd) {
-      const beat = beats[beatIndex];
-      const x = Math.round(timeToX(beat.t)) + 0.5;
-      ctx.strokeStyle = beat.downbeat ? grid.barLine : grid.beatLine;
-      ctx.lineWidth = beat.downbeat ? 1.25 : 1;
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, rollBottom);
-      ctx.stroke();
-
-      if (beat.downbeat) {
-        ctx.fillStyle = text.muted;
-        ctx.font = `600 9px ${STUDIO_PALETTE.typography.mono}`;
-        ctx.fillText(`${beat.bar}`, x + 4, 12);
-      }
-      beatIndex += 1;
-    }
-
-    // Soft playhead atmospheric wash
-    const washWidth = Math.max(24, width * 0.06);
-    const washGrad = ctx.createLinearGradient(playheadX - washWidth, 0, playheadX + 8, 0);
-    washGrad.addColorStop(0, 'rgba(245, 185, 99, 0)');
-    washGrad.addColorStop(0.85, grid.playheadWash);
-    washGrad.addColorStop(1, 'rgba(245, 185, 99, 0)');
-    ctx.fillStyle = washGrad;
-    ctx.fillRect(playheadX - washWidth, 0, washWidth + 8, rollBottom);
-
-    // Notes
-    const afterglowMargin = 1.5;
-    for (const item of cache.notes) {
-      const { note, trackIndex, category } = item;
-      if (note.endSec < windowStart - afterglowMargin || note.startSec > windowEnd) {
-        continue;
-      }
-
-      const x1 = timeToX(note.startSec);
-      const x2 = timeToX(note.endSec);
-      const drawX = Math.max(-4, x1);
-      const drawRight = Math.min(width + 4, Math.max(x2, x1 + 3));
-      const drawW = drawRight - drawX;
-      if (drawW <= 0) continue;
-
-      const isSounding = timeSec >= note.startSec && timeSec <= note.endSec;
-      const attackGlow =
-        timeSec >= note.startSec ? expDecay(timeSec - note.startSec, decay.attackGlowRate) : 0;
-      const afterglow =
-        timeSec > note.endSec ? expDecay(timeSec - note.endSec, decay.afterglowRate) : 0;
-      const sustainGlow = isSounding ? 1 : 0;
-      const energy = clamp01(Math.max(attackGlow, sustainGlow * 0.72, afterglow * 0.55));
-
-      const isHighlightedSolo =
-        cache.isSoloEmphasis &&
-        (note.top || note.velocity >= STUDIO_PALETTE.pianoRoll.soloVelocityThreshold);
-      const isRecessedSolo = cache.isSoloEmphasis && !isHighlightedSolo;
-
-      const heightScale = isHighlightedSolo ? 0.94 : isRecessedSolo ? 0.66 : 0.82;
-      const noteH = Math.max(3, rowHeight * heightScale);
-      const noteY = midiToY(note.midi) + (rowHeight - noteH) / 2;
-
-      const paletteStyle = resolveNoteColor(note, trackIndex, colorMode);
-      const baseAlpha =
-        (isRecessedSolo ? 0.52 : STUDIO_PALETTE.categoryAlpha[category]) *
-        (0.7 + (note.velocity / 127) * 0.3);
-
-      // Outer illumination halo when active or decaying
-      if (energy > 0.03) {
-        const pad = 2 + attackGlow * 5;
-        ctx.save();
-        ctx.globalAlpha = clamp01(energy * (isHighlightedSolo ? 0.65 : 0.5));
-        ctx.fillStyle = paletteStyle.glow;
-        fillRoundedRect(
-          ctx,
-          drawX - pad * 0.5,
-          noteY - pad * 0.5,
-          drawW + pad,
-          noteH + pad,
-          pianoRoll.noteCornerRadius + 2,
-        );
-        ctx.restore();
-      }
-
-      // Main note body
-      ctx.save();
-      ctx.globalAlpha = clamp01(baseAlpha + energy * 0.28);
-      ctx.fillStyle = paletteStyle.fill;
-      fillRoundedRect(ctx, drawX, noteY, drawW, noteH, pianoRoll.noteCornerRadius);
-
-      // Specular inner core on active/attacking notes
-      if (sustainGlow > 0 || attackGlow > 0.08) {
-        ctx.globalAlpha = clamp01(0.24 + attackGlow * 0.58);
-        ctx.fillStyle = paletteStyle.core;
-        fillRoundedRect(
-          ctx,
-          drawX + 1,
-          noteY + 1,
-          Math.max(1, drawW - 2),
-          Math.max(1.5, noteH * 0.44),
-          Math.max(1, pianoRoll.noteCornerRadius - 1),
-        );
-      }
-
-      // Crisp border
-      ctx.globalAlpha = clamp01(0.55 + energy * 0.45 + (isHighlightedSolo ? 0.15 : 0));
-      ctx.strokeStyle = paletteStyle.stroke;
-      ctx.lineWidth = isHighlightedSolo ? 1.4 : 1;
-      strokeRoundedRect(ctx, drawX, noteY, drawW, noteH, pianoRoll.noteCornerRadius);
-      ctx.restore();
-
-      // Playhead attack flare at exact strike point
-      if (attackGlow > 0.06 && x1 <= playheadX + 4 && x2 >= playheadX - 18) {
-        const flareRadius = 5 + attackGlow * 10;
-        const cy = noteY + noteH / 2;
-        ctx.save();
-        ctx.globalAlpha = clamp01(attackGlow * 0.72);
-        const flare = ctx.createRadialGradient(playheadX, cy, 0.5, playheadX, cy, flareRadius);
-        flare.addColorStop(0, paletteStyle.core);
-        flare.addColorStop(0.45, paletteStyle.glow);
-        flare.addColorStop(1, 'rgba(255, 255, 255, 0)');
-        ctx.fillStyle = flare;
-        ctx.beginPath();
-        ctx.arc(playheadX, cy, flareRadius, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
-      }
-    }
-
-    // CC64 Sustain Pedal sub-lane
-    this.drawSustainLane(ctx, width, rollBottom, sustainHeight, cache.sustains, timeSec, timeToX);
-
-    // Playhead vertical line
-    ctx.save();
-    ctx.strokeStyle = grid.playheadGlow;
-    ctx.lineWidth = 5;
-    ctx.beginPath();
-    ctx.moveTo(playheadX, 0);
-    ctx.lineTo(playheadX, height);
-    ctx.stroke();
-
-    ctx.strokeStyle = grid.playheadLine;
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.moveTo(playheadX, 0);
-    ctx.lineTo(playheadX, height);
-    ctx.stroke();
-
-    // Top needle cap
-    ctx.fillStyle = grid.playheadLine;
-    ctx.beginPath();
-    ctx.moveTo(playheadX - 4, 0);
-    ctx.lineTo(playheadX + 4, 0);
-    ctx.lineTo(playheadX, 6);
-    ctx.closePath();
-    ctx.fill();
-    ctx.restore();
-  }
-
-  private drawSustainLane(
-    ctx: CanvasRenderingContext2D,
-    width: number,
-    top: number,
-    height: number,
-    sustains: readonly VisualSustain[],
-    timeSec: number,
-    timeToX: (t: number) => number,
-  ): void {
-    const { surface, border, grid, text } = STUDIO_PALETTE;
-    ctx.fillStyle = surface.sustainLane;
-    ctx.fillRect(0, top, width, height);
-
-    ctx.strokeStyle = border.panel;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(0, top + 0.5);
-    ctx.lineTo(width, top + 0.5);
-    ctx.stroke();
-
-    const barTop = top + 7;
-    const barHeight = Math.max(6, height - 13);
-
-    for (const sustain of sustains) {
-      const x1 = timeToX(sustain.startSec);
-      const x2 = timeToX(sustain.endSec);
-      if (x2 < 0 || x1 > width) continue;
-      const drawX = Math.max(0, x1);
-      const drawRight = Math.min(width, x2);
-      const drawW = drawRight - drawX;
-      if (drawW <= 0) continue;
-
-      const active = timeSec >= sustain.startSec && timeSec <= sustain.endSec;
-      ctx.fillStyle = active ? grid.sustainActiveFill : grid.sustainFill;
-      fillRoundedRect(ctx, drawX, barTop, drawW, barHeight, 2);
-
-      ctx.strokeStyle = active ? grid.sustainActiveStroke : grid.sustainStroke;
-      ctx.lineWidth = active ? 1.5 : 1;
-      ctx.beginPath();
-      ctx.moveTo(drawX, barTop + 0.5);
-      ctx.lineTo(drawX + drawW, barTop + 0.5);
-      ctx.stroke();
-    }
-
-    ctx.fillStyle = text.dim;
-    ctx.font = `600 9px ${STUDIO_PALETTE.typography.mono}`;
-    ctx.fillText('CC64', 6, top + height - 6);
-  }
-}
-
-function resolveNoteColor(
-  note: VisualNote,
-  trackIndex: number,
-  colorMode: ColorMode,
-): TrackColorStyle {
-  if (colorMode === 'harmony') {
-    return note.chordRole
-      ? STUDIO_PALETTE.harmony[note.chordRole]
-      : STUDIO_PALETTE.harmony.fallback;
-  }
-  if (colorMode === 'velocity') {
-    return interpolateVelocityColor(note.velocity);
-  }
-  return STUDIO_PALETTE.tracks[trackIndex % STUDIO_PALETTE.tracks.length];
-}
-
-function lowerBoundBeat(beats: readonly { t: number }[], targetSec: number): number {
-  let low = 0;
-  let high = beats.length;
-  while (low < high) {
-    const mid = Math.floor((low + high) / 2);
-    if (beats[mid].t < targetSec) {
-      low = mid + 1;
-    } else {
-      high = mid;
-    }
-  }
-  return low;
-}
-
-function fillRoundedRect(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-  radius: number,
-): void {
-  traceRoundedRect(ctx, x, y, width, height, radius);
-  ctx.fill();
-}
-
-function strokeRoundedRect(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-  radius: number,
-): void {
-  traceRoundedRect(ctx, x, y, width, height, radius);
-  ctx.stroke();
-}
-
-function traceRoundedRect(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-  radius: number,
-): void {
-  const r = Math.min(radius, width / 2, height / 2);
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.lineTo(x + width - r, y);
-  ctx.quadraticCurveTo(x + width, y, x + width, y + r);
-  ctx.lineTo(x + width, y + height - r);
-  ctx.quadraticCurveTo(x + width, y + height, x + width - r, y + height);
-  ctx.lineTo(x + r, y + height);
-  ctx.quadraticCurveTo(x, y + height, x, y + height - r);
-  ctx.lineTo(x, y + r);
-  ctx.quadraticCurveTo(x, y, x + r, y);
-  ctx.closePath();
 }

@@ -100,6 +100,9 @@ function createCanvasRecorder(): {
     save: () => calls.push('save'),
     restore: () => calls.push('restore'),
     scale: (x: number, y: number) => calls.push(`scale:${x},${y}`),
+    rect: (x: number, y: number, w: number, h: number) =>
+      calls.push(`rect:${x.toFixed(1)},${y.toFixed(1)},${w.toFixed(1)},${h.toFixed(1)}`),
+    clip: () => calls.push('clip'),
     fillRect: (x: number, y: number, w: number, h: number) =>
       calls.push(`fillRect:${x.toFixed(1)},${y.toFixed(1)},${w.toFixed(1)},${h.toFixed(1)}`),
     beginPath: () => calls.push('beginPath'),
@@ -200,12 +203,12 @@ describe('studio-console theme', () => {
 
     // Assert
     expect((container.querySelector('[data-role="header"]') as HTMLElement).hidden).toBe(true);
-    expect((container.querySelector('.sc-chord-empty') as HTMLElement).hidden).toBe(false);
+    expect((container.querySelector('[data-role="chord-strip"]') as HTMLElement).hidden).toBe(true);
     expect(container.querySelector('[data-role="diatonic-arc"]')?.getAttribute('visibility')).toBe(
       'hidden',
     );
-    expect((container.querySelector('[data-role="circle-key"]') as HTMLElement).hidden).toBe(true);
-    expect(container.querySelector('[data-role="circle-bar"]')?.textContent).toBe('Bar 1');
+    expect((container.querySelector('.sc-circle-footer') as HTMLElement).hidden).toBe(true);
+    expect(container.querySelector('[data-role="circle-section"]')?.textContent).toBe('Unkeyed');
 
     theme.unmount();
   });
@@ -235,8 +238,8 @@ describe('studio-console theme', () => {
       toJSON: () => ({}),
     });
 
-    // Act: click at playhead ratio (28% of 400 = 112px from left -> 2.0s) and past right edge (clamped to durationSec)
-    canvas.dispatchEvent(new MouseEvent('click', { clientX: 212, bubbles: true }));
+    // Act: click at playhead ratio (28px key strip + 28% of 372 = 132.16px from left -> 2.0s) and past right edge (clamped to durationSec)
+    canvas.dispatchEvent(new MouseEvent('click', { clientX: 232.16, bubbles: true }));
     canvas.dispatchEvent(new MouseEvent('click', { clientX: 1000, bubbles: true }));
     canvas.dispatchEvent(new MouseEvent('click', { clientX: 0, bubbles: true }));
 

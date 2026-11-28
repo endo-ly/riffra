@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatMusicSymbol, midiToLabel } from '../format';
+import { formatKeyLabel, formatMusicSymbol, midiToLabel } from '../format';
 
 describe('formatMusicSymbol', () => {
   it('turns ASCII flats and sharps into glyphs', () => {
@@ -21,5 +21,14 @@ describe('midiToLabel', () => {
     expect(midiToLabel(36)).toBe('C2');
     expect(midiToLabel(60)).toBe('C4');
     expect(midiToLabel(61)).toBe('C#4');
+  });
+});
+
+describe('formatKeyLabel', () => {
+  it('formats known, custom, and unspecified scales cleanly', () => {
+    expect(formatKeyLabel({ tonic: 'F', scale: 'ionian' })).toBe('F Major');
+    expect(formatKeyLabel({ tonic: 'Bb', scale: 'harmonic_minor' })).toBe('B♭ Harmonic Minor');
+    expect(formatKeyLabel({ tonic: 'D', scale: 'hirajoshi_mode' })).toBe('D Hirajoshi Mode');
+    expect(formatKeyLabel({ tonic: 'Eb' })).toBe('E♭');
   });
 });

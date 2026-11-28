@@ -10,20 +10,51 @@ interface VisualSnapshotState {
   loading: boolean;
 }
 
-/** Reads the Showcase snapshot for the active Project, once per canonical change. */
+const snapshotCaches = new WeakMap<object, Map<string, VisualSnapshot | null>>();
+
+function cacheFor(api: object): Map<string, VisualSnapshot | null> {
+  let cache = snapshotCaches.get(api);
+  if (!cache) {
+    cache = new Map();
+    snapshotCaches.set(api, cache);
+  }
+  return cache;
+}
+
+/**
+ * Reads the Showcase snapshot for the active Project, caching per canonical
+ * sequence so switching between Edit and Showcase is instantaneous when no
+ * edits occurred.
+ */
 export function useVisualSnapshot(): VisualSnapshotState {
   const { api } = useSessionContext();
   const hostGeneration = useSession((state) => state.host.connection.generation);
   const activeProjectId = useSession(selectActiveProjectId);
   const sequence = useSession((state) => state.project.boot?.canonical.sequence ?? 0);
-  const [state, setState] = useState<VisualSnapshotState>({ snapshot: null, loading: true });
+  const cacheKey = `${hostGeneration}:${activeProjectId ?? ''}:${sequence}`;
+
+  const [state, setState] = useState<VisualSnapshotState>(() => {
+    const cache = cacheFor(api);
+    if (cache.has(cacheKey)) {
+      return { snapshot: cache.get(cacheKey) ?? null, loading: false };
+    }
+    return { snapshot: null, loading: true };
+  });
 
   useEffect(() => {
+    const cache = cacheFor(api);
+    if (cache.has(cacheKey)) {
+      setState({ snapshot: cache.get(cacheKey) ?? null, loading: false });
+      return;
+    }
+
     let cancelled = false;
     setState((current) => ({ ...current, loading: true }));
     void api.getVisualSnapshot().then(
       (snapshot) => {
         if (cancelled) return;
+        cache.clear();
+        cache.set(cacheKey, snapshot);
         setState({ snapshot, loading: false });
       },
       (error: unknown) => {
@@ -36,7 +67,7 @@ export function useVisualSnapshot(): VisualSnapshotState {
     return () => {
       cancelled = true;
     };
-  }, [api, hostGeneration, activeProjectId, sequence]);
+  }, [api, cacheKey]);
 
   return state;
 }

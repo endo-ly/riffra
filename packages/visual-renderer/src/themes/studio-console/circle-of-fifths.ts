@@ -1,4 +1,4 @@
-import { formatMusicSymbol } from '../../format';
+import { formatKeyLabel, formatMusicSymbol } from '../../format';
 import type { VisualKey, VisualSnapshot } from '../../generated';
 import {
   circleOfFifthsAngle,
@@ -7,12 +7,7 @@ import {
   easeOutCubic,
   lerpAngle,
 } from '../../math';
-import {
-  findChordWindow,
-  findRecentChordRoots,
-  findSectionAt,
-  resolveBeatGridPosition,
-} from '../../query';
+import { findChordWindow, findRecentChordRoots, findSectionAt } from '../../query';
 import { STUDIO_PALETTE } from './palette';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -43,12 +38,13 @@ export class CircleOfFifthsView {
   private readonly diatonicGlow: SVGPathElement;
   private readonly diatonicArc: SVGPathElement;
   private readonly trails: TrailSegmentNodes[] = [];
+  private readonly trailHead: SVGCircleElement;
   private readonly vertices: VertexNodes[] = [];
   private readonly centerPrimary: SVGTextElement;
   private readonly centerSecondary: SVGTextElement;
+  private readonly sectionTag: HTMLSpanElement;
   private readonly keyReadout: HTMLSpanElement;
-  private readonly keySep: HTMLSpanElement;
-  private readonly barReadout: HTMLSpanElement;
+  private readonly footer: HTMLDivElement;
 
   constructor(doc: Document) {
     const C = STUDIO_PALETTE.circle;
@@ -64,11 +60,12 @@ export class CircleOfFifthsView {
     title.className = 'sc-panel-title';
     title.textContent = 'CIRCLE OF FIFTHS';
 
-    const tag = doc.createElement('span');
-    tag.className = 'sc-panel-tag';
-    tag.textContent = 'C TOP';
+    this.sectionTag = doc.createElement('span');
+    this.sectionTag.className = 'sc-panel-tag';
+    this.sectionTag.setAttribute('data-role', 'circle-section');
+    this.sectionTag.hidden = true;
 
-    header.append(title, tag);
+    header.append(title, this.sectionTag);
 
     const stage = doc.createElement('div');
     stage.className = 'sc-circle-stage';
@@ -133,6 +130,14 @@ export class CircleOfFifthsView {
       svg.append(glow, line);
       this.trails.push({ glow, line });
     }
+
+    this.trailHead = doc.createElementNS(SVG_NS, 'circle');
+    this.trailHead.setAttribute('r', '4.2');
+    this.trailHead.setAttribute('fill', STUDIO_PALETTE.accent.amberBright);
+    this.trailHead.setAttribute('stroke', STUDIO_PALETTE.accent.amber);
+    this.trailHead.setAttribute('stroke-width', '1.5');
+    this.trailHead.setAttribute('visibility', 'hidden');
+    svg.appendChild(this.trailHead);
 
     // 12 fixed vertices (C at 12 o'clock)
     for (let slotIndex = 0; slotIndex < 12; slotIndex += 1) {
@@ -203,26 +208,17 @@ export class CircleOfFifthsView {
     svg.append(this.centerPrimary, this.centerSecondary);
     stage.appendChild(svg);
 
-    // Bottom readout: current key + bar number
-    const footer = doc.createElement('div');
-    footer.className = 'sc-circle-footer';
+    // Bottom readout: current key
+    this.footer = doc.createElement('div');
+    this.footer.className = 'sc-circle-footer';
 
     this.keyReadout = doc.createElement('span');
     this.keyReadout.className = 'sc-circle-key';
     this.keyReadout.setAttribute('data-role', 'circle-key');
-    this.keyReadout.hidden = true;
 
-    this.keySep = doc.createElement('span');
-    this.keySep.className = 'sc-circle-sep';
-    this.keySep.textContent = '·';
-    this.keySep.hidden = true;
-
-    this.barReadout = doc.createElement('span');
-    this.barReadout.setAttribute('data-role', 'circle-bar');
-    this.barReadout.textContent = 'Bar 1';
-
-    footer.append(this.keyReadout, this.keySep, this.barReadout);
-    this.element.append(header, stage, footer);
+    this.footer.append(this.keyReadout);
+    this.footer.hidden = true;
+    this.element.append(header, stage, this.footer);
   }
 
   render(snapshot: VisualSnapshot, timeSec: number): void {
@@ -233,13 +229,21 @@ export class CircleOfFifthsView {
     const activeChord =
       chordWindow.current >= 0 ? chordWindow.chords[chordWindow.current] : undefined;
     const recentRoots = findRecentChordRoots(snapshot, timeSec, MAX_TRAIL_SEGMENTS + 1);
-    const beatPos = resolveBeatGridPosition(snapshot, timeSec);
+
+    const sectionName = sectionWindow.current?.name;
+    if (sectionName) {
+      this.sectionTag.textContent = sectionName;
+      this.sectionTag.hidden = false;
+    } else {
+      this.sectionTag.textContent = '';
+      this.sectionTag.hidden = true;
+    }
 
     this.updateDiatonicArc(currentKey, previousKey, sectionWindow.current?.startSec ?? 0, timeSec);
     this.updateTrails(recentRoots);
     this.updateVertices(currentKey, activeChord?.rootPc, activeChord?.tonesPc);
     this.updateCenter(activeChord);
-    this.updateFooter(currentKey, beatPos.bar);
+    this.updateFooter(currentKey);
   }
 
   private updateDiatonicArc(
@@ -349,6 +353,21 @@ export class CircleOfFifthsView {
       segment.glow.setAttribute('opacity', (opacity * 0.45).toFixed(2));
       segment.glow.setAttribute('visibility', 'visible');
     }
+
+    if (roots.length >= 2) {
+      const latestAngle = circleOfFifthsAngle(roots[roots.length - 1]);
+      this.trailHead.setAttribute(
+        'cx',
+        (C.center + Math.cos(latestAngle) * C.trailRadius).toFixed(2),
+      );
+      this.trailHead.setAttribute(
+        'cy',
+        (C.center + Math.sin(latestAngle) * C.trailRadius).toFixed(2),
+      );
+      this.trailHead.setAttribute('visibility', 'visible');
+    } else {
+      this.trailHead.setAttribute('visibility', 'hidden');
+    }
   }
 
   private updateVertices(
@@ -432,25 +451,15 @@ export class CircleOfFifthsView {
     }
   }
 
-  private updateFooter(currentKey: VisualKey | undefined, bar: number): void {
+  private updateFooter(currentKey: VisualKey | undefined): void {
     if (currentKey) {
-      const label = formatKeyLabel(currentKey);
-      this.keyReadout.textContent = `Key: ${label}`;
-      this.keyReadout.hidden = false;
-      this.keySep.hidden = false;
+      this.keyReadout.textContent = formatKeyLabel(currentKey);
+      this.footer.hidden = false;
     } else {
       this.keyReadout.textContent = '';
-      this.keyReadout.hidden = true;
-      this.keySep.hidden = true;
+      this.footer.hidden = true;
     }
-    this.barReadout.textContent = `Bar ${bar}`;
   }
-}
-
-export function formatKeyLabel(key: VisualKey): string {
-  const tonic = formatMusicSymbol(key.tonic);
-  if (!key.scale) return tonic;
-  return `${tonic} ${key.scale.replaceAll('_', ' ')}`;
 }
 
 function describeArc(
