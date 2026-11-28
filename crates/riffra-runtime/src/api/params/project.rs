@@ -128,6 +128,14 @@ pub struct ProjectExportParams {
     pub output: PathBuf,
 }
 
+/// Writes the active Project's visual snapshot as JSON.
+#[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ProjectExportVisualParams {
+    /// JSON file to write; an existing file is replaced.
+    pub output: PathBuf,
+}
+
 /// Writes the active Project as a Score song folder.
 #[derive(Clone, Debug, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]

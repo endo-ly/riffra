@@ -6,5 +6,6 @@
 pub(crate) mod export;
 pub(crate) mod import;
 
+pub(crate) mod linked;
 mod parameters;
 mod plugin_source;

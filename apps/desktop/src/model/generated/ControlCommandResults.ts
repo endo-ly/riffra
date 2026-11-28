@@ -140,6 +140,7 @@ export type ControlCommandResults = {
   'music.export-midi': OutputValue<'midiExport'>;
   'project.export': OutputValue<'projectExport'>;
   'project.export-score': OutputValue<'scoreExport'>;
+  'project.export-visual': OutputValue<'visualExport'>;
   'host.status': OutputValue<'hostStatus'>;
   'host.info': OutputValue<'hostInfo'>;
   'host.bootstrap': OutputValue<'hostBootstrap'>;

@@ -30,6 +30,12 @@ pub(super) fn dispatch(
             ),
             current.sequence,
         )),
+        ProjectCommand::ProjectExportVisual(params) => Ok((
+            ControlOutput::VisualExport(
+                crate::visual::export(&current.session, &params).map_err(command_error)?,
+            ),
+            current.sequence,
+        )),
         ProjectCommand::ProjectExport(params) => Ok((
             ControlOutput::ProjectExport(
                 projects::export(
