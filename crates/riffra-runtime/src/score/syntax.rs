@@ -66,6 +66,10 @@ pub(super) fn note(token: &str) -> Result<NoteToken<'_>> {
 }
 
 pub(crate) fn degree(token: &str) -> Result<i32> {
+    degree_parts(token).map(|(semitone, _)| semitone)
+}
+
+fn degree_parts(token: &str) -> Result<(i32, u8)> {
     let bytes = token.as_bytes();
     let mut index = 0;
     let mut accidental = 0;
@@ -97,7 +101,7 @@ pub(crate) fn degree(token: &str) -> Result<i32> {
     }
     let octaves =
         i32::try_from(suffix.len()).unwrap_or(0) * if suffix.starts_with(',') { -1 } else { 1 };
-    Ok(semitone + accidental + 12 * octaves)
+    Ok((semitone + accidental + 12 * octaves, *n - b'0'))
 }
 
 pub(crate) fn tonic(token: &str) -> Result<i32> {
@@ -129,8 +133,17 @@ pub(crate) struct Chord {
     pub(super) spelling: String,
     pub(crate) root: i32,
     pub(crate) bass: i32,
-    slash_bass: bool,
+    pub(crate) root_step: u8,
+    pub(crate) bass_step: u8,
+    pub(crate) slash_bass: bool,
     tones: Vec<ChordTone>,
+}
+
+impl Chord {
+    /// Returns the normalized chord tones as their degree and semitone offset.
+    pub(crate) fn tones(&self) -> impl Iterator<Item = (u8, i32)> {
+        self.tones.iter().map(|tone| (tone.degree, tone.semitones))
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -287,14 +300,19 @@ pub(crate) fn chord(text: &str) -> Result<Option<Chord>> {
     let (root, quality) = body
         .split_once(':')
         .ok_or_else(|| Error::new("", "expected degree:quality[/bass] or NC"))?;
-    let root = degree(root)?;
+    let (root, root_step) = degree_parts(root)?;
     let slash_bass = bass.is_some();
-    let bass = bass.map(degree).transpose()?.unwrap_or(root);
+    let (bass, bass_step) = bass
+        .map(degree_parts)
+        .transpose()?
+        .unwrap_or((root, root_step));
     let tones = chord_quality(quality)?;
     Ok(Some(Chord {
         spelling: text.into(),
         root,
         bass,
+        root_step,
+        bass_step,
         slash_bass,
         tones,
     }))

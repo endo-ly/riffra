@@ -1586,35 +1586,40 @@ fn processing_track_ids_with_required<'a>(
     required
 }
 
+/// Returns the tick where the Entire Arrangement ends.
+pub(crate) fn entire_arrangement_end_tick(session: &CreativeSession) -> u64 {
+    let audio_end = session
+        .arrangement
+        .audio_clips
+        .iter()
+        .map(|clip| {
+            let timebase = &session.arrangement.timebase;
+            timebase
+                .seconds_to_ticks(
+                    timebase.ticks_to_seconds(clip.start_tick.0)
+                        + clip.timeline_duration.frames as f64
+                            / f64::from(clip.timeline_duration.sample_rate),
+                )
+                .0
+        })
+        .max()
+        .unwrap_or(0);
+    let midi_end = session
+        .arrangement
+        .midi_clips
+        .iter()
+        .map(|clip| clip.start_tick.0.saturating_add(clip.duration_ticks))
+        .max()
+        .unwrap_or(0);
+    audio_end
+        .max(midi_end)
+        .max(session.settings.mixdown.musical_end_tick)
+}
+
 fn resolve_range(session: &CreativeSession, range: &RenderRange) -> Result<(u64, u64), String> {
     match range {
         RenderRange::EntireArrangement => {
-            let audio_end = session
-                .arrangement
-                .audio_clips
-                .iter()
-                .map(|clip| {
-                    let timebase = &session.arrangement.timebase;
-                    timebase
-                        .seconds_to_ticks(
-                            timebase.ticks_to_seconds(clip.start_tick.0)
-                                + clip.timeline_duration.frames as f64
-                                    / f64::from(clip.timeline_duration.sample_rate),
-                        )
-                        .0
-                })
-                .max()
-                .unwrap_or(0);
-            let midi_end = session
-                .arrangement
-                .midi_clips
-                .iter()
-                .map(|clip| clip.start_tick.0.saturating_add(clip.duration_ticks))
-                .max()
-                .unwrap_or(0);
-            let end_tick = audio_end
-                .max(midi_end)
-                .max(session.settings.mixdown.musical_end_tick);
+            let end_tick = entire_arrangement_end_tick(session);
             if end_tick == 0 {
                 return Err("Entire Arrangement has no positive-duration clips.".into());
             }

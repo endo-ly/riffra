@@ -176,6 +176,9 @@ impl HostDispatcher<'_> {
             ProjectCommand::MusicExportMidi(params) => ControlOutput::MidiExport(
                 crate::projects::export_midi(&canonical.session, &params)?,
             ),
+            ProjectCommand::ProjectExportVisual(params) => {
+                ControlOutput::VisualExport(crate::visual::export(&canonical.session, &params)?)
+            }
             ProjectCommand::ProjectExport(params) => {
                 ControlOutput::ProjectExport(crate::projects::export(
                     &self.data_root,
@@ -743,6 +746,90 @@ mod tests {
         ));
         assert!(result.is_err());
         assert!(!path.exists());
+        drop(dispatcher);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn visual_export_writes_the_project_and_is_byte_stable() {
+        use crate::test_support::{mutated_session, output_type};
+
+        // Arrange
+        let root = std::env::temp_dir().join(format!(
+            "riffra-visual-export-{}",
+            riffra_control::new_instance_id()
+        ));
+        let resources = root.join("resources");
+        std::fs::create_dir_all(resources.join("01-keys")).unwrap();
+        std::fs::write(
+            resources.join("01-keys/definition.json"),
+            r#"{"metadata":{"name":"Keys"},"layers":[{"id":"main","trigger":{"event":"note_on","key_min":0,"key_max":127,"velocity_min":1,"velocity_max":127}}]}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            resources.join("manifest.json"),
+            br#"{"sourceRelease":"vtest","presets":[{"id":"01-keys","name":"Keys","author":"Riffra","description":"Keys","category":"Keys","tags":["test"],"recommendedRange":{"minMidi":21,"maxMidi":108},"preview":{"tempoBpm":120,"ticksPerBeat":480,"timeSignature":{"numerator":4,"denominator":4},"lengthTicks":1920,"notes":[{"tick":0,"durationTicks":480,"note":60,"velocity":100}]},"definitionPath":"01-keys/definition.json","resourceBasePath":"01-keys"}]}"#,
+        )
+        .unwrap();
+        let dispatcher = Dispatcher::open(root.clone(), resources).unwrap();
+        let created = dispatcher
+            .dispatch(request(
+                "track.add",
+                json!({"name":"Keys","kind":"instrument"}),
+            ))
+            .unwrap();
+        let track_id = mutated_session(&created).arrangement.tracks[0].id.clone();
+        dispatcher
+            .dispatch(request(
+                "instrument.apply",
+                json!({"trackId":track_id,"instrumentId":"builtin:01-keys"}),
+            ))
+            .unwrap();
+        let created = dispatcher
+            .dispatch(request(
+                "clip.midi.create",
+                json!({"trackId":track_id,"startTick":0,"durationTicks":1920,"name":"Keys"}),
+            ))
+            .unwrap();
+        let clip_id = mutated_session(&created).arrangement.midi_clips[0]
+            .id
+            .clone();
+        dispatcher
+            .dispatch(request(
+                "clip.midi.note.add",
+                json!({"clipId":clip_id,"pitch":60,"startTick":480,"durationTicks":960,"velocity":100,"channel":1}),
+            ))
+            .unwrap();
+        dispatcher
+            .dispatch(request("project.rename", json!({"name":"Visual"})))
+            .unwrap();
+        let path = root.join("visual.json");
+
+        // Act
+        let first = dispatcher
+            .dispatch(request("project.export-visual", json!({"output": path})))
+            .unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        let snapshot: Value = serde_json::from_slice(&bytes).unwrap();
+        let second = dispatcher
+            .dispatch(request("project.export-visual", json!({"output": path})))
+            .unwrap();
+
+        // Assert
+        assert_eq!(output_type(&first), "visualExport");
+        assert_eq!(
+            output_value(&first)["path"],
+            path.to_string_lossy().as_ref()
+        );
+        assert_eq!(snapshot["schemaVersion"], 1);
+        assert_eq!(snapshot["title"], "Visual");
+        assert_eq!(snapshot["durationSec"], 1.0);
+        assert_eq!(snapshot["tracks"][0]["name"], "Keys");
+        assert_eq!(snapshot["tracks"][0]["category"], "lead");
+        assert_eq!(snapshot["tracks"][0]["notes"][0]["midi"], 60);
+        assert_eq!(snapshot["tracks"][0]["notes"][0]["startSec"], 0.25);
+        assert_eq!(output_type(&second), "visualExport");
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
         drop(dispatcher);
         let _ = std::fs::remove_dir_all(root);
     }

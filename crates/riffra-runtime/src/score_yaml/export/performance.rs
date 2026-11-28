@@ -1,12 +1,13 @@
 //! Score performance content: notes, drums, control events, harmony.
 
 use super::{
-    Export, ExportError, ExportFile, ExportTrack, Original, SongSection, TrackRole, add_file,
-    clips_for, file_identifier, fraction, instrument_of, omit, rational, to_quarters,
+    Export, ExportError, ExportFile, ExportTrack, SongSection, TrackRole, add_file, clips_for,
+    file_identifier, fraction, instrument_of, omit, rational, to_quarters,
 };
 use crate::api::output::ScoreExportOmission;
 use crate::instrument::BuiltInInstrumentCatalog;
 use crate::score::syntax;
+use crate::score_yaml::linked::LinkedScore;
 use num_rational::BigRational;
 use riffra_core::{
     AudioClip, FadeShape, HarmonyEvent, InstrumentControlEventKind, InternalInstrumentResource,
@@ -228,7 +229,7 @@ pub(super) fn apply(
     if !drums.is_empty() {
         document.insert("drums".into(), Value::Object(drums));
     }
-    if let Some(transitions) = export.original.as_ref().and_then(Original::transitions) {
+    if let Some(transitions) = export.original.as_ref().and_then(LinkedScore::transitions) {
         document.insert("transitions".into(), transitions.clone());
     }
     document.insert("sections".into(), Value::Object(sections));

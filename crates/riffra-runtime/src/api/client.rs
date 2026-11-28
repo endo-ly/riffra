@@ -137,6 +137,7 @@ pub fn prepare_command(command: &mut ControlCommand) -> Result<(), String> {
             }
             ProjectCommand::ProjectExport(params) => resolve_path(&mut params.output)?,
             ProjectCommand::ProjectExportScore(params) => resolve_path(&mut params.path)?,
+            ProjectCommand::ProjectExportVisual(params) => resolve_path(&mut params.output)?,
             ProjectCommand::MusicExportMidi(params) => resolve_path(&mut params.output)?,
             _ => {}
         },

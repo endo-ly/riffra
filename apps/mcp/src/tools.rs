@@ -101,7 +101,7 @@ pub(crate) const TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "project",
-        description: "List, create, open, rename, or export Riffra Projects, or import a `.riffra` package or a Score YAML file as a new Project. Open switches the Host's active Project; rebuild_score reapplies the active Project's linked Score file and its library, state, and audio dependencies to the same Project; export_score writes the active Project as a Score YAML song folder and can link the Project to it.",
+        description: "List, create, open, rename, or export Riffra Projects, or import a `.riffra` package or a Score YAML file as a new Project. Open switches the Host's active Project; rebuild_score reapplies the active Project's linked Score file and its library, state, and audio dependencies to the same Project; export_score writes the active Project as a Score YAML song folder and can link the Project to it; export_visual writes the active Project's visual snapshot as JSON.",
         actions: &[
             action("list", "project.list"),
             action("create", "project.create"),
@@ -112,6 +112,7 @@ pub(crate) const TOOLS: &[ToolDef] = &[
             action("rebuild_score", "project.rebuild-score"),
             action("export", "project.export"),
             action("export_score", "project.export-score"),
+            action("export_visual", "project.export-visual"),
         ],
         read_only: false,
         destructive: false,
@@ -1170,11 +1171,11 @@ mod tests {
         // Assert
         assert_eq!(names, expected);
         let actions: Vec<_> = TOOLS.iter().flat_map(|tool| tool.actions.iter()).collect();
-        assert_eq!(actions.len(), 229);
+        assert_eq!(actions.len(), 230);
         let commands: std::collections::HashSet<_> =
             actions.iter().map(|action| action.command).collect();
-        assert_eq!(commands.len(), 228);
-        assert_eq!(command_names().len(), 244);
+        assert_eq!(commands.len(), 229);
+        assert_eq!(command_names().len(), 245);
         let public_commands: std::collections::HashSet<_> =
             command_names().iter().copied().collect();
         let mut unused = public_commands

@@ -150,11 +150,13 @@ impl MusicalNoteName {
         Ok(MusicalPitch { note: self, octave })
     }
 
-    pub(crate) fn from_interval(
-        root: Self,
-        degree: u8,
-        semitones: u8,
-    ) -> Result<Self, DomainError> {
+    /// Spells the note `degree` steps above `root` at `semitones` distance.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `degree` is not a supported chord interval or when
+    /// the spelling needs more than a double accidental.
+    pub fn from_interval(root: Self, degree: u8, semitones: u8) -> Result<Self, DomainError> {
         let degree_steps = match degree {
             1 | 8 => 0,
             2 | 9 => 1,
